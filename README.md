@@ -26,6 +26,14 @@ The app has one engine (this server) and two focused surfaces you toggle between
 - **Features.** Worktrees/sessions sharing a name across repos auto-group; manual groups via
   `config.groups`. Running dev servers are **discovered by lsof→cwd** (any server in any worktree,
   not just configured ports) — a true superset of worktree-dash.
+- **Multi-repo features.** One session can span several repos: it owns a *feature* whose worktrees
+  share a name across repos (that name is what ties them together). Add a repo **up front** (intake
+  "also touches" multi-select) or **on the fly** (the "＋ repo" button, or claude itself via
+  `wt-studio add-repo <repo>`). Adding a repo creates a same-named worktree there and grants the live
+  session access via claude's `/add-dir` — so one conversation edits multiple repos, all tracked as
+  one feature in Fleet + the menubar.
+- **Session management.** Rename, deactivate (stop the process, keep it resumable) / reactivate,
+  delete. A **⚙ Connections** panel configures GitHub (via `gh`) / GitLab / Asana.
 - **Sessions are real `claude` processes** inside a multiplexer (**zellij** preferred,
   **tmux** fallback — auto-selected). Embedded xterm terminal, multiple tabs, and a
   **Pop out** button that opens the *same live session* in a native terminal window.

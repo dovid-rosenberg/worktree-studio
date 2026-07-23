@@ -66,6 +66,29 @@ Full merge (Plan B), Fleet manages all worktrees. Built + verified:
 
 Follow-up (not blocking): run-config import from `.idea`/`.vscode`/`.zed` (`/api/runconfigs*`).
 
+## Post-merge fixes + features (2026-07-23)
+- [x] Fix: claude launch dropped `-n` (installed claude rejects it — was blocking session start)
+- [x] Fix: seed prompt injected after claude is ready (SessionStart hook + fallback), single-line
+- [x] Intake: separate short Name field (branch no longer the whole prompt); form resets on open
+- [x] Session mgmt: rename / deactivate+reactivate / delete
+- [x] Connections settings UI (GitHub status, GitLab/Asana tokens), persisted to config
+- [x] **Multi-repo features:** session owns feature + repos[]; `addRepo` (same-named worktree +
+      `/add-dir`); triggers = intake "also touches" (up-front) + "＋ repo" button (on-the-fly) +
+      `wt-studio add-repo` CLI (claude, via $WT_STUDIO_SESSION). Verified across 3 throwaway repos.
+- [x] realpath-robust session↔worktree matching; rescan on promote/add-repo. 14/14 tests.
+
+### Known environment blocker (not an app bug)
+David's global `~/.claude/settings.json` has `permissions.defaultMode: "auto"`, invalid for the
+installed claude → every interactive session opens with a settings-error dialog. Fix: set it to a
+valid mode (`default` or `acceptEdits`), OR point `claude.cmd` at a claude that accepts "auto".
+
+### Deliberately NOT done
+- Multi-agent support (OpenAI/Codex/etc.) — feasible via an agent-adapter layer, deferred per David.
+
+### Follow-ups
+- Run-config import; claude-triggered add-repo could become a formal tool/hook; live end-to-end
+  multi-repo run once the global defaultMode is valid.
+
 ### Notes / follow-ups
 - Your repos are not GitHub-hosted, so the GitHub source lists nothing; the GitLab
   source is the real one for you — install `glab` or set `sources.gitlab.token`+`project`.
