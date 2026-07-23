@@ -170,14 +170,19 @@ function rebuildDock(s) {
 function updateDock(s) {
   const promoted = !!s.worktreePath;
   const head = $('#dockHead');
+  const repoChips = (s.repos && s.repos.length ? s.repos : [{ repo: s.repoName, primary: true, worktreePath: s.worktreePath }])
+    .map((r) => `<span class="repochip2${r.primary ? ' primary' : ''}" title="${r.worktreePath ? esc(r.worktreePath) : 'main (not promoted)'}">${r.primary ? '★ ' : ''}${esc(r.repo)}${r.worktreePath ? ' ⎇' : ''}</span>`).join('');
   head.innerHTML = `
     <span class="dot ${s.state}"></span>
     <span class="dock-title">${esc(s.title)}</span>
     ${s.sourceUrl ? `<a class="link" href="${esc(s.sourceUrl)}" target="_blank" rel="noreferrer">${esc(labelForSource(s))}</a>` : `<span class="src">${esc(s.source)}</span>`}
-    <span class="dock-sub">${promoted ? `⎇ ${esc(s.branch)}` : `${esc(s.repoName)} · main`}</span>
+    <span class="repochips">${repoChips}</span>
     <span class="pill ${s.state}">${esc(s.state)}</span>
     <span class="dock-actions" id="dockActions"></span>`;
   const acts = head.querySelector('#dockActions');
+  const addr = h(`<button class="btn sm" title="Add another repo to this feature">＋ repo</button>`);
+  addr.addEventListener('click', () => addRepoToSession(s));
+  acts.appendChild(addr);
   if (!promoted) {
     const b = h(`<button class="btn sm primary">⤴ Promote to worktree</button>`);
     b.addEventListener('click', () => promote(s));
@@ -286,6 +291,15 @@ async function popout(s) {
   try { await api('POST', `/api/sessions/${s.id}/popout`, {}); toast('Popped out to a native terminal (same live session).'); }
   catch (e) { toast(e.message, true); }
 }
+async function addRepoToSession(s) {
+  const have = new Set((s.repos || []).map((r) => r.repo));
+  const avail = state.repos.map((r) => r.name).filter((n) => !have.has(n));
+  if (!avail.length) return toast('No other repos to add.', true);
+  const pick = prompt(`Add which repo to this feature? Creates a same-named worktree there and gives the session access.\n\nAvailable: ${avail.join(', ')}`, avail[0]);
+  if (!pick || !avail.includes(pick)) return;
+  try { const r = await api('POST', `/api/sessions/${s.id}/add-repo`, { repo: pick }); toast(r.already ? `${pick} already in feature` : `Added ${pick} → ${r.worktree.name}`); }
+  catch (e) { toast(e.message, true); }
+}
 async function addTab(s) {
   const title = prompt('New tab name:', 'shell'); if (title === null) return;
   try { await api('POST', `/api/sessions/${s.id}/tabs`, { title: title || 'shell' }); toast(`Tab “${title || 'shell'}” added`); }
@@ -362,6 +376,11 @@ function renderModal() {
   }
   $('#mLoad').onclick = loadIssues;
 
+  // additional repos this feature may touch (everything except the primary)
+  const extra = $('#mExtraRepos');
+  extra.innerHTML = state.repos.filter((r) => r.name !== modal.repo)
+    .map((r) => `<label class="repocheck"><input type="checkbox" value="${esc(r.name)}"/> ${esc(r.name)}</label>`).join('') || '<span class="hint">no other repos</span>';
+
   $('#mNote').textContent = isFree
     ? 'Boots a real Claude Code session in the repo (CLAUDE.md loaded). The name is optional; the branch is chosen when you promote.'
     : `Seeds the session from ${modal.source}. ${state.sources.find((s) => s.id === modal.source && s.needsRepo) ? 'Uses the selected repo.' : ''}`;
@@ -387,6 +406,8 @@ async function startSession() {
     if (!body.text.trim()) return toast('Describe what you’re working on first.', true);
     if ($('#mName').value.trim()) body.name = $('#mName').value.trim();
   } else { if (!modal.issueId) return toast('Pick an item first.', true); body.sourceId = modal.issueId; }
+  const extra = [...document.querySelectorAll('#mExtraRepos input:checked')].map((c) => c.value);
+  if (extra.length) body.additionalRepos = extra;
   try {
     const s = await api('POST', '/api/sessions', body);
     closeModal();

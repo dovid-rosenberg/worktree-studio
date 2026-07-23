@@ -169,11 +169,14 @@ async function main() {
   // ---- sessions ----
   app.post('/api/sessions', async (req, res) => {
     try {
-      const { source, sourceId, text, name, repo } = req.body || {};
+      const { source, sourceId, text, name, repo, additionalRepos } = req.body || {};
       const repoObj = repos.find((r) => r.name === repo);
       if (!repoObj) return res.status(400).json({ error: `unknown repo '${repo}'` });
       const seed = await sources.seed(cfg, source || 'freetext', { repoPath: repoObj.path, id: sourceId, text, name });
-      const session = await manager.create({ seed, repoPath: repoObj.path, repoName: repoObj.name });
+      const extra = (additionalRepos || [])
+        .map((rn) => repos.find((r) => r.name === rn)).filter(Boolean)
+        .map((r) => ({ repo: r.name, repoPath: r.path }));
+      const session = await manager.create({ seed, repoPath: repoObj.path, repoName: repoObj.name, additionalRepos: extra });
       res.json(session);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -184,10 +187,21 @@ async function main() {
   app.post('/api/sessions/:id/deactivate', async (req, res) => { res.json(await manager.deactivate(req.params.id)); });
   app.post('/api/sessions/:id/activate', async (req, res) => { res.json(await manager.activate(req.params.id)); });
 
+  // Add a repo to a session's feature (creates a same-named worktree + grants access).
+  // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
+  app.post('/api/sessions/:id/add-repo', async (req, res) => {
+    const repoObj = repos.find((r) => r.name === (req.body && req.body.repo));
+    if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body && req.body.repo}'` });
+    const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
+    if (!out.ok) return res.status(400).json(out);
+    await rescan(); // pick up the sibling worktree so the feature updates immediately
+    res.json(out);
+  });
+
   app.post('/api/sessions/:id/promote', async (req, res) => {
     const out = await manager.promote(req.params.id, req.body || {});
     if (!out.ok) return res.status(400).json(out);
-    scheduleBroadcast();
+    await rescan(); // pick up the new worktree(s) so features update immediately
     res.json(out);
   });
 
