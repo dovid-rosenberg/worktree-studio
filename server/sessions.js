@@ -57,7 +57,13 @@ class SessionManager extends EventEmitter {
     // is ready (see injectPrompt) — passing a multi-line prompt as a launch arg
     // was unreliable through the multiplexer layout.
     // NB: the installed claude rejects -n/--name, so we don't set a display name here.
-    const parts = [this.cfg.claude.cmd || 'claude', '--settings', shq(session.settingsFile)];
+    // Scrub claude env markers inherited from the parent process so each session
+    // is a clean, top-level claude (transcripts on, no "child session" behavior).
+    // Drop only the child-session marker (keeps transcripts + normal behavior) and
+    // force persistence. Everything else stays so the launcher can still find the
+    // (inherited) claude binary — unsetting CLAUDECODE/EXECPATH breaks that.
+    const CLEAN = 'env -u CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1';
+    const parts = [CLEAN, this.cfg.claude.cmd || 'claude', '--settings', shq(session.settingsFile)];
     if (resume && session.claudeSessionId) parts.push('-r', shq(session.claudeSessionId));
     // grant tool access to any sibling-repo worktrees this session already owns
     for (const r of session.repos || []) {
@@ -142,7 +148,7 @@ class SessionManager extends EventEmitter {
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
     // Inject the first message once claude is up. The SessionStart hook triggers
     // it (applyHook); this is a fallback in case the hook is slow/absent.
-    else setTimeout(() => this.injectPrompt(id).catch(() => {}), 6000);
+    else setTimeout(() => this.injectPrompt(id).catch(() => {}), 12000);
     this._touch(id);
     return session;
   }
@@ -181,7 +187,7 @@ class SessionManager extends EventEmitter {
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
-    else if (session.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 6000);
+    else if (session.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 12000);
     this._touch(id);
     return session;
   }
@@ -267,8 +273,9 @@ class SessionManager extends EventEmitter {
     if (!s) return;
     if (event === 'SessionStart') {
       if (payload && payload.session_id) s.claudeSessionId = payload.session_id;
-      // claude is up — type in the seeded first message (small delay for input readiness)
-      if (s.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 1200);
+      // claude is up — type in the seeded first message. Wait for the TUI input to
+      // be ready (it isn't immediately at SessionStart), else the keystrokes drop.
+      if (s.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 4000);
     }
     const m = status.mapEvent(event, payload);
     if (m) { s.state = m.state; if (m.activity) s.activity = m.activity; }
