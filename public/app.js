@@ -39,6 +39,44 @@ function toast(msg, isErr) {
   setTimeout(() => t.remove(), isErr ? 6000 : 3200);
 }
 
+/* ---------------- custom dialogs (no native alert/confirm/prompt) ---------------- */
+function uiDialog({ title, message, messageHtml, fields = [], okLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
+  return new Promise((resolve) => {
+    const back = h('<div class="modal-backdrop"></div>');
+    const modal = h('<div class="modal dlg"></div>');
+    modal.innerHTML = `
+      <div class="modal-head"><b>${esc(title || '')}</b><span class="spacer"></span></div>
+      <div class="modal-body">
+        ${messageHtml ? `<div class="dlg-msg">${messageHtml}</div>` : (message ? `<div class="dlg-msg">${esc(message)}</div>` : '')}
+        ${fields.map((f, i) => {
+    if (f.type === 'checkbox') return `<label class="dlg-check"><input type="checkbox" class="dlgf" data-i="${i}" data-t="checkbox" ${f.value ? 'checked' : ''}/> ${esc(f.label || '')}</label>`;
+    if (f.type === 'select') return `<div class="field"><label>${esc(f.label || '')}</label><select class="select dlgf" data-i="${i}" data-t="select">${(f.options || []).map((o) => `<option value="${esc(o)}" ${o === f.value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></div>`;
+    return `<div class="field"><label>${esc(f.label || '')}</label><input class="input dlgf" data-i="${i}" data-t="text" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}"/></div>`;
+  }).join('')}
+      </div>
+      <div class="modal-foot"><span class="spacer"></span>
+        ${cancelLabel ? `<button class="btn dlg-cancel">${esc(cancelLabel)}</button>` : ''}
+        <button class="btn ${danger ? 'danger' : 'primary'} dlg-ok">${esc(okLabel)}</button>
+      </div>`;
+    back.appendChild(modal);
+    document.body.appendChild(back);
+    const readFields = () => [...modal.querySelectorAll('.dlgf')].map((el) => (el.dataset.t === 'checkbox' ? el.checked : el.value));
+    let onKey;
+    const done = (val) => { document.removeEventListener('keydown', onKey); back.remove(); resolve(val); };
+    onKey = (e) => { if (e.key === 'Escape') done(null); else if (e.key === 'Enter' && !fields.some((f) => f.type === 'select')) { e.preventDefault(); done(fields.length ? readFields() : true); } };
+    document.addEventListener('keydown', onKey);
+    const cancelBtn = modal.querySelector('.dlg-cancel'); if (cancelBtn) cancelBtn.onclick = () => done(null);
+    modal.querySelector('.dlg-ok').onclick = () => done(fields.length ? readFields() : true);
+    back.addEventListener('click', (e) => { if (e.target === back) done(null); });
+    const first = modal.querySelector('.dlgf'); if (first && first.focus) setTimeout(() => { first.focus(); if (first.select) first.select(); }, 30);
+  });
+}
+async function uiConfirm(message, opts = {}) { return (await uiDialog({ title: opts.title || 'Confirm', message, okLabel: opts.okLabel || 'OK', danger: opts.danger })) === true; }
+async function uiPrompt(message, value = '', opts = {}) {
+  const r = await uiDialog({ title: message, fields: [{ type: 'text', label: opts.label || '', value, placeholder: opts.placeholder || '' }], okLabel: opts.okLabel || 'OK' });
+  return r ? r[0] : null;
+}
+
 /* ---------------- SSE ---------------- */
 function connectSSE() {
   const ev = new EventSource('/api/events');
@@ -285,7 +323,7 @@ function sendResize() {
 
 /* ---------------- actions ---------------- */
 async function promote(s) {
-  const branch = prompt('Branch to create for this worktree:', s.suggestedBranch || 'feature/x');
+  const branch = await uiPrompt('Branch to create for this worktree:', s.suggestedBranch || 'feature/x');
   if (!branch) return;
   try {
     const r = await api('POST', `/api/sessions/${s.id}/promote`, { branch });
@@ -302,13 +340,15 @@ async function addRepoToSession(s) {
   const have = new Set((s.repos || []).map((r) => r.repo));
   const avail = state.repos.map((r) => r.name).filter((n) => !have.has(n));
   if (!avail.length) return toast('No other repos to add.', true);
-  const pick = prompt(`Add which repo to this feature? Creates a same-named worktree there and gives the session access.\n\nAvailable: ${avail.join(', ')}`, avail[0]);
-  if (!pick || !avail.includes(pick)) return;
+  const r0 = await uiDialog({ title: 'Add a repo to this feature', message: 'Creates a same-named worktree there and gives the session access.', fields: [{ type: 'select', label: 'Repo', value: avail[0], options: avail }], okLabel: 'Add' });
+  if (!r0) return;
+  const pick = r0[0];
+  if (!avail.includes(pick)) return;
   try { const r = await api('POST', `/api/sessions/${s.id}/add-repo`, { repo: pick }); toast(r.already ? `${pick} already in feature` : `Added ${pick} → ${r.worktree.name}`); }
   catch (e) { toast(e.message, true); }
 }
 async function addTab(s) {
-  const title = prompt('New tab name:', 'shell'); if (title === null) return;
+  const title = await uiPrompt('New tab name:', 'shell'); if (title === null) return;
   try { await api('POST', `/api/sessions/${s.id}/tabs`, { title: title || 'shell' }); toast(`Tab “${title || 'shell'}” added`); }
   catch (e) { toast(e.message, true); }
 }
@@ -320,16 +360,16 @@ async function closeTab(s, i) {
   try { await api('POST', `/api/sessions/${s.id}/close-tab`, { index: i }); toast('Tab closed'); } catch (e) { toast(e.message, true); }
 }
 async function closeSession(s) {
-  if (!confirm(`Delete “${s.title}”? This kills its ${state.mux} session and removes it.`)) return;
+  if (!(await uiConfirm(`Delete “${s.title}”? This kills its ${state.mux} session and removes it.`, { title: 'Delete session', okLabel: 'Delete', danger: true }))) return;
   try { await api('DELETE', `/api/sessions/${s.id}`); if (selectedId === s.id) selectedId = null; toast('Session deleted'); }
   catch (e) { toast(e.message, true); }
 }
 async function renameSession(s) {
-  const title = prompt('Rename session:', s.title); if (title === null || !title.trim()) return;
+  const title = await uiPrompt('Rename session:', s.title); if (title === null || !title.trim()) return;
   try { await api('POST', `/api/sessions/${s.id}/rename`, { title }); toast('Renamed'); } catch (e) { toast(e.message, true); }
 }
 async function deactivateSession(s) {
-  if (!confirm(`Deactivate “${s.title}”? Stops the process; you can reactivate to resume the conversation.`)) return;
+  if (!(await uiConfirm(`Deactivate “${s.title}”? Stops the process; you can reactivate to resume the conversation.`, { title: 'Deactivate', okLabel: 'Deactivate' }))) return;
   try { await api('POST', `/api/sessions/${s.id}/deactivate`, {}); toast('Deactivated'); } catch (e) { toast(e.message, true); }
 }
 async function activateSession(s) {
@@ -461,43 +501,54 @@ function renderFleet() {
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   if (!feats.length) tbody.appendChild(h(`<tr><td colspan="6" style="color:var(--faint);padding:22px 16px">No worktrees found under your base dirs. Create one from a session (promote) or with git worktree.</td></tr>`));
-  for (const f of feats) {
-    const ms = f.members.filter((m) => m && !m.missing);
-    const anyRunning = ms.some((m) => m.running);
-    const anyStartable = ms.some((m) => m.canStart && !m.running);
-    const anyMerged = ms.some((m) => m.merged);
-    const fs = featureState(f);
 
-    const tr = document.createElement('tr');
-    tr.appendChild(h(`<td><span class="feat">${stateDot(fs)}${esc(f.name)}${f.auto ? '' : ' <span class="src">manual</span>'}</span></td>`));
-    tr.appendChild(h(`<td><div class="repos">${ms.map((m) => `<span><span class="r">${esc(m.repo)}</span> <span class="br">${esc(m.branch || m.wtname)}</span>${m.merged ? ' <span class="badge merged">✓ merged</span>' : ''}</span>`).join('')}</div></td>`));
-    tr.appendChild(h(`<td><div class="ports">${ms.map((m) => `<span class="p"><span class="dot ${m.running ? 'done' : 'idle'}"></span>${(m.ports || []).map((p) => ':' + p).join(' ') || (m.canStart ? 'stopped' : '—')}</span>`).join('')}</div></td>`));
-    tr.appendChild(h(`<td><div class="agents">${ms.map((m) => m.session ? `<span><span class="dot ${m.session.state}"></span>${esc(m.session.state)}</span>` : '<span style="color:var(--faint)">—</span>').join('')}</div></td>`));
-    const pend = fleetPending.has(f.name);
-    tr.appendChild(h(`<td><span class="badge ${pend ? 'run' : (anyRunning ? 'run' : 'stop')}">${pend ? '<span class="dot working"></span> starting…' : (anyRunning ? '● running' : '○ stopped')}</span></td>`));
+  const isActive = (f) => f.members.some((m) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped')));
+  const activeFeats = feats.filter(isActive);
+  const idleFeats = feats.filter((f) => !isActive(f));
+  const section = (label, n) => h(`<tr class="sectionrow"><td colspan="6">${esc(label)} · ${n}</td></tr>`);
+  if (activeFeats.length) { tbody.appendChild(section('▶ Running', activeFeats.length)); activeFeats.forEach((f) => tbody.appendChild(featureRow(f))); }
+  if (idleFeats.length) { if (activeFeats.length) tbody.appendChild(section('Idle', idleFeats.length)); idleFeats.forEach((f) => tbody.appendChild(featureRow(f))); }
+  tbl.appendChild(tbody);
+}
 
-    const acts = h(`<td><div class="rowacts"></div></td>`);
-    const box = acts.querySelector('.rowacts');
-    if (pend) {
-      box.appendChild(h(`<button class="btn sm" disabled>working…</button>`));
-    } else {
-      if (anyStartable) { const b = h(`<button class="btn sm ${anyRunning ? '' : 'primary'}">${anyRunning ? 'Restart stack' : 'Run stack'}</button>`); b.addEventListener('click', () => (anyRunning ? restartStack(f.name) : runStack(f.name))); box.appendChild(b); }
-      if (anyRunning) { const b = h(`<button class="btn sm">Stop</button>`); b.addEventListener('click', () => stopStack(f.name)); box.appendChild(b); }
-      const openb = h(`<button class="btn sm ghost">Open</button>`); openb.addEventListener('click', () => openGroup(f.name)); box.appendChild(openb);
-      for (const m of ms) {
-        if (!m.session) {
-          const ap = fleetPending.has(`adopt:${m.path}`);
-          const b = h(`<button class="btn sm" ${ap ? 'disabled' : ''}>${ap ? 'starting…' : `Session ▸ ${esc(m.repo)}`}</button>`);
-          if (!ap) b.addEventListener('click', () => adoptWorktree(m));
-          box.appendChild(b);
-        }
-        if (m.merged) { const b = h(`<button class="btn sm ghost">Remove ${esc(m.repo)}</button>`); b.addEventListener('click', () => removeWorktree(m)); box.appendChild(b); }
+function featureRow(f) {
+  const ms = f.members.filter((m) => m && !m.missing);
+  const anyRunning = ms.some((m) => m.running);
+  const anyStartable = ms.some((m) => m.canStart && !m.running);
+  const anySession = ms.some((m) => m.session);
+  const fs = featureState(f);
+  const pend = fleetPending.has(f.name);
+
+  const tr = document.createElement('tr');
+  tr.appendChild(h(`<td><span class="feat">${stateDot(fs)}${esc(f.name)}${f.auto ? '' : ' <span class="src">manual</span>'}</span></td>`));
+  tr.appendChild(h(`<td><div class="repos">${ms.map((m) => `<span><span class="r">${esc(m.repo)}</span> <span class="br">${esc(m.branch || m.wtname)}</span>${m.merged ? ' <span class="badge merged">✓ merged</span>' : ''}</span>`).join('')}</div></td>`));
+  tr.appendChild(h(`<td><div class="ports">${ms.map((m) => `<span class="p"><span class="dot ${m.running ? 'done' : 'idle'}"></span>${(m.ports || []).map((p) => ':' + p).join(' ') || (m.canStart ? 'stopped' : '—')}</span>`).join('')}</div></td>`));
+  tr.appendChild(h(`<td><div class="agents">${ms.map((m) => m.session ? `<span><span class="dot ${m.session.state}"></span>${esc(m.session.state)}</span>` : '<span style="color:var(--faint)">—</span>').join('')}</div></td>`));
+  tr.appendChild(h(`<td><span class="badge ${pend ? 'run' : (anyRunning ? 'run' : 'stop')}">${pend ? '<span class="dot working"></span> starting…' : (anyRunning ? '● running' : '○ stopped')}</span></td>`));
+
+  const acts = h(`<td><div class="rowacts"></div></td>`);
+  const box = acts.querySelector('.rowacts');
+  const add = (label, fn, cls = '') => { const b = h(`<button class="btn sm ${cls}">${label}</button>`); b.addEventListener('click', fn); box.appendChild(b); };
+  if (pend) {
+    box.appendChild(h(`<button class="btn sm" disabled>working…</button>`));
+  } else {
+    if (anyStartable) add(anyRunning ? 'Restart stack' : 'Run stack', () => (anyRunning ? restartStack(f.name) : runStack(f.name)), anyRunning ? '' : 'primary');
+    if (anyRunning) add('Stop', () => stopStack(f.name));
+    add('Open', () => openGroup(f.name), 'ghost');
+    for (const m of ms) {
+      if (!m.session) {
+        const ap = fleetPending.has(`adopt:${m.path}`);
+        const b = h(`<button class="btn sm" ${ap ? 'disabled' : ''}>${ap ? 'starting…' : `Session ▸ ${esc(m.repo)}`}</button>`);
+        if (!ap) b.addEventListener('click', () => adoptWorktree(m));
+        box.appendChild(b);
       }
     }
-    tr.appendChild(acts);
-    tbody.appendChild(tr);
+    add('PR / MR', () => prFeature(f.name), 'ghost');
+    if (anyRunning || anySession) add('Close', () => closeFeature(f.name), 'ghost');
+    add('Delete', () => deleteFeature(f), 'ghost');
   }
-  tbl.appendChild(tbody);
+  tr.appendChild(acts);
+  return tr;
 }
 
 // run an async fleet action with a visible pending state keyed by `key`
@@ -511,8 +562,9 @@ function runStack(name) {
     try {
       const r = await api('POST', '/api/group/start', { group: name });
       if (r.needsConfirm) {
-        const list = r.conflicts.map((c) => `${c.repo} (${c.ports.join(',') || 'running'})`).join(', ');
-        if (!confirm(`Stop & switch? These are using needed ports: ${list}`)) return;
+        const names = [...new Set(r.conflicts.map((c) => c.wtname))];
+        const list = names.map((n) => `“${n}”`).join(', ');
+        if (!(await uiConfirm(`${list} ${names.length > 1 ? 'are' : 'is'} already running in the same repo. Stop ${names.length > 1 ? 'them' : 'it'} and switch to “${name}”?`, { title: 'Stop & switch?', okLabel: 'Stop & switch' }))) return;
         const r2 = await api('POST', '/api/group/start', { group: name, stopConflicts: true });
         toast(`Switched — started ${r2.started}/${r2.total}`);
       } else {
@@ -524,10 +576,33 @@ function runStack(name) {
 function stopStack(name) { return withPending(name, async () => { try { await api('POST', '/api/group/stop', { group: name }); toast(`Stopped ${name}`); } catch (e) { toast(e.message, true); } }); }
 function restartStack(name) { return withPending(name, async () => { try { await api('POST', '/api/group/restart', { group: name }); toast(`Restarting ${name}`); } catch (e) { toast(e.message, true); } }); }
 async function openGroup(name) { try { await api('POST', '/api/group/open', { group: name }); } catch (e) { toast(e.message, true); } }
+function prFeature(name) {
+  return withPending(name, async () => {
+    try {
+      toast('Opening PR / MR…');
+      const r = await api('POST', '/api/group/pr', { group: name });
+      const html = (r.results || []).map((x) => x.url
+        ? `<div>${esc(x.repo)}: <a href="${esc(x.url)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`
+        : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`).join('');
+      await uiDialog({ title: 'Pull / merge requests', messageHtml: html || 'No results', okLabel: 'Done', cancelLabel: '' });
+    } catch (e) { toast(e.message, true); }
+  });
+}
+async function closeFeature(name) {
+  if (!(await uiConfirm(`Close feature “${name}”? Stops its servers and deactivates its sessions (worktrees kept).`, { title: 'Close feature', okLabel: 'Close' }))) return;
+  return withPending(name, async () => { try { await api('POST', '/api/group/close', { group: name }); toast(`Closed ${name}`); } catch (e) { toast(e.message, true); } });
+}
+async function deleteFeature(f) {
+  const ms = f.members.filter((m) => m && !m.missing);
+  const anyMerged = ms.some((m) => m.merged);
+  const r0 = await uiDialog({ title: `Delete feature “${f.name}”?`, message: `Kills its sessions and removes its worktree(s) in ${ms.length} repo(s).`, fields: [{ type: 'checkbox', label: 'Also delete the branches', value: anyMerged }], okLabel: 'Delete', danger: true });
+  if (!r0) return;
+  return withPending(f.name, async () => { try { const r = await api('POST', '/api/group/delete', { group: f.name, deleteBranches: r0[0] }); toast(r.ok ? `Deleted ${f.name}` : 'Some removals failed', !r.ok); } catch (e) { toast(e.message, true); } });
+}
 async function removeWorktree(m) {
-  if (!confirm(`Remove worktree ${m.repo}/${m.wtname}?` + (m.merged ? ' (branch is merged)' : ''))) return;
-  const delBranch = m.merged && confirm(`Also delete the merged branch ${m.branch}?`);
-  try { const r = await api('DELETE', '/api/worktrees', { repo: m.repo, worktreePath: m.path, branch: m.branch, deleteBranch: delBranch }); toast(r.ok ? 'Worktree removed' : r.error, !r.ok); } catch (e) { toast(e.message, true); }
+  const r0 = await uiDialog({ title: `Remove worktree ${m.repo}/${m.wtname}?`, message: m.merged ? 'This branch is merged into the default branch.' : 'Removes the worktree (the branch is kept unless you check below).', fields: [{ type: 'checkbox', label: `Also delete branch ${m.branch}`, value: !!m.merged }], okLabel: 'Remove', danger: true });
+  if (!r0) return;
+  try { const r = await api('DELETE', '/api/worktrees', { repo: m.repo, worktreePath: m.path, branch: m.branch, deleteBranch: r0[0] }); toast(r.ok ? 'Worktree removed' : r.error, !r.ok); } catch (e) { toast(e.message, true); }
 }
 function adoptWorktree(m) {
   // don't yank the user out of Fleet — start it with a visible pending state and

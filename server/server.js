@@ -324,14 +324,61 @@ async function main() {
     res.json({ ok: true });
   });
 
+  // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
+  app.post('/api/group/close', async (req, res) => {
+    const { group: g } = await resolveGroup(req.body && req.body.group);
+    if (!g) return res.status(404).json({ error: 'no such feature' });
+    for (const m of g.members) {
+      if (m.running) await servers.stop(m.repo, m.path);
+      if (m.session) await manager.deactivate(m.session.id);
+    }
+    scheduleBroadcast();
+    res.json({ ok: true });
+  });
+
+  // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
+  app.post('/api/group/delete', async (req, res) => {
+    const { group, deleteBranches } = req.body || {};
+    const { group: g } = await resolveGroup(group);
+    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const results = [];
+    for (const m of g.members) {
+      if (m.running) await servers.stop(m.repo, m.path);
+      if (m.session) await manager.close(m.session.id);
+      const repoObj = repos.find((r) => r.name === m.repo);
+      const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: deleteBranches });
+      results.push({ repo: m.repo, ok: rr.ok, error: rr.error });
+    }
+    await rescan();
+    res.json({ ok: results.every((r) => r.ok), results });
+  });
+
+  // Open a PR (gh) / MR (glab) for each of a feature's branches.
+  app.post('/api/group/pr', async (req, res) => {
+    const { group: g } = await resolveGroup(req.body && req.body.group);
+    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+    const results = [];
+    for (const m of g.members) {
+      await run('git', ['-C', m.path, 'push', '-u', 'origin', m.branch], { env });
+      let r = await run('gh', ['pr', 'create', '--fill', '--head', m.branch], { cwd: m.path, env });
+      if (r.code === 0) { results.push({ repo: m.repo, url: r.stdout.trim().split('\n').pop() }); continue; }
+      r = await run('glab', ['mr', 'create', '--fill', '--yes'], { cwd: m.path, env });
+      if (r.code === 0) { results.push({ repo: m.repo, url: (r.stdout.match(/https?:\/\/\S+/) || ['created'])[0] }); continue; }
+      results.push({ repo: m.repo, error: (r.stderr || '').trim().split('\n')[0] || 'gh/glab unavailable or failed' });
+    }
+    res.json({ ok: results.some((r) => r.url), results });
+  });
+
   // Start a session in an existing worktree (Fleet: "Start session here")
   app.post('/api/worktrees/adopt', async (req, res) => {
     const { repo, worktreePath, branch, wtname } = req.body || {};
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
-    const s = await manager.adopt({ worktreePath, repoName: repo, repoPath: repoObj.path, branch, wtname });
+    let s = await manager.adopt({ worktreePath, repoName: repo, repoPath: repoObj.path, branch, wtname });
+    if (!s) s = manager.sessionForWorktree(worktreePath); // an adopt was already in flight
     scheduleBroadcast();
-    res.json(s);
+    res.json(s || { error: 'session is already being opened' });
   });
 
   // ---- editor open ----

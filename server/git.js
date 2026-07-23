@@ -70,7 +70,9 @@ async function describeRepo(repoPath) {
     w.name = path.basename(w.path);
     w.merged = false;
     w.ahead = 0;
-    if (!w.isMain && w.head && defHead && !w.detached) {
+    // merged = the branch's commits are all in the default branch AND it isn't
+    // simply a fresh branch sitting at the base (head === defHead → new, not merged)
+    if (!w.isMain && w.head && defHead && !w.detached && w.head !== defHead) {
       const anc = await gitFull(repoPath, ['merge-base', '--is-ancestor', w.head, defHead]);
       w.merged = anc.code === 0;
     }

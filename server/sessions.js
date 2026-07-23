@@ -30,6 +30,7 @@ class SessionManager extends EventEmitter {
     this.mux = mux;
     this.file = path.join(cfg._stateDir, 'sessions.json');
     this.sessions = new Map();
+    this._adopting = new Set(); // worktreePaths with an adopt in flight (dedup guard)
     for (const s of readJson(this.file, []) || []) this.sessions.set(s.id, s);
   }
 
@@ -148,8 +149,17 @@ class SessionManager extends EventEmitter {
 
   // Start a session in a worktree that already exists (no promote step).
   async adopt({ worktreePath, repoName, repoPath, branch, wtname, seed }) {
+    // dedup: never open two sessions for the same worktree, even on concurrent calls
     const existing = this.sessionForWorktree(worktreePath);
     if (existing) return existing;
+    if (this._adopting.has(worktreePath)) return null;
+    this._adopting.add(worktreePath);
+    try {
+      return await this._doAdopt({ worktreePath, repoName, repoPath, branch, wtname, seed });
+    } finally { this._adopting.delete(worktreePath); }
+  }
+
+  async _doAdopt({ worktreePath, repoName, repoPath, branch, wtname, seed }) {
     const s = seed || { source: 'freetext', title: wtname || require('path').basename(worktreePath), body: '', url: null };
     const id = makeId('s_');
     const title = s.title;
