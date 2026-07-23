@@ -1,0 +1,28 @@
+{
+  "name": "worktree-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One place to start, watch, and steer Claude Code sessions — pluggable intake, baked-in worktrees, embedded multiplexer terminals, hook-driven status, and resume-after-shutdown.",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "wt-studio": "bin/wt-studio.js"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "node --test test/worktree.test.js test/logic.test.js",
+    "vendor": "node bin/vendor.js",
+    "fix-pty": "node bin/fix-pty.js",
+    "postinstall": "node bin/fix-pty.js && node bin/vendor.js"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/addon-web-links": "0.11.0",
+    "@xterm/xterm": "5.5.0",
+    "express": "^4.19.2",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  }
+}

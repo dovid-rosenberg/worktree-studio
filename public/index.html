@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Worktree Studio</title>
+  <link rel="stylesheet" href="/vendor/xterm.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="glyph">⎇</span> Worktree&nbsp;Studio</div>
+    <span class="muxbadge" id="muxBadge" title="active multiplexer">…</span>
+    <div class="viewseg" id="viewSeg">
+      <button data-view="work" class="on">◧ Work</button>
+      <button data-view="fleet">▦ Fleet</button>
+    </div>
+    <span class="spacer"></span>
+    <span class="restore" id="restore" hidden></span>
+    <button class="btn ghost" id="themeBtn" title="Toggle theme">◐</button>
+    <button class="btn primary" id="newBtn">+ New session</button>
+  </header>
+
+  <!-- WORK view -->
+  <div class="main" id="workView">
+    <aside class="rail">
+      <div class="rail-head">
+        <span>Sessions</span>
+        <select id="repoFilter" class="mini-select" title="Filter by repo"></select>
+      </div>
+      <div class="rail-list" id="rail"></div>
+      <div class="rail-foot" id="railFoot"></div>
+    </aside>
+    <section class="dock" id="dock">
+      <div class="empty" id="empty">
+        <div class="empty-glyph">⎇</div>
+        <h2>No session selected</h2>
+        <p>Start one from any source — free text, a GitHub / GitLab issue, or an Asana task. It boots a real Claude&nbsp;Code session on your CLAUDE.md, and you promote it to a worktree when it&rsquo;s real work.</p>
+        <button class="btn primary" id="emptyNew">+ New session</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- FLEET view -->
+  <section class="fleet" id="fleetView" hidden>
+    <div class="fleet-summary" id="fleetSummary"></div>
+    <div class="fleet-tablewrap"><table class="fleet-table" id="fleetTable"></table></div>
+  </section>
+
+  <!-- Intake modal -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="New session">
+      <div class="modal-head">
+        <span class="dot idle"></span><b>New session</b>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="modalClose">✕</button>
+      </div>
+      <div class="srctabs" id="srctabs"></div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Repo</label>
+          <select id="mRepo" class="select"></select>
+        </div>
+        <div class="field" id="fFreetext">
+          <label>What are you working on?</label>
+          <textarea id="mText" class="textarea" rows="4" placeholder="Describe the feature or bug…"></textarea>
+        </div>
+        <div class="field" id="fIssue" hidden>
+          <label>Pick an item <button class="btn xs" id="mLoad">Load</button></label>
+          <div class="issuelist" id="mIssues"></div>
+        </div>
+        <div class="field">
+          <label>Branch / worktree name <span class="hint">(created on promote)</span></label>
+          <input id="mBranch" class="input" placeholder="feature/…" />
+        </div>
+        <div class="modal-note" id="mNote"></div>
+      </div>
+      <div class="modal-foot">
+        <span class="foot-note" id="mFootNote"></span>
+        <span class="spacer"></span>
+        <button class="btn" id="mCancel">Cancel</button>
+        <button class="btn primary" id="mStart">Start session ↵</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/addon-fit.js"></script>
+  <script src="/vendor/addon-web-links.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
