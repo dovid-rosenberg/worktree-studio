@@ -13,7 +13,7 @@ const sources = require('./sources');
 const { SessionManager } = require('./sessions');
 const { Servers } = require('./servers');
 const { computeFeatures } = require('./features');
-const { run } = require('./util');
+const { run, has } = require('./util');
 
 async function main() {
   const cfg = configMod.load();
@@ -137,6 +137,27 @@ async function main() {
     req.on('close', () => { clearInterval(hb); sseClients.delete(res); });
   });
 
+  // ---- settings / connections ----
+  app.get('/api/settings', async (req, res) => {
+    const gh = await run('gh', ['auth', 'status'], {});
+    res.json({
+      sources: cfg.sources || {},
+      enabled: sources.enabled(cfg),
+      tools: { gh: has('gh'), glab: has('glab') },
+      githubAuthed: gh.code === 0,
+    });
+  });
+  app.post('/api/settings', (req, res) => {
+    const { sources: srcs } = req.body || {};
+    if (srcs) {
+      cfg.sources = cfg.sources || {};
+      for (const k of Object.keys(srcs)) cfg.sources[k] = { ...(cfg.sources[k] || {}), ...srcs[k] };
+    }
+    configMod.save(cfg);
+    scheduleBroadcast();
+    res.json({ ok: true, sources: cfg.sources, enabled: sources.enabled(cfg) });
+  });
+
   // ---- sources ----
   app.get('/api/sources', (req, res) => res.json(sources.enabled(cfg)));
   app.get('/api/sources/:source/items', async (req, res) => {
@@ -148,14 +169,20 @@ async function main() {
   // ---- sessions ----
   app.post('/api/sessions', async (req, res) => {
     try {
-      const { source, sourceId, text, repo } = req.body || {};
+      const { source, sourceId, text, name, repo } = req.body || {};
       const repoObj = repos.find((r) => r.name === repo);
       if (!repoObj) return res.status(400).json({ error: `unknown repo '${repo}'` });
-      const seed = await sources.seed(cfg, source || 'freetext', { repoPath: repoObj.path, id: sourceId, text });
+      const seed = await sources.seed(cfg, source || 'freetext', { repoPath: repoObj.path, id: sourceId, text, name });
       const session = await manager.create({ seed, repoPath: repoObj.path, repoName: repoObj.name });
       res.json(session);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
+
+  app.post('/api/sessions/:id/rename', async (req, res) => {
+    res.json(await manager.rename(req.params.id, (req.body && req.body.title) || ''));
+  });
+  app.post('/api/sessions/:id/deactivate', async (req, res) => { res.json(await manager.deactivate(req.params.id)); });
+  app.post('/api/sessions/:id/activate', async (req, res) => { res.json(await manager.activate(req.params.id)); });
 
   app.post('/api/sessions/:id/promote', async (req, res) => {
     const out = await manager.promote(req.params.id, req.body || {});

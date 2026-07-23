@@ -17,6 +17,7 @@
     </div>
     <span class="spacer"></span>
     <span class="restore" id="restore" hidden></span>
+    <button class="btn ghost" id="settingsBtn" title="Connections & settings">⚙</button>
     <button class="btn ghost" id="themeBtn" title="Toggle theme">◐</button>
     <button class="btn primary" id="newBtn">+ New session</button>
   </header>
@@ -70,8 +71,8 @@
           <div class="issuelist" id="mIssues"></div>
         </div>
         <div class="field">
-          <label>Branch / worktree name <span class="hint">(created on promote)</span></label>
-          <input id="mBranch" class="input" placeholder="feature/…" />
+          <label>Short name <span class="hint">(optional — names the session &amp; its branch)</span></label>
+          <input id="mName" class="input" placeholder="e.g. invoice-order-fix" />
         </div>
         <div class="modal-note" id="mNote"></div>
       </div>
@@ -80,6 +81,24 @@
         <span class="spacer"></span>
         <button class="btn" id="mCancel">Cancel</button>
         <button class="btn primary" id="mStart">Start session ↵</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings / connections modal -->
+  <div class="modal-backdrop" id="settingsModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Connections & settings">
+      <div class="modal-head">
+        <span>⚙</span><b>Connections &amp; settings</b>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="settingsClose">✕</button>
+      </div>
+      <div class="modal-body" id="settingsBody"></div>
+      <div class="modal-foot">
+        <span class="foot-note">Saved to ~/.config/worktree-studio/config.json</span>
+        <span class="spacer"></span>
+        <button class="btn" id="setCancel">Close</button>
+        <button class="btn primary" id="setSave">Save</button>
       </div>
     </div>
   </div>

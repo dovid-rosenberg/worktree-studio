@@ -190,8 +190,19 @@ function updateDock(s) {
   const po = h(`<button class="btn sm">Pop out ⧉</button>`);
   po.addEventListener('click', () => popout(s));
   acts.appendChild(po);
-  const del = h(`<button class="btn sm ghost">✕</button>`);
-  del.title = 'Close session (kills the multiplexer session)';
+  const ren = h(`<button class="btn sm ghost" title="Rename">✎</button>`);
+  ren.addEventListener('click', () => renameSession(s));
+  acts.appendChild(ren);
+  if (s.active === false) {
+    const act = h(`<button class="btn sm">Reactivate</button>`);
+    act.addEventListener('click', () => activateSession(s));
+    acts.appendChild(act);
+  } else {
+    const de = h(`<button class="btn sm ghost" title="Stop the process but keep the session (resumable)">Deactivate</button>`);
+    de.addEventListener('click', () => deactivateSession(s));
+    acts.appendChild(de);
+  }
+  const del = h(`<button class="btn sm ghost" title="Delete session (kills the multiplexer session)">🗑</button>`);
   del.addEventListener('click', () => closeSession(s));
   acts.appendChild(del);
 
@@ -285,9 +296,20 @@ async function selectTab(s, i, tabsEl) {
   try { await api('POST', `/api/sessions/${s.id}/select-tab`, { index: i }); if (term) term.focus(); } catch (e) { toast(e.message, true); }
 }
 async function closeSession(s) {
-  if (!confirm(`Close “${s.title}”? This kills its ${state.mux} session.`)) return;
-  try { await api('DELETE', `/api/sessions/${s.id}`); if (selectedId === s.id) selectedId = null; toast('Session closed'); }
+  if (!confirm(`Delete “${s.title}”? This kills its ${state.mux} session and removes it.`)) return;
+  try { await api('DELETE', `/api/sessions/${s.id}`); if (selectedId === s.id) selectedId = null; toast('Session deleted'); }
   catch (e) { toast(e.message, true); }
+}
+async function renameSession(s) {
+  const title = prompt('Rename session:', s.title); if (title === null || !title.trim()) return;
+  try { await api('POST', `/api/sessions/${s.id}/rename`, { title }); toast('Renamed'); } catch (e) { toast(e.message, true); }
+}
+async function deactivateSession(s) {
+  if (!confirm(`Deactivate “${s.title}”? Stops the process; you can reactivate to resume the conversation.`)) return;
+  try { await api('POST', `/api/sessions/${s.id}/deactivate`, {}); toast('Deactivated'); } catch (e) { toast(e.message, true); }
+}
+async function activateSession(s) {
+  try { await api('POST', `/api/sessions/${s.id}/activate`, {}); toast('Reactivated — resuming'); } catch (e) { toast(e.message, true); }
 }
 async function startServer(s) { try { const r = await api('POST', '/api/servers/start', { repo: s.repoName, worktreePath: s.worktreePath }); toast(r.ok ? `Server starting (pid ${r.pid})` : r.error, !r.ok); } catch (e) { toast(e.message, true); } }
 async function stopServer(s) { try { await api('POST', '/api/servers/stop', { repo: s.repoName, worktreePath: s.worktreePath }); toast('Server stopped'); } catch (e) { toast(e.message, true); } }
@@ -297,6 +319,9 @@ async function openEditor(p) { try { await api('POST', '/api/open', { path: p })
 function openModal() {
   modal.repo = modal.repo || (state.repos[0] && state.repos[0].name) || '';
   modal.source = 'freetext'; modal.issues = []; modal.issueId = null;
+  // reset the form fields each open
+  if ($('#mText')) $('#mText').value = '';
+  if ($('#mName')) $('#mName').value = '';
   renderModal();
   $('#modal').hidden = false;
   setTimeout(() => $('#mText') && $('#mText').focus(), 30);
@@ -332,27 +357,15 @@ function renderModal() {
     ? '' : `<div class="modal-note">Click “Load” to fetch ${isAsana ? 'your Asana tasks' : 'open issues'}.</div>`;
   for (const it of modal.issues) {
     const el = h(`<div class="issue ${modal.issueId === it.id ? 'sel' : ''}"><span class="num">${esc(it.subtitle || it.id)}</span> <span>${esc(it.title)}</span></div>`);
-    el.addEventListener('click', () => { modal.issueId = it.id; $('#mBranch').value = suggestBranch(it.title, it.id); renderModal(); });
+    el.addEventListener('click', () => { modal.issueId = it.id; renderModal(); });
     list.appendChild(el);
   }
   $('#mLoad').onclick = loadIssues;
 
   $('#mNote').textContent = isFree
-    ? 'Boots a real Claude Code session in the repo (CLAUDE.md loaded). No worktree until you promote.'
+    ? 'Boots a real Claude Code session in the repo (CLAUDE.md loaded). The name is optional; the branch is chosen when you promote.'
     : `Seeds the session from ${modal.source}. ${state.sources.find((s) => s.id === modal.source && s.needsRepo) ? 'Uses the selected repo.' : ''}`;
   $('#mFootNote').textContent = `→ ${state.mux} session · seeds first message`;
-
-  // default branch preview
-  if (isFree && $('#mText')) {
-    $('#mText').oninput = () => { if (!$('#mBranch').value || $('#mBranch').dataset.auto) { $('#mBranch').value = suggestBranch($('#mText').value.split('\n')[0], null); $('#mBranch').dataset.auto = '1'; } };
-  }
-}
-
-function suggestBranch(title, id) {
-  const s = (title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'session';
-  const type = /\b(fix|bug|error|broken|regression|crash|fail)/i.test(title || '') ? 'fix' : 'feature';
-  const num = id && /^\d+$/.test(String(id)) ? `${id}-` : '';
-  return `${type}/${num}${s}`;
 }
 
 async function loadIssues() {
@@ -369,12 +382,16 @@ async function loadIssues() {
 
 async function startSession() {
   const body = { source: modal.source, repo: modal.repo };
-  if (modal.source === 'freetext') { body.text = $('#mText').value; }
-  else { if (!modal.issueId) return toast('Pick an item first.', true); body.sourceId = modal.issueId; }
+  if (modal.source === 'freetext') {
+    body.text = $('#mText').value;
+    if (!body.text.trim()) return toast('Describe what you’re working on first.', true);
+    if ($('#mName').value.trim()) body.name = $('#mName').value.trim();
+  } else { if (!modal.issueId) return toast('Pick an item first.', true); body.sourceId = modal.issueId; }
   try {
     const s = await api('POST', '/api/sessions', body);
     closeModal();
     selectedId = s.id;
+    setView('work');
     toast(`Session started — ${s.title}`);
   } catch (e) { toast(e.message, true); }
 }
@@ -467,6 +484,40 @@ async function adoptWorktree(m) {
   try { const s = await api('POST', '/api/worktrees/adopt', { repo: m.repo, worktreePath: m.path, branch: m.branch, wtname: m.wtname }); selectedId = s.id; setView('work'); toast(`Session started in ${m.repo}/${m.wtname}`); } catch (e) { toast(e.message, true); }
 }
 
+/* ---------------- settings / connections ---------------- */
+async function openSettings() {
+  let data;
+  try { data = await api('GET', '/api/settings'); } catch (e) { return toast(e.message, true); }
+  const src = data.sources || {};
+  const gl = src.gitlab || {}; const as = src.asana || {};
+  const body = $('#settingsBody');
+  body.innerHTML = `
+    <div class="field">
+      <label>GitHub <span class="hint">— uses the <code>gh</code> CLI</span></label>
+      <div class="conn-status">${data.tools.gh ? (data.githubAuthed ? '<span class="ok">✓ gh installed &amp; authenticated</span>' : '<span class="warn">gh installed — run <code>gh auth login</code></span>') : '<span class="warn">gh not installed (brew install gh)</span>'}</div>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="setGlEnabled" ${gl.enabled ? 'checked' : ''}/> GitLab <span class="hint">${data.tools.glab ? '— glab CLI available' : '— uses API token'}</span></label>
+      <input id="setGlHost" class="input" placeholder="https://gitlab.com" value="${esc(gl.host || 'https://gitlab.com')}"/>
+      <input id="setGlProject" class="input" placeholder="group/project (for API mode)" value="${esc(gl.project || '')}"/>
+      <input id="setGlToken" class="input" type="password" placeholder="Personal access token" value="${esc(gl.token || '')}"/>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="setAsEnabled" ${as.enabled ? 'checked' : ''}/> Asana <span class="hint">— API token</span></label>
+      <input id="setAsToken" class="input" type="password" placeholder="Personal access token" value="${esc(as.token || '')}"/>
+      <input id="setAsWorkspace" class="input" placeholder="Workspace GID" value="${esc(as.workspace || '')}"/>
+    </div>`;
+  $('#settingsModal').hidden = false;
+}
+function closeSettings() { $('#settingsModal').hidden = true; }
+async function saveSettings() {
+  const sources = {
+    gitlab: { enabled: $('#setGlEnabled').checked, host: $('#setGlHost').value.trim(), project: $('#setGlProject').value.trim(), token: $('#setGlToken').value.trim() },
+    asana: { enabled: $('#setAsEnabled').checked, token: $('#setAsToken').value.trim(), workspace: $('#setAsWorkspace').value.trim() },
+  };
+  try { await api('POST', '/api/settings', { sources }); closeSettings(); toast('Connections saved'); } catch (e) { toast(e.message, true); }
+}
+
 /* ---------------- theme + wiring ---------------- */
 function toggleTheme() {
   const cur = document.documentElement.getAttribute('data-theme')
@@ -488,6 +539,11 @@ function init() {
   $('#mStart').addEventListener('click', startSession);
   $('#repoFilter').addEventListener('change', (e) => { repoFilter = e.target.value; render(); });
   document.querySelectorAll('#viewSeg button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+  $('#settingsBtn').addEventListener('click', openSettings);
+  $('#settingsClose').addEventListener('click', closeSettings);
+  $('#setCancel').addEventListener('click', closeSettings);
+  $('#setSave').addEventListener('click', saveSettings);
+  $('#settingsModal').addEventListener('click', (e) => { if (e.target.id === 'settingsModal') closeSettings(); });
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
   connectSSE();

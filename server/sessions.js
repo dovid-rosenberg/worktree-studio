@@ -47,13 +47,23 @@ class SessionManager extends EventEmitter {
   }
 
   claudeCmd(session, { resume } = {}) {
-    const parts = [this.cfg.claude.cmd || 'claude', '--settings', shq(session.settingsFile), '-n', shq(session.title)];
-    if (resume && session.claudeSessionId) {
-      parts.push('-r', shq(session.claudeSessionId));
-    } else if (session.seedPrompt) {
-      parts.push(shq(session.seedPrompt));
-    }
+    // Launch claude clean; the seeded first message is typed in once the session
+    // is ready (see injectPrompt) — passing a multi-line prompt as a launch arg
+    // was unreliable through the multiplexer layout.
+    // NB: the installed claude rejects -n/--name, so we don't set a display name here.
+    const parts = [this.cfg.claude.cmd || 'claude', '--settings', shq(session.settingsFile)];
+    if (resume && session.claudeSessionId) parts.push('-r', shq(session.claudeSessionId));
     return parts.join(' ');
+  }
+
+  // Type the seeded first message into a freshly-started session and submit it.
+  // Collapsed to one line so a single Enter submits (newlines would submit early).
+  async injectPrompt(id) {
+    const s = this.get(id);
+    if (!s || !s.pendingPrompt) return;
+    const line = s.pendingPrompt.replace(/\s*\n\s*/g, ' ').trim();
+    s.pendingPrompt = null;
+    await this.mux.sendText(s.muxName, line);
   }
 
   async create({ seed, repoPath, repoName }) {
@@ -80,7 +90,8 @@ class SessionManager extends EventEmitter {
       state: 'idle',
       activity: 'starting…',
       tabs: [{ title: 'claude' }],
-      seedPrompt: seedPrompt(seed),
+      pendingPrompt: seedPrompt(seed),
+      active: true,
       createdAt: Date.now(),
       promotedAt: null,
     };
@@ -90,6 +101,9 @@ class SessionManager extends EventEmitter {
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
+    // Inject the first message once claude is up. The SessionStart hook triggers
+    // it (applyHook); this is a fallback in case the hook is slow/absent.
+    else setTimeout(() => this.injectPrompt(id).catch(() => {}), 6000);
     this._touch(id);
     return session;
   }
@@ -108,7 +122,7 @@ class SessionManager extends EventEmitter {
       worktree: wtname, worktreePath, branch: branch || null,
       suggestedBranch: branch || null, suggestedName: wtname || slug(title),
       muxName, claudeSessionId: null, state: 'idle', activity: 'starting…',
-      tabs: [{ title: 'claude' }], seedPrompt: seed ? seedPrompt(seed) : null,
+      tabs: [{ title: 'claude' }], pendingPrompt: seed ? seedPrompt(seed) : null, active: true,
       createdAt: Date.now(), promotedAt: Date.now(), adopted: true,
     };
     session.settingsFile = status.settingsFile(this.cfg._stateDir, id, this.cfg.web.port);
@@ -116,6 +130,7 @@ class SessionManager extends EventEmitter {
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
+    else if (session.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 6000);
     this._touch(id);
     return session;
   }
@@ -179,11 +194,49 @@ class SessionManager extends EventEmitter {
   applyHook(id, event, payload) {
     const s = this.get(id);
     if (!s) return;
-    if (event === 'SessionStart' && payload && payload.session_id) s.claudeSessionId = payload.session_id;
+    if (event === 'SessionStart') {
+      if (payload && payload.session_id) s.claudeSessionId = payload.session_id;
+      // claude is up — type in the seeded first message (small delay for input readiness)
+      if (s.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 1200);
+    }
     const m = status.mapEvent(event, payload);
     if (m) { s.state = m.state; if (m.activity) s.activity = m.activity; }
     s.lastEventAt = Date.now();
     this._touch(id);
+  }
+
+  async rename(id, title) {
+    const s = this.get(id);
+    if (!s || !title || !title.trim()) return { ok: false, error: 'invalid title' };
+    s.title = title.trim();
+    this._touch(id);
+    return { ok: true };
+  }
+
+  // Stop the running process but keep the session (resumable later).
+  async deactivate(id) {
+    const s = this.get(id);
+    if (!s) return { ok: false };
+    await this.mux.kill(s.muxName);
+    s.active = false;
+    s.state = 'stopped';
+    s.activity = 'deactivated';
+    this._touch(id);
+    return { ok: true };
+  }
+
+  // Bring a deactivated session back, resuming its conversation.
+  async activate(id) {
+    const s = this.get(id);
+    if (!s) return { ok: false };
+    const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
+    const cwd = s.worktreePath || s.home || s.repoPath;
+    const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+    s.active = true;
+    s.state = 'idle';
+    s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
+    this._touch(id);
+    return { ok: !r.error, error: r.error };
   }
 
   // Recreate every persisted session after a restart, resuming the conversation.
