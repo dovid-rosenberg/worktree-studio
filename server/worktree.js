@@ -95,11 +95,26 @@ async function defaultBase(repoPath) {
  */
 async function create(repoPath, branch, name, opts = {}) {
   const warnings = [];
-  const wtName = slug(name || branch.replace(/\//g, '-'));
-  const dest = path.join(repoPath, '.worktrees', wtName);
+  let wtName = slug(name || branch.replace(/\//g, '-'));
+  let dest = path.join(repoPath, '.worktrees', wtName);
+
+  // On a name/branch collision: opts.unique auto-suffixes (foo → foo-2) instead
+  // of hard-failing, keeping the worktree name and branch's last segment in sync.
+  if (opts.unique) {
+    const baseName = wtName;
+    let n = 1;
+    // eslint-disable-next-line no-await-in-loop
+    while (fs.existsSync(dest) || (await branchExists(repoPath, branch))) {
+      n += 1;
+      wtName = `${baseName}-${n}`;
+      dest = path.join(repoPath, '.worktrees', wtName);
+      branch = branch.replace(/[^/]+$/, wtName);
+    }
+    if (n > 1) warnings.push(`name was taken — using "${wtName}"`);
+  }
 
   if (fs.existsSync(dest)) {
-    return { ok: false, error: `already exists: ${dest}`, path: dest, name: wtName, branch };
+    return { ok: false, error: `worktree "${wtName}" already exists in ${path.basename(repoPath)}`, path: dest, name: wtName, branch };
   }
   // warn if .worktrees isn't ignored (checkouts would show as untracked)
   const ign = await gitFull(repoPath, ['check-ignore', '-q', '.worktrees']);

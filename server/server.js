@@ -213,6 +213,10 @@ async function main() {
     res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
   });
 
+  app.post('/api/sessions/:id/close-tab', async (req, res) => {
+    res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
+  });
+
   app.post('/api/sessions/:id/popout', async (req, res) => {
     const cmd = manager.popout(req.params.id);
     if (!cmd) return res.status(404).json({ error: 'no such session' });

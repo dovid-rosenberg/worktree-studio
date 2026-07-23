@@ -70,6 +70,10 @@ module.exports = {
     return (await T(['select-window', '-t', `${name}:${id}`])).code === 0;
   },
 
+  async closeTab(name, id) {
+    return (await T(['kill-window', '-t', `${name}:${id}`])).code === 0;
+  },
+
   async rename(oldName, newName) {
     return (await T(['rename-session', '-t', oldName, newName])).code === 0;
   },

@@ -89,6 +89,8 @@ button { font-family:inherit; }
 .tab { font-family:var(--mono); font-size:11.5px; color:var(--muted); padding:6px 12px; border-radius:7px 7px 0 0; display:flex; align-items:center; gap:7px; border:1px solid transparent; border-bottom:none; cursor:pointer; }
 .tab.on { color:var(--ink); background:var(--bg); border-color:var(--border); }
 .tab .newtab { color:var(--faint); }
+.tab .tabclose { color:var(--faint); margin-left:2px; font-size:10px; padding:0 2px; border-radius:3px; }
+.tab .tabclose:hover { color:var(--ink); background:var(--border); }
 .tabstrip .popout { margin-left:auto; }
 
 .term-wrap { flex:1; min-height:0; background:#0c0f14; padding:8px 10px; }

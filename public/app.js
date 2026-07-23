@@ -11,6 +11,7 @@ let selectedId = null;
 let renderedDockId = null;
 let repoFilter = '';
 let view = localStorage.getItem('wts-view') || 'work';
+const fleetPending = new Set(); // feature-name / 'adopt:<path>' keys with an action in flight
 
 // intake modal state
 const modal = { source: 'freetext', repo: '', issues: [], issueId: null };
@@ -215,8 +216,10 @@ function updateDock(s) {
   const tabs = $('#dockTabs');
   tabs.innerHTML = '';
   (s.tabs || [{ title: 'claude' }]).forEach((t, i) => {
-    const tab = h(`<span class="tab ${i === 0 ? 'on' : ''}"><span class="dot ${i === 0 ? s.state : 'idle'}"></span>${esc(t.title)}</span>`);
+    const tab = h(`<span class="tab ${i === 0 ? 'on' : ''}"><span class="dot ${i === 0 ? s.state : 'idle'}"></span>${esc(t.title)}${i > 0 ? ' <span class="tabclose" title="Close tab">✕</span>' : ''}</span>`);
     tab.addEventListener('click', () => selectTab(s, i, tabs));
+    const x = tab.querySelector('.tabclose');
+    if (x) x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(s, i); });
     tabs.appendChild(tab);
   });
   const add = h(`<span class="tab"><span class="newtab">＋</span></span>`);
@@ -284,8 +287,12 @@ function sendResize() {
 async function promote(s) {
   const branch = prompt('Branch to create for this worktree:', s.suggestedBranch || 'feature/x');
   if (!branch) return;
-  try { await api('POST', `/api/sessions/${s.id}/promote`, { branch }); toast(`Promoted → worktree on ${branch}`); }
-  catch (e) { toast(e.message, true); }
+  try {
+    const r = await api('POST', `/api/sessions/${s.id}/promote`, { branch });
+    const w = r.worktree || {};
+    const warn = (w.warnings || []).find((x) => /taken/.test(x));
+    toast(warn ? `Promoted as “${w.name}” — ${warn}` : `Promoted → ${w.branch || branch}`);
+  } catch (e) { toast(e.message, true); }
 }
 async function popout(s) {
   try { await api('POST', `/api/sessions/${s.id}/popout`, {}); toast('Popped out to a native terminal (same live session).'); }
@@ -308,6 +315,9 @@ async function addTab(s) {
 async function selectTab(s, i, tabsEl) {
   tabsEl.querySelectorAll('.tab').forEach((t, idx) => t.classList.toggle('on', idx === i));
   try { await api('POST', `/api/sessions/${s.id}/select-tab`, { index: i }); if (term) term.focus(); } catch (e) { toast(e.message, true); }
+}
+async function closeTab(s, i) {
+  try { await api('POST', `/api/sessions/${s.id}/close-tab`, { index: i }); toast('Tab closed'); } catch (e) { toast(e.message, true); }
 }
 async function closeSession(s) {
   if (!confirm(`Delete “${s.title}”? This kills its ${state.mux} session and removes it.`)) return;
@@ -427,7 +437,8 @@ function featureState(f) {
 }
 
 function renderFleet() {
-  const feats = state.features || [];
+  // stable alphabetical order so a feature doesn't jump around when it starts
+  const feats = (state.features || []).slice().sort((a, b) => a.name.localeCompare(b.name));
   const flat = feats.flatMap((f) => f.members.filter((m) => m && !m.missing));
   const running = flat.filter((m) => m.running).length;
   const waiting = flat.filter((m) => m.session && m.session.state === 'waiting').length;
@@ -462,17 +473,26 @@ function renderFleet() {
     tr.appendChild(h(`<td><div class="repos">${ms.map((m) => `<span><span class="r">${esc(m.repo)}</span> <span class="br">${esc(m.branch || m.wtname)}</span>${m.merged ? ' <span class="badge merged">✓ merged</span>' : ''}</span>`).join('')}</div></td>`));
     tr.appendChild(h(`<td><div class="ports">${ms.map((m) => `<span class="p"><span class="dot ${m.running ? 'done' : 'idle'}"></span>${(m.ports || []).map((p) => ':' + p).join(' ') || (m.canStart ? 'stopped' : '—')}</span>`).join('')}</div></td>`));
     tr.appendChild(h(`<td><div class="agents">${ms.map((m) => m.session ? `<span><span class="dot ${m.session.state}"></span>${esc(m.session.state)}</span>` : '<span style="color:var(--faint)">—</span>').join('')}</div></td>`));
-    tr.appendChild(h(`<td><span class="badge ${anyRunning ? 'run' : 'stop'}">${anyRunning ? '● running' : '○ stopped'}</span></td>`));
+    const pend = fleetPending.has(f.name);
+    tr.appendChild(h(`<td><span class="badge ${pend ? 'run' : (anyRunning ? 'run' : 'stop')}">${pend ? '<span class="dot working"></span> starting…' : (anyRunning ? '● running' : '○ stopped')}</span></td>`));
 
     const acts = h(`<td><div class="rowacts"></div></td>`);
     const box = acts.querySelector('.rowacts');
-    if (anyStartable) { const b = h(`<button class="btn sm ${anyRunning ? '' : 'primary'}">${anyRunning ? 'Restart stack' : 'Run stack'}</button>`); b.addEventListener('click', () => (anyRunning ? restartStack(f.name) : runStack(f.name))); box.appendChild(b); }
-    if (anyRunning) { const b = h(`<button class="btn sm">Stop</button>`); b.addEventListener('click', () => stopStack(f.name)); box.appendChild(b); }
-    const openb = h(`<button class="btn sm ghost">Open</button>`); openb.addEventListener('click', () => openGroup(f.name)); box.appendChild(openb);
-    // per-member session/cleanup
-    for (const m of ms) {
-      if (!m.session) { const b = h(`<button class="btn sm">Session ▸ ${esc(m.repo)}</button>`); b.addEventListener('click', () => adoptWorktree(m)); box.appendChild(b); }
-      if (m.merged) { const b = h(`<button class="btn sm ghost">Remove ${esc(m.repo)}</button>`); b.addEventListener('click', () => removeWorktree(m)); box.appendChild(b); }
+    if (pend) {
+      box.appendChild(h(`<button class="btn sm" disabled>working…</button>`));
+    } else {
+      if (anyStartable) { const b = h(`<button class="btn sm ${anyRunning ? '' : 'primary'}">${anyRunning ? 'Restart stack' : 'Run stack'}</button>`); b.addEventListener('click', () => (anyRunning ? restartStack(f.name) : runStack(f.name))); box.appendChild(b); }
+      if (anyRunning) { const b = h(`<button class="btn sm">Stop</button>`); b.addEventListener('click', () => stopStack(f.name)); box.appendChild(b); }
+      const openb = h(`<button class="btn sm ghost">Open</button>`); openb.addEventListener('click', () => openGroup(f.name)); box.appendChild(openb);
+      for (const m of ms) {
+        if (!m.session) {
+          const ap = fleetPending.has(`adopt:${m.path}`);
+          const b = h(`<button class="btn sm" ${ap ? 'disabled' : ''}>${ap ? 'starting…' : `Session ▸ ${esc(m.repo)}`}</button>`);
+          if (!ap) b.addEventListener('click', () => adoptWorktree(m));
+          box.appendChild(b);
+        }
+        if (m.merged) { const b = h(`<button class="btn sm ghost">Remove ${esc(m.repo)}</button>`); b.addEventListener('click', () => removeWorktree(m)); box.appendChild(b); }
+      }
     }
     tr.appendChild(acts);
     tbody.appendChild(tr);
@@ -480,29 +500,45 @@ function renderFleet() {
   tbl.appendChild(tbody);
 }
 
-async function runStack(name) {
-  try {
-    const r = await api('POST', '/api/group/start', { group: name });
-    if (r.needsConfirm) {
-      const list = r.conflicts.map((c) => `${c.repo} (${c.ports.join(',') || 'running'})`).join(', ');
-      if (!confirm(`Stop & switch? These are using needed ports: ${list}`)) return;
-      const r2 = await api('POST', '/api/group/start', { group: name, stopConflicts: true });
-      toast(`Switched — started ${r2.started}/${r2.total}`);
-    } else {
-      toast(`Started ${r.started}/${r.total}` + (r.failures && r.failures.length ? ` (${r.failures.length} failed)` : ''), r.failures && r.failures.length);
-    }
-  } catch (e) { toast(e.message, true); }
+// run an async fleet action with a visible pending state keyed by `key`
+async function withPending(key, fn) {
+  fleetPending.add(key); if (view === 'fleet') renderFleet();
+  try { return await fn(); } finally { fleetPending.delete(key); if (view === 'fleet') renderFleet(); }
 }
-async function stopStack(name) { try { await api('POST', '/api/group/stop', { group: name }); toast(`Stopped ${name}`); } catch (e) { toast(e.message, true); } }
-async function restartStack(name) { try { await api('POST', '/api/group/restart', { group: name }); toast(`Restarting ${name}`); } catch (e) { toast(e.message, true); } }
+
+function runStack(name) {
+  return withPending(name, async () => {
+    try {
+      const r = await api('POST', '/api/group/start', { group: name });
+      if (r.needsConfirm) {
+        const list = r.conflicts.map((c) => `${c.repo} (${c.ports.join(',') || 'running'})`).join(', ');
+        if (!confirm(`Stop & switch? These are using needed ports: ${list}`)) return;
+        const r2 = await api('POST', '/api/group/start', { group: name, stopConflicts: true });
+        toast(`Switched — started ${r2.started}/${r2.total}`);
+      } else {
+        toast(`Started ${r.started}/${r.total}` + (r.failures && r.failures.length ? ` (${r.failures.length} failed)` : ''), r.failures && r.failures.length);
+      }
+    } catch (e) { toast(e.message, true); }
+  });
+}
+function stopStack(name) { return withPending(name, async () => { try { await api('POST', '/api/group/stop', { group: name }); toast(`Stopped ${name}`); } catch (e) { toast(e.message, true); } }); }
+function restartStack(name) { return withPending(name, async () => { try { await api('POST', '/api/group/restart', { group: name }); toast(`Restarting ${name}`); } catch (e) { toast(e.message, true); } }); }
 async function openGroup(name) { try { await api('POST', '/api/group/open', { group: name }); } catch (e) { toast(e.message, true); } }
 async function removeWorktree(m) {
   if (!confirm(`Remove worktree ${m.repo}/${m.wtname}?` + (m.merged ? ' (branch is merged)' : ''))) return;
   const delBranch = m.merged && confirm(`Also delete the merged branch ${m.branch}?`);
   try { const r = await api('DELETE', '/api/worktrees', { repo: m.repo, worktreePath: m.path, branch: m.branch, deleteBranch: delBranch }); toast(r.ok ? 'Worktree removed' : r.error, !r.ok); } catch (e) { toast(e.message, true); }
 }
-async function adoptWorktree(m) {
-  try { const s = await api('POST', '/api/worktrees/adopt', { repo: m.repo, worktreePath: m.path, branch: m.branch, wtname: m.wtname }); selectedId = s.id; setView('work'); toast(`Session started in ${m.repo}/${m.wtname}`); } catch (e) { toast(e.message, true); }
+function adoptWorktree(m) {
+  // don't yank the user out of Fleet — start it with a visible pending state and
+  // let them switch to Work when ready (the feature stays put in the list)
+  return withPending(`adopt:${m.path}`, async () => {
+    try {
+      const s = await api('POST', '/api/worktrees/adopt', { repo: m.repo, worktreePath: m.path, branch: m.branch, wtname: m.wtname });
+      selectedId = s.id;
+      toast(`Session started in ${m.repo}/${m.wtname} — open it in Work ▸`);
+    } catch (e) { toast(e.message, true); }
+  });
 }
 
 /* ---------------- settings / connections ---------------- */

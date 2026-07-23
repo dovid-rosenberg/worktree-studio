@@ -11,7 +11,23 @@ const { run } = require('../util');
 // pin a short socket dir. Must be identical everywhere the session is reached —
 // including the pop-out command that runs in a native terminal.
 const SOCKET_DIR = process.env.ZELLIJ_SOCKET_DIR || '/tmp/zellij';
-const ENV = { ...process.env, ZELLIJ_SOCKET_DIR: SOCKET_DIR, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+
+// Clean, native-looking embedded terminal: hide zellij's pane frames, tab bar
+// and status bar via a studio-owned config + a no-chrome layout (studio renders
+// its own tab strip, so zellij's UI is redundant).
+const CFG_DIR = path.join(os.homedir(), '.config', 'worktree-studio', 'zellij');
+const LAYOUT_DIR = path.join(CFG_DIR, 'layouts');
+const CONFIG_FILE = path.join(CFG_DIR, 'config.kdl');
+(function ensureCleanConfig() {
+  try {
+    fs.mkdirSync(LAYOUT_DIR, { recursive: true });
+    // no tab-bar / status-bar plugins in the template → no chrome
+    fs.writeFileSync(path.join(LAYOUT_DIR, 'wtclean.kdl'), 'layout {\n    default_tab_template {\n        children\n    }\n}\n');
+    fs.writeFileSync(CONFIG_FILE, `pane_frames false\nlayout_dir "${LAYOUT_DIR}"\ndefault_layout "wtclean"\n`);
+  } catch { /* */ }
+})();
+
+const ENV = { ...process.env, ZELLIJ_SOCKET_DIR: SOCKET_DIR, ZELLIJ_CONFIG_FILE: CONFIG_FILE, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 function Z(args) { return run('zellij', args, { env: ENV }); }
 
 function stripAnsi(s) { return s.replace(/\x1b\[[0-9;]*m/g, ''); }
@@ -56,8 +72,12 @@ module.exports = {
     const c = await Z(['attach', '--create-background', name]);
     if (c.code !== 0) return { created: false, error: c.stderr.trim() };
     const layout = writeLayout(cwd, cmd);
-    const t = await Z(['--session', name, 'action', 'new-tab', '--layout', layout, '--name', 'main']);
+    const t = await Z(['--session', name, 'action', 'new-tab', '--layout', layout, '--name', 'claude']);
     try { fs.unlinkSync(layout); } catch { /* */ }
+    // remove the empty default tab so our claude tab is tab 1 (studio's tab strip
+    // then maps 1:1 to zellij's tabs)
+    await Z(['--session', name, 'action', 'go-to-tab', '1']);
+    await Z(['--session', name, 'action', 'close-tab']);
     if (t.code !== 0) return { created: true, warn: t.stderr.trim() };
     return { created: true };
   },
@@ -97,6 +117,11 @@ module.exports = {
     return (await Z(['--session', name, 'action', 'go-to-tab', String(Number(id) + 1)])).code === 0;
   },
 
+  async closeTab(name, id) {
+    await Z(['--session', name, 'action', 'go-to-tab', String(Number(id) + 1)]);
+    return (await Z(['--session', name, 'action', 'close-tab'])).code === 0;
+  },
+
   async rename(oldName, newName) {
     // best-effort; not all zellij builds expose session rename
     const r = await Z(['--session', oldName, 'action', 'rename-session', newName]);
@@ -109,7 +134,7 @@ module.exports = {
     return true;
   },
 
-  popoutCommand(name) { return `ZELLIJ_SOCKET_DIR=${SOCKET_DIR} zellij attach ${name}`; },
+  popoutCommand(name) { return `ZELLIJ_SOCKET_DIR=${SOCKET_DIR} ZELLIJ_CONFIG_FILE=${CONFIG_FILE} zellij attach ${name}`; },
 
   async selfTest() {
     const n = `wts-selftest-${process.pid}`;

@@ -183,6 +183,7 @@ class SessionManager extends EventEmitter {
     const br = branch || s.suggestedBranch;
     const wtName = name || s.suggestedName;
     const res = await worktree.create(s.repoPath, br, wtName, {
+      unique: true, // auto-suffix on collision rather than fail
       copyPatterns: (this.cfg.copyPatterns && (this.cfg.copyPatterns[s.repoName] || this.cfg.copyPatterns.default)) || [],
     });
     if (!res.ok) return res;
@@ -222,6 +223,16 @@ class SessionManager extends EventEmitter {
     if (!s) return { ok: false };
     const ok = await this.mux.selectTab(s.muxName, index);
     return { ok };
+  }
+
+  async closeTab(id, index) {
+    const s = this.get(id);
+    if (!s) return { ok: false };
+    if (Number(index) <= 0) return { ok: false, error: 'cannot close the primary tab' };
+    await this.mux.closeTab(s.muxName, index);
+    (s.tabs || []).splice(index, 1);
+    this._touch(id);
+    return { ok: true };
   }
 
   popout(id) {
