@@ -88,6 +88,17 @@ function toast(msg, isErr) {
   setTimeout(() => t.remove(), isErr ? 6000 : 3200);
 }
 
+// Disable a button while an async action runs (prevents double-fire), restoring
+// state — and its label, if a pendingLabel was shown — in a finally.
+async function guardBtn(btn, fn, pendingLabel) {
+  if (!btn || btn.disabled) return;
+  const prevLabel = pendingLabel != null ? btn.textContent : null;
+  btn.disabled = true;
+  if (pendingLabel != null) btn.textContent = pendingLabel;
+  try { return await fn(); }
+  finally { btn.disabled = false; if (prevLabel != null) btn.textContent = prevLabel; }
+}
+
 /* ---------------- custom dialogs (no native alert/confirm/prompt) ---------------- */
 function uiDialog({ title, message, messageHtml, fields = [], okLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
   return new Promise((resolve) => {
@@ -386,7 +397,7 @@ function updateDock(s) {
   acts.appendChild(addr);
   if (!promoted) {
     const b = h(`<button class="btn sm primary">⤴ Promote to worktree</button>`);
-    b.addEventListener('click', () => promote(s));
+    b.addEventListener('click', () => guardBtn(b, () => promote(s)));
     acts.appendChild(b);
   } else {
     const oc = h(`<button class="btn sm">Open in editor</button>`);
@@ -394,18 +405,18 @@ function updateDock(s) {
     acts.appendChild(oc);
   }
   const po = h(`<button class="btn sm">Pop out ⧉</button>`);
-  po.addEventListener('click', () => popout(s));
+  po.addEventListener('click', () => guardBtn(po, () => popout(s)));
   acts.appendChild(po);
   const ren = h(`<button class="btn sm ghost" title="Rename">✎</button>`);
   ren.addEventListener('click', () => renameSession(s));
   acts.appendChild(ren);
   if (s.active === false) {
     const act = h(`<button class="btn sm">Reactivate</button>`);
-    act.addEventListener('click', () => activateSession(s));
+    act.addEventListener('click', () => guardBtn(act, () => activateSession(s)));
     acts.appendChild(act);
   } else {
     const de = h(`<button class="btn sm ghost" title="Stop the process but keep the session (resumable)">Deactivate</button>`);
-    de.addEventListener('click', () => deactivateSession(s));
+    de.addEventListener('click', () => guardBtn(de, () => deactivateSession(s)));
     acts.appendChild(de);
   }
   const del = h(`<button class="btn sm ghost" title="Delete session (kills the multiplexer session)">🗑</button>`);
@@ -437,8 +448,8 @@ function updateDock(s) {
       + '<span class="spacer" style="flex:1"></span>';
     bar.querySelectorAll('.portchip.open').forEach((el) => el.addEventListener('click', () => window.open(`http://localhost:${el.dataset.port}`, '_blank', 'noopener')));
     for (const web of webAppsFor(reps)) { const b = h(`<button class="btn sm primary" title="Open the frontend — http://localhost:${esc(web.port)}">Open ${esc(web.repo)} ↗</button>`); b.addEventListener('click', () => openApp(web.port)); bar.appendChild(b); }
-    if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => startSessionServers(s)); bar.appendChild(b); }
-    if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => stopSessionServers(s)); bar.appendChild(b); }
+    if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => guardBtn(b, () => startSessionServers(s))); bar.appendChild(b); }
+    if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => guardBtn(b, () => stopSessionServers(s))); bar.appendChild(b); }
   }
   // Re-inject any cached PR/CI pills (updateDock rebuilds the bar on every SSE tick).
   if (promoted) injectCiPills(s);
@@ -532,10 +543,10 @@ function renderTabstrip(s) {
     tabs.appendChild(lt);
   }
   const add = h(`<span class="tab"><span class="newtab">＋</span></span>`);
-  add.addEventListener('click', () => addTab(s));
+  add.addEventListener('click', () => guardBtn(add, () => addTab(s)));
   tabs.appendChild(add);
   const pop = h(`<button class="btn xs popout">Pop out ⧉</button>`);
-  pop.addEventListener('click', () => popout(s));
+  pop.addEventListener('click', () => guardBtn(pop, () => popout(s)));
   tabs.appendChild(pop);
   // ⊟ Split — second live terminal beside the primary. Only meaningful in the
   // term view, so it only appears there.
@@ -697,6 +708,7 @@ async function selectDiff(s, repo, file) {
 
 // Parse a raw unified diff line-by-line: @@=hunk, +=add, -=del, else context.
 // Header lines (diff --git / index / +++ / --- / mode / rename …) are dropped.
+const MAX_DIFF_LINES = 3000;
 function renderDiff(box, repo, file, text) {
   const status = statusFor(repo, file);
   const label = status === 'A' ? 'Added' : status === 'D' ? 'Deleted' : 'Modified';
@@ -704,8 +716,17 @@ function renderDiff(box, repo, file, text) {
   const skip = /^(diff --git |index |--- |\+\+\+ |new file mode|deleted file mode|old mode |new mode |similarity index|dissimilarity index|rename from |rename to |copy from |copy to |Binary files )/;
   const out = [];
   let oldLn = 0, newLn = 0;
-  for (const raw of String(text).split('\n')) {
+  const lines = String(text).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     if (skip.test(raw)) continue;
+    // cap unbounded DOM growth on huge diffs — render the first N, then a notice
+    if (out.length >= MAX_DIFF_LINES) {
+      let more = 0;
+      for (let j = i; j < lines.length; j++) if (!skip.test(lines[j])) more++;
+      out.push(`<div class="diffline ctx"><span class="ln"></span><span class="tx">… diff truncated (${esc(more)} more lines) — open in editor to see the rest</span></div>`);
+      break;
+    }
     if (raw.startsWith('@@')) {
       const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
       if (m) { oldLn = +m[1]; newLn = +m[2]; }
@@ -879,7 +900,11 @@ function appendLogText(body, wtPath, chunk) {
   let html = lines.map((ln) => logLineHtml(ln, false)).join('');
   if (partial) html += logLineHtml(partial, true);
   if (html) body.insertAdjacentHTML('beforeend', html);
+  // cap unbounded growth: keep only the most recent MAX_LOG_LINES line elements
+  let over = body.childElementCount - MAX_LOG_LINES;
+  while (over-- > 0 && body.firstChild) body.removeChild(body.firstChild);
 }
+const MAX_LOG_LINES = 2000;
 
 // One escaped log line with light level coloring and a highlighted leading timestamp.
 function logLineHtml(raw, partial) {
@@ -1178,14 +1203,15 @@ function renderModal() {
 }
 
 async function loadIssues() {
-  $('#mLoad').textContent = 'Loading…';
+  const btn = $('#mLoad');
+  if (btn) { if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Loading…'; }
   try {
     const out = await api('GET', `/api/sources/${modal.source}/items?repo=${encodeURIComponent(modal.repo)}`);
     if (!out.ok) throw new Error(out.error || 'failed');
     modal.issues = out.items || [];
     if (!modal.issues.length) toast('No items found.');
   } catch (e) { toast(e.message, true); }
-  $('#mLoad').textContent = 'Load';
+  if (btn) { btn.disabled = false; btn.textContent = 'Load'; }
   renderModal();
 }
 
@@ -1755,7 +1781,7 @@ function init() {
   $('#themeBtn').addEventListener('click', toggleTheme);
   $('#modalClose').addEventListener('click', closeModal);
   $('#mCancel').addEventListener('click', closeModal);
-  $('#mStart').addEventListener('click', startSession);
+  $('#mStart').addEventListener('click', () => guardBtn($('#mStart'), startSession, 'Starting…'));
   $('#repoFilter').addEventListener('change', (e) => { repoFilter = e.target.value; render(); });
   document.querySelectorAll('#viewSeg button').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
   $('#settingsBtn').addEventListener('click', openSettings);
