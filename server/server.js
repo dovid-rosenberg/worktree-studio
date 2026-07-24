@@ -67,6 +67,11 @@ async function main() {
       reposOut.push({ name: repo.name, repo: repo.name, path: repo.path, defaultBranch: repo.defaultBranch, worktrees: wts });
     }
     const { features, groups } = computeFeatures(flat, cfg.groups || []);
+    // one session per feature: surface the single driving session on the feature
+    for (const f of [...features, ...groups]) {
+      const m = (f.members || []).find((x) => x && x.session);
+      f.session = m ? m.session : null;
+    }
     // per-session server state (Work-view compatibility)
     const serversById = {};
     for (const s of sessions) {
@@ -368,6 +373,26 @@ async function main() {
       results.push({ repo: m.repo, error: (r.stderr || '').trim().split('\n')[0] || 'gh/glab unavailable or failed' });
     }
     res.json({ ok: results.some((r) => r.url), results });
+  });
+
+  // One session per feature: return the existing one, or start a single session
+  // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
+  app.post('/api/group/session', async (req, res) => {
+    const { group: g } = await resolveGroup(req.body && req.body.group);
+    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const members = g.members;
+    for (const m of members) { const s = manager.sessionForWorktree(m.path); if (s) return res.json({ ok: true, session: s, existed: true }); }
+    const [primary, ...rest] = members;
+    const pRepo = repos.find((r) => r.name === primary.repo);
+    const session = await manager.adopt({ worktreePath: primary.path, repoName: primary.repo, repoPath: pRepo.path, branch: primary.branch, wtname: primary.wtname });
+    if (session) {
+      for (const m of rest) {
+        const ro = repos.find((r) => r.name === m.repo);
+        if (ro) await manager.attachRepo(session.id, { repo: m.repo, repoPath: ro.path, worktreePath: m.path, branch: m.branch, wtname: m.wtname });
+      }
+    }
+    scheduleBroadcast();
+    res.json({ ok: true, session });
   });
 
   // Start a session in an existing worktree (Fleet: "Start session here")

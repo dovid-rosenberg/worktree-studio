@@ -96,6 +96,18 @@ class SessionManager extends EventEmitter {
     return { ok: true, session: s, worktree: res };
   }
 
+  // Attach an EXISTING worktree to a session (no creation) and grant /add-dir.
+  // Used when starting one session for a feature whose worktrees already exist.
+  async attachRepo(id, { repo, repoPath, worktreePath, branch, wtname }) {
+    const s = this.get(id);
+    if (!s) return { ok: false };
+    if ((s.repos || []).some((r) => r.worktreePath === worktreePath)) return { ok: true, already: true };
+    s.repos.push({ repo, repoPath, worktree: wtname, worktreePath, branch, primary: false });
+    await this.mux.sendText(s.muxName, `/add-dir ${worktreePath}`);
+    this._touch(id);
+    return { ok: true };
+  }
+
   // Type the seeded first message into a freshly-started session and submit it.
   // Collapsed to one line so a single Enter submits (newlines would submit early).
   async injectPrompt(id) {

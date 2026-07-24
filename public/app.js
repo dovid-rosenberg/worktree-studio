@@ -495,60 +495,80 @@ function renderFleet() {
   const restartAll = h(`<button class="btn sm">Restart all</button>`); restartAll.addEventListener('click', () => feats.forEach((f) => f.members.some((m) => m.running) && restartStack(f.name)));
   sum.appendChild(restartAll); sum.appendChild(stopAll);
 
-  const tbl = $('#fleetTable');
-  tbl.innerHTML = `<thead><tr>
-    <th>Feature</th><th>Stack · branches</th><th>Servers</th><th>Agents</th><th>State</th><th>Actions</th>
-  </tr></thead>`;
-  const tbody = document.createElement('tbody');
-  if (!feats.length) tbody.appendChild(h(`<tr><td colspan="6" style="color:var(--faint);padding:22px 16px">No worktrees found under your base dirs. Create one from a session (promote) or with git worktree.</td></tr>`));
+  const list = $('#fleetTable');
+  list.innerHTML = '';
+  if (!feats.length) { list.appendChild(h(`<div class="fleet-empty">No worktrees found under your base dirs. Create one from a session (promote) or with git worktree.</div>`)); return; }
 
   const isActive = (f) => f.members.some((m) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped')));
   const activeFeats = feats.filter(isActive);
   const idleFeats = feats.filter((f) => !isActive(f));
-  const section = (label, n) => h(`<tr class="sectionrow"><td colspan="6">${esc(label)} · ${n}</td></tr>`);
-  if (activeFeats.length) { tbody.appendChild(section('▶ Running', activeFeats.length)); activeFeats.forEach((f) => tbody.appendChild(featureRow(f))); }
-  if (idleFeats.length) { if (activeFeats.length) tbody.appendChild(section('Idle', idleFeats.length)); idleFeats.forEach((f) => tbody.appendChild(featureRow(f))); }
-  tbl.appendChild(tbody);
+  const section = (label, n) => h(`<div class="sectionrow">${esc(label)} · ${n}</div>`);
+  if (activeFeats.length) { list.appendChild(section('▶ Running', activeFeats.length)); activeFeats.forEach((f) => list.appendChild(featureRow(f))); }
+  if (idleFeats.length) { if (activeFeats.length) list.appendChild(section('Idle', idleFeats.length)); idleFeats.forEach((f) => list.appendChild(featureRow(f))); }
 }
 
+// Option B: a two-line row (decision line + stack line) with an ⋯ overflow menu.
 function featureRow(f) {
   const ms = f.members.filter((m) => m && !m.missing);
   const anyRunning = ms.some((m) => m.running);
   const anyStartable = ms.some((m) => m.canStart && !m.running);
-  const anySession = ms.some((m) => m.session);
   const fs = featureState(f);
   const pend = fleetPending.has(f.name);
+  const sess = f.session; // one session per feature
+  const btn = (label, fn, cls = '') => { const b = h(`<button class="btn sm ${cls}">${label}</button>`); b.addEventListener('click', fn); return b; };
 
-  const tr = document.createElement('tr');
-  tr.appendChild(h(`<td><span class="feat">${stateDot(fs)}${esc(f.name)}${f.auto ? '' : ' <span class="src">manual</span>'}</span></td>`));
-  tr.appendChild(h(`<td><div class="repos">${ms.map((m) => `<span><span class="r">${esc(m.repo)}</span> <span class="br">${esc(m.branch || m.wtname)}</span>${m.merged ? ' <span class="badge merged">✓ merged</span>' : ''}</span>`).join('')}</div></td>`));
-  tr.appendChild(h(`<td><div class="ports">${ms.map((m) => `<span class="p"><span class="dot ${m.running ? 'done' : 'idle'}"></span>${(m.ports || []).map((p) => ':' + p).join(' ') || (m.canStart ? 'stopped' : '—')}</span>`).join('')}</div></td>`));
-  tr.appendChild(h(`<td><div class="agents">${ms.map((m) => m.session ? `<span><span class="dot ${m.session.state}"></span>${esc(m.session.state)}</span>` : '<span style="color:var(--faint)">—</span>').join('')}</div></td>`));
-  tr.appendChild(h(`<td><span class="badge ${pend ? 'run' : (anyRunning ? 'run' : 'stop')}">${pend ? '<span class="dot working"></span> starting…' : (anyRunning ? '● running' : '○ stopped')}</span></td>`));
-
-  const acts = h(`<td><div class="rowacts"></div></td>`);
-  const box = acts.querySelector('.rowacts');
-  const add = (label, fn, cls = '') => { const b = h(`<button class="btn sm ${cls}">${label}</button>`); b.addEventListener('click', fn); box.appendChild(b); };
+  const row = h('<div class="frow"></div>');
+  // line 1 — the decision line
+  const l1 = h('<div class="frow-l1"></div>');
+  l1.appendChild(h(`<span class="dot ${fs}"></span>`));
+  l1.appendChild(h(`<span class="fname">${esc(f.name)}${f.auto ? '' : ' <span class="src">manual</span>'}</span>`));
+  if (sess) l1.appendChild(h(`<span class="pill ${sess.state}">${esc(sess.state)}</span>`));
+  l1.appendChild(h(`<span class="pill ${anyRunning ? 'done' : 'idle'}">${anyRunning ? '● running' : '○ stopped'}</span>`));
+  l1.appendChild(h('<span class="grow"></span>'));
   if (pend) {
-    box.appendChild(h(`<button class="btn sm" disabled>working…</button>`));
+    l1.appendChild(h('<button class="btn sm" disabled>working…</button>'));
   } else {
-    if (anyStartable) add(anyRunning ? 'Restart stack' : 'Run stack', () => (anyRunning ? restartStack(f.name) : runStack(f.name)), anyRunning ? '' : 'primary');
-    if (anyRunning) add('Stop', () => stopStack(f.name));
-    add('Open', () => openGroup(f.name), 'ghost');
-    for (const m of ms) {
-      if (!m.session) {
-        const ap = fleetPending.has(`adopt:${m.path}`);
-        const b = h(`<button class="btn sm" ${ap ? 'disabled' : ''}>${ap ? 'starting…' : `Session ▸ ${esc(m.repo)}`}</button>`);
-        if (!ap) b.addEventListener('click', () => adoptWorktree(m));
-        box.appendChild(b);
-      }
-    }
-    add('PR / MR', () => prFeature(f.name), 'ghost');
-    if (anyRunning || anySession) add('Close', () => closeFeature(f.name), 'ghost');
-    add('Delete', () => deleteFeature(f), 'ghost');
+    l1.appendChild(sess ? btn('Go to session ▸', () => goToSession(sess.id), 'primary') : btn('Start session', () => startFeatureSession(f), 'primary'));
+    if (anyRunning) l1.appendChild(btn('Stop stack', () => stopStack(f.name)));
+    else if (anyStartable) l1.appendChild(btn('Run stack', () => runStack(f.name)));
+    const more = h('<button class="btn sm ghost fmore" title="More">⋯</button>');
+    more.addEventListener('click', (e) => { e.stopPropagation(); openFeatureMenu(more, f, { anyRunning, sess }); });
+    l1.appendChild(more);
   }
-  tr.appendChild(acts);
-  return tr;
+  row.appendChild(l1);
+
+  // line 2 — the stack detail
+  const l2 = h('<div class="frow-l2"></div>');
+  l2.innerHTML = ms.map((m) => `<span class="mchip"><span class="dot ${m.session ? m.session.state : (m.running ? 'done' : 'idle')}"></span><span class="r">${esc(m.repo)}</span> <span class="br">${esc(m.branch || m.wtname)}</span>${(m.ports || []).length ? ` <span class="p">${m.ports.map((p) => ':' + p).join(' ')}</span>` : ''}${m.merged ? ' <span class="badge merged">✓ merged</span>' : ''}</span>`).join('');
+  row.appendChild(l2);
+  return row;
+}
+
+function closeAnyMenu() { document.querySelectorAll('.fmenu').forEach((m) => m.remove()); }
+function openFeatureMenu(anchor, f, { anyRunning, sess }) {
+  closeAnyMenu();
+  const menu = h('<div class="fmenu"></div>');
+  const item = (label, fn, cls = '') => { const d = h(`<div class="${cls}">${esc(label)}</div>`); d.addEventListener('click', () => { closeAnyMenu(); fn(); }); menu.appendChild(d); };
+  item('Open in editor', () => openGroup(f.name));
+  if (anyRunning) item('Restart stack', () => restartStack(f.name));
+  item('Open PR / MR', () => prFeature(f.name));
+  menu.appendChild(h('<div class="sep"></div>'));
+  if (anyRunning || sess) item('Close feature', () => closeFeature(f.name));
+  item('Delete feature…', () => deleteFeature(f), 'danger');
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 4}px`;
+  menu.style.left = `${Math.max(8, rect.right - menu.offsetWidth)}px`;
+  setTimeout(() => document.addEventListener('click', closeAnyMenu, { once: true }), 0);
+}
+function goToSession(id) { selectedId = id; setView('work'); }
+function startFeatureSession(f) {
+  return withPending(f.name, async () => {
+    try {
+      const r = await api('POST', '/api/group/session', { group: f.name });
+      if (r.session) { selectedId = r.session.id; toast(r.existed ? 'Session already open — “Go to session ▸”' : `Session started for ${f.name} — “Go to session ▸”`); }
+    } catch (e) { toast(e.message, true); }
+  });
 }
 
 // run an async fleet action with a visible pending state keyed by `key`
