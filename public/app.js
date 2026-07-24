@@ -482,9 +482,18 @@ function featureState(f) {
   return 'idle';
 }
 
+// active = a live agent or a running dev server
+function featActive(f) { return f.members.some((m) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped'))); }
+
 function renderFleet() {
-  // stable alphabetical order so a feature doesn't jump around when it starts
-  const feats = (state.features || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  // active first, then alphabetical — a feature doesn't jump around when it starts
+  const feats = (state.features || []).slice().sort((a, b) => (featActive(b) - featActive(a)) || a.name.localeCompare(b.name));
+  // unpromoted sessions with a live agent — surfaced here so Fleet is the one place you watch work
+  const agents = (state.sessions || []).filter((s) => !s.worktreePath && s.state !== 'stopped')
+    .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  // worktree features whose dev servers are up (may also appear under Worktrees)
+  const serverFeats = feats.filter((f) => f.members.some((m) => m && m.running));
+
   const flat = feats.flatMap((f) => f.members.filter((m) => m && !m.missing));
   const running = flat.filter((m) => m.running).length;
   const waiting = flat.filter((m) => m.session && m.session.state === 'waiting').length;
@@ -493,6 +502,7 @@ function renderFleet() {
   const sum = $('#fleetSummary');
   sum.innerHTML = `
     <span><b>${feats.length}</b> features</span>
+    <span class="chip"><span class="pi">✦</span>${agents.length} unpromoted</span>
     <span class="chip"><span class="dot done"></span><b>${running}</b> running</span>
     <span class="chip"><span class="dot working"></span>${workingA} working</span>
     <span class="chip"><span class="dot waiting"></span>${waiting} waiting</span>
@@ -503,14 +513,47 @@ function renderFleet() {
 
   const list = $('#fleetTable');
   list.innerHTML = '';
-  if (!feats.length) { list.appendChild(h(`<div class="fleet-empty">No worktrees found under your base dirs. Create one from a session (promote) or with git worktree.</div>`)); return; }
+  if (!feats.length && !agents.length) { list.appendChild(h(`<div class="fleet-empty">No worktrees or running agents. Start a session, or create a worktree by promoting one.</div>`)); return; }
 
-  const isActive = (f) => f.members.some((m) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped')));
-  const activeFeats = feats.filter(isActive);
-  const idleFeats = feats.filter((f) => !isActive(f));
   const section = (label, n) => h(`<div class="sectionrow">${esc(label)} · ${n}</div>`);
-  if (activeFeats.length) { list.appendChild(section('▶ Running', activeFeats.length)); activeFeats.forEach((f) => list.appendChild(featureRow(f))); }
-  if (idleFeats.length) { if (activeFeats.length) list.appendChild(section('Idle', idleFeats.length)); idleFeats.forEach((f) => list.appendChild(featureRow(f))); }
+  if (agents.length) { list.appendChild(section('✦ Agents · no worktree', agents.length)); agents.forEach((s) => list.appendChild(agentRow(s))); }
+  if (feats.length) { list.appendChild(section('⎇ Worktrees', feats.length)); feats.forEach((f) => list.appendChild(featureRow(f))); }
+  if (serverFeats.length) { list.appendChild(section('⇅ Servers running', serverFeats.length)); serverFeats.forEach((f) => list.appendChild(serverRow(f))); }
+}
+
+// A running agent that hasn't been promoted — its next step is Promote to a worktree.
+function agentRow(s) {
+  const btn = (label, fn, cls = '') => { const b = h(`<button class="btn sm ${cls}">${label}</button>`); b.addEventListener('click', fn); return b; };
+  const row = h('<div class="frow"></div>');
+  const l1 = h('<div class="frow-l1"></div>');
+  l1.appendChild(h(`<span class="fname">${esc(s.title || 'session')}</span>`));
+  l1.appendChild(h(`<span class="pill agent ${s.state}" title="Agent — the Claude session"><span class="dot ${s.state}"></span>agent · ${esc(s.state)}</span>`));
+  l1.appendChild(h('<span class="pill srv nowt" title="Not promoted — no worktree yet"><span class="pi">✦</span>no worktree</span>'));
+  l1.appendChild(h('<span class="grow"></span>'));
+  l1.appendChild(btn('Go to session ▸', () => goToSession(s.id), 'primary'));
+  l1.appendChild(btn('⤴ Promote', () => promote(s), 'go'));
+  row.appendChild(l1);
+  const l2 = h('<div class="frow-l2"></div>');
+  const reps = (s.repos && s.repos.length ? s.repos : [{ repo: s.repoName }]);
+  l2.innerHTML = reps.map((r) => `<span class="mchip"><span class="dot ${s.state}"></span><span class="r">${esc(r.repo)}</span> <span class="br">in main · no worktree</span></span>`).join('');
+  row.appendChild(l2);
+  return row;
+}
+
+// Compact readout of a feature whose dev servers are up (overlaps Worktrees on purpose).
+function serverRow(f) {
+  const btn = (label, fn, cls = '') => { const b = h(`<button class="btn sm ${cls}">${label}</button>`); b.addEventListener('click', fn); return b; };
+  const ports = f.members.filter((m) => m && m.running).flatMap((m) => (m.ports || []).map((p) => `${m.repo}:${p}`));
+  const row = h('<div class="frow srvrow"></div>');
+  const l1 = h('<div class="frow-l1"></div>');
+  l1.appendChild(h(`<span class="fname">${esc(f.name)}</span>`));
+  l1.appendChild(h('<span class="pill srv done"><span class="pi">⇅</span>servers · running</span>'));
+  l1.appendChild(h(`<span class="ports">${ports.map((p) => `<span class="p">${esc(p)}</span>`).join('')}</span>`));
+  l1.appendChild(h('<span class="grow"></span>'));
+  if (f.session) l1.appendChild(btn('Go to session ▸', () => goToSession(f.session.id)));
+  l1.appendChild(btn('Stop stack', () => stopStack(f.name), 'danger'));
+  row.appendChild(l1);
+  return row;
 }
 
 // Option B: a two-line row (decision line + stack line) with an ⋯ overflow menu.
