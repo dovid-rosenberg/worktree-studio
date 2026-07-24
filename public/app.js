@@ -16,6 +16,11 @@ const fleetPending = new Set(); // feature-name / 'adopt:<path>' keys with an ac
 // intake modal state
 const modal = { source: 'freetext', repo: '', issues: [], issueId: null };
 
+// overlay focus management — the trap cleanup fn + the element focused before open,
+// restored on close, so keyboard focus returns where it was (one pair per overlay).
+let modalTrap = null, modalPrevFocus = null;
+let settingsTrap = null, settingsPrevFocus = null;
+
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
@@ -58,6 +63,42 @@ let ciData = null;                  // { sessionId, repos:[…] } — last CI re
 const $ = (sel) => document.querySelector(sel);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// Make a click-only span/div keyboard-operable: focusable, role=button (unless one
+// is already set), and Enter/Space activate. ADDITIVE — the existing click still
+// fires. The e.target===el guard means a focusable descendant (e.g. a .cfile's
+// checkbox, or a tab's ✕ close) handles its own keys without double-firing here.
+function activatable(el, fn) {
+  if (!el) return el;
+  el.setAttribute('tabindex', '0');
+  if (!el.getAttribute('role')) el.setAttribute('role', 'button');
+  el.addEventListener('click', fn);
+  el.addEventListener('keydown', (e) => {
+    if (e.target !== el) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(e); }
+  });
+  return el;
+}
+
+// Tab-focusable descendants of an open overlay, in DOM order (visible ones only).
+const FOCUSABLE_SEL = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+function focusablesIn(container) {
+  return [...container.querySelectorAll(FOCUSABLE_SEL)].filter((el) => el.offsetParent !== null || el === document.activeElement);
+}
+// Trap Tab / Shift+Tab within `container` so focus can't reach the background while
+// an overlay is open. Returns a cleanup fn that removes the listener.
+function trapFocus(container) {
+  const onKey = (e) => {
+    if (e.key !== 'Tab') return;
+    const items = focusablesIn(container);
+    if (!items.length) { e.preventDefault(); return; }
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  container.addEventListener('keydown', onKey);
+  return () => container.removeEventListener('keydown', onKey);
+}
 
 // The browsable frontends of a feature/session: every web repo (config.webRepos)
 // that's running with a discovered port. Returns an array of { repo, port } (first
@@ -102,8 +143,9 @@ async function guardBtn(btn, fn, pendingLabel) {
 /* ---------------- custom dialogs (no native alert/confirm/prompt) ---------------- */
 function uiDialog({ title, message, messageHtml, fields = [], okLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
   return new Promise((resolve) => {
+    const prevFocus = document.activeElement;
     const back = h('<div class="modal-backdrop"></div>');
-    const modal = h('<div class="modal dlg"></div>');
+    const modal = h('<div class="modal dlg" role="dialog" aria-modal="true"></div>');
     modal.innerHTML = `
       <div class="modal-head"><b>${esc(title || '')}</b><span class="spacer"></span></div>
       <div class="modal-body">
@@ -120,15 +162,17 @@ function uiDialog({ title, message, messageHtml, fields = [], okLabel = 'OK', ca
       </div>`;
     back.appendChild(modal);
     document.body.appendChild(back);
+    const untrap = trapFocus(back);
     const readFields = () => [...modal.querySelectorAll('.dlgf')].map((el) => (el.dataset.t === 'checkbox' ? el.checked : el.value));
     let onKey;
-    const done = (val) => { document.removeEventListener('keydown', onKey); back.remove(); resolve(val); };
+    const done = (val) => { document.removeEventListener('keydown', onKey); untrap(); back.remove(); if (prevFocus && prevFocus.focus) prevFocus.focus(); resolve(val); };
     onKey = (e) => { if (e.key === 'Escape') done(null); else if (e.key === 'Enter' && !fields.some((f) => f.type === 'select')) { e.preventDefault(); done(fields.length ? readFields() : true); } };
     document.addEventListener('keydown', onKey);
     const cancelBtn = modal.querySelector('.dlg-cancel'); if (cancelBtn) cancelBtn.onclick = () => done(null);
     modal.querySelector('.dlg-ok').onclick = () => done(fields.length ? readFields() : true);
     back.addEventListener('click', (e) => { if (e.target === back) done(null); });
-    const first = modal.querySelector('.dlgf'); if (first && first.focus) setTimeout(() => { first.focus(); if (first.select) first.select(); }, 30);
+    const first = modal.querySelector('.dlgf');
+    setTimeout(() => { const f = first || modal.querySelector('.dlg-ok'); if (f && f.focus) { f.focus(); if (f.select) f.select(); } }, 30);
   });
 }
 async function uiConfirm(message, opts = {}) { return (await uiDialog({ title: opts.title || 'Confirm', message, okLabel: opts.okLabel || 'OK', danger: opts.danger })) === true; }
@@ -298,7 +342,7 @@ function sessionCard(s) {
       </div>
       <div class="scard-act">${esc(s.activity || '')}</div>
     </div>`);
-  card.addEventListener('click', () => selectSession(s.id));
+  activatable(card, () => selectSession(s.id));
   return card;
 }
 
@@ -404,10 +448,10 @@ function updateDock(s) {
     oc.addEventListener('click', () => openEditor(s.worktreePath));
     acts.appendChild(oc);
   }
-  const po = h(`<button class="btn sm">Pop out ⧉</button>`);
+  const po = h(`<button class="btn sm" aria-label="Pop out">Pop out ⧉</button>`);
   po.addEventListener('click', () => guardBtn(po, () => popout(s)));
   acts.appendChild(po);
-  const ren = h(`<button class="btn sm ghost" title="Rename">✎</button>`);
+  const ren = h(`<button class="btn sm ghost" title="Rename" aria-label="Rename">✎</button>`);
   ren.addEventListener('click', () => renameSession(s));
   acts.appendChild(ren);
   if (s.active === false) {
@@ -419,7 +463,7 @@ function updateDock(s) {
     de.addEventListener('click', () => guardBtn(de, () => deactivateSession(s)));
     acts.appendChild(de);
   }
-  const del = h(`<button class="btn sm ghost" title="Delete session (kills the multiplexer session)">🗑</button>`);
+  const del = h(`<button class="btn sm ghost" title="Delete session (kills the multiplexer session)" aria-label="Delete session">🗑</button>`);
   del.addEventListener('click', () => closeSession(s));
   acts.appendChild(del);
 
@@ -443,10 +487,10 @@ function updateDock(s) {
     // repo's chips are tagged, and get a prominent "Open <repo> ↗" button below.
     bar.innerHTML = '<span>workspace</span>'
       + reps.map((r) => (r.running && r.ports.length
-        ? r.ports.map((p) => `<span class="portchip open${webSet.has(r.repo) ? ' web' : ''}" data-port="${esc(p)}" title="Open http://localhost:${esc(p)}${webSet.has(r.repo) ? ' (frontend)' : ''}"><span class="dot done"></span>${esc(r.repo)} :${esc(p)} <span class="go">↗</span></span>`).join('')
-        : `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}"></span>${esc(r.repo)}</span>`)).join('')
+        ? r.ports.map((p) => `<span class="portchip open${webSet.has(r.repo) ? ' web' : ''}" data-port="${esc(p)}" title="Open http://localhost:${esc(p)}${webSet.has(r.repo) ? ' (frontend)' : ''}"><span class="dot done" title="running"></span>${esc(r.repo)} :${esc(p)} <span class="go">↗</span></span>`).join('')
+        : `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}" title="${r.running ? 'running' : 'stopped'}"></span>${esc(r.repo)}</span>`)).join('')
       + '<span class="spacer" style="flex:1"></span>';
-    bar.querySelectorAll('.portchip.open').forEach((el) => el.addEventListener('click', () => window.open(`http://localhost:${el.dataset.port}`, '_blank', 'noopener')));
+    bar.querySelectorAll('.portchip.open').forEach((el) => activatable(el, () => window.open(`http://localhost:${el.dataset.port}`, '_blank', 'noopener')));
     for (const web of webAppsFor(reps)) { const b = h(`<button class="btn sm primary" title="Open the frontend — http://localhost:${esc(web.port)}">Open ${esc(web.repo)} ↗</button>`); b.addEventListener('click', () => openApp(web.port)); bar.appendChild(b); }
     if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => guardBtn(b, () => startSessionServers(s))); bar.appendChild(b); }
     if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => guardBtn(b, () => stopSessionServers(s))); bar.appendChild(b); }
@@ -494,7 +538,7 @@ function ciPill(r) {
     if (c.failed) parts.push(`<span class="ck x">✕${esc(c.failed)}</span>`);
   }
   const el = h(`<span class="cistat" title="Open ${r.provider === 'gitlab' ? 'MR' : 'PR'} ${tag}"><span>${esc(r.repo)} ${tag}</span>${parts.join('')}</span>`);
-  if (r.url) el.addEventListener('click', () => window.open(r.url, '_blank', 'noopener'));
+  if (r.url) activatable(el, () => window.open(r.url, '_blank', 'noopener'));
   return el;
 }
 
@@ -524,10 +568,10 @@ function renderTabstrip(s) {
   tabList.forEach((t, i) => {
     const closable = tabList.length > 1; // any tab can be closed when more than one
     const on = dockView === 'term' && i === activeTab;
-    const tab = h(`<span class="tab ${on ? 'on' : ''}"><span class="dot ${on ? s.state : 'idle'}"></span>${esc(t.title)}${closable ? ' <span class="tabclose" title="Close tab">✕</span>' : ''}</span>`);
-    tab.addEventListener('click', () => selectTab(s, i));
+    const tab = h(`<span class="tab ${on ? 'on' : ''}"><span class="dot ${on ? s.state : 'idle'}" title="${esc(on ? s.state : 'idle')}"></span>${esc(t.title)}${closable ? ' <span class="tabclose" title="Close tab" aria-label="Close tab">✕</span>' : ''}</span>`);
+    activatable(tab, () => selectTab(s, i));
     const x = tab.querySelector('.tabclose');
-    if (x) x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(s, i); });
+    if (x) activatable(x, (e) => { if (e) e.stopPropagation(); closeTab(s, i); });
     tabs.appendChild(tab);
   });
   // ✎ Changes — a DOM panel, not a tmux window. Only for promoted (worktree) sessions.
@@ -535,17 +579,17 @@ function renderTabstrip(s) {
     const n = changesFileCount();
     const on = dockView === 'changes';
     const ct = h(`<span class="tab ${on ? 'on' : ''}">✎ Changes${n ? ` <span class="cbadge">${esc(n)}</span>` : ''}</span>`);
-    ct.addEventListener('click', () => openChanges(s));
+    activatable(ct, () => openChanges(s));
     tabs.appendChild(ct);
     // ▸ Logs — live dev-server tail (poll-based). Also worktree-only.
     const lt = h(`<span class="tab ${dockView === 'logs' ? 'on' : ''}">▸ Logs</span>`);
-    lt.addEventListener('click', () => openLogs(s));
+    activatable(lt, () => openLogs(s));
     tabs.appendChild(lt);
   }
-  const add = h(`<span class="tab"><span class="newtab">＋</span></span>`);
-  add.addEventListener('click', () => guardBtn(add, () => addTab(s)));
+  const add = h(`<span class="tab" aria-label="New tab"><span class="newtab">＋</span></span>`);
+  activatable(add, () => guardBtn(add, () => addTab(s)));
   tabs.appendChild(add);
-  const pop = h(`<button class="btn xs popout">Pop out ⧉</button>`);
+  const pop = h(`<button class="btn xs popout" aria-label="Pop out">Pop out ⧉</button>`);
   pop.addEventListener('click', () => guardBtn(pop, () => popout(s)));
   tabs.appendChild(pop);
   // ⊟ Split — second live terminal beside the primary. Only meaningful in the
@@ -646,7 +690,7 @@ function renderChangesPanel(s) {
         <button class="btn sm go" id="commitPrBtn">Commit &amp; open PR ↗</button>
       </div>
     </div>`;
-  $('#changesRefresh').addEventListener('click', () => refreshChanges(s, { reloadCurrent: true }));
+  activatable($('#changesRefresh'), () => refreshChanges(s, { reloadCurrent: true }));
   $('#commitBtn').addEventListener('click', () => doCommit(s, false));
   $('#commitPrBtn').addEventListener('click', () => doCommit(s, true));
   renderChangesFiles(s);
@@ -678,9 +722,11 @@ function renderChangesFiles(s) {
         ${f.deleted ? `<span class="dels">−${esc(f.deleted)}</span>` : ''}
       </div>`);
       const cb = row.querySelector('input');
+      cb.setAttribute('aria-label', `Stage ${f.file}`);
       cb.addEventListener('click', (e) => e.stopPropagation());
+      cb.addEventListener('keydown', (e) => e.stopPropagation()); // let the checkbox own its keys; don't reach the row
       cb.addEventListener('change', () => { if (cb.checked) changesUnstaged.delete(key); else changesUnstaged.add(key); renderCommitMeta(); });
-      row.addEventListener('click', () => selectDiff(s, r.repo, f.file));
+      activatable(row, () => selectDiff(s, r.repo, f.file));
       el.appendChild(row);
     }
   }
@@ -1146,6 +1192,7 @@ async function openEditor(p) { try { await api('POST', '/api/open', { path: p })
 
 /* ---------------- intake modal ---------------- */
 function openModal() {
+  modalPrevFocus = document.activeElement;
   modal.repo = modal.repo || (state.repos[0] && state.repos[0].name) || '';
   modal.source = 'freetext'; modal.issues = []; modal.issueId = null;
   // reset the form fields each open
@@ -1153,9 +1200,16 @@ function openModal() {
   if ($('#mName')) $('#mName').value = '';
   renderModal();
   $('#modal').hidden = false;
+  modalTrap = trapFocus($('#modal'));
   setTimeout(() => $('#mText') && $('#mText').focus(), 30);
 }
-function closeModal() { $('#modal').hidden = true; }
+function closeModal() {
+  if ($('#modal').hidden) return; // already closed — don't stomp focus/prev refs
+  $('#modal').hidden = true;
+  if (modalTrap) { modalTrap(); modalTrap = null; }
+  if (modalPrevFocus && modalPrevFocus.focus) modalPrevFocus.focus();
+  modalPrevFocus = null;
+}
 
 function renderModal() {
   // source tabs
@@ -1167,7 +1221,7 @@ function renderModal() {
     const on = modal.source === t.id;
     const dis = !enabled.has(t.id);
     const el = h(`<span class="srctab ${on ? 'on' : ''}" ${dis ? 'disabled' : ''}>${esc(t.label)}</span>`);
-    if (!dis) el.addEventListener('click', () => { modal.source = t.id; modal.issues = []; modal.issueId = null; renderModal(); });
+    if (!dis) activatable(el, () => { modal.source = t.id; modal.issues = []; modal.issueId = null; renderModal(); });
     tabs.appendChild(el);
   }
   // repos
@@ -1186,7 +1240,7 @@ function renderModal() {
     ? '' : `<div class="modal-note">Click “Load” to fetch ${isAsana ? 'your Asana tasks' : 'open issues'}.</div>`;
   for (const it of modal.issues) {
     const el = h(`<div class="issue ${modal.issueId === it.id ? 'sel' : ''}"><span class="num">${esc(it.subtitle || it.id)}</span> <span>${esc(it.title)}</span></div>`);
-    el.addEventListener('click', () => { modal.issueId = it.id; renderModal(); });
+    activatable(el, () => { modal.issueId = it.id; renderModal(); });
     list.appendChild(el);
   }
   $('#mLoad').onclick = loadIssues;
@@ -1299,13 +1353,13 @@ function agentRow(s) {
     l1.appendChild(btn('Go to session ▸', () => goToSession(s.id), 'primary'));
     l1.appendChild(btn('⤴ Promote', () => promote(s), 'go'));
   }
-  const del = h('<button class="btn sm ghost" title="Delete session">🗑</button>');
+  const del = h('<button class="btn sm ghost" title="Delete session" aria-label="Delete session">🗑</button>');
   del.addEventListener('click', () => closeSession(s));
   l1.appendChild(del);
   row.appendChild(l1);
   const l2 = h('<div class="frow-l2"></div>');
   const reps = (s.repos && s.repos.length ? s.repos : [{ repo: s.repoName }]);
-  l2.innerHTML = reps.map((r) => `<span class="mchip"><span class="dot ${s.state}"></span><span class="r">${esc(r.repo)}</span> <span class="br">in main · no worktree</span></span>`).join('');
+  l2.innerHTML = reps.map((r) => `<span class="mchip"><span class="dot ${s.state}" title="${esc(s.state)}"></span><span class="r">${esc(r.repo)}</span> <span class="br">in main · no worktree</span></span>`).join('');
   row.appendChild(l2);
   return row;
 }
@@ -1353,7 +1407,7 @@ function featureRow(f) {
     if (anyRunning) l1.appendChild(btn('Stop stack', () => stopStack(f.name), 'danger'));
     else if (anyStartable) l1.appendChild(btn('Run stack', () => runStack(f.name), 'go'));
     webAppsFor(ms).forEach((fweb) => l1.appendChild(btn(`Open ${fweb.repo} ↗`, () => openApp(fweb.port))));
-    const more = h('<button class="btn sm ghost fmore" title="More">⋯</button>');
+    const more = h('<button class="btn sm ghost fmore" title="More" aria-label="More actions" aria-haspopup="menu">⋯</button>');
     more.addEventListener('click', (e) => { e.stopPropagation(); openFeatureMenu(more, f, { anyRunning, sess }); });
     l1.appendChild(more);
   }
@@ -1361,7 +1415,7 @@ function featureRow(f) {
 
   // line 2 — the stack detail
   const l2 = h('<div class="frow-l2"></div>');
-  l2.innerHTML = ms.map((m) => `<span class="mchip"><span class="dot ${m.session ? m.session.state : (m.running ? 'done' : 'idle')}"></span><span class="r">${esc(m.repo)}</span> <span class="br">${esc(m.branch || m.wtname)}</span>${(m.ports || []).length ? ` <span class="p">${m.ports.map((p) => ':' + p).join(' ')}</span>` : ''}${m.merged ? ' <span class="badge merged">✓ merged</span>' : ''}</span>`).join('');
+  l2.innerHTML = ms.map((m) => { const dst = m.session ? m.session.state : (m.running ? 'done' : 'idle'); return `<span class="mchip"><span class="dot ${dst}" title="${esc(dst)}"></span><span class="r">${esc(m.repo)}</span> <span class="br">${esc(m.branch || m.wtname)}</span>${(m.ports || []).length ? ` <span class="p">${m.ports.map((p) => ':' + p).join(' ')}</span>` : ''}${m.merged ? ' <span class="badge merged">✓ merged</span>' : ''}</span>`; }).join('');
   row.appendChild(l2);
   return row;
 }
@@ -1372,19 +1426,38 @@ function openFeatureMenu(anchor, f, { anyRunning, sess }) {
   const wasThis = existing && existing._anchor === anchor;
   closeAnyMenu();
   if (wasThis) return; // clicking the same ⋯ again toggles it closed
-  const menu = h('<div class="fmenu"></div>');
+  const menu = h('<div class="fmenu" role="menu" aria-label="Feature actions"></div>');
   menu._anchor = anchor;
-  const item = (label, fn, cls = '') => { const d = h(`<div class="${cls}">${esc(label)}</div>`); d.addEventListener('click', () => { closeAnyMenu(); fn(); }); menu.appendChild(d); };
+  // Activating an item (click or Enter/Space) closes the menu and returns focus to
+  // the ⋯ trigger before running the action, so keyboard focus is never orphaned.
+  const item = (label, fn, cls = '') => {
+    const d = h(`<div class="${cls}" role="menuitem" tabindex="0">${esc(label)}</div>`);
+    const run = () => { closeAnyMenu(); if (anchor.focus) anchor.focus(); fn(); };
+    d.addEventListener('click', run);
+    d.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); run(); } });
+    menu.appendChild(d);
+  };
   item('Open in editor', () => openGroup(f.name));
   if (anyRunning) item('Restart stack', () => restartStack(f.name));
   item('Open PR / MR', () => prFeature(f.name));
   menu.appendChild(h('<div class="sep"></div>'));
   if (anyRunning || sess) item('Close feature', () => closeFeature(f.name));
   item('Delete feature…', () => deleteFeature(f), 'danger');
+  // roving focus: ↑/↓ move between items (wrapping); Escape closes + restores the trigger.
+  menu.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Escape') return;
+    e.preventDefault();
+    if (e.key === 'Escape') { e.stopPropagation(); closeAnyMenu(); if (anchor.focus) anchor.focus(); return; }
+    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+    const i = items.indexOf(document.activeElement);
+    const d = e.key === 'ArrowDown' ? 1 : -1;
+    items[(i + d + items.length) % items.length].focus();
+  });
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
   menu.style.top = `${rect.bottom + 4}px`;
   menu.style.left = `${Math.max(8, rect.right - menu.offsetWidth)}px`;
+  const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus();
   setTimeout(() => document.addEventListener('click', closeAnyMenu, { once: true }), 0);
 }
 function goToSession(id) { selectedId = id; setView('work'); }
@@ -1466,6 +1539,7 @@ function adoptWorktree(m) {
 
 /* ---------------- settings / connections ---------------- */
 async function openSettings() {
+  settingsPrevFocus = document.activeElement;
   let data;
   try { data = await api('GET', '/api/settings'); } catch (e) { return toast(e.message, true); }
   const src = data.sources || {};
@@ -1530,8 +1604,16 @@ async function openSettings() {
   (data.groups || []).forEach((g) => grpRows.appendChild(settingsGroupRow(g)));
   $('#setGroupAdd').addEventListener('click', () => grpRows.appendChild(settingsGroupRow({})));
   $('#settingsModal').hidden = false;
+  settingsTrap = trapFocus($('#settingsModal'));
+  setTimeout(() => { const c = $('#setCancel'); if (c) c.focus(); }, 30);
 }
-function closeSettings() { $('#settingsModal').hidden = true; }
+function closeSettings() {
+  if ($('#settingsModal').hidden) return;
+  $('#settingsModal').hidden = true;
+  if (settingsTrap) { settingsTrap(); settingsTrap = null; }
+  if (settingsPrevFocus && settingsPrevFocus.focus) settingsPrevFocus.focus();
+  settingsPrevFocus = null;
+}
 
 // One editable Dev-servers row: repo (datalist of scanned repos) · command · ports · remove.
 function settingsStartRow(repo, v) {
@@ -1540,7 +1622,7 @@ function settingsStartRow(repo, v) {
     <input class="dv-repo" list="setRepoList" value="${esc(repo)}" placeholder="repo…">
     <input class="dv-cmd" value="${esc((v && v.cmd) || '')}" placeholder="command…">
     <input class="dv-ports" value="${esc(ports)}" placeholder="ports">
-    <button class="btn ghost xs" title="Remove">✕</button>
+    <button class="btn ghost xs" title="Remove" aria-label="Remove">✕</button>
   </div>`);
   row.querySelector('button').addEventListener('click', () => row.remove());
   return row;
@@ -1551,7 +1633,7 @@ function settingsEditorRow(name, v) {
   const row = h(`<div class="srvcfg-row cols3"${og}>
     <input class="ed-name" value="${esc(name)}" placeholder="name…">
     <input class="ed-open" value="${esc((v && v.open) || '')}" placeholder="open command with {path}…">
-    <button class="btn ghost xs" title="Remove">✕</button>
+    <button class="btn ghost xs" title="Remove" aria-label="Remove">✕</button>
   </div>`);
   row.querySelector('button').addEventListener('click', () => row.remove());
   return row;
@@ -1562,7 +1644,7 @@ function settingsGroupRow(g) {
   const row = h(`<div class="srvcfg-row cols3">
     <input class="gp-name" value="${esc((g && g.name) || '')}" placeholder="group name…">
     <input class="gp-members" value="${esc(members)}" placeholder="repo/branch, repo/branch…">
-    <button class="btn ghost xs" title="Remove">✕</button>
+    <button class="btn ghost xs" title="Remove" aria-label="Remove">✕</button>
   </div>`);
   row.querySelector('button').addEventListener('click', () => row.remove());
   return row;
@@ -1619,13 +1701,14 @@ function togglePalette() { if (palette) closePalette(); else openPalette(); }
 
 function openPalette() {
   if (palette) return;
+  const prevFocus = document.activeElement;
   const back = h('<div class="modal-backdrop top palette-back"></div>');
-  const box = h('<div class="palette"></div>');
+  const box = h('<div class="palette" role="dialog" aria-modal="true" aria-label="Command palette"></div>');
   const input = h('<input type="text" spellcheck="false" autocomplete="off" placeholder="Jump to a session or run a command…" />');
   const list = h('<div class="palette-list"></div>');
   box.appendChild(input); box.appendChild(list); back.appendChild(box);
   document.body.appendChild(back);
-  palette = { back, input, list, rows: [], hi: 0 };
+  palette = { back, input, list, rows: [], hi: 0, prevFocus, untrap: trapFocus(back) };
   input.addEventListener('input', renderPalette);
   back.addEventListener('click', (e) => { if (e.target === back) closePalette(); });
   palette.onKey = (e) => {
@@ -1641,8 +1724,11 @@ function openPalette() {
 function closePalette() {
   if (!palette) return;
   document.removeEventListener('keydown', palette.onKey);
+  if (palette.untrap) palette.untrap();
+  const prev = palette.prevFocus;
   palette.back.remove();
   palette = null;
+  if (prev && prev.focus) prev.focus();
 }
 
 // Build the filtered Sessions + Commands rows for the current query and context.
@@ -1744,8 +1830,14 @@ function handleShortcut(e) {
   const meta = e.metaKey || e.ctrlKey;
   // ⌘K always toggles the palette — even from inside an input.
   if (meta && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); togglePalette(); return; }
-  // Escape closes the topmost overlay (palette first, else the intake modal).
-  if (e.key === 'Escape') { if (paletteOpen()) closePalette(); else closeModal(); return; }
+  // Escape closes the topmost overlay (palette first, then settings, else intake).
+  // uiDialogs handle their own Escape via their own keydown listener.
+  if (e.key === 'Escape') {
+    if (paletteOpen()) closePalette();
+    else if (!$('#settingsModal').hidden) closeSettings();
+    else closeModal();
+    return;
+  }
   // Beyond ⌘K/Escape, never hijack typing or act while an overlay is up.
   if (isTypingTarget(e.target) || overlayOpen() || !meta) return;
 
