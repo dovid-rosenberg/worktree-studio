@@ -142,9 +142,19 @@ button { font-family:inherit; }
 .chk { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px; color:var(--muted); }
 .chk input { accent-color:var(--brand); }
 
+.term-area { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
 .term-wrap { flex:1; min-height:0; background:#0c0f14; padding:8px 10px; }
 :root[data-theme="light"] .term-wrap { background:#12151b; }
 .term-wrap .xterm { height:100%; }
+
+/* split view — two side-by-side terminals inside the term area */
+.term-area.term-split { display:grid; grid-template-columns:1fr 1fr; gap:2px; background:var(--border); }
+.term-area.term-split > .term-wrap { min-width:0; }
+.term-area.term-split .panewrap { display:flex; flex-direction:column; min-width:0; min-height:0; }
+.term-area.term-split .panehd { font-family:var(--mono); font-size:10.5px; color:var(--muted); padding:5px 10px; background:var(--elevated); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; flex:none; }
+.panehd .split-select { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--ink); font-family:var(--mono); font-size:10.5px; padding:1px 4px; max-width:220px; }
+.tabstrip .split-toggle { margin-left:6px; }
+.tabstrip .split-toggle.on { border-color:var(--brand); color:var(--brand); }
 
 /* LOGS panel — live dev-server tail */
 .logs { flex:1; min-height:0; display:flex; flex-direction:column; background:#0c0f14; }

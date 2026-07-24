@@ -19,6 +19,13 @@ const modal = { source: 'freetext', repo: '', issues: [], issueId: null };
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
+// split-view second pane — a fully independent terminal (own xterm + socket).
+// Only ever touched through openSecondTerm/closeSecondTerm; the primary pane
+// above never learns it exists, so split is additive and zero-risk.
+let splitOn = false;                    // is the split toggle engaged?
+let splitPickId = null;                 // session id currently shown in pane 2
+let term2 = null, fit2 = null, ws2 = null, ro2 = null;
+
 // attention notifications: previous per-session state (id → state) so we can diff
 // each SSE tick and alert when a session transitions INTO waiting (or idle).
 const prevSessionState = new Map();
@@ -330,6 +337,7 @@ function rebuildDock(s) {
   ciData = null;
   // reset the client-side dock view whenever the selected session changes
   dockView = 'term'; activeTab = 0;
+  splitOn = false; splitPickId = null; // split never carries across a session switch
   changesState = null; changesSel = null; changesUnstaged.clear();
   logsSel = null; logsOffset.clear(); logsPartial.clear();
   clearTimeout(changesRefreshT);
@@ -337,7 +345,7 @@ function rebuildDock(s) {
   dock.innerHTML = '';
   dock.appendChild(h(`<div class="dock-head" id="dockHead"></div>`));
   dock.appendChild(h(`<div class="tabstrip" id="dockTabs"></div>`));
-  dock.appendChild(h(`<div class="term-wrap" id="termWrap"></div>`));
+  dock.appendChild(h(`<div class="term-area" id="termArea"><div class="term-wrap" id="termWrap"></div></div>`));
   dock.appendChild(h(`<div class="changes" id="changesPanel" hidden></div>`));
   dock.appendChild(h(`<div class="logs" id="logsPanel" hidden></div>`));
   dock.appendChild(h(`<div class="serverbar" id="serverBar"></div>`));
@@ -513,13 +521,23 @@ function renderTabstrip(s) {
   const pop = h(`<button class="btn xs popout">Pop out ⧉</button>`);
   pop.addEventListener('click', () => popout(s));
   tabs.appendChild(pop);
+  // ⊟ Split — second live terminal beside the primary. Only meaningful in the
+  // term view, so it only appears there.
+  if (dockView === 'term') {
+    const sp = h(`<button class="btn xs split-toggle ${splitOn ? 'on' : ''}" title="Show a second terminal alongside this one">⊟ Split</button>`);
+    sp.addEventListener('click', () => { splitOn = !splitOn; applySplit(); renderTabstrip(s); });
+    tabs.appendChild(sp);
+  }
 }
 
 function applyDockView() {
-  const tw = $('#termWrap'); const cp = $('#changesPanel'); const lp = $('#logsPanel');
-  if (tw) tw.hidden = dockView !== 'term';
+  const ta = $('#termArea'); const cp = $('#changesPanel'); const lp = $('#logsPanel');
+  if (ta) ta.hidden = dockView !== 'term';
   if (cp) cp.hidden = dockView !== 'changes';
   if (lp) lp.hidden = dockView !== 'logs';
+  // Reconcile the split pane: it only lives while the term view is showing, so
+  // leaving for Changes/Logs tears it down and returning rebuilds it.
+  applySplit();
 }
 
 function changesFileCount() {
@@ -869,6 +887,7 @@ function themeForTerm() {
 }
 
 function destroyTerminal() {
+  closeSecondTerm(); // never leak a ws2/term2 across a session switch or teardown
   try { if (ro) ro.disconnect(); } catch { /* */ }
   try { if (ws) { ws.onclose = null; ws.close(); } } catch { /* */ }
   try { if (term) term.dispose(); } catch { /* */ }
@@ -920,6 +939,107 @@ function connectTermWS(s, attempt) {
 
 function sendResize() {
   if (ws && ws.readyState === 1 && term) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+}
+
+/* ---------------- split view (second, independent terminal) ---------------- */
+
+// Reconcile the DOM to (splitOn && dockView==='term'). Idempotent: safe to call
+// from the toggle, from applyDockView on every SSE tick, and on view changes.
+function applySplit() {
+  const ta = $('#termArea');
+  if (!ta) return;
+  const want = splitOn && dockView === 'term';
+  const has = !!$('#termPane2');
+  if (want && !has) {
+    ta.classList.add('term-split');
+    const pane = buildSecondPane();
+    ta.appendChild(pane);
+    const pick = defaultSecondId();
+    splitPickId = pick;
+    const sel = pane.querySelector('.split-select');
+    if (sel && pick != null) sel.value = pick;
+    openSecondTerm(pick);
+    refitPrimary(); // primary just lost half its width — refit so it isn't stale
+  } else if (!want && has) {
+    closeSecondTerm();
+    ta.classList.remove('term-split');
+    const p = $('#termPane2'); if (p) p.remove();
+    refitPrimary(); // primary reclaimed full width
+  }
+}
+
+// A promoted feature usually owns two repos as two sessions; default the second
+// pane to the first session that isn't the primary, else the primary itself.
+function defaultSecondId() {
+  const other = state.sessions.find((x) => x.id !== selectedId);
+  return (other && other.id) || selectedId;
+}
+
+function buildSecondPane() {
+  const opts = state.sessions
+    .map((x) => `<option value="${esc(x.id)}">${esc(x.title)}</option>`).join('');
+  const pane = h(`<div class="panewrap" id="termPane2">
+    <div class="panehd"><span class="dot idle"></span><span>claude&nbsp;·</span>
+      <select class="split-select">${opts}</select></div>
+    <div class="term-wrap" id="termWrap2"></div>
+  </div>`);
+  const sel = pane.querySelector('.split-select');
+  sel.addEventListener('change', () => { closeSecondTerm(); splitPickId = sel.value; openSecondTerm(sel.value); });
+  return pane;
+}
+
+// Refit the PRIMARY terminal after its width changes (entering/leaving split).
+// rAF lets the grid settle first; no-op while the term view is hidden.
+function refitPrimary() {
+  if (!term || !fit) return;
+  const ta = $('#termArea');
+  if (ta && ta.hidden) return;
+  requestAnimationFrame(() => { try { fit.fit(); sendResize(); } catch { /* */ } });
+}
+
+function openSecondTerm(sessionId) {
+  const wrap = $('#termWrap2');
+  if (!wrap || !XTerm || sessionId == null) return;
+  term2 = new XTerm({ fontFamily: 'ui-monospace, SF Mono, Menlo, monospace', fontSize: 12.5, cursorBlink: true, scrollback: 8000, allowProposedApi: true, theme: themeForTerm() });
+  if (FitAddonCtor) { fit2 = new FitAddonCtor(); term2.loadAddon(fit2); }
+  if (WebLinksCtor) { try { term2.loadAddon(new WebLinksCtor()); } catch { /* */ } }
+  term2.open(wrap);
+  try { fit2 && fit2.fit(); } catch { /* */ }
+  term2.onData((d) => { if (ws2 && ws2.readyState === 1) ws2.send(new TextEncoder().encode(d)); });
+  ro2 = new ResizeObserver(() => { try { fit2 && fit2.fit(); sendResize2(); } catch { /* */ } });
+  ro2.observe(wrap);
+  connectSecondWS(sessionId);
+}
+
+// Plain connect — no reconnect/backoff. If the picked session has no live mux
+// the socket just closes and we show a one-line notice (display-only pane).
+function connectSecondWS(sessionId) {
+  if (!term2) return;
+  const theTerm = term2; // capture so a select/dispose can orphan this socket
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(sessionId)}&cols=${theTerm.cols}&rows=${theTerm.rows}`);
+  sock.binaryType = 'arraybuffer';
+  ws2 = sock;
+  sock.onmessage = (e) => { if (typeof e.data === 'string') theTerm.write(e.data); else theTerm.write(new Uint8Array(e.data)); };
+  sock.onopen = () => {
+    if (term2 !== theTerm) { try { sock.close(); } catch { /* */ } return; }
+    sendResize2();
+  };
+  sock.onclose = () => {
+    if (term2 !== theTerm) return; // superseded by a newer pane — stay quiet
+    try { theTerm.write('\r\n\x1b[2m[disconnected — pick a session to reattach]\x1b[0m\r\n'); } catch { /* */ }
+  };
+}
+
+function sendResize2() {
+  if (ws2 && ws2.readyState === 1 && term2) ws2.send(JSON.stringify({ type: 'resize', cols: term2.cols, rows: term2.rows }));
+}
+
+function closeSecondTerm() {
+  try { if (ro2) ro2.disconnect(); } catch { /* */ }
+  try { if (ws2) { ws2.onclose = null; ws2.close(); } } catch { /* */ }
+  try { if (term2) term2.dispose(); } catch { /* */ }
+  ro2 = ws2 = term2 = fit2 = null;
 }
 
 /* ---------------- actions ---------------- */
