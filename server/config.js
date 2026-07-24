@@ -30,6 +30,9 @@ function defaults() {
     },
     // per-repo dev-server launch config { cmd, ports }
     start: dash.start || {},
+    // repos that serve a browsable frontend — get an "Open app ↗" button that
+    // opens their (lsof-discovered) running port, incl. concurrency-shifted ports.
+    webRepos: dash.webRepos || ['merchant-v3'],
     // manual feature groups: [{ name, members: ["repo/branch-or-wtname"] }]
     groups: dash.groups || [],
     // imported editor run/test configs: { "<repo>": [{ name, cmd, kind, source }] }

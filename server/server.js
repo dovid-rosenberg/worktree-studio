@@ -111,6 +111,7 @@ async function main() {
       baseDirs: cfg.baseDirs,
       editors: Object.keys(cfg.editors || {}),
       defaultEditor: cfg.defaultEditor,
+      webRepos: cfg.webRepos || [],
       runConfigs: cfg.runConfigs || {},
       sources: sources.enabled(cfg),
       repos: reposOut,

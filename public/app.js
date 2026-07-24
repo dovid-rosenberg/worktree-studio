@@ -59,6 +59,17 @@ const $ = (sel) => document.querySelector(sel);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+// The browsable frontend of a feature/session: the first web repo (config.webRepos)
+// that's running with a discovered port. Returns { repo, port } or null.
+function webAppFor(list) {
+  const web = new Set(state.webRepos || []);
+  for (const r of (list || [])) {
+    if (web.has(r.repo) && r.running && (r.ports || []).length) return { repo: r.repo, port: r.ports[0] };
+  }
+  return null;
+}
+function openApp(port) { window.open(`http://localhost:${port}`, '_blank', 'noopener'); }
+
 async function api(method, url, body) {
   const opt = { method, headers: {} };
   if (body !== undefined) { opt.headers['content-type'] = 'application/json'; opt.body = JSON.stringify(body); }
@@ -413,14 +424,18 @@ function updateDock(s) {
   } else {
     const anyRunning = reps.some((r) => r.running);
     const anyStopped = reps.some((r) => r.canStart && !r.running);
+    const webSet = new Set(state.webRepos || []);
     // A running repo with ports → one clickable chip per port (opens localhost:<port>).
-    // Anything else (running-no-ports, stopped) → an inert repo chip.
+    // Anything else (running-no-ports, stopped) → an inert repo chip. The frontend
+    // repo's chips are tagged, and get a prominent "Open <repo> ↗" button below.
     bar.innerHTML = '<span>workspace</span>'
       + reps.map((r) => (r.running && r.ports.length
-        ? r.ports.map((p) => `<span class="portchip open" data-port="${esc(p)}" title="Open http://localhost:${esc(p)}"><span class="dot done"></span>${esc(r.repo)} :${esc(p)} <span class="go">↗</span></span>`).join('')
+        ? r.ports.map((p) => `<span class="portchip open${webSet.has(r.repo) ? ' web' : ''}" data-port="${esc(p)}" title="Open http://localhost:${esc(p)}${webSet.has(r.repo) ? ' (frontend)' : ''}"><span class="dot done"></span>${esc(r.repo)} :${esc(p)} <span class="go">↗</span></span>`).join('')
         : `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}"></span>${esc(r.repo)}</span>`)).join('')
       + '<span class="spacer" style="flex:1"></span>';
     bar.querySelectorAll('.portchip.open').forEach((el) => el.addEventListener('click', () => window.open(`http://localhost:${el.dataset.port}`, '_blank', 'noopener')));
+    const web = webAppFor(reps);
+    if (web) { const b = h(`<button class="btn sm primary" title="Open the frontend — http://localhost:${esc(web.port)}">Open ${esc(web.repo)} ↗</button>`); b.addEventListener('click', () => openApp(web.port)); bar.appendChild(b); }
     if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => startSessionServers(s)); bar.appendChild(b); }
     if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => stopSessionServers(s)); bar.appendChild(b); }
   }
@@ -1310,6 +1325,8 @@ function featureRow(f) {
     l1.appendChild(sess ? btn('Go to session ▸', () => goToSession(sess.id), 'primary') : btn('Start session', () => startFeatureSession(f), 'primary'));
     if (anyRunning) l1.appendChild(btn('Stop stack', () => stopStack(f.name), 'danger'));
     else if (anyStartable) l1.appendChild(btn('Run stack', () => runStack(f.name), 'go'));
+    const fweb = webAppFor(ms);
+    if (fweb) l1.appendChild(btn(`Open ${fweb.repo} ↗`, () => openApp(fweb.port)));
     const more = h('<button class="btn sm ghost fmore" title="More">⋯</button>');
     more.addEventListener('click', (e) => { e.stopPropagation(); openFeatureMenu(more, f, { anyRunning, sess }); });
     l1.appendChild(more);
