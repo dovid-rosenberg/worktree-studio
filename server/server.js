@@ -524,6 +524,84 @@ async function main() {
     res.json({ ok: results.some((r) => r.url), results });
   }));
 
+  // ---- PR / CI status (serverbar pill) ----
+  // gh/glab lookups cached per worktreePath+branch for ~20s so UI polling doesn't
+  // hammer the CLIs. Value: { at, data } where data is the per-repo result.
+  const ciCache = new Map();
+  const CI_TTL = 20000;
+  const hasGh = has('gh');
+  const hasGlab = has('glab');
+
+  // Tally a GitHub statusCheckRollup (mixed CheckRun / StatusContext nodes) into
+  // { passed, running, failed, total }. Neutral/skipped count toward total only.
+  function ghChecks(rollup) {
+    const c = { passed: 0, running: 0, failed: 0, total: 0 };
+    for (const n of (Array.isArray(rollup) ? rollup : [])) {
+      c.total++;
+      const conclusion = String(n.conclusion || '').toUpperCase();
+      const status = String(n.status || n.state || '').toUpperCase();
+      if (conclusion === 'SUCCESS' || status === 'SUCCESS') c.passed++;
+      else if (['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ERROR', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(conclusion) || status === 'FAILURE' || status === 'ERROR') c.failed++;
+      else if (['QUEUED', 'IN_PROGRESS', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED'].includes(status)) c.running++;
+    }
+    return c;
+  }
+
+  // Map a single GitLab pipeline status into the same { passed, running, failed, total } shape.
+  function glChecks(status) {
+    const s = String(status || '').toLowerCase();
+    if (!s) return { passed: 0, running: 0, failed: 0, total: 0 };
+    if (s === 'success') return { passed: 1, running: 0, failed: 0, total: 1 };
+    if (['failed', 'canceled', 'cancelled'].includes(s)) return { passed: 0, running: 0, failed: 1, total: 1 };
+    if (['running', 'pending', 'created', 'preparing', 'scheduled', 'waiting_for_resource'].includes(s)) return { passed: 0, running: 1, failed: 0, total: 1 };
+    return { passed: 0, running: 0, failed: 0, total: 0 };
+  }
+
+  // Look up a single repo's PR/MR + checks (GitHub first, then GitLab). Never
+  // throws — returns { repo, hasPR:false } on any miss/failure. Cached per key.
+  async function ciForRepo(entry, env) {
+    const { repo, worktreePath, branch } = entry;
+    if (!worktreePath || !branch) return { repo, hasPR: false };
+    const key = `${worktreePath}\n${branch}`;
+    const hit = ciCache.get(key);
+    if (hit && Date.now() - hit.at < CI_TTL) return { ...hit.data, repo };
+    let data = { repo, hasPR: false };
+    try {
+      if (hasGh) {
+        const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], { cwd: worktreePath, env });
+        if (r.code === 0 && r.stdout.trim()) {
+          const j = JSON.parse(r.stdout);
+          data = { repo, hasPR: true, provider: 'github', number: j.number, url: j.url, state: j.state, checks: ghChecks(j.statusCheckRollup) };
+        }
+      }
+      if (!data.hasPR && hasGlab) {
+        const r = await run('glab', ['mr', 'view', branch, '-F', 'json'], { cwd: worktreePath, env });
+        if (r.code === 0 && r.stdout.trim()) {
+          const j = JSON.parse(r.stdout);
+          const pipe = j.pipeline || j.head_pipeline || {};
+          data = { repo, hasPR: true, provider: 'gitlab', number: j.iid, url: j.web_url, state: j.state, checks: glChecks(pipe.status) };
+        }
+      }
+    } catch { data = { repo, hasPR: false }; }
+    ciCache.set(key, { at: Date.now(), data });
+    return { ...data, repo };
+  }
+
+  app.get('/api/sessions/:id/ci', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    const entries = (s.repos || []).filter((r) => r.worktreePath && r.branch);
+    // Neither CLI installed → answer instantly without shelling out.
+    if (!hasGh && !hasGlab) return res.json({ repos: entries.map((r) => ({ repo: r.repo, hasPR: false })) });
+    const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+    const repos = [];
+    for (const entry of entries) {
+      try { repos.push(await ciForRepo(entry, env)); }
+      catch { repos.push({ repo: entry.repo, hasPR: false }); }
+    }
+    res.json({ repos });
+  }));
+
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
   app.post('/api/group/session', A(async (req, res) => {

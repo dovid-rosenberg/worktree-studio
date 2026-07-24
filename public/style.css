@@ -166,6 +166,11 @@ button { font-family:inherit; }
 .serverbar .portchip.open:hover { border-color:var(--brand); color:var(--brand); }
 .serverbar .portchip .go { color:var(--faint); font-size:10px; }
 .serverbar .portchip.open:hover .go { color:var(--brand); }
+.serverbar .cistat { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border); border-radius:6px; padding:2px 9px; cursor:pointer; color:var(--ink); }
+.serverbar .cistat:hover { border-color:var(--brand); }
+.serverbar .cistat .ck.ok { color:var(--done); }
+.serverbar .cistat .ck.run { color:var(--waiting); }
+.serverbar .cistat .ck.x { color:var(--del); }
 
 /* modal */
 .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.45); display:grid; place-items:center; z-index:50; padding:20px; }

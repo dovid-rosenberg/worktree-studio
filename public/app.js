@@ -43,6 +43,11 @@ let logsPollT = null;               // self-scheduling poll timer
 const logsOffset = new Map();       // worktreePath → next byte offset to fetch from
 const logsPartial = new Map();      // worktreePath → trailing partial (incomplete) line
 
+// PR/CI status (serverbar pill) — lazily fetched per promoted session, refreshed
+// on a self-scheduling timer while that session stays selected.
+let ciPollT = null;
+let ciData = null;                  // { sessionId, repos:[…] } — last CI response for the selected session
+
 const $ = (sel) => document.querySelector(sel);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -304,7 +309,7 @@ function selectSession(id) { selectedId = id; render(); }
 function renderDock() {
   const dock = $('#dock');
   const s = state.sessions.find((x) => x.id === selectedId);
-  if (!s) { destroyTerminal(); stopLogsPoll(); renderedDockId = null; dock.innerHTML = ''; dock.appendChild(emptyState()); return; }
+  if (!s) { destroyTerminal(); stopLogsPoll(); stopCiPoll(); renderedDockId = null; dock.innerHTML = ''; dock.appendChild(emptyState()); return; }
   if (renderedDockId !== s.id) { rebuildDock(s); renderedDockId = s.id; }
   else updateDock(s);
 }
@@ -321,6 +326,8 @@ function emptyState() {
 function rebuildDock(s) {
   destroyTerminal();
   stopLogsPoll();
+  stopCiPoll();
+  ciData = null;
   // reset the client-side dock view whenever the selected session changes
   dockView = 'term'; activeTab = 0;
   changesState = null; changesSel = null; changesUnstaged.clear();
@@ -337,7 +344,7 @@ function rebuildDock(s) {
   updateDock(s);
   openTerminal(s);
   // eager-load so the ✎ Changes badge shows a count before the tab is opened
-  if (s.worktreePath) refreshChanges(s, {});
+  if (s.worktreePath) { refreshChanges(s, {}); startCiPoll(s); }
 }
 
 function updateDock(s) {
@@ -409,11 +416,66 @@ function updateDock(s) {
     if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => startSessionServers(s)); bar.appendChild(b); }
     if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => stopSessionServers(s)); bar.appendChild(b); }
   }
+  // Re-inject any cached PR/CI pills (updateDock rebuilds the bar on every SSE tick).
+  if (promoted) injectCiPills(s);
 
   applyDockView();
   // an SSE tick arrived while the Changes panel is open — refresh the file list
   // (debounced) without stomping the diff the user is reading.
   if (dockView === 'changes') scheduleChangesRefresh(s);
+}
+
+/* ---------------- PR / CI status pill ---------------- */
+function stopCiPoll() { if (ciPollT) { clearTimeout(ciPollT); ciPollT = null; } }
+
+// Lazily fetch PR/CI status for a promoted session, then refresh every ~30s while
+// it stays selected. Never blocks the serverbar render; degrades to nothing on error.
+function startCiPoll(s) {
+  stopCiPoll();
+  if (!s.worktreePath) return;
+  const tick = async () => {
+    if (selectedId !== s.id) { stopCiPoll(); return; }
+    try {
+      const res = await api('GET', `/api/sessions/${s.id}/ci`);
+      if (selectedId !== s.id) { stopCiPoll(); return; }
+      ciData = { sessionId: s.id, repos: (res && res.repos) || [] };
+      injectCiPills(s);
+    } catch { /* no gh/glab, no PR, network error — leave the bar as-is */ }
+    if (selectedId === s.id) ciPollT = setTimeout(tick, 30000); else stopCiPoll();
+  };
+  tick();
+}
+
+// Build one clickable .cistat pill for a repo that has a PR/MR.
+function ciPill(r) {
+  const c = r.checks || { passed: 0, running: 0, failed: 0, total: 0 };
+  const tag = (r.provider === 'gitlab' ? '!' : '#') + esc(r.number);
+  const parts = [];
+  if (c.total === 0) {
+    if (r.state) parts.push(`<span class="ck">${esc(String(r.state).toLowerCase())}</span>`);
+  } else {
+    if (c.passed) parts.push(`<span class="ck ok">✓${esc(c.passed)}</span>`);
+    if (c.running) parts.push(`<span class="ck run">◴${esc(c.running)}</span>`);
+    if (c.failed) parts.push(`<span class="ck x">✕${esc(c.failed)}</span>`);
+  }
+  const el = h(`<span class="cistat" title="Open ${r.provider === 'gitlab' ? 'MR' : 'PR'} ${tag}"><span>${esc(r.repo)} ${tag}</span>${parts.join('')}</span>`);
+  if (r.url) el.addEventListener('click', () => window.open(r.url, '_blank', 'noopener'));
+  return el;
+}
+
+// Render cached CI pills into the serverbar (before the spacer, else appended).
+// No-op unless the cached data belongs to the currently shown session.
+function injectCiPills(s) {
+  const bar = $('#serverBar');
+  if (!bar) return;
+  bar.querySelectorAll('.cistat').forEach((el) => el.remove());
+  if (!ciData || ciData.sessionId !== s.id) return;
+  const spacer = bar.querySelector('.spacer');
+  for (const r of ciData.repos) {
+    if (!r || !r.hasPR) continue;
+    const pill = ciPill(r);
+    if (spacer) bar.insertBefore(pill, spacer); else bar.appendChild(pill);
+  }
 }
 
 /* ---------------- changes / diff panel ---------------- */
