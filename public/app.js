@@ -19,14 +19,22 @@ const modal = { source: 'freetext', repo: '', issues: [], issueId: null };
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
-// dock view state — the tmux terminal ('term') vs the DOM Changes panel ('changes').
-// Switching to 'changes' hides #termWrap without destroying the live terminal.
+// dock view state — the tmux terminal ('term') vs the DOM Changes ('changes') /
+// Logs ('logs') panels. Switching away from 'term' hides #termWrap without
+// destroying the live terminal.
 let dockView = 'term';
 let activeTab = 0;
 let changesState = null;   // { repos:[{repo,worktreePath,base,files:[…]}] } for the selected session
 let changesSel = null;     // { repo, file } — the diff currently shown
 const changesUnstaged = new Set(); // ckey()s the user has un-checked (default = staged)
 let changesRefreshT = null;
+
+// live logs (poll-based tail) state
+let logsSel = null;                 // worktreePath currently being tailed
+let logsFollow = true;              // autoscroll to bottom when near the bottom
+let logsPollT = null;               // self-scheduling poll timer
+const logsOffset = new Map();       // worktreePath → next byte offset to fetch from
+const logsPartial = new Map();      // worktreePath → trailing partial (incomplete) line
 
 const $ = (sel) => document.querySelector(sel);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -189,7 +197,7 @@ function selectSession(id) { selectedId = id; render(); }
 function renderDock() {
   const dock = $('#dock');
   const s = state.sessions.find((x) => x.id === selectedId);
-  if (!s) { destroyTerminal(); renderedDockId = null; dock.innerHTML = ''; dock.appendChild(emptyState()); return; }
+  if (!s) { destroyTerminal(); stopLogsPoll(); renderedDockId = null; dock.innerHTML = ''; dock.appendChild(emptyState()); return; }
   if (renderedDockId !== s.id) { rebuildDock(s); renderedDockId = s.id; }
   else updateDock(s);
 }
@@ -205,9 +213,11 @@ function emptyState() {
 
 function rebuildDock(s) {
   destroyTerminal();
+  stopLogsPoll();
   // reset the client-side dock view whenever the selected session changes
   dockView = 'term'; activeTab = 0;
   changesState = null; changesSel = null; changesUnstaged.clear();
+  logsSel = null; logsOffset.clear(); logsPartial.clear();
   clearTimeout(changesRefreshT);
   const dock = $('#dock');
   dock.innerHTML = '';
@@ -215,6 +225,7 @@ function rebuildDock(s) {
   dock.appendChild(h(`<div class="tabstrip" id="dockTabs"></div>`));
   dock.appendChild(h(`<div class="term-wrap" id="termWrap"></div>`));
   dock.appendChild(h(`<div class="changes" id="changesPanel" hidden></div>`));
+  dock.appendChild(h(`<div class="logs" id="logsPanel" hidden></div>`));
   dock.appendChild(h(`<div class="serverbar" id="serverBar"></div>`));
   updateDock(s);
   openTerminal(s);
@@ -317,6 +328,10 @@ function renderTabstrip(s) {
     const ct = h(`<span class="tab ${on ? 'on' : ''}">✎ Changes${n ? ` <span class="cbadge">${esc(n)}</span>` : ''}</span>`);
     ct.addEventListener('click', () => openChanges(s));
     tabs.appendChild(ct);
+    // ▸ Logs — live dev-server tail (poll-based). Also worktree-only.
+    const lt = h(`<span class="tab ${dockView === 'logs' ? 'on' : ''}">▸ Logs</span>`);
+    lt.addEventListener('click', () => openLogs(s));
+    tabs.appendChild(lt);
   }
   const add = h(`<span class="tab"><span class="newtab">＋</span></span>`);
   add.addEventListener('click', () => addTab(s));
@@ -327,9 +342,10 @@ function renderTabstrip(s) {
 }
 
 function applyDockView() {
-  const tw = $('#termWrap'); const cp = $('#changesPanel');
+  const tw = $('#termWrap'); const cp = $('#changesPanel'); const lp = $('#logsPanel');
   if (tw) tw.hidden = dockView !== 'term';
   if (cp) cp.hidden = dockView !== 'changes';
+  if (lp) lp.hidden = dockView !== 'logs';
 }
 
 function changesFileCount() {
@@ -354,6 +370,7 @@ function statusFor(repo, file) {
 }
 
 function openChanges(s) {
+  stopLogsPoll();
   dockView = 'changes';
   renderTabstrip(s);
   applyDockView();
@@ -551,6 +568,124 @@ async function doCommit(s, openPr) {
   finally { btns.forEach((b) => { b.disabled = false; }); }
 }
 
+/* ---------------- live logs panel ---------------- */
+// Repos of the selected session that own a worktree (each has a per-worktree log
+// file once its dev server has been started). Carries { repo, worktreePath, running, ports }.
+function logsRepos(s) { return (state.servers[s.id] && state.servers[s.id].repos) || []; }
+
+function openLogs(s) {
+  dockView = 'logs';
+  renderTabstrip(s);
+  applyDockView();
+  renderLogsPanel(s);
+}
+
+function renderLogsPanel(s) {
+  const panel = $('#logsPanel');
+  if (!panel) return;
+  const reps = logsRepos(s);
+  // keep the prior selection if still valid, else prefer a running server, else first
+  let sel = reps.find((r) => r.worktreePath === logsSel);
+  if (!sel) sel = reps.find((r) => r.running) || reps[0];
+  logsSel = sel ? sel.worktreePath : null;
+  const opts = reps.map((r) => {
+    const ports = (r.ports && r.ports.length) ? ' ' + r.ports.map((p) => ':' + p).join(' ') : '';
+    const label = `${r.repo}${ports}${r.running ? '' : ' (stopped)'}`;
+    return `<option value="${esc(r.worktreePath)}" ${r.worktreePath === logsSel ? 'selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+  panel.innerHTML = `
+    <div class="logs-head">
+      <span>tail</span>
+      <select class="select logs-select" id="logsSelect" ${reps.length ? '' : 'disabled'}>${opts || '<option>no repos</option>'}</select>
+      <label class="chk"><input type="checkbox" id="logsFollow" ${logsFollow ? 'checked' : ''}> follow</label>
+      <button class="btn xs" id="logsClear">Clear</button>
+      <span class="tailing" id="logsTailing" hidden><i></i>tailing</span>
+    </div>
+    <div class="logbody" id="logsBody"></div>`;
+  const selEl = $('#logsSelect');
+  if (selEl) selEl.addEventListener('change', () => startLogsPoll(s, selEl.value));
+  $('#logsFollow').addEventListener('change', (e) => { logsFollow = e.target.checked; if (logsFollow) { const b = $('#logsBody'); if (b) b.scrollTop = b.scrollHeight; } });
+  $('#logsClear').addEventListener('click', () => { const b = $('#logsBody'); if (b) b.innerHTML = ''; logsPartial.delete(logsSel); });
+  if (logsSel) startLogsPoll(s, logsSel);
+  else $('#logsBody').innerHTML = `<div class="logs-hint">Promote and start a dev server to see logs.</div>`;
+}
+
+function setTailing(on, label) {
+  const el = $('#logsTailing');
+  if (!el) return;
+  el.hidden = !on;
+  if (on) el.innerHTML = `<i></i>tailing${label ? ' ' + esc(label) : ''}`;
+}
+
+function stopLogsPoll() {
+  if (logsPollT) { clearTimeout(logsPollT); logsPollT = null; }
+  setTailing(false);
+}
+
+// Poll GET /api/servers/logs?worktreePath=&offset= every ~1.5s while the Logs tab
+// is open for `wtPath`. A self-scheduling timeout (not setInterval) avoids
+// overlapping requests that could double-append. Offset is tracked per worktree.
+function startLogsPoll(s, wtPath) {
+  stopLogsPoll();
+  logsSel = wtPath;
+  const body = $('#logsBody');
+  if (!body) return;
+  body.innerHTML = '';
+  logsOffset.delete(wtPath);
+  logsPartial.delete(wtPath);
+  const opt = $('#logsSelect') && $('#logsSelect').selectedOptions[0];
+  setTailing(true, opt ? opt.textContent : '');
+  const alive = () => selectedId === s.id && dockView === 'logs' && logsSel === wtPath && $('#logsBody');
+  const tick = async () => {
+    if (!alive()) { stopLogsPoll(); return; }
+    const b = $('#logsBody');
+    try {
+      const prev = logsOffset.get(wtPath);
+      const near = (b.scrollHeight - b.scrollTop - b.clientHeight) < 60;
+      const q = prev === undefined ? '' : `&offset=${prev}`;
+      const res = await api('GET', `/api/servers/logs?worktreePath=${encodeURIComponent(wtPath)}${q}`);
+      if (!alive()) { stopLogsPoll(); return; }
+      logsOffset.set(wtPath, res.offset);
+      if (res.text) {
+        appendLogText(b, wtPath, res.text);
+        if (logsFollow && near) b.scrollTop = b.scrollHeight;
+      } else if (prev === undefined && res.size === 0 && !b.firstChild) {
+        b.innerHTML = `<div class="logs-hint">No logs yet — start this feature's dev server.</div>`;
+      }
+    } catch { /* transient network/parse error — keep polling */ }
+    if (alive()) logsPollT = setTimeout(tick, 1500);
+    else stopLogsPoll();
+  };
+  tick();
+}
+
+// Append a text chunk, buffering the trailing partial line so a line split across
+// two polls renders as one line (not two). Escapes everything.
+function appendLogText(body, wtPath, chunk) {
+  const hint = body.querySelector('.logs-hint'); if (hint) hint.remove();
+  const oldPartial = body.querySelector('.logpartial'); if (oldPartial) oldPartial.remove();
+  const combined = (logsPartial.get(wtPath) || '') + chunk;
+  const lines = combined.split('\n');
+  const partial = lines.pop();
+  logsPartial.set(wtPath, partial);
+  let html = lines.map((ln) => logLineHtml(ln, false)).join('');
+  if (partial) html += logLineHtml(partial, true);
+  if (html) body.insertAdjacentHTML('beforeend', html);
+}
+
+// One escaped log line with light level coloring and a highlighted leading timestamp.
+function logLineHtml(raw, partial) {
+  let cls = '';
+  if (/(error|fatal|exception|failed|✗|\bECONN)/i.test(raw)) cls = 'e';
+  else if (/(warn|deprecated)/i.test(raw)) cls = 'w';
+  else if (/(ready|listening|compiled|success|✓)/i.test(raw)) cls = 'ok';
+  const ts = raw.match(/^\s*(\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?)/);
+  const inner = ts
+    ? `<span class="t">${esc(ts[1])}</span>${esc(raw.slice(ts[0].length))}`
+    : esc(raw);
+  return `<div class="logline${cls ? ' ' + cls : ''}${partial ? ' logpartial' : ''}">${inner || '&nbsp;'}</div>`;
+}
+
 /* ---------------- terminal ---------------- */
 function themeForTerm() {
   const light = document.documentElement.getAttribute('data-theme') === 'light';
@@ -621,6 +756,7 @@ async function addTab(s) {
   catch (e) { toast(e.message, true); }
 }
 async function selectTab(s, i) {
+  stopLogsPoll();
   dockView = 'term'; activeTab = i;
   renderTabstrip(s); applyDockView();
   try { await api('POST', `/api/sessions/${s.id}/select-tab`, { index: i }); if (term) term.focus(); } catch (e) { toast(e.message, true); }

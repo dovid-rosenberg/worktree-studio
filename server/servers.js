@@ -13,6 +13,15 @@ const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
 
 function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
 
+// Read a byte range [start, end) from a file as UTF-8 (used for incremental log tails).
+function readRange(file, start, end) {
+  const len = end - start;
+  if (len <= 0) return '';
+  const fd = fs.openSync(file, 'r');
+  try { const buf = Buffer.alloc(len); const n = fs.readSync(fd, buf, 0, len, start); return buf.toString('utf8', 0, n); }
+  finally { fs.closeSync(fd); }
+}
+
 class Servers {
   constructor(cfg) {
     this.cfg = cfg;
@@ -149,11 +158,25 @@ class Servers {
     return this.start(repo, worktreePath);
   }
 
-  logs(worktreePath, lines = 300) {
+  // Incremental log tail, guarded to tracked log files only.
+  //  - opts.offset omitted → return the tail (last `lines` lines) + current byte size as the next offset.
+  //  - opts.offset a number → return only the bytes written after that offset.
+  // Always returns { offset, text, size } where `offset` is the byte position to pass next.
+  logs(worktreePath, opts = {}) {
+    const incremental = typeof opts.offset === 'number' && Number.isFinite(opts.offset);
     const t = this.tracked[worktreePath];
     const log = t && t.log;
-    if (!log || !fs.existsSync(log)) return '';
-    return fs.readFileSync(log, 'utf8').split('\n').slice(-lines).join('\n');
+    if (!log || !fs.existsSync(log)) return { offset: incremental ? opts.offset : 0, text: '', size: 0 };
+    let size;
+    try { size = fs.statSync(log).size; } catch { return { offset: incremental ? opts.offset : 0, text: '', size: 0 }; }
+    if (incremental) {
+      // a shrunken file means it was truncated/rotated — re-read from the start
+      const start = opts.offset > size ? 0 : Math.max(0, opts.offset);
+      return { offset: size, text: readRange(log, start, size), size };
+    }
+    const lines = opts.lines || 300;
+    const text = fs.readFileSync(log, 'utf8').split('\n').slice(-lines).join('\n');
+    return { offset: size, text, size };
   }
 }
 

@@ -364,7 +364,10 @@ async function main() {
     scheduleBroadcast();
     res.json(out);
   }));
-  app.get('/api/servers/logs', (req, res) => res.type('text/plain').send(servers.logs(req.query.worktreePath)));
+  app.get('/api/servers/logs', (req, res) => {
+    const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
+    res.json(servers.logs(req.query.worktreePath, { offset }));
+  });
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
   app.post('/api/group/start', A(async (req, res) => {
