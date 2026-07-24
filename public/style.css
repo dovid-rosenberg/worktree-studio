@@ -40,6 +40,7 @@ button { font-family:inherit; }
 .pill.agent { box-shadow:inset 2px 0 0 currentColor; padding-left:9px; }
 .pill.srv { opacity:.95; } .pill .pi { font-size:9px; margin-right:1px; }
 .pill.srv.nowt { color:var(--faint); }
+.frow.stoppedrow .fname, .frow.stoppedrow .frow-l2 { opacity:.55; }
 .srvrow .ports { display:inline-flex; gap:6px; flex-wrap:wrap; }
 .srvrow .ports .p { font-family:var(--mono); font-size:11px; color:var(--done); }
 .dlg { width:min(460px,94vw); }

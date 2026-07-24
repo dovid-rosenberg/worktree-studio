@@ -300,6 +300,8 @@ class SessionManager extends EventEmitter {
     }
     const m = status.mapEvent(event, payload);
     if (m) { s.state = m.state; if (m.activity) s.activity = m.activity; }
+    // the agent's own process exited — mark inactive so the UI offers Reactivate
+    if (event === 'SessionEnd') s.active = false;
     s.lastEventAt = Date.now();
     this._touch(id);
   }

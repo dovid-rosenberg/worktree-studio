@@ -488,9 +488,10 @@ function featActive(f) { return f.members.some((m) => m && !m.missing && (m.runn
 function renderFleet() {
   // active first, then alphabetical — a feature doesn't jump around when it starts
   const feats = (state.features || []).slice().sort((a, b) => (featActive(b) - featActive(a)) || a.name.localeCompare(b.name));
-  // unpromoted sessions with a live agent — surfaced here so Fleet is the one place you watch work
-  const agents = (state.sessions || []).filter((s) => !s.worktreePath && s.state !== 'stopped')
-    .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  // unpromoted sessions — surfaced here so Fleet is the one place you watch work.
+  // ended/deactivated ones linger as stopped (active first, then alphabetical).
+  const agents = (state.sessions || []).filter((s) => !s.worktreePath)
+    .sort((a, b) => ((a.state === 'stopped') - (b.state === 'stopped')) || (a.title || '').localeCompare(b.title || ''));
   // worktree features whose dev servers are up (may also appear under Worktrees)
   const serverFeats = feats.filter((f) => f.members.some((m) => m && m.running));
 
@@ -521,17 +522,26 @@ function renderFleet() {
   if (serverFeats.length) { list.appendChild(section('⇅ Servers running', serverFeats.length)); serverFeats.forEach((f) => list.appendChild(serverRow(f))); }
 }
 
-// A running agent that hasn't been promoted — its next step is Promote to a worktree.
+// An unpromoted agent. Live → Promote is the next step; stopped → Restart resumes it.
 function agentRow(s) {
+  const stopped = s.state === 'stopped';
   const btn = (label, fn, cls = '') => { const b = h(`<button class="btn sm ${cls}">${label}</button>`); b.addEventListener('click', fn); return b; };
-  const row = h('<div class="frow"></div>');
+  const row = h(`<div class="frow${stopped ? ' stoppedrow' : ''}"></div>`);
   const l1 = h('<div class="frow-l1"></div>');
   l1.appendChild(h(`<span class="fname">${esc(s.title || 'session')}</span>`));
   l1.appendChild(h(`<span class="pill agent ${s.state}" title="Agent — the Claude session"><span class="dot ${s.state}"></span>agent · ${esc(s.state)}</span>`));
   l1.appendChild(h('<span class="pill srv nowt" title="Not promoted — no worktree yet"><span class="pi">✦</span>no worktree</span>'));
   l1.appendChild(h('<span class="grow"></span>'));
-  l1.appendChild(btn('Go to session ▸', () => goToSession(s.id), 'primary'));
-  l1.appendChild(btn('⤴ Promote', () => promote(s), 'go'));
+  if (stopped) {
+    l1.appendChild(btn('↻ Restart', () => activateSession(s), 'go'));
+    l1.appendChild(btn('Go to session ▸', () => goToSession(s.id)));
+  } else {
+    l1.appendChild(btn('Go to session ▸', () => goToSession(s.id), 'primary'));
+    l1.appendChild(btn('⤴ Promote', () => promote(s), 'go'));
+  }
+  const del = h('<button class="btn sm ghost" title="Delete session">🗑</button>');
+  del.addEventListener('click', () => closeSession(s));
+  l1.appendChild(del);
   row.appendChild(l1);
   const l2 = h('<div class="frow-l2"></div>');
   const reps = (s.repos && s.repos.length ? s.repos : [{ repo: s.repoName }]);
