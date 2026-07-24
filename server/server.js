@@ -13,7 +13,14 @@ const sources = require('./sources');
 const { SessionManager } = require('./sessions');
 const { Servers } = require('./servers');
 const { computeFeatures } = require('./features');
-const { run, has } = require('./util');
+const { run, has, shq } = require('./util');
+
+// Wrap async route handlers so a rejected promise becomes a 500 instead of an
+// unhandled rejection (Express 4 doesn't await handlers).
+const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
+  console.error('[wt-studio]', e);
+  if (!res.headersSent) res.status(500).json({ error: e.message });
+});
 
 async function main() {
   const cfg = configMod.load();
@@ -42,10 +49,17 @@ async function main() {
     return (cfg.baseDirs || []).find((b) => repoPath.startsWith(b)) || '';
   }
 
+  // Cached lsof discovery — refreshed on a timer and after mutations, not on
+  // every SSE broadcast (which fires per Claude hook → per tool call).
+  let runningCache = new Map();
+  async function refreshRunning() {
+    try { runningCache = await servers.discoverRunning(); } catch { /* */ }
+  }
+
   // Unified state: every worktree decorated with discovered server state + its
   // session (if any), grouped into features. Superset of worktree-dash's contract.
   async function buildState() {
-    const running = await servers.discoverRunning();
+    const running = runningCache;
     const sessions = manager.all();
     const reposOut = [];
     const flat = [];
@@ -137,7 +151,7 @@ async function main() {
   app.use(express.text({ type: 'text/*', limit: '8mb' }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
-  app.get('/api/state', async (req, res) => res.json(await buildState()));
+  app.get('/api/state', A(async (req, res) => res.json(await buildState())));
 
   app.get('/api/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -150,7 +164,7 @@ async function main() {
   });
 
   // ---- settings / connections ----
-  app.get('/api/settings', async (req, res) => {
+  app.get('/api/settings', A(async (req, res) => {
     const gh = await run('gh', ['auth', 'status'], {});
     res.json({
       sources: cfg.sources || {},
@@ -159,8 +173,8 @@ async function main() {
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
     });
-  });
-  app.post('/api/settings', async (req, res) => {
+  }));
+  app.post('/api/settings', A(async (req, res) => {
     const { sources: srcs, baseDirs } = req.body || {};
     if (srcs) {
       cfg.sources = cfg.sources || {};
@@ -175,18 +189,18 @@ async function main() {
     configMod.save(cfg);
     if (rescanNeeded) await rescan(); else scheduleBroadcast();
     res.json({ ok: true, sources: cfg.sources, baseDirs: cfg.baseDirs, enabled: sources.enabled(cfg) });
-  });
+  }));
 
   // ---- sources ----
   app.get('/api/sources', (req, res) => res.json(sources.enabled(cfg)));
-  app.get('/api/sources/:source/items', async (req, res) => {
+  app.get('/api/sources/:source/items', A(async (req, res) => {
     const repo = repos.find((r) => r.name === req.query.repo);
     const out = await sources.list(cfg, req.params.source, { repoPath: repo && repo.path, q: req.query.q });
     res.json(out);
-  });
+  }));
 
   // ---- sessions ----
-  app.post('/api/sessions', async (req, res) => {
+  app.post('/api/sessions', A(async (req, res) => {
     try {
       const { source, sourceId, text, name, repo, additionalRepos } = req.body || {};
       const repoObj = repos.find((r) => r.name === repo);
@@ -198,79 +212,82 @@ async function main() {
       const session = await manager.create({ seed, repoPath: repoObj.path, repoName: repoObj.name, additionalRepos: extra });
       res.json(session);
     } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  }));
 
-  app.post('/api/sessions/:id/rename', async (req, res) => {
+  app.post('/api/sessions/:id/rename', A(async (req, res) => {
     res.json(await manager.rename(req.params.id, (req.body && req.body.title) || ''));
-  });
-  app.post('/api/sessions/:id/deactivate', async (req, res) => { res.json(await manager.deactivate(req.params.id)); });
-  app.post('/api/sessions/:id/activate', async (req, res) => { res.json(await manager.activate(req.params.id)); });
+  }));
+  app.post('/api/sessions/:id/deactivate', A(async (req, res) => { res.json(await manager.deactivate(req.params.id)); }));
+  app.post('/api/sessions/:id/activate', A(async (req, res) => { res.json(await manager.activate(req.params.id)); }));
 
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
-  app.post('/api/sessions/:id/add-repo', async (req, res) => {
+  app.post('/api/sessions/:id/add-repo', A(async (req, res) => {
     const repoObj = repos.find((r) => r.name === (req.body && req.body.repo));
     if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body && req.body.repo}'` });
     const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the sibling worktree so the feature updates immediately
     res.json(out);
-  });
+  }));
 
-  app.post('/api/sessions/:id/promote', async (req, res) => {
+  app.post('/api/sessions/:id/promote', A(async (req, res) => {
     const out = await manager.promote(req.params.id, req.body || {});
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the new worktree(s) so features update immediately
     res.json(out);
-  });
+  }));
 
-  app.post('/api/sessions/:id/tabs', async (req, res) => {
+  app.post('/api/sessions/:id/tabs', A(async (req, res) => {
     res.json(await manager.addTab(req.params.id, req.body || {}));
-  });
+  }));
 
-  app.post('/api/sessions/:id/select-tab', async (req, res) => {
+  app.post('/api/sessions/:id/select-tab', A(async (req, res) => {
     res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
-  });
+  }));
 
-  app.post('/api/sessions/:id/close-tab', async (req, res) => {
+  app.post('/api/sessions/:id/close-tab', A(async (req, res) => {
     res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
-  });
+  }));
 
   // Start / stop ALL dev servers of a session's shared workspace (every repo it owns).
-  app.post('/api/sessions/:id/servers/start', async (req, res) => {
+  app.post('/api/sessions/:id/servers/start', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const results = [];
     for (const r of (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo))) {
       results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath)) });
     }
+    await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: results.some((r) => r.ok), results });
-  });
-  app.post('/api/sessions/:id/servers/stop', async (req, res) => {
+  }));
+  app.post('/api/sessions/:id/servers/stop', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     for (const r of (s.repos || []).filter((x) => x.worktreePath)) await servers.stop(r.repo, r.worktreePath);
+    await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
-  });
+  }));
 
-  app.post('/api/sessions/:id/popout', async (req, res) => {
+  app.post('/api/sessions/:id/popout', A(async (req, res) => {
     const cmd = manager.popout(req.params.id);
     if (!cmd) return res.status(404).json({ error: 'no such session' });
     // open a native Terminal window attached to the same mux session
     const script = `tell application "Terminal" to do script ${JSON.stringify(cmd)}\ntell application "Terminal" to activate`;
     await run('osascript', ['-e', script]);
     res.json({ ok: true, cmd });
-  });
+  }));
 
-  app.delete('/api/sessions/:id', async (req, res) => {
+  app.delete('/api/sessions/:id', A(async (req, res) => {
     res.json(await manager.close(req.params.id, { kill: req.query.kill !== 'false' }));
-  });
+  }));
 
   // ---- worktrees (manual) ----
-  app.post('/api/worktrees', async (req, res) => {
+  app.post('/api/worktrees', A(async (req, res) => {
     const { repo, branch, name } = req.body || {};
+    if (!branch && !name) return res.status(400).json({ error: 'branch or name is required' });
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     const out = await worktree.create(repoObj.path, branch, name, {
@@ -278,40 +295,43 @@ async function main() {
     });
     await rescan();
     res.json(out);
-  });
+  }));
 
-  app.delete('/api/worktrees', async (req, res) => {
+  app.delete('/api/worktrees', A(async (req, res) => {
     const { repo, worktreePath, branch, deleteBranch } = req.body || {};
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     const out = await worktree.remove(repoObj.path, worktreePath, { branch, deleteBranch });
     await rescan();
     res.json(out);
-  });
+  }));
 
   // ---- dev servers ----
-  app.post('/api/servers/start', async (req, res) => {
+  app.post('/api/servers/start', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.start(repo, worktreePath);
+    await refreshRunning();
     scheduleBroadcast();
     res.json(out);
-  });
-  app.post('/api/servers/stop', async (req, res) => {
+  }));
+  app.post('/api/servers/stop', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.stop(repo, worktreePath);
+    await refreshRunning();
     scheduleBroadcast();
     res.json(out);
-  });
-  app.post('/api/servers/restart', async (req, res) => {
+  }));
+  app.post('/api/servers/restart', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.restart(repo, worktreePath);
+    await refreshRunning();
     scheduleBroadcast();
     res.json(out);
-  });
+  }));
   app.get('/api/servers/logs', (req, res) => res.type('text/plain').send(servers.logs(req.query.worktreePath)));
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
-  app.post('/api/group/start', async (req, res) => {
+  app.post('/api/group/start', A(async (req, res) => {
     const { group, stopConflicts } = req.body || {};
     const { group: g, flat } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
@@ -331,39 +351,42 @@ async function main() {
       const r = await servers.start(m.repo, m.path);
       if (r.ok) started++; else failures.push({ repo: m.repo, error: r.error });
     }));
+    await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true, started, total: toStart.length, failures });
-  });
-  app.post('/api/group/stop', async (req, res) => {
+  }));
+  app.post('/api/group/stop', A(async (req, res) => {
     const { group } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
+    await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
-  });
-  app.post('/api/group/restart', async (req, res) => {
+  }));
+  app.post('/api/group/restart', A(async (req, res) => {
     const { group } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running || m.canStart).map((m) => servers.restart(m.repo, m.path)));
+    await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
-  });
-  app.post('/api/group/open', async (req, res) => {
+  }));
+  app.post('/api/group/open', A(async (req, res) => {
     const { group, editor } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
     const paths = g.members.map((m) => m.path);
-    if (ed.openGroup) { await run('bash', ['-lc', ed.openGroup.replace('{paths}', paths.map((p) => `'${p}'`).join(' '))]); }
-    else { for (const p of paths) await run('bash', ['-lc', ed.open.replace('{path}', p)]); }
+    if (ed.openGroup) { await run('bash', ['-lc', ed.openGroup.replace('{paths}', paths.map(shq).join(' '))]); }
+    else { for (const p of paths) await run('bash', ['-lc', ed.open.replace('{path}', shq(p))]); }
     res.json({ ok: true });
-  });
+  }));
 
   // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
-  app.post('/api/group/close', async (req, res) => {
+  app.post('/api/group/close', A(async (req, res) => {
     const { group: g } = await resolveGroup(req.body && req.body.group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     for (const m of g.members) {
@@ -372,27 +395,28 @@ async function main() {
     }
     scheduleBroadcast();
     res.json({ ok: true });
-  });
+  }));
 
   // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
-  app.post('/api/group/delete', async (req, res) => {
+  app.post('/api/group/delete', A(async (req, res) => {
     const { group, deleteBranches } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const results = [];
     for (const m of g.members) {
+      const repoObj = repos.find((r) => r.name === m.repo);
+      if (!repoObj) { results.push({ repo: m.repo, ok: false, error: 'unknown repo' }); continue; }
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.close(m.session.id);
-      const repoObj = repos.find((r) => r.name === m.repo);
       const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: deleteBranches });
       results.push({ repo: m.repo, ok: rr.ok, error: rr.error });
     }
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
-  });
+  }));
 
   // Open a PR (gh) / MR (glab) for each of a feature's branches.
-  app.post('/api/group/pr', async (req, res) => {
+  app.post('/api/group/pr', A(async (req, res) => {
     const { group: g } = await resolveGroup(req.body && req.body.group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
@@ -406,14 +430,15 @@ async function main() {
       results.push({ repo: m.repo, error: (r.stderr || '').trim().split('\n')[0] || 'gh/glab unavailable or failed' });
     }
     res.json({ ok: results.some((r) => r.url), results });
-  });
+  }));
 
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
-  app.post('/api/group/session', async (req, res) => {
+  app.post('/api/group/session', A(async (req, res) => {
     const { group: g } = await resolveGroup(req.body && req.body.group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const members = g.members;
+    if (!members.length) return res.status(400).json({ error: 'feature has no members' });
     for (const m of members) { const s = manager.sessionForWorktree(m.path); if (s) return res.json({ ok: true, session: s, existed: true }); }
     const [primary, ...rest] = members;
     const pRepo = repos.find((r) => r.name === primary.repo);
@@ -426,28 +451,29 @@ async function main() {
     }
     scheduleBroadcast();
     res.json({ ok: true, session });
-  });
+  }));
 
   // Start a session in an existing worktree (Fleet: "Start session here")
-  app.post('/api/worktrees/adopt', async (req, res) => {
+  app.post('/api/worktrees/adopt', A(async (req, res) => {
     const { repo, worktreePath, branch, wtname } = req.body || {};
+    if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     let s = await manager.adopt({ worktreePath, repoName: repo, repoPath: repoObj.path, branch, wtname });
     if (!s) s = manager.sessionForWorktree(worktreePath); // an adopt was already in flight
     scheduleBroadcast();
     res.json(s || { error: 'session is already being opened' });
-  });
+  }));
 
   // ---- editor open ----
-  app.post('/api/open', async (req, res) => {
+  app.post('/api/open', A(async (req, res) => {
     const { path: p, editor } = req.body || {};
     const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
-    const cmd = ed.open.replace('{path}', p);
+    const cmd = ed.open.replace('{path}', shq(p));
     await run('bash', ['-lc', cmd]);
     res.json({ ok: true });
-  });
+  }));
 
   // ---- Claude Code hook receiver ----
   app.post('/hook/:event', (req, res) => {
@@ -487,8 +513,12 @@ async function main() {
   });
 
   // ---- boot ----
+  process.on('unhandledRejection', (e) => console.error('[wt-studio] unhandledRejection', e));
+  process.on('uncaughtException', (e) => console.error('[wt-studio] uncaughtException', e));
   await rescan();
   setInterval(rescan, 15000);
+  await refreshRunning();
+  setInterval(refreshRunning, 3000);
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 

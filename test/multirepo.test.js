@@ -71,3 +71,14 @@ test('addRepo is idempotent for a repo already in the feature', async () => {
   assert.equal(out.already, true);
   assert.equal(m.get('s3').repos.length, 1);
 });
+
+test('restore() leaves a deactivated session stopped and does not relaunch it', async () => {
+  const m = manager();
+  const ensured = [];
+  m.mux = { async ensure(n) { ensured.push(n); return {}; }, async hasSession() { return false; } };
+  m.sessions.set('d1', { id: 'd1', muxName: 'mux-d1', active: false, state: 'stopped', createdAt: 1 });
+  const n = await m.restore();
+  assert.equal(n, 0, 'nothing restored');
+  assert.equal(ensured.length, 0, 'mux.ensure not called for a deactivated session');
+  assert.equal(m.get('d1').state, 'stopped');
+});

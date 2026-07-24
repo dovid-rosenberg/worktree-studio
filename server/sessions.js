@@ -356,6 +356,7 @@ class SessionManager extends EventEmitter {
     let n = 0;
     for (const s of this.all()) {
       if (!s.muxName) continue;
+      if (s.active === false) continue;
       if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
       const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
       const cwd = s.worktreePath || s.home || s.repoPath;
