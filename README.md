@@ -4,7 +4,7 @@
 
 The origin of work is a *real Claude Code session* (booted on your `CLAUDE.md`), not a form.
 Start one from free text, a GitHub / GitLab issue, or an Asana task; it runs in an
-embedded terminal backed by a persistent multiplexer. When it's clearly real work,
+embedded terminal backed by a persistent tmux session. When it's clearly real work,
 **promote** it — one click creates a worktree (run configs + local files carried in)
 and the *same session continues into it*. Status is pushed by Claude Code hooks;
 sessions survive a shutdown and resume where they left off.
@@ -34,22 +34,23 @@ The app has one engine (this server) and two focused surfaces you toggle between
   one feature in Fleet + the menubar.
 - **Session management.** Rename, deactivate (stop the process, keep it resumable) / reactivate,
   delete. A **⚙ Connections** panel configures GitHub (via `gh`) / GitLab / Asana.
-- **Sessions are real `claude` processes** inside a multiplexer (**zellij** preferred,
-  **tmux** fallback — auto-selected). Embedded xterm terminal, multiple tabs, and a
-  **Pop out** button that opens the *same live session* in a native terminal window.
+- **Sessions are real `claude` processes** inside **tmux** (dedicated socket, chrome-free
+  config so it reads native). Embedded xterm terminal, multiple tabs, and a **Pop out**
+  button that opens the *same live session* in a native terminal window via a grouped
+  tmux session — closing it never orphans the embedded terminal.
 - **Baked-in worktrees.** No external `wt` script — creation is native: `git worktree add`
   off the default branch, plus copying the gitignored bits a plain add drops
   (`.idea/runConfigurations/*.xml`, `.env`, `config/*-config.js`).
 - **Hook-driven status.** A per-session `--settings` file wires Claude Code lifecycle
   hooks (SessionStart / PreToolUse / Notification / Stop / …) to the app — working /
   waiting / idle / stopped, pushed live over SSE. Your global settings are untouched.
-- **Resume after shutdown.** A `{ session → id }` registry + `claude --resume`; zellij
-  also resurrects its own panes. Restart the app and sessions come back.
+- **Resume after shutdown.** A `{ session → id }` registry + `claude --resume`; tmux
+  sessions persist and are reattached (tabs reconciled). Restart the app and sessions come back.
 - **Dev servers per worktree** — start / stop / status via `lsof` on configured ports.
 
 ## Requirements
 
-- macOS, Node ≥ 18, `git`, and **zellij** or **tmux** (`brew install zellij`).
+- macOS, Node ≥ 18, `git`, and **tmux** (`brew install tmux`).
 - `claude` (Claude Code) on PATH. Optional: `gh`, `glab` for issue sources.
 
 ## Run
@@ -69,7 +70,6 @@ npm start            # → http://127.0.0.1:7788
 |---|---|
 | `baseDirs`, `scanDepth` | where to discover repos + their worktrees |
 | `web.port` | dashboard port (default 7788, bound to 127.0.0.1) |
-| `multiplexer` | `auto` (prefer zellij) · `zellij` · `tmux` |
 | `claude.cmd` | command used to launch a session (default `claude`) |
 | `copyPatterns` | gitignored files carried into new worktrees (per-repo or `default`) |
 | `start.<repo>` | `{ cmd, ports }` dev-server launch config |
@@ -84,7 +84,7 @@ server/
   config.js            config load/seed
   git.js               repo + worktree discovery
   worktree.js          native `wt` (create/remove + copy gitignored files)
-  multiplexer/         index (auto-select) · zellij · tmux drivers
+  multiplexer/         index (tmux selector) · tmux driver
   sessions.js          session lifecycle: create / promote / popout / restore
   status.js            hook-settings generator + event→state machine
   servers.js           dev-server start/stop/status

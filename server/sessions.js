@@ -265,7 +265,7 @@ class SessionManager extends EventEmitter {
   async closeTab(id, index) {
     const s = this.get(id);
     if (!s) return { ok: false };
-    if (Number(index) <= 0) return { ok: false, error: 'cannot close the primary tab' };
+    if ((s.tabs || []).length <= 1) return { ok: false, error: 'can’t close the only tab' };
     await this.mux.closeTab(s.muxName, index);
     (s.tabs || []).splice(index, 1);
     this._touch(id);
@@ -338,15 +338,29 @@ class SessionManager extends EventEmitter {
     return { ok: !r.error, error: r.error };
   }
 
+  // Reconcile a session's tab strip with the tmux windows that actually exist.
+  async _syncTabs(s) {
+    try {
+      const live = await this.mux.listTabs(s.muxName);
+      if (!live.length) return;
+      const prev = s.tabs || [];
+      // keep our stored titles by position; fall back to the live window name
+      s.tabs = live.map((w, i) => ({ title: (prev[i] && prev[i].title) || w.title }));
+    } catch { /* leave tabs as-is if the mux can't be queried */ }
+  }
+
   // Recreate every persisted session after a restart, resuming the conversation.
   async restore() {
     let n = 0;
     for (const s of this.all()) {
       if (!s.muxName) continue;
-      if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; continue; }
+      if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
       const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
       const cwd = s.worktreePath || s.home || s.repoPath;
       await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+      // restore recreates only the primary claude window — drop any stale extra
+      // tabs so the tab strip matches the windows that actually exist.
+      s.tabs = [{ title: 'claude' }];
       s.state = 'idle';
       s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
       n++;

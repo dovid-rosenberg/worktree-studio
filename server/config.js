@@ -4,7 +4,7 @@
 // two feel like one world.
 const fs = require('fs');
 const path = require('path');
-const { HOME, expandTilde, readJson, writeJson, has } = require('./util');
+const { HOME, expandTilde, readJson, writeJson } = require('./util');
 
 const CONFIG_DIR = process.env.WT_STUDIO_CONFIG_DIR || path.join(HOME, '.config', 'worktree-studio');
 const CONFIG_FILE = process.env.WT_STUDIO_CONFIG || path.join(CONFIG_DIR, 'config.json');
@@ -18,8 +18,6 @@ function defaults() {
     baseDirs: dash.baseDirs || ['~/Desktop/ab-code'],
     scanDepth: dash.scanDepth || 3,
     web: { port: 7788, host: '127.0.0.1' },
-    // "auto" prefers zellij when installed, else tmux.
-    multiplexer: 'auto',
     claude: { cmd: 'claude' },
     editors: dash.editors || {
       WebStorm: { open: 'open -na WebStorm --args {path}' },
@@ -64,12 +62,6 @@ function load() {
   cfg._file = CONFIG_FILE;
   cfg._stateDir = STATE_DIR;
   cfg.baseDirs = (cfg.baseDirs || []).map(expandTilde);
-  // resolve multiplexer
-  if (cfg.multiplexer === 'auto') {
-    cfg._mux = has('zellij') ? 'zellij' : (has('tmux') ? 'tmux' : 'none');
-  } else {
-    cfg._mux = cfg.multiplexer;
-  }
   fs.mkdirSync(STATE_DIR, { recursive: true });
   return cfg;
 }

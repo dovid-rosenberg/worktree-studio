@@ -17,9 +17,9 @@ const { run, has } = require('./util');
 
 async function main() {
   const cfg = configMod.load();
-  const mux = await muxSelect.select(cfg.multiplexer);
+  const mux = await muxSelect.select();
   if (!mux) {
-    console.error('[wt-studio] no multiplexer available (need zellij or tmux). Install one and retry.');
+    console.error('[wt-studio] tmux not found — install it (brew install tmux) and retry.');
   } else {
     console.log(`[wt-studio] multiplexer: ${mux.name}`);
   }
@@ -72,12 +72,19 @@ async function main() {
       const m = (f.members || []).find((x) => x && x.session);
       f.session = m ? m.session : null;
     }
-    // per-session server state (Work-view compatibility)
+    // per-session server state — every repo the session owns (its shared workspace)
+    const { realpath } = require('./servers');
     const serversById = {};
     for (const s of sessions) {
-      if (s.worktreePath) {
-        const hit = running.get(require('./servers').realpath(s.worktreePath));
-        serversById[s.id] = { configured: !!servers.startCfg(s.repoName), running: !!hit, ports: hit ? hit.ports.map((p) => ({ port: p, up: true })) : [], pid: hit ? hit.pid : null };
+      const owned = (s.repos || []).filter((r) => r.worktreePath);
+      const list = owned.length ? owned : (s.worktreePath ? [{ repo: s.repoName, worktreePath: s.worktreePath }] : []);
+      if (list.length) {
+        serversById[s.id] = {
+          repos: list.map((r) => {
+            const hit = running.get(realpath(r.worktreePath));
+            return { repo: r.repo, worktreePath: r.worktreePath, running: !!hit, ports: hit ? hit.ports : [], canStart: !!servers.startCfg(r.repo) };
+          }),
+        };
       }
     }
     return {
@@ -227,6 +234,25 @@ async function main() {
 
   app.post('/api/sessions/:id/close-tab', async (req, res) => {
     res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
+  });
+
+  // Start / stop ALL dev servers of a session's shared workspace (every repo it owns).
+  app.post('/api/sessions/:id/servers/start', async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    const results = [];
+    for (const r of (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo))) {
+      results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath)) });
+    }
+    scheduleBroadcast();
+    res.json({ ok: results.some((r) => r.ok), results });
+  });
+  app.post('/api/sessions/:id/servers/stop', async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    for (const r of (s.repos || []).filter((x) => x.worktreePath)) await servers.stop(r.repo, r.worktreePath);
+    scheduleBroadcast();
+    res.json({ ok: true });
   });
 
   app.post('/api/sessions/:id/popout', async (req, res) => {

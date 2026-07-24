@@ -253,8 +253,10 @@ function updateDock(s) {
   // tabs
   const tabs = $('#dockTabs');
   tabs.innerHTML = '';
-  (s.tabs || [{ title: 'claude' }]).forEach((t, i) => {
-    const tab = h(`<span class="tab ${i === 0 ? 'on' : ''}"><span class="dot ${i === 0 ? s.state : 'idle'}"></span>${esc(t.title)}${i > 0 ? ' <span class="tabclose" title="Close tab">✕</span>' : ''}</span>`);
+  const tabList = s.tabs || [{ title: 'claude' }];
+  tabList.forEach((t, i) => {
+    const closable = tabList.length > 1; // any tab can be closed when more than one
+    const tab = h(`<span class="tab ${i === 0 ? 'on' : ''}"><span class="dot ${i === 0 ? s.state : 'idle'}"></span>${esc(t.title)}${closable ? ' <span class="tabclose" title="Close tab">✕</span>' : ''}</span>`);
     tab.addEventListener('click', () => selectTab(s, i, tabs));
     const x = tab.querySelector('.tabclose');
     if (x) x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(s, i); });
@@ -267,19 +269,22 @@ function updateDock(s) {
   pop.addEventListener('click', () => popout(s));
   tabs.appendChild(pop);
 
-  // server bar
+  // server bar — the whole shared workspace (every repo this session owns)
   const bar = $('#serverBar');
   const st = state.servers[s.id];
+  const reps = (st && st.repos) || [];
   if (!promoted) {
-    bar.innerHTML = `<span>Promote to a worktree to run dev servers.</span>`;
-  } else if (!st || !st.configured) {
-    bar.innerHTML = `<span>No dev-server config for <b>${esc(s.repoName)}</b> (set <code>start.${esc(s.repoName)}</code> in config).</span>`;
+    bar.innerHTML = '<span>Promote to a worktree to run dev servers.</span>';
+  } else if (!reps.some((r) => r.canStart)) {
+    bar.innerHTML = `<span>No dev-server config for this feature’s repos (set <code>start.&lt;repo&gt;</code> in config).</span>`;
   } else {
-    const chips = (st.ports || []).map((p) => `<span class="portchip"><span class="dot ${p.up ? 'done' : 'idle'}"></span>:${p.port}</span>`).join('');
-    bar.innerHTML = `<span>servers ${chips || '—'}</span><span class="spacer" style="flex:1"></span>`;
-    const btn = h(`<button class="btn sm">${st.running ? 'Stop' : 'Run server'}</button>`);
-    btn.addEventListener('click', () => (st.running ? stopServer(s) : startServer(s)));
-    bar.appendChild(btn);
+    const anyRunning = reps.some((r) => r.running);
+    const anyStopped = reps.some((r) => r.canStart && !r.running);
+    bar.innerHTML = '<span>workspace</span>'
+      + reps.map((r) => `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}"></span>${esc(r.repo)}${r.ports.length ? ' ' + r.ports.map((p) => ':' + p).join(' ') : ''}</span>`).join('')
+      + '<span class="spacer" style="flex:1"></span>';
+    if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => startSessionServers(s)); bar.appendChild(b); }
+    if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => stopSessionServers(s)); bar.appendChild(b); }
   }
 }
 
@@ -375,8 +380,9 @@ async function deactivateSession(s) {
 async function activateSession(s) {
   try { await api('POST', `/api/sessions/${s.id}/activate`, {}); toast('Reactivated — resuming'); } catch (e) { toast(e.message, true); }
 }
-async function startServer(s) { try { const r = await api('POST', '/api/servers/start', { repo: s.repoName, worktreePath: s.worktreePath }); toast(r.ok ? `Server starting (pid ${r.pid})` : r.error, !r.ok); } catch (e) { toast(e.message, true); } }
-async function stopServer(s) { try { await api('POST', '/api/servers/stop', { repo: s.repoName, worktreePath: s.worktreePath }); toast('Server stopped'); } catch (e) { toast(e.message, true); } }
+// start/stop every dev server in the session's shared workspace
+async function startSessionServers(s) { try { const r = await api('POST', `/api/sessions/${s.id}/servers/start`, {}); toast(r.ok ? 'Workspace servers starting' : 'Some failed to start', !r.ok); } catch (e) { toast(e.message, true); } }
+async function stopSessionServers(s) { try { await api('POST', `/api/sessions/${s.id}/servers/stop`, {}); toast('Workspace servers stopped'); } catch (e) { toast(e.message, true); } }
 async function openEditor(p) { try { await api('POST', '/api/open', { path: p }); } catch (e) { toast(e.message, true); } }
 
 /* ---------------- intake modal ---------------- */
