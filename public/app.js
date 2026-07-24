@@ -398,9 +398,14 @@ function updateDock(s) {
   } else {
     const anyRunning = reps.some((r) => r.running);
     const anyStopped = reps.some((r) => r.canStart && !r.running);
+    // A running repo with ports → one clickable chip per port (opens localhost:<port>).
+    // Anything else (running-no-ports, stopped) → an inert repo chip.
     bar.innerHTML = '<span>workspace</span>'
-      + reps.map((r) => `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}"></span>${esc(r.repo)}${r.ports.length ? ' ' + r.ports.map((p) => ':' + p).join(' ') : ''}</span>`).join('')
+      + reps.map((r) => (r.running && r.ports.length
+        ? r.ports.map((p) => `<span class="portchip open" data-port="${esc(p)}" title="Open http://localhost:${esc(p)}"><span class="dot done"></span>${esc(r.repo)} :${esc(p)} <span class="go">↗</span></span>`).join('')
+        : `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}"></span>${esc(r.repo)}</span>`)).join('')
       + '<span class="spacer" style="flex:1"></span>';
+    bar.querySelectorAll('.portchip.open').forEach((el) => el.addEventListener('click', () => window.open(`http://localhost:${el.dataset.port}`, '_blank', 'noopener')));
     if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => startSessionServers(s)); bar.appendChild(b); }
     if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => stopSessionServers(s)); bar.appendChild(b); }
   }
@@ -1266,14 +1271,76 @@ async function openSettings() {
       <label class="chk"><input type="checkbox" id="setNotifyWaiting" ${nt.waiting ? 'checked' : ''}/> Desktop notification when a session needs input</label>
       <label class="chk"><input type="checkbox" id="setNotifySound" ${nt.sound ? 'checked' : ''}/> Play a sound</label>
       <label class="chk"><input type="checkbox" id="setNotifyIdle" ${nt.idle ? 'checked' : ''}/> Notify when a turn completes</label>
+    </div>
+    <datalist id="setRepoList">${state.repos.map((r) => `<option value="${esc(r.name)}"></option>`).join('')}</datalist>
+    <div class="setsec">
+      <span class="lbl">Dev servers <span class="lbl-note">— per-repo launch command &amp; ports (space/comma separated)</span></span>
+      <div id="setStartRows"></div>
+      <button class="btn ghost xs" id="setStartAdd" style="align-self:flex-start">＋ add server</button>
+    </div>
+    <div class="setsec">
+      <span class="lbl">Editors <span class="lbl-note">— <code>{path}</code> is the worktree path</span></span>
+      <div id="setEditorRows"></div>
+      <button class="btn ghost xs" id="setEditorAdd" style="align-self:flex-start">＋ add editor</button>
+    </div>
+    <div class="setsec">
+      <span class="lbl">Feature groups <span class="lbl-note">— members are <code>repo/branch-or-wtname</code> refs, comma-separated</span></span>
+      <div id="setGroupRows"></div>
+      <button class="btn ghost xs" id="setGroupAdd" style="align-self:flex-start">＋ add group</button>
     </div>`;
   const wbox = $('#setNotifyWaiting');
   if (wbox) wbox.addEventListener('change', () => {
     if (wbox.checked && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
   });
+  // editable config rows (dev servers / editors / groups) — DOM built, add/remove per row
+  const startRows = $('#setStartRows');
+  Object.entries(data.start || {}).forEach(([repo, v]) => startRows.appendChild(settingsStartRow(repo, v)));
+  $('#setStartAdd').addEventListener('click', () => startRows.appendChild(settingsStartRow('', {})));
+  const edRows = $('#setEditorRows');
+  Object.entries(data.editors || {}).forEach(([name, v]) => edRows.appendChild(settingsEditorRow(name, v)));
+  $('#setEditorAdd').addEventListener('click', () => edRows.appendChild(settingsEditorRow('', {})));
+  const grpRows = $('#setGroupRows');
+  (data.groups || []).forEach((g) => grpRows.appendChild(settingsGroupRow(g)));
+  $('#setGroupAdd').addEventListener('click', () => grpRows.appendChild(settingsGroupRow({})));
   $('#settingsModal').hidden = false;
 }
 function closeSettings() { $('#settingsModal').hidden = true; }
+
+// One editable Dev-servers row: repo (datalist of scanned repos) · command · ports · remove.
+function settingsStartRow(repo, v) {
+  const ports = ((v && v.ports) || []).join(' ');
+  const row = h(`<div class="srvcfg-row">
+    <input class="dv-repo" list="setRepoList" value="${esc(repo)}" placeholder="repo…">
+    <input class="dv-cmd" value="${esc((v && v.cmd) || '')}" placeholder="command…">
+    <input class="dv-ports" value="${esc(ports)}" placeholder="ports">
+    <button class="btn ghost xs" title="Remove">✕</button>
+  </div>`);
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  return row;
+}
+// One editable Editor row: name · open command ({path}) · remove. openGroup is preserved via data attr.
+function settingsEditorRow(name, v) {
+  const og = v && v.openGroup ? ` data-opengroup="${esc(v.openGroup)}"` : '';
+  const row = h(`<div class="srvcfg-row cols3"${og}>
+    <input class="ed-name" value="${esc(name)}" placeholder="name…">
+    <input class="ed-open" value="${esc((v && v.open) || '')}" placeholder="open command with {path}…">
+    <button class="btn ghost xs" title="Remove">✕</button>
+  </div>`);
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  return row;
+}
+// One editable Group row: name · members (comma-separated refs) · remove.
+function settingsGroupRow(g) {
+  const members = ((g && g.members) || []).join(', ');
+  const row = h(`<div class="srvcfg-row cols3">
+    <input class="gp-name" value="${esc((g && g.name) || '')}" placeholder="group name…">
+    <input class="gp-members" value="${esc(members)}" placeholder="repo/branch, repo/branch…">
+    <button class="btn ghost xs" title="Remove">✕</button>
+  </div>`);
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  return row;
+}
+
 async function saveSettings() {
   const sources = {
     gitlab: { enabled: $('#setGlEnabled').checked, host: $('#setGlHost').value.trim(), project: $('#setGlProject').value.trim(), token: $('#setGlToken').value.trim() },
@@ -1286,7 +1353,31 @@ async function saveSettings() {
     idle: !!($('#setNotifyIdle') && $('#setNotifyIdle').checked),
   };
   notifyPrefs = { ...notifyPrefs, ...notify };
-  try { await api('POST', '/api/settings', { sources, baseDirs, notify }); closeSettings(); toast('Settings saved'); } catch (e) { toast(e.message, true); }
+  // gather the editable config rows, skipping blanks and coercing ports to positive ints
+  const start = {};
+  document.querySelectorAll('#setStartRows .srvcfg-row').forEach((row) => {
+    const repo = row.querySelector('.dv-repo').value.trim();
+    const cmd = row.querySelector('.dv-cmd').value.trim();
+    if (!repo || !cmd) return;
+    const ports = row.querySelector('.dv-ports').value.split(/[\s,]+/).map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0);
+    start[repo] = { cmd, ports };
+  });
+  const editors = {};
+  document.querySelectorAll('#setEditorRows .srvcfg-row').forEach((row) => {
+    const name = row.querySelector('.ed-name').value.trim();
+    const open = row.querySelector('.ed-open').value.trim();
+    if (!name || !open) return;
+    const og = row.dataset.opengroup;
+    editors[name] = og ? { open, openGroup: og } : { open };
+  });
+  const groups = [];
+  document.querySelectorAll('#setGroupRows .srvcfg-row').forEach((row) => {
+    const name = row.querySelector('.gp-name').value.trim();
+    const members = row.querySelector('.gp-members').value.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!name || !members.length) return;
+    groups.push({ name, members });
+  });
+  try { await api('POST', '/api/settings', { sources, baseDirs, notify, start, editors, groups }); closeSettings(); toast('Settings saved'); } catch (e) { toast(e.message, true); }
 }
 
 /* ---------------- command palette (⌘K) ---------------- */

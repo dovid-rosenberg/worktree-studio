@@ -171,13 +171,17 @@ async function main() {
       sources: cfg.sources || {},
       baseDirs: cfg.baseDirs || [],
       notify: cfg.notify || {},
+      start: cfg.start || {},
+      editors: cfg.editors || {},
+      defaultEditor: cfg.defaultEditor || '',
+      groups: cfg.groups || [],
       enabled: sources.enabled(cfg),
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
     });
   }));
   app.post('/api/settings', A(async (req, res) => {
-    const { sources: srcs, baseDirs, notify } = req.body || {};
+    const { sources: srcs, baseDirs, notify, start, editors, defaultEditor, groups } = req.body || {};
     if (srcs) {
       cfg.sources = cfg.sources || {};
       for (const k of Object.keys(srcs)) cfg.sources[k] = { ...(cfg.sources[k] || {}), ...srcs[k] };
@@ -191,9 +195,54 @@ async function main() {
       cfg.baseDirs = baseDirs.map((s) => expandTilde(String(s).trim())).filter(Boolean);
       rescanNeeded = true;
     }
+    // Dev-server launch config { "<repo>": { cmd, ports:[…] } } — full replace, drop blank rows.
+    if (start && typeof start === 'object' && !Array.isArray(start)) {
+      const coercePorts = (v) => (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\s,]+/))
+        .map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0);
+      const clean = {};
+      for (const [repo, v] of Object.entries(start)) {
+        const name = String(repo).trim();
+        const cmd = v && typeof v === 'object' ? String(v.cmd || '').trim() : '';
+        if (!name || !cmd) continue;
+        clean[name] = { cmd, ports: coercePorts(v.ports) };
+      }
+      cfg.start = clean;
+      rescanNeeded = true;
+    }
+    // Editors { "<name>": { open, openGroup? } } — full replace, drop blank rows.
+    if (editors && typeof editors === 'object' && !Array.isArray(editors)) {
+      const clean = {};
+      for (const [nm, v] of Object.entries(editors)) {
+        const name = String(nm).trim();
+        const open = v && typeof v === 'object' ? String(v.open || '').trim() : '';
+        if (!name || !open) continue;
+        clean[name] = { open };
+        if (v.openGroup && String(v.openGroup).trim()) clean[name].openGroup = String(v.openGroup).trim();
+      }
+      cfg.editors = clean;
+    }
+    if (typeof defaultEditor === 'string' && defaultEditor.trim()) cfg.defaultEditor = defaultEditor.trim();
+    // Manual feature groups [{ name, members:[…] }] — full replace, drop blank rows.
+    if (Array.isArray(groups)) {
+      cfg.groups = groups.map((g) => ({
+        name: String((g && g.name) || '').trim(),
+        members: Array.isArray(g && g.members) ? g.members.map((m) => String(m).trim()).filter(Boolean) : [],
+      })).filter((g) => g.name && g.members.length);
+      rescanNeeded = true;
+    }
     configMod.save(cfg);
     if (rescanNeeded) await rescan(); else scheduleBroadcast();
-    res.json({ ok: true, sources: cfg.sources, baseDirs: cfg.baseDirs, notify: cfg.notify, enabled: sources.enabled(cfg) });
+    res.json({
+      ok: true,
+      sources: cfg.sources,
+      baseDirs: cfg.baseDirs,
+      notify: cfg.notify,
+      start: cfg.start,
+      editors: cfg.editors,
+      defaultEditor: cfg.defaultEditor,
+      groups: cfg.groups,
+      enabled: sources.enabled(cfg),
+    });
   }));
 
   // ---- sources ----
