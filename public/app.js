@@ -19,6 +19,15 @@ const modal = { source: 'freetext', repo: '', issues: [], issueId: null };
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
+// dock view state — the tmux terminal ('term') vs the DOM Changes panel ('changes').
+// Switching to 'changes' hides #termWrap without destroying the live terminal.
+let dockView = 'term';
+let activeTab = 0;
+let changesState = null;   // { repos:[{repo,worktreePath,base,files:[…]}] } for the selected session
+let changesSel = null;     // { repo, file } — the diff currently shown
+const changesUnstaged = new Set(); // ckey()s the user has un-checked (default = staged)
+let changesRefreshT = null;
+
 const $ = (sel) => document.querySelector(sel);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -196,14 +205,21 @@ function emptyState() {
 
 function rebuildDock(s) {
   destroyTerminal();
+  // reset the client-side dock view whenever the selected session changes
+  dockView = 'term'; activeTab = 0;
+  changesState = null; changesSel = null; changesUnstaged.clear();
+  clearTimeout(changesRefreshT);
   const dock = $('#dock');
   dock.innerHTML = '';
   dock.appendChild(h(`<div class="dock-head" id="dockHead"></div>`));
   dock.appendChild(h(`<div class="tabstrip" id="dockTabs"></div>`));
   dock.appendChild(h(`<div class="term-wrap" id="termWrap"></div>`));
+  dock.appendChild(h(`<div class="changes" id="changesPanel" hidden></div>`));
   dock.appendChild(h(`<div class="serverbar" id="serverBar"></div>`));
   updateDock(s);
   openTerminal(s);
+  // eager-load so the ✎ Changes badge shows a count before the tab is opened
+  if (s.worktreePath) refreshChanges(s, {});
 }
 
 function updateDock(s) {
@@ -251,23 +267,7 @@ function updateDock(s) {
   acts.appendChild(del);
 
   // tabs
-  const tabs = $('#dockTabs');
-  tabs.innerHTML = '';
-  const tabList = s.tabs || [{ title: 'claude' }];
-  tabList.forEach((t, i) => {
-    const closable = tabList.length > 1; // any tab can be closed when more than one
-    const tab = h(`<span class="tab ${i === 0 ? 'on' : ''}"><span class="dot ${i === 0 ? s.state : 'idle'}"></span>${esc(t.title)}${closable ? ' <span class="tabclose" title="Close tab">✕</span>' : ''}</span>`);
-    tab.addEventListener('click', () => selectTab(s, i, tabs));
-    const x = tab.querySelector('.tabclose');
-    if (x) x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(s, i); });
-    tabs.appendChild(tab);
-  });
-  const add = h(`<span class="tab"><span class="newtab">＋</span></span>`);
-  add.addEventListener('click', () => addTab(s));
-  tabs.appendChild(add);
-  const pop = h(`<button class="btn xs popout">Pop out ⧉</button>`);
-  pop.addEventListener('click', () => popout(s));
-  tabs.appendChild(pop);
+  renderTabstrip(s);
 
   // server bar — the whole shared workspace (every repo this session owns)
   const bar = $('#serverBar');
@@ -286,6 +286,269 @@ function updateDock(s) {
     if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => startSessionServers(s)); bar.appendChild(b); }
     if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => stopSessionServers(s)); bar.appendChild(b); }
   }
+
+  applyDockView();
+  // an SSE tick arrived while the Changes panel is open — refresh the file list
+  // (debounced) without stomping the diff the user is reading.
+  if (dockView === 'changes') scheduleChangesRefresh(s);
+}
+
+/* ---------------- changes / diff panel ---------------- */
+const ckey = (repo, file) => `${repo} ${file}`;
+
+function renderTabstrip(s) {
+  const tabs = $('#dockTabs');
+  if (!tabs) return;
+  tabs.innerHTML = '';
+  const tabList = s.tabs || [{ title: 'claude' }];
+  tabList.forEach((t, i) => {
+    const closable = tabList.length > 1; // any tab can be closed when more than one
+    const on = dockView === 'term' && i === activeTab;
+    const tab = h(`<span class="tab ${on ? 'on' : ''}"><span class="dot ${on ? s.state : 'idle'}"></span>${esc(t.title)}${closable ? ' <span class="tabclose" title="Close tab">✕</span>' : ''}</span>`);
+    tab.addEventListener('click', () => selectTab(s, i));
+    const x = tab.querySelector('.tabclose');
+    if (x) x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(s, i); });
+    tabs.appendChild(tab);
+  });
+  // ✎ Changes — a DOM panel, not a tmux window. Only for promoted (worktree) sessions.
+  if (s.worktreePath) {
+    const n = changesFileCount();
+    const on = dockView === 'changes';
+    const ct = h(`<span class="tab ${on ? 'on' : ''}">✎ Changes${n ? ` <span class="cbadge">${esc(n)}</span>` : ''}</span>`);
+    ct.addEventListener('click', () => openChanges(s));
+    tabs.appendChild(ct);
+  }
+  const add = h(`<span class="tab"><span class="newtab">＋</span></span>`);
+  add.addEventListener('click', () => addTab(s));
+  tabs.appendChild(add);
+  const pop = h(`<button class="btn xs popout">Pop out ⧉</button>`);
+  pop.addEventListener('click', () => popout(s));
+  tabs.appendChild(pop);
+}
+
+function applyDockView() {
+  const tw = $('#termWrap'); const cp = $('#changesPanel');
+  if (tw) tw.hidden = dockView !== 'term';
+  if (cp) cp.hidden = dockView !== 'changes';
+}
+
+function changesFileCount() {
+  if (!changesState || !changesState.repos) return 0;
+  return changesState.repos.reduce((n, r) => n + ((r.files && r.files.length) || 0), 0);
+}
+// flat [{repo, file, status, added, deleted}] across every repo
+function allChangeFiles() {
+  const out = [];
+  for (const r of (changesState && changesState.repos) || []) {
+    for (const f of r.files || []) out.push({ repo: r.repo, ...f });
+  }
+  return out;
+}
+function branchForRepo(s, repoName) {
+  const e = (s.repos || []).find((r) => r.repo === repoName);
+  return (e && e.branch) || s.branch || '';
+}
+function statusFor(repo, file) {
+  const f = allChangeFiles().find((x) => x.repo === repo && x.file === file);
+  return (f && f.status ? f.status : 'M').toUpperCase();
+}
+
+function openChanges(s) {
+  dockView = 'changes';
+  renderTabstrip(s);
+  applyDockView();
+  renderChangesPanel(s);
+  refreshChanges(s, { force: true });
+}
+
+function scheduleChangesRefresh(s) {
+  clearTimeout(changesRefreshT);
+  changesRefreshT = setTimeout(() => { if (selectedId === s.id && dockView === 'changes') refreshChanges(s, {}); }, 400);
+}
+
+async function refreshChanges(s, opts = {}) {
+  try {
+    const data = await api('GET', `/api/sessions/${s.id}/changes`);
+    if (selectedId !== s.id) return;
+    changesState = data;
+    renderTabstrip(s); // refresh the ✎ Changes badge count
+    if (dockView !== 'changes' || !$('#changesFiles')) return;
+    renderChangesFiles(s);
+    renderCommitMeta();
+    const files = allChangeFiles();
+    const stillThere = changesSel && files.some((f) => f.repo === changesSel.repo && f.file === changesSel.file);
+    if (opts.force || !stillThere) {
+      if (files.length) selectDiff(s, files[0].repo, files[0].file);
+      else { changesSel = null; renderDiffEmpty(); }
+    } else if (opts.reloadCurrent) {
+      selectDiff(s, changesSel.repo, changesSel.file);
+    }
+  } catch (e) { if (dockView === 'changes') toast(e.message, true); }
+}
+
+function renderChangesPanel(s) {
+  const panel = $('#changesPanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="changes-cols">
+      <div class="changes-files" id="changesFiles"></div>
+      <div class="changes-diff" id="changesDiff"></div>
+    </div>
+    <div class="commitbar">
+      <div class="commit-meta">
+        <span id="commitStat"></span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="refresh" id="changesRefresh" title="Reload changes">⟳ Refresh</span>
+      </div>
+      <div class="commit-row">
+        <input class="commit-input" id="commitMsg" placeholder="Commit message…" />
+      </div>
+      <div class="commit-row">
+        <label class="chk"><input type="checkbox" id="commitAmend"> amend</label>
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn sm" id="commitBtn">Commit</button>
+        <button class="btn sm go" id="commitPrBtn">Commit &amp; open PR ↗</button>
+      </div>
+    </div>`;
+  $('#changesRefresh').addEventListener('click', () => refreshChanges(s, { reloadCurrent: true }));
+  $('#commitBtn').addEventListener('click', () => doCommit(s, false));
+  $('#commitPrBtn').addEventListener('click', () => doCommit(s, true));
+  renderChangesFiles(s);
+  renderDiffEmpty();
+  renderCommitMeta();
+}
+
+function renderChangesFiles(s) {
+  const el = $('#changesFiles');
+  if (!el) return;
+  el.innerHTML = '';
+  const repos = (changesState && changesState.repos) || [];
+  if (!repos.length) { el.appendChild(h(`<div class="chsub">No changes vs the base branch.</div>`)); return; }
+  for (const r of repos) {
+    const branch = branchForRepo(s, r.repo);
+    el.appendChild(h(`<div class="chsub">${esc(r.repo)}${branch ? ` · branch ${esc(branch)}` : ''}</div>`));
+    if (!(r.files && r.files.length)) { el.appendChild(h(`<div class="chsub clean">clean</div>`)); continue; }
+    for (const f of r.files) {
+      const key = ckey(r.repo, f.file);
+      const staged = !changesUnstaged.has(key);
+      const sel = changesSel && changesSel.repo === r.repo && changesSel.file === f.file;
+      const st = (f.status || 'M').toUpperCase();
+      const stc = st === 'A' ? 'a' : st === 'D' ? 'd' : 'm';
+      const row = h(`<div class="cfile ${sel ? 'on' : ''}">
+        <input type="checkbox" ${staged ? 'checked' : ''}>
+        <span class="st ${stc}">${esc(st)}</span>
+        <span class="nm" title="${esc(f.file)}">${esc(f.file)}</span>
+        ${f.added ? `<span class="adds">+${esc(f.added)}</span>` : ''}
+        ${f.deleted ? `<span class="dels">−${esc(f.deleted)}</span>` : ''}
+      </div>`);
+      const cb = row.querySelector('input');
+      cb.addEventListener('click', (e) => e.stopPropagation());
+      cb.addEventListener('change', () => { if (cb.checked) changesUnstaged.delete(key); else changesUnstaged.add(key); renderCommitMeta(); });
+      row.addEventListener('click', () => selectDiff(s, r.repo, f.file));
+      el.appendChild(row);
+    }
+  }
+}
+
+function renderDiffEmpty() {
+  const box = $('#changesDiff');
+  if (box) box.innerHTML = `<div class="diff-empty">Select a file to view its diff.</div>`;
+}
+
+async function selectDiff(s, repo, file) {
+  changesSel = { repo, file };
+  renderChangesFiles(s); // move the .on highlight
+  const box = $('#changesDiff');
+  if (!box) return;
+  box.innerHTML = `<div class="diff-fname">${esc(file)} <span class="pill idle">loading…</span></div>`;
+  try {
+    const res = await api('GET', `/api/sessions/${s.id}/diff?repo=${encodeURIComponent(repo)}&file=${encodeURIComponent(file)}`);
+    if (!(changesSel && changesSel.repo === repo && changesSel.file === file)) return; // a newer click won
+    renderDiff(box, repo, file, (res && res.raw) || '');
+  } catch (e) {
+    box.innerHTML = `<div class="diff-fname">${esc(file)}</div><div class="diffline ctx"><span class="ln"></span><span class="tx">${esc(e.message)}</span></div>`;
+  }
+}
+
+// Parse a raw unified diff line-by-line: @@=hunk, +=add, -=del, else context.
+// Header lines (diff --git / index / +++ / --- / mode / rename …) are dropped.
+function renderDiff(box, repo, file, text) {
+  const status = statusFor(repo, file);
+  const label = status === 'A' ? 'Added' : status === 'D' ? 'Deleted' : 'Modified';
+  const head = `<div class="diff-fname">${esc(file)} <span class="pill idle">${esc(label)}</span></div>`;
+  const skip = /^(diff --git |index |--- |\+\+\+ |new file mode|deleted file mode|old mode |new mode |similarity index|dissimilarity index|rename from |rename to |copy from |copy to |Binary files )/;
+  const out = [];
+  let oldLn = 0, newLn = 0;
+  for (const raw of String(text).split('\n')) {
+    if (skip.test(raw)) continue;
+    if (raw.startsWith('@@')) {
+      const m = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { oldLn = +m[1]; newLn = +m[2]; }
+      out.push(`<div class="diffline hunk"><span class="ln"></span><span class="tx">${esc(raw)}</span></div>`);
+      continue;
+    }
+    if (raw.startsWith('\\')) { // "\ No newline at end of file"
+      out.push(`<div class="diffline ctx"><span class="ln"></span><span class="tx">${esc(raw)}</span></div>`);
+      continue;
+    }
+    let cls = 'ctx', ln = '';
+    if (raw.startsWith('+')) { cls = 'add'; ln = String(newLn++); }
+    else if (raw.startsWith('-')) { cls = 'del'; ln = String(oldLn++); }
+    else { ln = String(newLn); oldLn++; newLn++; }
+    out.push(`<div class="diffline ${cls}"><span class="ln">${esc(ln)}</span><span class="tx">${esc(raw)}</span></div>`);
+  }
+  box.innerHTML = head + (out.length ? out.join('') : `<div class="diffline ctx"><span class="ln"></span><span class="tx">(no textual diff)</span></div>`);
+}
+
+function renderCommitMeta() {
+  const el = $('#commitStat');
+  if (!el) return;
+  const files = allChangeFiles();
+  const staged = files.filter((f) => !changesUnstaged.has(ckey(f.repo, f.file)));
+  const add = staged.reduce((n, f) => n + (f.added || 0), 0);
+  const del = staged.reduce((n, f) => n + (f.deleted || 0), 0);
+  el.innerHTML = `${staged.length} of ${files.length} file${files.length === 1 ? '' : 's'} staged · <b style="color:var(--add)">+${add}</b> <b style="color:var(--del)">−${del}</b>`;
+}
+
+// Which repo this commit targets: the selected file's repo (if it has staged
+// files), else the first repo with anything staged. Commit is per-repo.
+function commitRepo() {
+  const staged = allChangeFiles().filter((f) => !changesUnstaged.has(ckey(f.repo, f.file)));
+  if (!staged.length) return null;
+  if (changesSel && staged.some((f) => f.repo === changesSel.repo)) return changesSel.repo;
+  return staged[0].repo;
+}
+function stagedPathsForRepo(repo) {
+  return allChangeFiles().filter((f) => f.repo === repo && !changesUnstaged.has(ckey(f.repo, f.file))).map((f) => f.file);
+}
+
+async function doCommit(s, openPr) {
+  const input = $('#commitMsg');
+  const msg = input ? input.value.trim() : '';
+  if (!msg) return toast('Enter a commit message first.', true);
+  const repo = commitRepo();
+  if (!repo) return toast('No files staged to commit.', true);
+  const paths = stagedPathsForRepo(repo);
+  if (!paths.length) return toast(`No files staged for ${repo}.`, true);
+  const amend = !!($('#commitAmend') && $('#commitAmend').checked);
+  const btns = [$('#commitBtn'), $('#commitPrBtn')].filter(Boolean);
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const r = await api('POST', `/api/sessions/${s.id}/commit`, { repo, message: msg, paths, amend });
+    if (!r.ok) throw new Error(r.error || 'commit failed');
+    toast(`Committed ${repo}${r.sha ? ` @ ${r.sha.slice(0, 7)}` : ''}`);
+    if (input) input.value = '';
+    if (openPr) {
+      toast('Opening PR / MR…');
+      const pr = await api('POST', '/api/group/pr', { group: s.feature });
+      const html = (pr.results || []).map((x) => x.url
+        ? `<div>${esc(x.repo)}: <a href="${esc(x.url)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`
+        : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`).join('');
+      await uiDialog({ title: 'Pull / merge requests', messageHtml: html || 'No results', okLabel: 'Done', cancelLabel: '' });
+    }
+    await refreshChanges(s, { force: true });
+  } catch (e) { toast(e.message, true); }
+  finally { btns.forEach((b) => { b.disabled = false; }); }
 }
 
 /* ---------------- terminal ---------------- */
@@ -357,8 +620,9 @@ async function addTab(s) {
   try { await api('POST', `/api/sessions/${s.id}/tabs`, { title: title || 'shell' }); toast(`Tab “${title || 'shell'}” added`); }
   catch (e) { toast(e.message, true); }
 }
-async function selectTab(s, i, tabsEl) {
-  tabsEl.querySelectorAll('.tab').forEach((t, idx) => t.classList.toggle('on', idx === i));
+async function selectTab(s, i) {
+  dockView = 'term'; activeTab = i;
+  renderTabstrip(s); applyDockView();
   try { await api('POST', `/api/sessions/${s.id}/select-tab`, { index: i }); if (term) term.focus(); } catch (e) { toast(e.message, true); }
 }
 async function closeTab(s, i) {
