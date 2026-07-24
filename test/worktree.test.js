@@ -52,3 +52,38 @@ test('create() refuses a duplicate worktree name', async () => {
   assert.match(again.error, /already exists/);
   fs.rmSync(repo, { recursive: true, force: true });
 });
+
+// A minimal repo without .idea run configs, so a created worktree has no
+// untracked files and `git worktree remove` (no --force) succeeds.
+function plainRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-plain-'));
+  sh(dir, 'git', ['init', '-q', '-b', 'main']);
+  sh(dir, 'git', ['config', 'user.email', 't@t.t']);
+  sh(dir, 'git', ['config', 'user.name', 't']);
+  fs.writeFileSync(path.join(dir, 'README.md'), '# repo\n');
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.worktrees/\n');
+  sh(dir, 'git', ['add', '.']);
+  sh(dir, 'git', ['commit', '-q', '-m', 'init']);
+  return dir;
+}
+
+test('remove() deletes the worktree directory', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/gone', 'gone', { fetch: false, copyPatterns: [] });
+  assert.ok(fs.existsSync(res.path), 'worktree created');
+  const out = await worktree.remove(repo, res.path);
+  assert.equal(out.ok, true, out.error);
+  assert.equal(fs.existsSync(res.path), false, 'worktree dir removed');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('remove() with { deleteBranch } also deletes the branch', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/gone2', 'gone2', { fetch: false, copyPatterns: [] });
+  assert.equal(await worktree.branchExists(repo, 'feature/gone2'), true, 'branch exists before remove');
+  const out = await worktree.remove(repo, res.path, { deleteBranch: true, branch: 'feature/gone2' });
+  assert.equal(out.ok, true, out.error);
+  assert.equal(out.branchDeleted, true, 'branch reported deleted');
+  assert.equal(await worktree.branchExists(repo, 'feature/gone2'), false, 'branch is gone');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
