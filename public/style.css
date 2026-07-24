@@ -195,6 +195,11 @@ button { font-family:inherit; }
 .viewseg button { font-family:var(--sans); font-size:12px; font-weight:600; border:0; background:transparent; color:var(--muted); padding:5px 13px; border-radius:7px; cursor:pointer; }
 .viewseg button.on { background:var(--brand); color:var(--brand-ink); }
 
+/* attention badge (# of sessions currently waiting) on the Fleet toggle */
+.attn { position:relative; }
+.attn::after { content:attr(data-n); position:absolute; top:-6px; right:-6px; min-width:16px; height:16px; padding:0 4px; background:var(--waiting); color:#241a06; font-family:var(--mono); font-size:10px; font-weight:700; border-radius:999px; display:grid; place-items:center; box-shadow:0 0 0 2px var(--panel); }
+.attn[data-n="0"]::after, .attn:not([data-n])::after { display:none; }
+
 /* rail feature grouping */
 .grouphd { font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:9px 6px 3px; display:flex; align-items:center; gap:7px; }
 .grouphd .gline { flex:1; height:1px; background:var(--border); }

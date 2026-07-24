@@ -44,6 +44,8 @@ function defaults() {
       gitlab: { enabled: false, host: 'https://gitlab.com', token: '' },
       asana: { enabled: false, token: '', workspace: '' },
     },
+    // attention notifications when a session changes state (see public/app.js)
+    notify: { waiting: true, sound: true, idle: false },
   };
 }
 

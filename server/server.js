@@ -170,16 +170,20 @@ async function main() {
     res.json({
       sources: cfg.sources || {},
       baseDirs: cfg.baseDirs || [],
+      notify: cfg.notify || {},
       enabled: sources.enabled(cfg),
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
     });
   }));
   app.post('/api/settings', A(async (req, res) => {
-    const { sources: srcs, baseDirs } = req.body || {};
+    const { sources: srcs, baseDirs, notify } = req.body || {};
     if (srcs) {
       cfg.sources = cfg.sources || {};
       for (const k of Object.keys(srcs)) cfg.sources[k] = { ...(cfg.sources[k] || {}), ...srcs[k] };
+    }
+    if (notify && typeof notify === 'object') {
+      cfg.notify = { ...(cfg.notify || {}), ...notify };
     }
     let rescanNeeded = false;
     if (Array.isArray(baseDirs)) {
@@ -189,7 +193,7 @@ async function main() {
     }
     configMod.save(cfg);
     if (rescanNeeded) await rescan(); else scheduleBroadcast();
-    res.json({ ok: true, sources: cfg.sources, baseDirs: cfg.baseDirs, enabled: sources.enabled(cfg) });
+    res.json({ ok: true, sources: cfg.sources, baseDirs: cfg.baseDirs, notify: cfg.notify, enabled: sources.enabled(cfg) });
   }));
 
   // ---- sources ----

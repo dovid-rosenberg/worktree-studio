@@ -19,6 +19,13 @@ const modal = { source: 'freetext', repo: '', issues: [], issueId: null };
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
+// attention notifications: previous per-session state (id → state) so we can diff
+// each SSE tick and alert when a session transitions INTO waiting (or idle).
+const prevSessionState = new Map();
+let notifyPrefs = { waiting: true, sound: true, idle: false };
+let baseTitle = null;   // the document title with no waiting-count prefix
+let audioCtx = null;    // lazily created on first beep (needs a user gesture)
+
 // dock view state — the tmux terminal ('term') vs the DOM Changes ('changes') /
 // Logs ('logs') panels. Switching away from 'term' hides #termWrap without
 // destroying the live terminal.
@@ -97,8 +104,96 @@ async function uiPrompt(message, value = '', opts = {}) {
 /* ---------------- SSE ---------------- */
 function connectSSE() {
   const ev = new EventSource('/api/events');
-  ev.onmessage = (e) => { try { state = JSON.parse(e.data); render(); } catch { /* */ } };
+  ev.onmessage = (e) => {
+    try {
+      const next = JSON.parse(e.data);
+      detectAttention(next); // diff old vs new BEFORE swapping in the new state
+      state = next;
+      render();
+    } catch { /* */ }
+  };
   ev.onerror = () => { /* browser auto-reconnects */ };
+}
+
+/* ---------------- attention notifications ---------------- */
+// Diff the incoming sessions against the last-seen per-session state. A session
+// only alerts on a real transition INTO waiting/idle from a *known* different
+// state — a session first seen on this tick (initial snapshot, or freshly
+// created) is only recorded, never alerted, so the initial populate is silent.
+function detectAttention(next) {
+  const sessions = (next && next.sessions) || [];
+  const seen = new Set();
+  for (const s of sessions) {
+    seen.add(s.id);
+    const prev = prevSessionState.get(s.id);
+    if (prev !== undefined && prev !== s.state) {
+      if (s.state === 'waiting') fireAttention(s, 'waiting');
+      else if (s.state === 'idle' && notifyPrefs.idle) fireAttention(s, 'idle');
+    }
+    prevSessionState.set(s.id, s.state);
+  }
+  for (const id of [...prevSessionState.keys()]) if (!seen.has(id)) prevSessionState.delete(id);
+  updateAttentionUI(sessions);
+}
+
+// Always-on visual: tab-title prefix + Fleet button badge, both = # waiting.
+function updateAttentionUI(sessions) {
+  if (baseTitle === null) baseTitle = document.title;
+  const n = sessions.filter((s) => s.state === 'waiting').length;
+  document.title = n > 0 ? `● (${n}) ${baseTitle}` : baseTitle;
+  const fleetBtn = document.querySelector('#viewSeg button[data-view="fleet"]');
+  if (fleetBtn) fleetBtn.setAttribute('data-n', String(n));
+}
+
+// A single alert = optional desktop notification + optional sound, each gated by
+// its own pref. The visual (updateAttentionUI) is separate and always fires.
+function fireAttention(s, kind) {
+  const wantDesktop = kind === 'waiting' ? notifyPrefs.waiting : notifyPrefs.idle;
+  if (wantDesktop) showDesktopNotification(s, kind);
+  if (notifyPrefs.sound) playBeep();
+}
+
+function showDesktopNotification(s, kind) {
+  if (!('Notification' in window)) return;
+  // already watching this session — the tab title/badge is enough
+  if (s.id === selectedId && document.hasFocus()) return;
+  if (Notification.permission === 'denied') return;
+  const fire = () => {
+    const title = kind === 'waiting' ? `${s.repoName} needs your input` : `${s.repoName} — turn complete`;
+    const body = s.activity || s.title || '';
+    try {
+      const n = new Notification(title, { body, tag: `wts-${s.id}` });
+      n.onclick = () => { selectedId = s.id; setView('work'); window.focus(); n.close(); };
+    } catch { /* */ }
+  };
+  if (Notification.permission === 'granted') fire();
+  else Notification.requestPermission().then((p) => { if (p === 'granted') fire(); }).catch(() => {});
+}
+
+// Short (~120ms) WebAudio beep. The context is created lazily and may be
+// suspended until a user gesture — degrade silently if it can't play.
+function playBeep() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.14, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.13);
+  } catch { /* no audio — silent */ }
+}
+
+async function loadNotifyPrefs() {
+  try { const d = await api('GET', '/api/settings'); if (d && d.notify) notifyPrefs = { ...notifyPrefs, ...d.notify }; } catch { /* */ }
 }
 
 /* ---------------- render ---------------- */
@@ -709,15 +804,39 @@ function openTerminal(s) {
   if (WebLinksCtor) { try { term.loadAddon(new WebLinksCtor()); } catch { /* */ } }
   term.open(wrap);
   try { fit && fit.fit(); } catch { /* */ }
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(s.id)}&cols=${term.cols}&rows=${term.rows}`);
-  ws.binaryType = 'arraybuffer';
-  ws.onmessage = (e) => { if (typeof e.data === 'string') term.write(e.data); else term.write(new Uint8Array(e.data)); };
-  ws.onopen = () => { sendResize(); term.focus(); };
-  ws.onclose = () => { try { term.write('\r\n\x1b[2m[disconnected — reselect to reattach]\x1b[0m\r\n'); } catch { /* */ } };
   term.onData((d) => { if (ws && ws.readyState === 1) ws.send(new TextEncoder().encode(d)); });
   ro = new ResizeObserver(() => { try { fit && fit.fit(); sendResize(); } catch { /* */ } });
   ro.observe(wrap);
+  connectTermWS(s, 0);
+}
+
+// Open (or re-open) the terminal socket for session `s`, reattaching the same
+// live xterm. On an UNintended close (destroyTerminal nulls `onclose` for
+// intentional ones) we retry with a capped backoff (1s→2s→4s, ~5 tries),
+// which revives the pane after a server restart that manager.restore() handles.
+function connectTermWS(s, attempt) {
+  if (!term) return;
+  const theTerm = term; // capture so a later select/dispose can stop this chain
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(s.id)}&cols=${theTerm.cols}&rows=${theTerm.rows}`);
+  sock.binaryType = 'arraybuffer';
+  ws = sock;
+  sock.onmessage = (e) => { if (typeof e.data === 'string') theTerm.write(e.data); else theTerm.write(new Uint8Array(e.data)); };
+  sock.onopen = () => {
+    if (term !== theTerm || selectedId !== s.id) { try { sock.close(); } catch { /* */ } return; }
+    if (attempt > 0) { try { theTerm.write('\r\n\x1b[2m[reconnected]\x1b[0m\r\n'); } catch { /* */ } }
+    sendResize();
+    theTerm.focus();
+  };
+  sock.onclose = () => {
+    // Reaching here means an unintended drop (intentional closes null this handler
+    // first). Stop if the terminal was disposed or the selection moved on.
+    if (term !== theTerm || selectedId !== s.id) return;
+    if (attempt >= 5) { try { theTerm.write('\r\n\x1b[2m[disconnected — reselect to reattach]\x1b[0m\r\n'); } catch { /* */ } return; }
+    try { theTerm.write('\r\n\x1b[2m[reconnecting…]\x1b[0m\r\n'); } catch { /* */ }
+    const delay = Math.min(4000, 1000 * (2 ** attempt));
+    setTimeout(() => { if (term === theTerm && selectedId === s.id) connectTermWS(s, attempt + 1); }, delay);
+  };
 }
 
 function sendResize() {
@@ -1105,6 +1224,8 @@ async function openSettings() {
   try { data = await api('GET', '/api/settings'); } catch (e) { return toast(e.message, true); }
   const src = data.sources || {};
   const gl = src.gitlab || {}; const as = src.asana || {};
+  const nt = data.notify || {};
+  notifyPrefs = { ...notifyPrefs, ...nt }; // keep the live prefs in sync with disk
   const body = $('#settingsBody');
   body.innerHTML = `
     <div class="field">
@@ -1125,7 +1246,17 @@ async function openSettings() {
       <label><input type="checkbox" id="setAsEnabled" ${as.enabled ? 'checked' : ''}/> Asana <span class="hint">— API token</span></label>
       <input id="setAsToken" class="input" type="password" placeholder="Personal access token" value="${esc(as.token || '')}"/>
       <input id="setAsWorkspace" class="input" placeholder="Workspace GID" value="${esc(as.workspace || '')}"/>
+    </div>
+    <div class="field">
+      <label>Notifications <span class="hint">— when a session needs you</span></label>
+      <label class="chk"><input type="checkbox" id="setNotifyWaiting" ${nt.waiting ? 'checked' : ''}/> Desktop notification when a session needs input</label>
+      <label class="chk"><input type="checkbox" id="setNotifySound" ${nt.sound ? 'checked' : ''}/> Play a sound</label>
+      <label class="chk"><input type="checkbox" id="setNotifyIdle" ${nt.idle ? 'checked' : ''}/> Notify when a turn completes</label>
     </div>`;
+  const wbox = $('#setNotifyWaiting');
+  if (wbox) wbox.addEventListener('change', () => {
+    if (wbox.checked && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  });
   $('#settingsModal').hidden = false;
 }
 function closeSettings() { $('#settingsModal').hidden = true; }
@@ -1135,7 +1266,13 @@ async function saveSettings() {
     asana: { enabled: $('#setAsEnabled').checked, token: $('#setAsToken').value.trim(), workspace: $('#setAsWorkspace').value.trim() },
   };
   const baseDirs = $('#setBaseDirs').value.split('\n').map((s) => s.trim()).filter(Boolean);
-  try { await api('POST', '/api/settings', { sources, baseDirs }); closeSettings(); toast('Settings saved'); } catch (e) { toast(e.message, true); }
+  const notify = {
+    waiting: !!($('#setNotifyWaiting') && $('#setNotifyWaiting').checked),
+    sound: !!($('#setNotifySound') && $('#setNotifySound').checked),
+    idle: !!($('#setNotifyIdle') && $('#setNotifyIdle').checked),
+  };
+  notifyPrefs = { ...notifyPrefs, ...notify };
+  try { await api('POST', '/api/settings', { sources, baseDirs, notify }); closeSettings(); toast('Settings saved'); } catch (e) { toast(e.message, true); }
 }
 
 /* ---------------- theme + wiring ---------------- */
@@ -1166,6 +1303,7 @@ function init() {
   $('#settingsModal').addEventListener('click', (e) => { if (e.target.id === 'settingsModal') closeSettings(); });
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  loadNotifyPrefs();
   connectSSE();
 }
 document.addEventListener('DOMContentLoaded', init);
