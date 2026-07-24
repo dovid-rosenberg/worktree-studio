@@ -124,8 +124,10 @@ async function api(method, url, body) {
 }
 
 function toast(msg, isErr) {
+  let stack = $('#toastStack');
+  if (!stack) { stack = h('<div class="toast-stack" id="toastStack"></div>'); document.body.appendChild(stack); }
   const t = h(`<div class="toast ${isErr ? 'err' : ''}">${esc(msg)}</div>`);
-  document.body.appendChild(t);
+  stack.appendChild(t);
   setTimeout(() => t.remove(), isErr ? 6000 : 3200);
 }
 
@@ -337,12 +339,15 @@ function sessionCard(s) {
       </div>
       <div class="scard-meta">
         <span class="src">${esc(s.source)}</span>
-        ${s.sourceUrl ? `<span class="link">${esc(labelForSource(s))}</span>` : ''}
+        ${s.sourceUrl ? `<a class="link" href="${esc(s.sourceUrl)}" target="_blank" rel="noreferrer">${esc(labelForSource(s))}</a>` : ''}
         ${promoted ? (s.repos && s.repos.length ? s.repos.map((r) => `<span class="grp">${esc(r.repo)}</span>`).join('') : `<span class="grp">${esc(s.repoName)}</span>`) : `<span class="grp">main</span>`}
       </div>
       <div class="scard-act">${esc(s.activity || '')}</div>
     </div>`);
   activatable(card, () => selectSession(s.id));
+  // real link — don't let its click also select the card
+  const srcLink = card.querySelector('a.link');
+  if (srcLink) srcLink.addEventListener('click', (e) => e.stopPropagation());
   return card;
 }
 
@@ -392,7 +397,7 @@ function renderDock() {
 function emptyState() {
   const e = h(`<div class="empty">
     <div class="empty-glyph">⎇</div><h2>No session selected</h2>
-    <p>Start one from any source — free text, a GitHub / GitLab issue, or an Asana task.</p>
+    <p>Start one from any source — free text, a GitHub / GitLab issue, or an Asana task. It boots a real Claude&nbsp;Code session on your CLAUDE.md, and you promote it to a worktree when it&rsquo;s real work.</p>
     <button class="btn primary">+ New session</button></div>`);
   e.querySelector('button').addEventListener('click', openModal);
   return e;
@@ -451,11 +456,11 @@ function updateDock(s) {
   const po = h(`<button class="btn sm" aria-label="Pop out">Pop out ⧉</button>`);
   po.addEventListener('click', () => guardBtn(po, () => popout(s)));
   acts.appendChild(po);
-  const ren = h(`<button class="btn sm ghost" title="Rename" aria-label="Rename">✎</button>`);
+  const ren = h(`<button class="btn sm ghost" title="Rename" aria-label="Rename">✐</button>`);
   ren.addEventListener('click', () => renameSession(s));
   acts.appendChild(ren);
   if (s.active === false) {
-    const act = h(`<button class="btn sm">Reactivate</button>`);
+    const act = h(`<button class="btn sm">Resume</button>`);
     act.addEventListener('click', () => guardBtn(act, () => activateSession(s)));
     acts.appendChild(act);
   } else {
@@ -481,13 +486,12 @@ function updateDock(s) {
   } else {
     const anyRunning = reps.some((r) => r.running);
     const anyStopped = reps.some((r) => r.canStart && !r.running);
-    const webSet = new Set(state.webRepos || []);
     // A running repo with ports → one clickable chip per port (opens localhost:<port>).
-    // Anything else (running-no-ports, stopped) → an inert repo chip. The frontend
-    // repo's chips are tagged, and get a prominent "Open <repo> ↗" button below.
+    // Anything else (running-no-ports, stopped) → an inert repo chip. Chips are
+    // uniform; the frontend repo gets the single prominent "Open <repo> ↗" button below.
     bar.innerHTML = '<span>workspace</span>'
       + reps.map((r) => (r.running && r.ports.length
-        ? r.ports.map((p) => `<span class="portchip open${webSet.has(r.repo) ? ' web' : ''}" data-port="${esc(p)}" title="Open http://localhost:${esc(p)}${webSet.has(r.repo) ? ' (frontend)' : ''}"><span class="dot done" title="running"></span>${esc(r.repo)} :${esc(p)} <span class="go">↗</span></span>`).join('')
+        ? r.ports.map((p) => `<span class="portchip open" data-port="${esc(p)}" title="Open http://localhost:${esc(p)}"><span class="dot done" title="running"></span>${esc(r.repo)} :${esc(p)} <span class="go">↗</span></span>`).join('')
         : `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}" title="${r.running ? 'running' : 'stopped'}"></span>${esc(r.repo)}</span>`)).join('')
       + '<span class="spacer" style="flex:1"></span>';
     bar.querySelectorAll('.portchip.open').forEach((el) => activatable(el, () => window.open(`http://localhost:${el.dataset.port}`, '_blank', 'noopener')));
@@ -581,8 +585,8 @@ function renderTabstrip(s) {
     const ct = h(`<span class="tab ${on ? 'on' : ''}">✎ Changes${n ? ` <span class="cbadge">${esc(n)}</span>` : ''}</span>`);
     activatable(ct, () => openChanges(s));
     tabs.appendChild(ct);
-    // ▸ Logs — live dev-server tail (poll-based). Also worktree-only.
-    const lt = h(`<span class="tab ${dockView === 'logs' ? 'on' : ''}">▸ Logs</span>`);
+    // ▤ Logs — live dev-server tail (poll-based). Also worktree-only.
+    const lt = h(`<span class="tab ${dockView === 'logs' ? 'on' : ''}">▤ Logs</span>`);
     activatable(lt, () => openLogs(s));
     tabs.appendChild(lt);
   }
@@ -1179,11 +1183,11 @@ async function renameSession(s) {
   try { await api('POST', `/api/sessions/${s.id}/rename`, { title }); toast('Renamed'); } catch (e) { toast(e.message, true); }
 }
 async function deactivateSession(s) {
-  if (!(await uiConfirm(`Deactivate “${s.title}”? Stops the process; you can reactivate to resume the conversation.`, { title: 'Deactivate', okLabel: 'Deactivate' }))) return;
+  if (!(await uiConfirm(`Deactivate “${s.title}”? Stops the process; you can resume it later to continue the conversation.`, { title: 'Deactivate', okLabel: 'Deactivate' }))) return;
   try { await api('POST', `/api/sessions/${s.id}/deactivate`, {}); toast('Deactivated'); } catch (e) { toast(e.message, true); }
 }
 async function activateSession(s) {
-  try { await api('POST', `/api/sessions/${s.id}/activate`, {}); toast('Reactivated — resuming'); } catch (e) { toast(e.message, true); }
+  try { await api('POST', `/api/sessions/${s.id}/activate`, {}); toast('Resuming session'); } catch (e) { toast(e.message, true); }
 }
 // start/stop every dev server in the session's shared workspace
 async function startSessionServers(s) { try { const r = await api('POST', `/api/sessions/${s.id}/servers/start`, {}); toast(r.ok ? 'Workspace servers starting' : 'Some failed to start', !r.ok); } catch (e) { toast(e.message, true); } }
@@ -1347,7 +1351,7 @@ function agentRow(s) {
   l1.appendChild(h('<span class="pill srv nowt" title="Not promoted — no worktree yet"><span class="pi">✦</span>no worktree</span>'));
   l1.appendChild(h('<span class="grow"></span>'));
   if (stopped) {
-    l1.appendChild(btn('↻ Restart', () => activateSession(s), 'go'));
+    l1.appendChild(btn('↻ Resume', () => activateSession(s), 'go'));
     l1.appendChild(btn('Go to session ▸', () => goToSession(s.id)));
   } else {
     l1.appendChild(btn('Go to session ▸', () => goToSession(s.id), 'primary'));
@@ -1754,13 +1758,14 @@ function paletteRows() {
   add('＋', 'New session', '⌘N', () => openModal());
   if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '⌘↵', () => promote(cur));
   if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { selectSession(cur.id); setView('work'); openChanges(cur); });
-  if (cur && cur.worktreePath) add('▸', 'Run dev stack', '⌘R', () => startSessionServers(cur));
+  if (cur && cur.worktreePath) add('▶', 'Run stack', '⌘R', () => startSessionServers(cur));
   add('◧', 'Toggle Work / Fleet', '⌘\\', () => setView(view === 'work' ? 'fleet' : 'work'));
   if (cur) {
-    if (cur.active === false) add('↻', 'Reactivate current', '', () => activateSession(cur));
+    if (cur.active === false) add('↻', 'Resume current', '', () => activateSession(cur));
     else add('⏻', 'Deactivate current', '', () => deactivateSession(cur));
   }
   add('⚙', 'Open Settings', '', () => openSettings());
+  add('?', 'Keyboard shortcuts', '?', () => showShortcuts());
 
   const cmdRows = [];
   for (const c of cmds) {
@@ -1826,6 +1831,23 @@ function overlayOpen() {
   return paletteOpen() || !$('#modal').hidden || !$('#settingsModal').hidden || !!document.querySelector('.modal-backdrop .modal.dlg');
 }
 
+// Lightweight, always-available cheatsheet of the global shortcuts (opened by ? or
+// from the palette). Rendered through uiDialog so it inherits the focus trap/restore.
+function showShortcuts() {
+  const rows = [
+    ['⌘K', 'Command palette'],
+    ['⌘N', 'New session'],
+    ['⌘\\', 'Toggle Work / Fleet'],
+    ['⌘1–9', 'Jump to the Nth session'],
+    ['⌘↵', 'Promote current to worktree'],
+    ['⌘D', 'Review changes'],
+    ['⌘R', 'Run dev servers'],
+    ['?', 'This help'],
+  ];
+  const html = `<div class="kbd-list">${rows.map(([k, d]) => `<div class="kbd-row"><kbd>${esc(k)}</kbd><span>${esc(d)}</span></div>`).join('')}</div>`;
+  uiDialog({ title: 'Keyboard shortcuts', messageHtml: html, okLabel: 'Done', cancelLabel: '' });
+}
+
 function handleShortcut(e) {
   const meta = e.metaKey || e.ctrlKey;
   // ⌘K always toggles the palette — even from inside an input.
@@ -1838,6 +1860,8 @@ function handleShortcut(e) {
     else closeModal();
     return;
   }
+  // ? (Shift+/) opens the shortcuts cheatsheet — but never while typing or over an overlay.
+  if (e.key === '?' && !isTypingTarget(e.target) && !overlayOpen()) { e.preventDefault(); showShortcuts(); return; }
   // Beyond ⌘K/Escape, never hijack typing or act while an overlay is up.
   if (isTypingTarget(e.target) || overlayOpen() || !meta) return;
 
