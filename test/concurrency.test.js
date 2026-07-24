@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { deriveEnv, allocSlot, rewriteSiblingPort } = require('../server/concurrency');
+const { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } = require('../server/concurrency');
 
 // accept-blue's real port map + redis__db slot key (mirrors config defaults).
 const AB = {
@@ -98,4 +98,38 @@ test('rewriteSiblingPort leaves ports outside the family and non-port text untou
   const text = "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1239/x';";
   const out = rewriteSiblingPort(text, 1239, 100, 3, 1439);
   assert.equal(out, "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1439/x';");
+});
+
+// rewriteAllSiblingPorts — shift EVERY sibling port family together (ab-su's config
+// references su 1231, merchant 1239, iso 1232 — a slot moves all three uniformly).
+const SU_PORTS = { api__port_su: 1231, api__port_merchant: 1239, api__port_iso: 1232 };
+const SU_CONFIG = [
+  "export default {",
+  "  apiUrl: 'http://localhost:1231/su/api/v1',",
+  "  merchantUrl: 'http://localhost:1239',",
+  "  isoUrl: 'http://localhost:1232/iso/api/v1',",
+  "};",
+].join('\n');
+
+test('rewriteAllSiblingPorts slot 2 shifts every sibling port family by +200', () => {
+  const out = rewriteAllSiblingPorts(SU_CONFIG, SU_PORTS, 100, 3, 2);
+  assert.ok(out.includes('localhost:1431/su/api/v1'));
+  assert.ok(out.includes('localhost:1439'));
+  assert.ok(out.includes('localhost:1432/iso/api/v1'));
+  assert.ok(!out.includes('localhost:1231') && !out.includes('localhost:1239') && !out.includes('localhost:1232'));
+});
+
+test('rewriteAllSiblingPorts slot 0 is a no-op', () => {
+  assert.equal(rewriteAllSiblingPorts(SU_CONFIG, SU_PORTS, 100, 3, 0), SU_CONFIG);
+});
+
+test('rewriteAllSiblingPorts is idempotent', () => {
+  const once = rewriteAllSiblingPorts(SU_CONFIG, SU_PORTS, 100, 3, 2);
+  assert.equal(rewriteAllSiblingPorts(once, SU_PORTS, 100, 3, 2), once);
+});
+
+test('rewriteAllSiblingPorts leaves non-family ports and non-port text untouched', () => {
+  const text = "fe='http://localhost:8000'; big='http://localhost:12390'; n=1231; su='http://localhost:1231/x';";
+  const out = rewriteAllSiblingPorts(text, SU_PORTS, 100, 3, 2);
+  assert.equal(out, "fe='http://localhost:8000'; big='http://localhost:12390'; n=1231; su='http://localhost:1431/x';");
 });

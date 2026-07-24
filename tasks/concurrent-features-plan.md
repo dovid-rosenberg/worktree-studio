@@ -92,30 +92,43 @@ at which point it solves the drift problem too, but that's a different, bigger p
 - **Studio `concurrency` config + `deriveEnv`/`allocSlot` pure fns + tests** — done.
 - **Slot allocator + env injection into the dev-server spawn** — done (`servers.slots`,
   `allocSlotFor`/`releaseSlot`, `launchOpts` → `start(repo, wt, {env, ports})`).
-- **FE→BE wiring** — done. `rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort)`
-  (pure, tested) rewrites every `localhost:<port-in-the-merchant-family>` in the worktree's
-  gitignored `src/config.js` to the feature's slot port. Wired via `merchant-v3.configPatch`
-  (`{ file:'src/config.js', siblingRepo:'accept-blue', siblingPortKey:'api__port_merchant' }`):
-  `launchOpts` derives the sibling port and returns a `patch` descriptor + injects
-  `VITE_API_URL=http://localhost:<merchant-port>/merchant`; `start()` calls
-  `applyConfigPatch()` before spawning — **file-exists guarded** (silent no-op when absent),
-  runs for **all slots including 0** (slot 0 rewrites base→base, a no-op), all gated on
-  `concurrency.enabled`.
+- **FE→BE wiring (multi-repo, all-ports)** — done. `rewriteAllSiblingPorts(text, siblingPortEnv,
+  offsetStep, maxSlots, slot)` (pure, tested) shifts **every** accept-blue port family a FE config
+  references to the feature's slot — one `rewriteSiblingPort` pass per base in `Object.values(siblingPortEnv)`.
+  This matters because a feature at slot n runs **one** accept-blue instance serving all 5 ports at
+  `+n*offsetStep`, and some FE configs reference several of them (see below), so a single per-port key
+  was wrong. Wired via each FE repo's `configPatch: { file, siblingRepo:'accept-blue' }`: `launchOpts`
+  returns `patch: { file, siblingPortEnv, slot }` (the sibling's whole `portEnv`); `start()` calls
+  `applyConfigPatch()` before spawning — **file-exists guarded** (silent no-op when absent), runs for
+  **all slots including 0** (slot 0 = base→base, a no-op), gated on `concurrency.enabled`. The old
+  speculative `VITE_API_URL` env injection was **dropped** — these FEs read their config file, not env.
+
+  Three FE repos are wired (`webRepos: ['merchant-v3', 'ab-iso-fe', 'ab-su']`; Studio identifies a repo
+  by its directory basename). Studio's `copyPatterns.default` now also carries `src/config.js` +
+  `src/config/config.js` so new worktrees receive these gitignored configs (tracked `config.js-dist`
+  templates are untouched — `populate` only copies files git actually ignores):
+
+  | repo | bundler / dev port | gitignored config | localhost ports it references | `start.<repo>.cmd` |
+  |---|---|---|---|---|
+  | `merchant-v3` | vite / 3030 | `src/config.js` | merchant 1239 | `npm run dev -- --port ${WTS_FE_PORT:-3030}` |
+  | `ab-iso-fe` | webpack-dev-server / 9000 | `src/config/config.js` | iso 1232, merchant 1239 | `webpack-dev-server --port ${WTS_FE_PORT:-9000}` |
+  | `ab-su` | vite / 8000 | `src/config/config.js` | su 1231, merchant 1239, iso 1232 | `vite serve --port ${WTS_FE_PORT:-8000}` |
+
+  Only the **local gitignored** config uses `localhost` (and is what gets patched); the committed
+  `config.js-dist` templates point at remote dev URLs and are never touched.
 - **Fleet UI** — `buildState()` surfaces `f.slot` from `servers.slots`; `featureRow` shows a
   `slot N` badge; per-feature port chips are the lsof-discovered (shifted) ports already.
+- **One "Open app ↗" button per running frontend** — `webAppsFor(list)` (replaces `webAppFor`)
+  returns an array of `{ repo, port }` for **all** `state.webRepos` running with a discovered port
+  (first port each). The Work serverbar (`updateDock`) and Fleet `featureRow` each render one
+  `Open <repo> ↗` primary button per entry, so a feature running e.g. merchant + iso + su shows three.
 
-### The one FE-repo config change the user must make (merchant-v3 is a different repo — NOT changed here)
+### The FE-repo `start.<repo>.cmd` the user must set (the FE repos are NOT changed here)
 
-Set `start.merchant-v3.cmd` to:
-
-```
-npm run dev -- --port ${WTS_FE_PORT:-3030}
-```
-
-Vite exposes no port env var, only the `--port` flag; Studio injects `WTS_FE_PORT` (slot-offset)
-into the spawn env, so this makes the FE bind its slot's port. The FE's BE URL is handled
-automatically by the `src/config.js` rewrite above (no `VITE_API_URL` read required yet —
-that env var is injected as a harmless bonus for a future env-reading FE).
+Set each FE repo's `start.<repo>.cmd` (see the table above): `WTS_FE_PORT` is injected slot-offset
+into the spawn env so the FE binds its slot's port; the BE URLs are handled automatically by the
+`applyConfigPatch()` rewrite of the gitignored config file. No `VITE_API_URL`/env read is required —
+that injection was dropped.
 
 ## Phased execution (for later — do NOT run now)
 

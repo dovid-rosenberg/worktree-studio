@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { run, readJson, writeJson } = require('./util');
-const { deriveEnv, allocSlot, rewriteSiblingPort } = require('./concurrency');
+const { deriveEnv, allocSlot, rewriteAllSiblingPorts } = require('./concurrency');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
@@ -66,9 +66,9 @@ class Servers {
 
   // Launch env + ports for a repo at a feature's current slot. {} / [] when
   // concurrency is off or the repo has no concurrency config (behaves as today).
-  // When the repo declares a `configPatch` (e.g. merchant-v3's FE→BE URL), also
-  //  - inject VITE_API_URL (derived sibling merchant URL) for a future env-reading FE, and
-  //  - return a `patch` descriptor that start() applies to the worktree's config file.
+  // When the repo declares a `configPatch` (e.g. an FE that hardcodes accept-blue's
+  // ports), return a `patch` descriptor that start() applies to the worktree's config
+  // file — shifting ALL of the sibling repo's port families to this feature's slot.
   launchOpts(repo, feature) {
     if (!this._concEnabled()) return { env: {}, ports: [] };
     const rc = this._repoConc(repo);
@@ -79,17 +79,14 @@ class Servers {
     const cp = rc.configPatch;
     if (cp) {
       const sib = this._repoConc(cp.siblingRepo);
-      const base = sib && sib.portEnv && sib.portEnv[cp.siblingPortKey];
-      if (base != null) {
-        const port = base + slot * step;
-        env.VITE_API_URL = `http://localhost:${port}/merchant`;
-        return { env, ports, patch: { file: cp.file, basePort: base, newPort: port } };
-      }
+      const siblingPortEnv = sib && sib.portEnv;
+      if (siblingPortEnv) return { env, ports, patch: { file: cp.file, siblingPortEnv, slot } };
     }
     return { env, ports };
   }
 
-  // Rewrite a worktree's gitignored FE config to point at the slot's sibling port.
+  // Rewrite a worktree's gitignored FE config to point at this slot's sibling ports.
+  // Shifts every one of the sibling repo's port families (su/merchant/iso/…) uniformly.
   // Best-effort + file-exists guarded: silently no-op when the file isn't present.
   applyConfigPatch(worktreePath, patch) {
     if (!patch || !patch.file) return;
@@ -99,7 +96,7 @@ class Servers {
       const step = this.cfg.concurrency.offsetStep;
       const max = this.cfg.concurrency.maxSlots || 1;
       const text = fs.readFileSync(file, 'utf8');
-      const out = rewriteSiblingPort(text, patch.basePort, step, max, patch.newPort);
+      const out = rewriteAllSiblingPorts(text, patch.siblingPortEnv, step, max, patch.slot);
       if (out !== text) fs.writeFileSync(file, out);
     } catch { /* best-effort — never block a launch on a config rewrite */ }
   }

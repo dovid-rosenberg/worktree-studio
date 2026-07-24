@@ -26,13 +26,13 @@ function defaults() {
     defaultEditor: dash.defaultEditor || 'WebStorm',
     // Native `wt` copy-patterns (files git ignores get carried into new worktrees).
     copyPatterns: {
-      default: ['.env', '.env.local', '.env.*.local', 'config/*-config.js'],
+      default: ['.env', '.env.local', '.env.*.local', 'config/*-config.js', 'src/config.js', 'src/config/config.js'],
     },
     // per-repo dev-server launch config { cmd, ports }
     start: dash.start || {},
     // repos that serve a browsable frontend — get an "Open app ↗" button that
     // opens their (lsof-discovered) running port, incl. concurrency-shifted ports.
-    webRepos: dash.webRepos || ['merchant-v3'],
+    webRepos: dash.webRepos || ['merchant-v3', 'ab-iso-fe', 'ab-su'],
     // manual feature groups: [{ name, members: ["repo/branch-or-wtname"] }]
     groups: dash.groups || [],
     // imported editor run/test configs: { "<repo>": [{ name, cmd, kind, source }] }
@@ -62,12 +62,21 @@ function defaults() {
           portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
           slotEnv: ['redis__db'],
         },
+        // The FE repos hardcode accept-blue's slot-0 ports in a gitignored, per-worktree
+        // config file. On stack-start Studio shifts ALL of the sibling's port families in
+        // that file to this feature's slot (ab-su references su/merchant/iso, so a single
+        // per-port key is wrong — every referenced accept-blue port moves by slot*step).
         'merchant-v3': {
-          portEnv: { WTS_FE_PORT: 3030 },
-          // The FE's BE URL is hardcoded to accept-blue's slot-0 merchant port in the
-          // gitignored, per-worktree src/config.js. On stack-start Studio rewrites that
-          // file's localhost:<merchant-port-family> to this feature's slot port.
-          configPatch: { file: 'src/config.js', siblingRepo: 'accept-blue', siblingPortKey: 'api__port_merchant' },
+          portEnv: { WTS_FE_PORT: 3030 }, // vite; localhost:1239 (merchant)
+          configPatch: { file: 'src/config.js', siblingRepo: 'accept-blue' },
+        },
+        'ab-iso-fe': {
+          portEnv: { WTS_FE_PORT: 9000 }, // webpack-dev-server; iso 1232 + merchant 1239
+          configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
+        },
+        'ab-su': {
+          portEnv: { WTS_FE_PORT: 8000 }, // vite; su 1231 + merchant 1239 + iso 1232
+          configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
         },
       },
     },

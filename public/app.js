@@ -59,14 +59,16 @@ const $ = (sel) => document.querySelector(sel);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-// The browsable frontend of a feature/session: the first web repo (config.webRepos)
-// that's running with a discovered port. Returns { repo, port } or null.
-function webAppFor(list) {
+// The browsable frontends of a feature/session: every web repo (config.webRepos)
+// that's running with a discovered port. Returns an array of { repo, port } (first
+// port each) — one "Open <repo> ↗" button is rendered per entry.
+function webAppsFor(list) {
   const web = new Set(state.webRepos || []);
+  const out = [];
   for (const r of (list || [])) {
-    if (web.has(r.repo) && r.running && (r.ports || []).length) return { repo: r.repo, port: r.ports[0] };
+    if (web.has(r.repo) && r.running && (r.ports || []).length) out.push({ repo: r.repo, port: r.ports[0] });
   }
-  return null;
+  return out;
 }
 function openApp(port) { window.open(`http://localhost:${port}`, '_blank', 'noopener'); }
 
@@ -434,8 +436,7 @@ function updateDock(s) {
         : `<span class="portchip"><span class="dot ${r.running ? 'done' : 'idle'}"></span>${esc(r.repo)}</span>`)).join('')
       + '<span class="spacer" style="flex:1"></span>';
     bar.querySelectorAll('.portchip.open').forEach((el) => el.addEventListener('click', () => window.open(`http://localhost:${el.dataset.port}`, '_blank', 'noopener')));
-    const web = webAppFor(reps);
-    if (web) { const b = h(`<button class="btn sm primary" title="Open the frontend — http://localhost:${esc(web.port)}">Open ${esc(web.repo)} ↗</button>`); b.addEventListener('click', () => openApp(web.port)); bar.appendChild(b); }
+    for (const web of webAppsFor(reps)) { const b = h(`<button class="btn sm primary" title="Open the frontend — http://localhost:${esc(web.port)}">Open ${esc(web.repo)} ↗</button>`); b.addEventListener('click', () => openApp(web.port)); bar.appendChild(b); }
     if (anyStopped) { const b = h(`<button class="btn sm go">${anyRunning ? 'Run rest' : 'Run all'}</button>`); b.addEventListener('click', () => startSessionServers(s)); bar.appendChild(b); }
     if (anyRunning) { const b = h('<button class="btn sm danger">Stop all</button>'); b.addEventListener('click', () => stopSessionServers(s)); bar.appendChild(b); }
   }
@@ -1325,8 +1326,7 @@ function featureRow(f) {
     l1.appendChild(sess ? btn('Go to session ▸', () => goToSession(sess.id), 'primary') : btn('Start session', () => startFeatureSession(f), 'primary'));
     if (anyRunning) l1.appendChild(btn('Stop stack', () => stopStack(f.name), 'danger'));
     else if (anyStartable) l1.appendChild(btn('Run stack', () => runStack(f.name), 'go'));
-    const fweb = webAppFor(ms);
-    if (fweb) l1.appendChild(btn(`Open ${fweb.repo} ↗`, () => openApp(fweb.port)));
+    webAppsFor(ms).forEach((fweb) => l1.appendChild(btn(`Open ${fweb.repo} ↗`, () => openApp(fweb.port))));
     const more = h('<button class="btn sm ghost fmore" title="More">⋯</button>');
     more.addEventListener('click', (e) => { e.stopPropagation(); openFeatureMenu(more, f, { anyRunning, sess }); });
     l1.appendChild(more);

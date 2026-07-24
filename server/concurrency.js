@@ -51,4 +51,21 @@ function rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) {
   return out;
 }
 
-module.exports = { deriveEnv, allocSlot, rewriteSiblingPort };
+// rewriteAllSiblingPorts(text, siblingPortEnv, offsetStep, maxSlots, slot) → `text`
+// with EVERY sibling-repo port family shifted to `slot`. For each base port in
+// Object.values(siblingPortEnv), it rewrites every `localhost:<base + k*offsetStep>`
+// (k in 0..maxSlots-1) to `localhost:<base + slot*offsetStep>` (one rewriteSiblingPort
+// pass per base). Used for FE configs (e.g. ab-su's) that reference MULTIPLE accept-blue
+// ports (su/merchant/iso) — a feature at slot n runs one accept-blue instance serving
+// all of them at +n*offsetStep, so all of those refs must move together.
+//   - Pure, idempotent, port-family-safe (inherits rewriteSiblingPort's `(?![0-9])` guard).
+//   - Slot 0 is a no-op (every base → itself).
+function rewriteAllSiblingPorts(text, siblingPortEnv, offsetStep, maxSlots, slot) {
+  let out = String(text == null ? '' : text);
+  for (const base of Object.values(siblingPortEnv || {})) {
+    out = rewriteSiblingPort(out, base, offsetStep, maxSlots, base + slot * offsetStep);
+  }
+  return out;
+}
+
+module.exports = { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts };
