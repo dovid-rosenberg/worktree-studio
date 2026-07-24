@@ -83,6 +83,35 @@ function defaults() {
   };
 }
 
+// Non-fatal sanity check of the concurrency block (this is a local dev tool — warn,
+// never throw). Flags two footguns:
+//   - maxSlots > 16: redis__db is set to the slot index; redis ships 16 DBs (0..15),
+//     so slots >= 16 would collide on the redis DB index.
+//   - port-family collisions: within slots 0..maxSlots-1, family i at slot a and family j
+//     at slot b land on the same port when base_i - base_j == (b-a)*offsetStep. That happens
+//     iff |base_i - base_j| is a multiple of offsetStep no larger than (maxSlots-1)*offsetStep.
+function validateConcurrency(cfg) {
+  const c = cfg && cfg.concurrency;
+  if (!c || !c.enabled) return;
+  const step = c.offsetStep;
+  const max = c.maxSlots || 1;
+  if (max > 16) {
+    console.warn(`[wt-studio] concurrency.maxSlots=${max} exceeds 16 (redis DB index limit); slots >= 16 collide on redis__db.`);
+  }
+  for (const [repo, rc] of Object.entries(c.repos || {})) {
+    const bases = Object.values((rc && rc.portEnv) || {});
+    for (let i = 0; i < bases.length; i++) {
+      for (let j = i + 1; j < bases.length; j++) {
+        const diff = Math.abs(bases[i] - bases[j]);
+        if (step > 0 && diff % step === 0 && diff / step <= max - 1) {
+          console.warn(`[wt-studio] concurrency: repo '${repo}' ports ${bases[i]} and ${bases[j]} collide across slots 0..${max - 1} `
+            + `at offsetStep ${step} (diff ${diff} is a multiple of the step within slot range); increase offsetStep or reduce maxSlots.`);
+        }
+      }
+    }
+  }
+}
+
 function load() {
   let cfg = readJson(CONFIG_FILE, null);
   if (!cfg) {
@@ -99,6 +128,7 @@ function load() {
   cfg._stateDir = STATE_DIR;
   cfg.baseDirs = (cfg.baseDirs || []).map(expandTilde);
   fs.mkdirSync(STATE_DIR, { recursive: true });
+  validateConcurrency(cfg);
   return cfg;
 }
 
@@ -109,4 +139,4 @@ function save(cfg) {
   writeJson(cfg._file || CONFIG_FILE, out);
 }
 
-module.exports = { load, save, CONFIG_FILE, CONFIG_DIR, STATE_DIR };
+module.exports = { load, save, validateConcurrency, CONFIG_FILE, CONFIG_DIR, STATE_DIR };

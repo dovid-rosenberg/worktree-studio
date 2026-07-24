@@ -5,8 +5,9 @@
 // ones on a configured port. Configured `start[repo]` is used only to launch.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { run, readJson, writeJson } = require('./util');
+const { run, readJson, writeJson, slug } = require('./util');
 const { deriveEnv, allocSlot, rewriteAllSiblingPorts } = require('./concurrency');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
@@ -40,11 +41,16 @@ class Servers {
     this.file = path.join(cfg._stateDir, 'servers.json');
     fs.mkdirSync(this.logDir, { recursive: true });
     fs.mkdirSync(this.lockDir, { recursive: true });
-    this.tracked = readJson(this.file, {}); // worktreePath → { pid, repo, log }
-    this.slots = new Map(); // featureName → slot (concurrency: one slot per feature, shared by its repos)
+    // servers.json shape: { tracked: { worktreePath → { pid, repo, log } }, slots: { feature → slot } }.
+    // Back-compat: an old flat file (just the tracked object) still loads as `tracked`.
+    const saved = readJson(this.file, {});
+    this.tracked = saved.tracked || saved; // worktreePath → { pid, repo, log }
+    // featureName → slot (concurrency: one slot per feature, shared by its repos). Persisted
+    // so a Studio restart while features run doesn't re-slot a running feature to slot 0.
+    this.slots = new Map(Object.entries(saved.slots || {}).map(([k, v]) => [k, Number(v)]));
   }
 
-  _save() { writeJson(this.file, this.tracked); }
+  _save() { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
 
   // ---- concurrency: per-feature slot allocation + derived launch env ----
   _concEnabled() { return !!(this.cfg.concurrency && this.cfg.concurrency.enabled); }
@@ -59,10 +65,26 @@ class Servers {
     const slot = allocSlot(new Set(this.slots.values()), max);
     if (slot === null) return { error: `no free concurrency slot (max ${max} running)` };
     this.slots.set(feature, slot);
+    this._save();
     return { slot };
   }
 
-  releaseSlot(feature) { if (feature) this.slots.delete(feature); }
+  releaseSlot(feature) { if (feature && this.slots.delete(feature)) this._save(); }
+
+  // Self-heal the slot map against reality: drop any slot whose feature has no
+  // running worktree in `runningMap` (Map(realpath → {pid,ports}) from discoverRunning).
+  // Called on the periodic refresh so leaked/stale slots are released and a
+  // restart-with-running-servers keeps only the slots that are actually live.
+  reconcileSlots(runningMap) {
+    let changed = false;
+    for (const feature of [...this.slots.keys()]) {
+      if (![...runningMap.keys()].some((p) => featureFromPath(p) === feature)) {
+        this.slots.delete(feature);
+        changed = true;
+      }
+    }
+    if (changed) this._save();
+  }
 
   // Launch env + ports for a repo at a feature's current slot. {} / [] when
   // concurrency is off or the repo has no concurrency config (behaves as today).
@@ -163,8 +185,12 @@ class Servers {
     };
   }
 
-  _lock(repo) {
-    const lock = path.join(this.lockDir, `${repo}.lock`);
+  // Serialize concurrent launches of the SAME worktree (not the same repo — two
+  // worktrees of one repo must start concurrently). Lock name is a filesystem-safe
+  // slug + hash of the worktree path so distinct paths never share a lock.
+  _lock(worktreePath) {
+    const name = `${slug(worktreePath, 40)}-${crypto.createHash('sha1').update(String(worktreePath)).digest('hex').slice(0, 8)}`;
+    const lock = path.join(this.lockDir, `${name}.lock`);
     try { fs.mkdirSync(lock); return lock; }
     catch {
       // stale lock (>60s) → reclaim
@@ -181,8 +207,8 @@ class Servers {
     if (!sc) return { ok: false, error: `no start config for repo '${repo}'` };
     const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
     const ports = opts.ports && opts.ports.length ? opts.ports : sc.ports;
-    const lock = this._lock(repo);
-    if (!lock) return { ok: false, error: `another launch for '${repo}' is in progress` };
+    const lock = this._lock(worktreePath);
+    if (!lock) return { ok: false, error: `another launch for '${repo}' at ${worktreePath} is in progress` };
     try {
       for (const p of ports) {
         const pid = await this.portPid(p);

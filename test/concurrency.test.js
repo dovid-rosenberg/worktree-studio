@@ -100,6 +100,26 @@ test('rewriteSiblingPort leaves ports outside the family and non-port text untou
   assert.equal(out, "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1439/x';");
 });
 
+// A7 — match 127.0.0.1 as well as localhost, and preserve whichever host was written.
+test('rewriteSiblingPort rewrites a 127.0.0.1 host and preserves it', () => {
+  assert.equal(rewriteSiblingPort('127.0.0.1:1231/api', 1231, 100, 3, 1331), '127.0.0.1:1331/api');
+});
+
+test('rewriteSiblingPort still rewrites a localhost host and preserves it', () => {
+  assert.equal(rewriteSiblingPort('localhost:1231/api', 1231, 100, 3, 1331), 'localhost:1331/api');
+});
+
+test('rewriteSiblingPort keeps mixed hosts distinct (no host swapping)', () => {
+  const text = "a='http://localhost:1231/x'; b='http://127.0.0.1:1231/y';";
+  const out = rewriteSiblingPort(text, 1231, 100, 3, 1331);
+  assert.equal(out, "a='http://localhost:1331/x'; b='http://127.0.0.1:1331/y';");
+});
+
+test('rewriteSiblingPort 127.0.0.1 keeps its trailing-digit guard', () => {
+  // 127.0.0.1:1231 must not match inside 127.0.0.1:12310
+  assert.equal(rewriteSiblingPort('127.0.0.1:12310/x', 1231, 100, 3, 1331), '127.0.0.1:12310/x');
+});
+
 // rewriteAllSiblingPorts — shift EVERY sibling port family together (ab-su's config
 // references su 1231, merchant 1239, iso 1232 — a slot moves all three uniformly).
 const SU_PORTS = { api__port_su: 1231, api__port_merchant: 1239, api__port_iso: 1232 };

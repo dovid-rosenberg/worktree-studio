@@ -54,7 +54,10 @@ async function main() {
   // every SSE broadcast (which fires per Claude hook → per tool call).
   let runningCache = new Map();
   async function refreshRunning() {
-    try { runningCache = await servers.discoverRunning(); } catch { /* */ }
+    try {
+      runningCache = await servers.discoverRunning();
+      servers.reconcileSlots(runningCache); // self-heal leaked/stale slots against reality
+    } catch { /* */ }
   }
 
   // Unified state: every worktree decorated with discovered server state + its
@@ -312,11 +315,16 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const toStart = (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo));
-    const alloc = toStart.length ? servers.allocSlotFor(s.feature) : { slot: 0 };
-    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+    // Key the slot on the per-worktree feature (its `.worktrees/<name>` basename) — the
+    // one canonical key used everywhere. A session's repos share the basename → one slot.
+    for (const r of toStart) {
+      const alloc = servers.allocSlotFor(featureFromPath(r.worktreePath));
+      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+    }
     const results = [];
     for (const r of toStart) {
-      results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, s.feature))) });
+      const feat = featureFromPath(r.worktreePath);
+      results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, feat))) });
     }
     await refreshRunning();
     scheduleBroadcast();
@@ -325,8 +333,9 @@ async function main() {
   app.post('/api/sessions/:id/servers/stop', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
-    for (const r of (s.repos || []).filter((x) => x.worktreePath)) await servers.stop(r.repo, r.worktreePath);
-    servers.releaseSlot(s.feature); // whole stack stopped → free the feature's slot
+    const owned = (s.repos || []).filter((x) => x.worktreePath);
+    for (const r of owned) await servers.stop(r.repo, r.worktreePath);
+    for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath)); // whole stack stopped → free the feature's slot
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -454,13 +463,17 @@ async function main() {
       for (const c of conflicts) await servers.stop(c.repo, c.path);
       await new Promise((r) => setTimeout(r, 1200));
     }
-    if (toStart.length) {
-      const alloc = servers.allocSlotFor(g.name);
+    // Key each slot on the member's own feature (its `.worktrees/<name>` basename) — the
+    // one canonical key. Members of a real feature share the basename → one slot; a
+    // degenerate mixed-name manual group correctly gets a per-worktree slot each.
+    for (const m of toStart) {
+      const alloc = servers.allocSlotFor(featureFromPath(m.path));
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
     let started = 0; const failures = [];
     await Promise.all(toStart.map(async (m) => {
-      const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, g.name));
+      const feat = featureFromPath(m.path);
+      const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, feat));
       if (r.ok) started++; else failures.push({ repo: m.repo, error: r.error });
     }));
     await refreshRunning();
@@ -472,7 +485,7 @@ async function main() {
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
-    servers.releaseSlot(g.name); // whole stack stopped → free the feature's slot
+    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // whole stack stopped → free the feature's slot
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -481,9 +494,12 @@ async function main() {
     const { group } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    const alloc = servers.allocSlotFor(g.name); // reuse the feature's slot across the restart
-    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    await Promise.all(g.members.filter((m) => m.running || m.canStart).map((m) => servers.restart(m.repo, m.path, servers.launchOpts(m.repo, g.name))));
+    const toRestart = g.members.filter((m) => m.running || m.canStart);
+    for (const m of toRestart) {
+      const alloc = servers.allocSlotFor(featureFromPath(m.path)); // reuse the feature's slot across the restart
+      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+    }
+    await Promise.all(toRestart.map((m) => servers.restart(m.repo, m.path, servers.launchOpts(m.repo, featureFromPath(m.path)))));
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -508,7 +524,7 @@ async function main() {
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.deactivate(m.session.id);
     }
-    servers.releaseSlot(g.name); // whole stack stopped → free the feature's slot
+    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // whole stack stopped → free the feature's slot
     scheduleBroadcast();
     res.json({ ok: true });
   }));
@@ -527,7 +543,7 @@ async function main() {
       const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: deleteBranches });
       results.push({ repo: m.repo, ok: rr.ok, error: rr.error });
     }
-    servers.releaseSlot(g.name); // feature removed → free its slot
+    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // feature removed → free its slot
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   }));

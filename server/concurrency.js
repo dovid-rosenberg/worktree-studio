@@ -45,8 +45,9 @@ function rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) {
   for (let k = 0; k < maxSlots; k++) {
     const port = basePort + k * offsetStep;
     if (port === newPort) continue; // leave the target port as-is (idempotency)
-    const re = new RegExp(`localhost:${port}(?![0-9])`, 'g');
-    out = out.replace(re, `localhost:${newPort}`);
+    // Match either host form and preserve it (localhost stays localhost, 127.0.0.1 stays 127.0.0.1).
+    const re = new RegExp(`(localhost|127\\.0\\.0\\.1):${port}(?![0-9])`, 'g');
+    out = out.replace(re, `$1:${newPort}`);
   }
   return out;
 }
