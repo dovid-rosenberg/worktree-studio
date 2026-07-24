@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { run, readJson, writeJson } = require('./util');
-const { deriveEnv, allocSlot } = require('./concurrency');
+const { deriveEnv, allocSlot, rewriteSiblingPort } = require('./concurrency');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
@@ -66,12 +66,42 @@ class Servers {
 
   // Launch env + ports for a repo at a feature's current slot. {} / [] when
   // concurrency is off or the repo has no concurrency config (behaves as today).
+  // When the repo declares a `configPatch` (e.g. merchant-v3's FE→BE URL), also
+  //  - inject VITE_API_URL (derived sibling merchant URL) for a future env-reading FE, and
+  //  - return a `patch` descriptor that start() applies to the worktree's config file.
   launchOpts(repo, feature) {
     if (!this._concEnabled()) return { env: {}, ports: [] };
     const rc = this._repoConc(repo);
     if (!rc) return { env: {}, ports: [] };
+    const step = this.cfg.concurrency.offsetStep;
     const slot = this.slots.has(feature) ? this.slots.get(feature) : 0;
-    return deriveEnv(rc, slot, this.cfg.concurrency.offsetStep);
+    const { env, ports } = deriveEnv(rc, slot, step);
+    const cp = rc.configPatch;
+    if (cp) {
+      const sib = this._repoConc(cp.siblingRepo);
+      const base = sib && sib.portEnv && sib.portEnv[cp.siblingPortKey];
+      if (base != null) {
+        const port = base + slot * step;
+        env.VITE_API_URL = `http://localhost:${port}/merchant`;
+        return { env, ports, patch: { file: cp.file, basePort: base, newPort: port } };
+      }
+    }
+    return { env, ports };
+  }
+
+  // Rewrite a worktree's gitignored FE config to point at the slot's sibling port.
+  // Best-effort + file-exists guarded: silently no-op when the file isn't present.
+  applyConfigPatch(worktreePath, patch) {
+    if (!patch || !patch.file) return;
+    try {
+      const file = path.join(worktreePath, patch.file);
+      if (!fs.existsSync(file)) return;
+      const step = this.cfg.concurrency.offsetStep;
+      const max = this.cfg.concurrency.maxSlots || 1;
+      const text = fs.readFileSync(file, 'utf8');
+      const out = rewriteSiblingPort(text, patch.basePort, step, max, patch.newPort);
+      if (out !== text) fs.writeFileSync(file, out);
+    } catch { /* best-effort — never block a launch on a config rewrite */ }
   }
 
   startCfg(repo) {
@@ -161,6 +191,8 @@ class Servers {
         const pid = await this.portPid(p);
         if (pid) return { ok: false, error: `port ${p} already in use (pid ${pid})` };
       }
+      // Re-point the worktree's FE config at this slot's sibling port before spawning.
+      if (opts.patch) this.applyConfigPatch(worktreePath, opts.patch);
       const log = path.join(this.logDir, `${repo}__${path.basename(worktreePath)}.log`);
       const fd = fs.openSync(log, 'a');
       fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);

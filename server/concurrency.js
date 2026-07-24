@@ -30,4 +30,25 @@ function allocSlot(usedSlots, maxSlots) {
   return null;
 }
 
-module.exports = { deriveEnv, allocSlot };
+// rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) → `text` with
+// every `localhost:<basePort + k*offsetStep>` (for k in 0..maxSlots-1) rewritten to
+// `localhost:<newPort>`. Used to re-point a per-worktree FE config (gitignored
+// `src/config.js`) at the accept-blue merchant port for its slot.
+//   - Only touches ports in this family (base, base+step, …); everything else is left
+//     byte-for-byte — including other numbers and unrelated `localhost:<port>`s.
+//   - The `localhost:` anchor + a trailing non-digit guard mean `localhost:1239` never
+//     matches inside `localhost:12390`.
+//   - Idempotent: re-running yields the same result (newPort is itself in the family
+//     and is skipped), so it can also re-target an already-shifted config.
+function rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) {
+  let out = String(text == null ? '' : text);
+  for (let k = 0; k < maxSlots; k++) {
+    const port = basePort + k * offsetStep;
+    if (port === newPort) continue; // leave the target port as-is (idempotency)
+    const re = new RegExp(`localhost:${port}(?![0-9])`, 'g');
+    out = out.replace(re, `localhost:${newPort}`);
+  }
+  return out;
+}
+
+module.exports = { deriveEnv, allocSlot, rewriteSiblingPort };

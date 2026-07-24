@@ -273,6 +273,7 @@ button { font-family:inherit; }
 .badge { font-family:var(--mono); font-size:10px; font-weight:600; padding:2px 8px; border-radius:999px; display:inline-flex; align-items:center; gap:5px; }
 .badge.run { color:var(--done); background:var(--done-bg); } .badge.stop { color:var(--muted); background:var(--idle-bg); }
 .badge.merged { color:var(--done); background:var(--done-bg); }
+.badge.slot { color:var(--working); background:var(--working-bg); }
 
 /* settings modal */
 .conn-status { font-family:var(--mono); font-size:12px; color:var(--muted); }

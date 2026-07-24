@@ -82,10 +82,12 @@ async function main() {
       reposOut.push({ name: repo.name, repo: repo.name, path: repo.path, defaultBranch: repo.defaultBranch, worktrees: wts });
     }
     const { features, groups } = computeFeatures(flat, cfg.groups || []);
-    // one session per feature: surface the single driving session on the feature
+    // one session per feature: surface the single driving session on the feature,
+    // plus its concurrency slot (0,1,2…) when one is allocated — powers the Fleet badge.
     for (const f of [...features, ...groups]) {
       const m = (f.members || []).find((x) => x && x.session);
       f.session = m ? m.session : null;
+      if (servers.slots.has(f.name)) f.slot = servers.slots.get(f.name);
     }
     // per-session server state — every repo the session owns (its shared workspace)
     const { realpath } = require('./servers');

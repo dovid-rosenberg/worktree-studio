@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { deriveEnv, allocSlot } = require('../server/concurrency');
+const { deriveEnv, allocSlot, rewriteSiblingPort } = require('../server/concurrency');
 
 // accept-blue's real port map + redis__db slot key (mirrors config defaults).
 const AB = {
@@ -62,4 +62,40 @@ test('allocSlot returns null when all slots are busy', () => {
 
 test('allocSlot accepts an array of used slots', () => {
   assert.equal(allocSlot([0, 1], 3), 2);
+});
+
+// rewriteSiblingPort — re-point the FE's gitignored src/config.js at a slot's BE merchant port.
+// merchant base port is 1239, offsetStep 100, maxSlots 3 (family: 1239, 1339, 1439).
+const FE_CONFIG = [
+  "export default {",
+  "  baseURL: 'http://localhost:1239/merchant',",
+  "  paayLibrary: { verifyUrl: 'http://localhost:1239/merchant/admin/three-ds' },",
+  "};",
+].join('\n');
+
+test('rewriteSiblingPort slot 0 is a no-op (base → base)', () => {
+  assert.equal(rewriteSiblingPort(FE_CONFIG, 1239, 100, 3, 1239), FE_CONFIG);
+});
+
+test('rewriteSiblingPort slot 2 rewrites every family port to 1439', () => {
+  const out = rewriteSiblingPort(FE_CONFIG, 1239, 100, 3, 1439);
+  assert.equal(out, FE_CONFIG.replace(/localhost:1239/g, 'localhost:1439'));
+  assert.ok(!out.includes('localhost:1239'));
+});
+
+test('rewriteSiblingPort re-targets an already-shifted config (slot 2 → slot 1)', () => {
+  const slot2 = rewriteSiblingPort(FE_CONFIG, 1239, 100, 3, 1439);
+  const slot1 = rewriteSiblingPort(slot2, 1239, 100, 3, 1339);
+  assert.equal(slot1, FE_CONFIG.replace(/localhost:1239/g, 'localhost:1339'));
+});
+
+test('rewriteSiblingPort is idempotent (re-running yields the same result)', () => {
+  const once = rewriteSiblingPort(FE_CONFIG, 1239, 100, 3, 1439);
+  assert.equal(rewriteSiblingPort(once, 1239, 100, 3, 1439), once);
+});
+
+test('rewriteSiblingPort leaves ports outside the family and non-port text untouched', () => {
+  const text = "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1239/x';";
+  const out = rewriteSiblingPort(text, 1239, 100, 3, 1439);
+  assert.equal(out, "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1439/x';");
 });

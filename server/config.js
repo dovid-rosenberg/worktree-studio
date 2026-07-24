@@ -59,7 +59,13 @@ function defaults() {
           portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
           slotEnv: ['redis__db'],
         },
-        'merchant-v3': { portEnv: { WTS_FE_PORT: 3030 } },
+        'merchant-v3': {
+          portEnv: { WTS_FE_PORT: 3030 },
+          // The FE's BE URL is hardcoded to accept-blue's slot-0 merchant port in the
+          // gitignored, per-worktree src/config.js. On stack-start Studio rewrites that
+          // file's localhost:<merchant-port-family> to this feature's slot port.
+          configPatch: { file: 'src/config.js', siblingRepo: 'accept-blue', siblingPortKey: 'api__port_merchant' },
+        },
       },
     },
   };

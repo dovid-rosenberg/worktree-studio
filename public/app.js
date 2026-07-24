@@ -1301,6 +1301,8 @@ function featureRow(f) {
   // two clearly-labelled statuses: the agent (Claude session) and the dev servers
   if (sess) l1.appendChild(h(`<span class="pill agent ${sess.state}" title="Agent — the Claude session"><span class="dot ${sess.state}"></span>agent · ${esc(sess.state)}</span>`));
   l1.appendChild(h(`<span class="pill srv ${anyRunning ? 'done' : 'idle'}" title="Dev servers"><span class="pi">⇅</span>servers · ${anyRunning ? 'running' : 'stopped'}</span>`));
+  // concurrency slot (0,1,2…) — the offset that gives this feature its own ports/redis DB
+  if (f.slot != null) l1.appendChild(h(`<span class="badge slot" title="Concurrency slot — its ports are offset by slot·100">slot ${esc(f.slot)}</span>`));
   l1.appendChild(h('<span class="grow"></span>'));
   if (pend) {
     l1.appendChild(h('<button class="btn sm" disabled>working…</button>'));

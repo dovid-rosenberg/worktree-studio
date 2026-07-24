@@ -30,7 +30,7 @@ That removes the two things I was most worried about (per-instance code changes,
 | **5 BE ports** su/iso/merchant/api/internal (`launchers/fe/index.js:37-58`, all read from `Config`) | Yes | env `api__port_su/iso/merchant/internal` + `PORT` (or `api__port`). **No code change.** |
 | **Job scheduler** | **No** in `fe` mode | nothing — just never launch >1 `job_schedule`. |
 | **Redis** — remote shared host, logical DB 0, unnamespaced keys (`components/cache/index.js`, dev-config `redis` block). Only cache + nonce/idempotency locks + rate limiters; no sessions (JWT), no pub/sub. | Yes | env `redis__db=<n>` per instance (host has 16 DBs). **No code change.** (A key-prefix would need new code; DB index is enough.) |
-| **FE dev port** hardcoded `3030` (`merchant-v3/vite.config.js`) | Yes | `npm run dev -- --port 313x` (CLI flag; no env today). |
+| **FE dev port** hardcoded `3030` (`merchant-v3/vite.config.js`) | Yes | `npm run dev -- --port 313x` (CLI flag; no env today). Studio injects `WTS_FE_PORT` (slot-offset), so set `start.merchant-v3.cmd` = `npm run dev -- --port ${WTS_FE_PORT:-3030}` (Vite has no port env var — only `--port`). |
 | **FE→BE base URL** hardcoded `http://localhost:1239/...` in `merchant-v3/src/config.js` (`baseURL`, `paayLibrary.verifyUrl`) | Yes | today: hand-edit those 2 lines; recommended: add a `VITE_API_URL` env read (~3 lines). |
 | Self/callback URLs | No | all point at *frontends* (`client_url` etc.), overridable; no BE self-URL with a port is built anywhere. |
 | Log/PID files | No | console/DB/cloud transports only; no local log or PID/lock files. |
@@ -86,6 +86,36 @@ at which point it solves the drift problem too, but that's a different, bigger p
   4. Thread the derived env into the spawn (`servers.start` / the group-start path currently pass a fixed
      ENV — merge per-feature env on top).
   5. Fleet UI: show each running feature's slot + its real ports (chips already open `localhost:<port>`).
+
+## Implemented (this branch)
+
+- **Studio `concurrency` config + `deriveEnv`/`allocSlot` pure fns + tests** — done.
+- **Slot allocator + env injection into the dev-server spawn** — done (`servers.slots`,
+  `allocSlotFor`/`releaseSlot`, `launchOpts` → `start(repo, wt, {env, ports})`).
+- **FE→BE wiring** — done. `rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort)`
+  (pure, tested) rewrites every `localhost:<port-in-the-merchant-family>` in the worktree's
+  gitignored `src/config.js` to the feature's slot port. Wired via `merchant-v3.configPatch`
+  (`{ file:'src/config.js', siblingRepo:'accept-blue', siblingPortKey:'api__port_merchant' }`):
+  `launchOpts` derives the sibling port and returns a `patch` descriptor + injects
+  `VITE_API_URL=http://localhost:<merchant-port>/merchant`; `start()` calls
+  `applyConfigPatch()` before spawning — **file-exists guarded** (silent no-op when absent),
+  runs for **all slots including 0** (slot 0 rewrites base→base, a no-op), all gated on
+  `concurrency.enabled`.
+- **Fleet UI** — `buildState()` surfaces `f.slot` from `servers.slots`; `featureRow` shows a
+  `slot N` badge; per-feature port chips are the lsof-discovered (shifted) ports already.
+
+### The one FE-repo config change the user must make (merchant-v3 is a different repo — NOT changed here)
+
+Set `start.merchant-v3.cmd` to:
+
+```
+npm run dev -- --port ${WTS_FE_PORT:-3030}
+```
+
+Vite exposes no port env var, only the `--port` flag; Studio injects `WTS_FE_PORT` (slot-offset)
+into the spawn env, so this makes the FE bind its slot's port. The FE's BE URL is handled
+automatically by the `src/config.js` rewrite above (no `VITE_API_URL` read required yet —
+that env var is injected as a harmless bonus for a future env-reading FE).
 
 ## Phased execution (for later — do NOT run now)
 
