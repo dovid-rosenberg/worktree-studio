@@ -7,11 +7,20 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { run, readJson, writeJson } = require('./util');
+const { deriveEnv, allocSlot } = require('./concurrency');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
 
 function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
+
+// Feature identity of a worktree: its `.worktrees/<name>` basename (the name
+// shared across repos). Main checkouts have no `.worktrees` segment → basename.
+function featureFromPath(worktreePath) {
+  const parts = String(worktreePath || '').split(path.sep);
+  const i = parts.lastIndexOf('.worktrees');
+  return (i >= 0 && parts[i + 1]) ? parts[i + 1] : path.basename(worktreePath || '');
+}
 
 // Read a byte range [start, end) from a file as UTF-8 (used for incremental log tails).
 function readRange(file, start, end) {
@@ -32,9 +41,38 @@ class Servers {
     fs.mkdirSync(this.logDir, { recursive: true });
     fs.mkdirSync(this.lockDir, { recursive: true });
     this.tracked = readJson(this.file, {}); // worktreePath → { pid, repo, log }
+    this.slots = new Map(); // featureName → slot (concurrency: one slot per feature, shared by its repos)
   }
 
   _save() { writeJson(this.file, this.tracked); }
+
+  // ---- concurrency: per-feature slot allocation + derived launch env ----
+  _concEnabled() { return !!(this.cfg.concurrency && this.cfg.concurrency.enabled); }
+  _repoConc(repo) { const c = this.cfg.concurrency; return (c && c.repos && c.repos[repo]) || null; }
+
+  // Allocate (or reuse) the slot for a feature. Returns { slot } or { error } when
+  // all slots are busy. Slot 0 semantics when concurrency is off / no feature name.
+  allocSlotFor(feature) {
+    if (!this._concEnabled() || !feature) return { slot: 0 };
+    if (this.slots.has(feature)) return { slot: this.slots.get(feature) };
+    const max = this.cfg.concurrency.maxSlots || 1;
+    const slot = allocSlot(new Set(this.slots.values()), max);
+    if (slot === null) return { error: `no free concurrency slot (max ${max} running)` };
+    this.slots.set(feature, slot);
+    return { slot };
+  }
+
+  releaseSlot(feature) { if (feature) this.slots.delete(feature); }
+
+  // Launch env + ports for a repo at a feature's current slot. {} / [] when
+  // concurrency is off or the repo has no concurrency config (behaves as today).
+  launchOpts(repo, feature) {
+    if (!this._concEnabled()) return { env: {}, ports: [] };
+    const rc = this._repoConc(repo);
+    if (!rc) return { env: {}, ports: [] };
+    const slot = this.slots.has(feature) ? this.slots.get(feature) : 0;
+    return deriveEnv(rc, slot, this.cfg.concurrency.offsetStep);
+  }
 
   startCfg(repo) {
     const s = this.cfg.start && this.cfg.start[repo];
@@ -109,28 +147,32 @@ class Servers {
   }
   _unlock(lock) { try { fs.rmdirSync(lock); } catch { /* */ } }
 
-  async start(repo, worktreePath) {
+  // opts.env: per-call env merged over the base ENV (concurrency slot offsets).
+  // opts.ports: derived (slot-offset) ports to pre-check/poll instead of sc.ports.
+  async start(repo, worktreePath, opts = {}) {
     const sc = this.startCfg(repo);
     if (!sc) return { ok: false, error: `no start config for repo '${repo}'` };
+    const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
+    const ports = opts.ports && opts.ports.length ? opts.ports : sc.ports;
     const lock = this._lock(repo);
     if (!lock) return { ok: false, error: `another launch for '${repo}' is in progress` };
     try {
-      for (const p of sc.ports) {
+      for (const p of ports) {
         const pid = await this.portPid(p);
         if (pid) return { ok: false, error: `port ${p} already in use (pid ${pid})` };
       }
       const log = path.join(this.logDir, `${repo}__${path.basename(worktreePath)}.log`);
       const fd = fs.openSync(log, 'a');
       fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);
-      const child = spawn('bash', ['-lc', sc.cmd], { cwd: worktreePath, detached: true, stdio: ['ignore', fd, fd], env: ENV });
+      const child = spawn('bash', ['-lc', sc.cmd], { cwd: worktreePath, detached: true, stdio: ['ignore', fd, fd], env });
       child.unref();
       this.tracked[worktreePath] = { pid: child.pid, repo, log };
       this._save();
       // poll for ports to bind (best-effort)
-      for (let i = 0; i < 16 && sc.ports.length; i++) {
+      for (let i = 0; i < 16 && ports.length; i++) {
         await new Promise((r) => setTimeout(r, 500));
         let allUp = true;
-        for (const p of sc.ports) if (!(await this.portPid(p))) allUp = false;
+        for (const p of ports) if (!(await this.portPid(p))) allUp = false;
         if (allUp) break;
       }
       return { ok: true, pid: child.pid, log };
@@ -152,10 +194,10 @@ class Servers {
     return { ok: true, killed };
   }
 
-  async restart(repo, worktreePath) {
+  async restart(repo, worktreePath, opts = {}) {
     await this.stop(repo, worktreePath);
     await new Promise((r) => setTimeout(r, 800));
-    return this.start(repo, worktreePath);
+    return this.start(repo, worktreePath, opts);
   }
 
   // Incremental log tail, guarded to tracked log files only.
@@ -180,4 +222,4 @@ class Servers {
   }
 }
 
-module.exports = { Servers, realpath };
+module.exports = { Servers, realpath, featureFromPath };

@@ -12,7 +12,7 @@ const worktree = require('./worktree');
 const review = require('./review');
 const sources = require('./sources');
 const { SessionManager } = require('./sessions');
-const { Servers } = require('./servers');
+const { Servers, featureFromPath } = require('./servers');
 const { computeFeatures } = require('./features');
 const { run, has, shq } = require('./util');
 
@@ -308,9 +308,12 @@ async function main() {
   app.post('/api/sessions/:id/servers/start', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
+    const toStart = (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo));
+    const alloc = toStart.length ? servers.allocSlotFor(s.feature) : { slot: 0 };
+    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const results = [];
-    for (const r of (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo))) {
-      results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath)) });
+    for (const r of toStart) {
+      results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, s.feature))) });
     }
     await refreshRunning();
     scheduleBroadcast();
@@ -320,6 +323,7 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     for (const r of (s.repos || []).filter((x) => x.worktreePath)) await servers.stop(r.repo, r.worktreePath);
+    servers.releaseSlot(s.feature); // whole stack stopped → free the feature's slot
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -398,7 +402,10 @@ async function main() {
   // ---- dev servers ----
   app.post('/api/servers/start', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const out = await servers.start(repo, worktreePath);
+    const feature = featureFromPath(worktreePath);
+    const alloc = servers.allocSlotFor(feature);
+    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+    const out = await servers.start(repo, worktreePath, servers.launchOpts(repo, feature));
     await refreshRunning();
     scheduleBroadcast();
     res.json(out);
@@ -407,12 +414,18 @@ async function main() {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.stop(repo, worktreePath);
     await refreshRunning();
+    // only free the feature's slot once no sibling repo of the feature is still running
+    const feature = featureFromPath(worktreePath);
+    if (![...runningCache.keys()].some((p) => featureFromPath(p) === feature)) servers.releaseSlot(feature);
     scheduleBroadcast();
     res.json(out);
   }));
   app.post('/api/servers/restart', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const out = await servers.restart(repo, worktreePath);
+    const feature = featureFromPath(worktreePath);
+    const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
+    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+    const out = await servers.restart(repo, worktreePath, servers.launchOpts(repo, feature));
     await refreshRunning();
     scheduleBroadcast();
     res.json(out);
@@ -438,9 +451,13 @@ async function main() {
       for (const c of conflicts) await servers.stop(c.repo, c.path);
       await new Promise((r) => setTimeout(r, 1200));
     }
+    if (toStart.length) {
+      const alloc = servers.allocSlotFor(g.name);
+      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+    }
     let started = 0; const failures = [];
     await Promise.all(toStart.map(async (m) => {
-      const r = await servers.start(m.repo, m.path);
+      const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, g.name));
       if (r.ok) started++; else failures.push({ repo: m.repo, error: r.error });
     }));
     await refreshRunning();
@@ -452,6 +469,7 @@ async function main() {
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
+    servers.releaseSlot(g.name); // whole stack stopped → free the feature's slot
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -460,7 +478,9 @@ async function main() {
     const { group } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    await Promise.all(g.members.filter((m) => m.running || m.canStart).map((m) => servers.restart(m.repo, m.path)));
+    const alloc = servers.allocSlotFor(g.name); // reuse the feature's slot across the restart
+    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+    await Promise.all(g.members.filter((m) => m.running || m.canStart).map((m) => servers.restart(m.repo, m.path, servers.launchOpts(m.repo, g.name))));
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -485,6 +505,7 @@ async function main() {
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.deactivate(m.session.id);
     }
+    servers.releaseSlot(g.name); // whole stack stopped → free the feature's slot
     scheduleBroadcast();
     res.json({ ok: true });
   }));
@@ -503,6 +524,7 @@ async function main() {
       const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: deleteBranches });
       results.push({ repo: m.repo, ok: rr.ok, error: rr.error });
     }
+    servers.releaseSlot(g.name); // feature removed → free its slot
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   }));

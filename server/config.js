@@ -46,6 +46,22 @@ function defaults() {
     },
     // attention notifications when a session changes state (see public/app.js)
     notify: { waiting: true, sound: true, idle: false },
+    // run 2–3 features at once: each feature gets a slot (0,1,2…); slot n offsets
+    // every dev-server port by n*offsetStep and sets redis__db to n. Slot 0 ==
+    // today's defaults (zero behavior change). accept-blue reads these via nconf's
+    // `__`-nested env override; no backend code change needed.
+    concurrency: {
+      enabled: true,
+      offsetStep: 100,
+      maxSlots: 3,
+      repos: {
+        'accept-blue': {
+          portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
+          slotEnv: ['redis__db'],
+        },
+        'merchant-v3': { portEnv: { WTS_FE_PORT: 3030 } },
+      },
+    },
   };
 }
 
