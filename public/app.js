@@ -229,6 +229,23 @@ function visibleSessions() {
   return state.sessions.filter((s) => !repoFilter || s.repoName === repoFilter);
 }
 
+// Group sessions the way the rail displays them: promoted sessions clustered by
+// their worktree (feature), unpromoted ones loose after. Shared by renderRail and
+// railOrderedSessions so ⌘1…⌘9 select the Nth card in visual order.
+function groupRail(sessions) {
+  const byFeature = new Map();
+  const loose = [];
+  for (const s of sessions) {
+    if (s.worktree) { if (!byFeature.has(s.worktree)) byFeature.set(s.worktree, []); byFeature.get(s.worktree).push(s); }
+    else loose.push(s);
+  }
+  return { byFeature, loose };
+}
+function railOrderedSessions() {
+  const { byFeature, loose } = groupRail(visibleSessions());
+  return [...[...byFeature.values()].flat(), ...loose];
+}
+
 function sessionCard(s) {
   const promoted = !!s.worktreePath;
   const card = h(`
@@ -261,12 +278,7 @@ function renderRail() {
     rail.appendChild(h(`<div class="scard-act" style="padding:14px;color:var(--faint)">No sessions yet. Click “+ New session”.</div>`));
   }
   // group promoted sessions by worktree name (their feature); unpromoted stand alone
-  const byFeature = new Map();
-  const loose = [];
-  for (const s of sessions) {
-    if (s.worktree) { if (!byFeature.has(s.worktree)) byFeature.set(s.worktree, []); byFeature.get(s.worktree).push(s); }
-    else loose.push(s);
-  }
+  const { byFeature, loose } = groupRail(sessions);
   for (const [name, members] of byFeature) {
     rail.appendChild(groupHeader(members.length > 1 ? `⎇ ${name} · ${members.length} repos` : `⎇ ${name}`));
     members.forEach((s) => rail.appendChild(sessionCard(s)));
@@ -1211,9 +1223,11 @@ function adoptWorktree(m) {
   // let them switch to Work when ready (the feature stays put in the list)
   return withPending(`adopt:${m.path}`, async () => {
     try {
+      // adopt returns HTTP 200 even when it can't (e.g. { error: 'already being
+      // opened' }), so api() won't throw — guard on a real session like startFeatureSession.
       const s = await api('POST', '/api/worktrees/adopt', { repo: m.repo, worktreePath: m.path, branch: m.branch, wtname: m.wtname });
-      selectedId = s.id;
-      toast(`Session started in ${m.repo}/${m.wtname} — open it in Work ▸`);
+      if (s && s.id) { selectedId = s.id; toast(`Session started in ${m.repo}/${m.wtname} — open it in Work ▸`); }
+      else toast((s && s.error) || 'Could not adopt worktree', true);
     } catch (e) { toast(e.message, true); }
   });
 }
@@ -1275,6 +1289,162 @@ async function saveSettings() {
   try { await api('POST', '/api/settings', { sources, baseDirs, notify }); closeSettings(); toast('Settings saved'); } catch (e) { toast(e.message, true); }
 }
 
+/* ---------------- command palette (⌘K) ---------------- */
+// Built dynamically like uiDialog: a backdrop + input + scrollable list. Its own
+// keydown handler (arrows/Enter) is attached on open and removed on close so no
+// listener leaks. ⌘K toggle and Escape close are handled by the global handler.
+let palette = null; // { back, input, list, rows:[{el,run}], hi } while open, else null
+
+function paletteOpen() { return !!palette; }
+
+function togglePalette() { if (palette) closePalette(); else openPalette(); }
+
+function openPalette() {
+  if (palette) return;
+  const back = h('<div class="modal-backdrop top palette-back"></div>');
+  const box = h('<div class="palette"></div>');
+  const input = h('<input type="text" spellcheck="false" autocomplete="off" placeholder="Jump to a session or run a command…" />');
+  const list = h('<div class="palette-list"></div>');
+  box.appendChild(input); box.appendChild(list); back.appendChild(box);
+  document.body.appendChild(back);
+  palette = { back, input, list, rows: [], hi: 0 };
+  input.addEventListener('input', renderPalette);
+  back.addEventListener('click', (e) => { if (e.target === back) closePalette(); });
+  palette.onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); movePalette(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); movePalette(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPaletteHighlighted(); }
+  };
+  document.addEventListener('keydown', palette.onKey);
+  renderPalette();
+  setTimeout(() => input.focus(), 20);
+}
+
+function closePalette() {
+  if (!palette) return;
+  document.removeEventListener('keydown', palette.onKey);
+  palette.back.remove();
+  palette = null;
+}
+
+// Build the filtered Sessions + Commands rows for the current query and context.
+function paletteRows() {
+  const q = palette.input.value.trim().toLowerCase();
+  const railIdx = new Map();
+  railOrderedSessions().forEach((s, i) => railIdx.set(s.id, i));
+
+  const sessRows = [];
+  for (const s of state.sessions) {
+    if (q && !`${s.title} ${s.repoName} ${s.state}`.toLowerCase().includes(q)) continue;
+    const i = railIdx.get(s.id);
+    const hint = (i != null && i < 9) ? ` · ⌘${i + 1}` : '';
+    sessRows.push({
+      html: `<span class="pg">${s.worktreePath ? '⎇' : '✦'}</span><span class="dot ${s.state}"></span><span class="ptitle">${esc(s.title)}</span><span class="psub">${esc(s.repoName)} · ${esc(s.state)}${hint}</span>`,
+      run: () => { closePalette(); selectSession(s.id); setView('work'); },
+    });
+  }
+
+  const cur = state.sessions.find((x) => x.id === selectedId);
+  const cmds = [];
+  const add = (glyph, label, sub, run) => cmds.push({ glyph, label, sub, run });
+  add('＋', 'New session', '⌘N', () => openModal());
+  if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '⌘↵', () => promote(cur));
+  if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { selectSession(cur.id); setView('work'); openChanges(cur); });
+  if (cur && cur.worktreePath) add('▸', 'Run dev stack', '⌘R', () => startSessionServers(cur));
+  add('◧', 'Toggle Work / Fleet', '⌘\\', () => setView(view === 'work' ? 'fleet' : 'work'));
+  if (cur) {
+    if (cur.active === false) add('↻', 'Reactivate current', '', () => activateSession(cur));
+    else add('⏻', 'Deactivate current', '', () => deactivateSession(cur));
+  }
+  add('⚙', 'Open Settings', '', () => openSettings());
+
+  const cmdRows = [];
+  for (const c of cmds) {
+    if (q && !c.label.toLowerCase().includes(q)) continue;
+    cmdRows.push({
+      html: `<span class="pg">${c.glyph}</span><span class="ptitle">${esc(c.label)}</span>${c.sub ? `<span class="psub">${esc(c.sub)}</span>` : ''}`,
+      run: () => { closePalette(); c.run(); },
+    });
+  }
+  return { sessRows, cmdRows };
+}
+
+function renderPalette() {
+  if (!palette) return;
+  const { sessRows, cmdRows } = paletteRows();
+  palette.list.innerHTML = '';
+  palette.rows = [];
+  const section = (label, rows) => {
+    if (!rows.length) return;
+    palette.list.appendChild(h(`<div class="psec">${esc(label)}</div>`));
+    for (const r of rows) {
+      const el = h(`<div class="pcmd">${r.html}</div>`);
+      const idx = palette.rows.length;
+      el.addEventListener('click', r.run);
+      el.addEventListener('mousemove', () => { if (palette.hi !== idx) { palette.hi = idx; paintPalette(); } });
+      palette.rows.push({ el, run: r.run });
+      palette.list.appendChild(el);
+    }
+  };
+  section('Sessions', sessRows);
+  section('Commands', cmdRows);
+  if (!palette.rows.length) palette.list.appendChild(h(`<div class="psec">No matches</div>`));
+  palette.hi = 0;
+  paintPalette();
+}
+
+function paintPalette() {
+  palette.rows.forEach((r, i) => r.el.classList.toggle('on', i === palette.hi));
+  const cur = palette.rows[palette.hi];
+  if (cur) cur.el.scrollIntoView({ block: 'nearest' });
+}
+
+function movePalette(d) {
+  const n = palette.rows.length;
+  if (!n) return;
+  palette.hi = (palette.hi + d + n) % n;
+  paintPalette();
+}
+
+function runPaletteHighlighted() {
+  const cur = palette.rows[palette.hi];
+  if (cur) cur.run();
+}
+
+/* ---------------- global keyboard shortcuts ---------------- */
+function isTypingTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+}
+// A blocking overlay = the palette, the intake/settings modals, or a live uiDialog.
+function overlayOpen() {
+  return paletteOpen() || !$('#modal').hidden || !$('#settingsModal').hidden || !!document.querySelector('.modal-backdrop .modal.dlg');
+}
+
+function handleShortcut(e) {
+  const meta = e.metaKey || e.ctrlKey;
+  // ⌘K always toggles the palette — even from inside an input.
+  if (meta && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); togglePalette(); return; }
+  // Escape closes the topmost overlay (palette first, else the intake modal).
+  if (e.key === 'Escape') { if (paletteOpen()) closePalette(); else closeModal(); return; }
+  // Beyond ⌘K/Escape, never hijack typing or act while an overlay is up.
+  if (isTypingTarget(e.target) || overlayOpen() || !meta) return;
+
+  const s = state.sessions.find((x) => x.id === selectedId);
+  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openModal(); return; }
+  if (e.key === '\\') { e.preventDefault(); setView(view === 'work' ? 'fleet' : 'work'); return; }
+  if (e.key >= '1' && e.key <= '9') {
+    const rail = railOrderedSessions();
+    const pick = rail[+e.key - 1];
+    if (pick) { e.preventDefault(); selectSession(pick.id); setView('work'); }
+    return;
+  }
+  if (e.key === 'Enter') { if (s && !s.worktreePath) { e.preventDefault(); promote(s); } return; }
+  if (e.key === 'd' || e.key === 'D') { if (s && s.worktreePath) { e.preventDefault(); selectSession(s.id); setView('work'); openChanges(s); } return; }
+  if (e.key === 'r' || e.key === 'R') { if (s && s.worktreePath) { e.preventDefault(); startSessionServers(s); } return; }
+}
+
 /* ---------------- theme + wiring ---------------- */
 function toggleTheme() {
   const cur = document.documentElement.getAttribute('data-theme')
@@ -1302,7 +1472,8 @@ function init() {
   $('#setSave').addEventListener('click', saveSettings);
   $('#settingsModal').addEventListener('click', (e) => { if (e.target.id === 'settingsModal') closeSettings(); });
   $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+  if ($('#paletteBtn')) $('#paletteBtn').addEventListener('click', togglePalette);
+  document.addEventListener('keydown', handleShortcut);
   loadNotifyPrefs();
   connectSSE();
 }
