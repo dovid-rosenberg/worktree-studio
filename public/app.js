@@ -1335,9 +1335,9 @@ function renderFleet() {
   if (!feats.length && !agents.length) { list.appendChild(h(`<div class="fleet-empty">No worktrees or running agents. Start a session, or create a worktree by promoting one.</div>`)); return; }
 
   const section = (label, n) => h(`<div class="sectionrow">${esc(label)} · ${n}</div>`);
+  if (serverFeats.length) { list.appendChild(section('⇅ Servers running', serverFeats.length)); serverFeats.forEach((f) => list.appendChild(serverRow(f))); }
   if (agents.length) { list.appendChild(section('✦ Agents · no worktree', agents.length)); agents.forEach((s) => list.appendChild(agentRow(s))); }
   if (feats.length) { list.appendChild(section('⎇ Worktrees', feats.length)); feats.forEach((f) => list.appendChild(featureRow(f))); }
-  if (serverFeats.length) { list.appendChild(section('⇅ Servers running', serverFeats.length)); serverFeats.forEach((f) => list.appendChild(serverRow(f))); }
 }
 
 // An unpromoted agent. Live → Promote is the next step; stopped → Restart resumes it.

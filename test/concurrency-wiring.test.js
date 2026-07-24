@@ -379,3 +379,11 @@ test('A8: a disabled concurrency block is never validated', () => {
   const msgs = captureWarn(() => validateConcurrency({ concurrency: { ...SHIPPED, enabled: false, maxSlots: 99 } }));
   assert.deepEqual(msgs, []);
 });
+
+// isSlotted — drives the "no stop & switch conflict" behavior for concurrency repos
+test('isSlotted is true only for a configured repo while concurrency is enabled', () => {
+  const s = servers();
+  assert.equal(s.isSlotted('accept-blue'), true, 'configured repo');
+  assert.equal(s.isSlotted('some-other-repo'), false, 'repo with no concurrency config');
+  assert.equal(servers({ enabled: false }).isSlotted('accept-blue'), false, 'concurrency disabled');
+});

@@ -133,8 +133,11 @@ async function main() {
     return { group: { ...g, members: g.members.filter((m) => m && !m.missing) }, flat };
   }
 
-  // running worktrees in the same repo at a different path (must stop to switch)
+  // running worktrees in the same repo at a different path (must stop to switch) —
+  // but a concurrency-slotted repo runs on its own offset ports per feature, so
+  // running it in another worktree is NOT a conflict (no stop & switch needed).
   function conflictsFor(member, flat) {
+    if (servers.isSlotted(member.repo)) return [];
     return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);
   }
 

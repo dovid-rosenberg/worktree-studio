@@ -55,6 +55,9 @@ class Servers {
   // ---- concurrency: per-feature slot allocation + derived launch env ----
   _concEnabled() { return !!(this.cfg.concurrency && this.cfg.concurrency.enabled); }
   _repoConc(repo) { const c = this.cfg.concurrency; return (c && c.repos && c.repos[repo]) || null; }
+  // A repo that gets a concurrency slot runs on its own (offset) ports per feature,
+  // so running it in two worktrees at once does NOT collide.
+  isSlotted(repo) { return this._concEnabled() && !!this._repoConc(repo); }
 
   // Allocate (or reuse) the slot for a feature. Returns { slot } or { error } when
   // all slots are busy. Slot 0 semantics when concurrency is off / no feature name.
