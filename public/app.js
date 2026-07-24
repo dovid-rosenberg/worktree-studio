@@ -129,7 +129,7 @@ function sessionCard(s) {
       <div class="scard-meta">
         <span class="src">${esc(s.source)}</span>
         ${s.sourceUrl ? `<span class="link">${esc(labelForSource(s))}</span>` : ''}
-        ${promoted ? `<span class="grp">${esc(s.repoName)}</span>` : `<span class="grp">main</span>`}
+        ${promoted ? (s.repos && s.repos.length ? s.repos.map((r) => `<span class="grp">${esc(r.repo)}</span>`).join('') : `<span class="grp">${esc(s.repoName)}</span>`) : `<span class="grp">main</span>`}
       </div>
       <div class="scard-act">${esc(s.activity || '')}</div>
     </div>`);
@@ -520,17 +520,17 @@ function featureRow(f) {
   const row = h('<div class="frow"></div>');
   // line 1 — the decision line
   const l1 = h('<div class="frow-l1"></div>');
-  l1.appendChild(h(`<span class="dot ${fs}"></span>`));
   l1.appendChild(h(`<span class="fname">${esc(f.name)}${f.auto ? '' : ' <span class="src">manual</span>'}</span>`));
-  if (sess) l1.appendChild(h(`<span class="pill ${sess.state}">${esc(sess.state)}</span>`));
-  l1.appendChild(h(`<span class="pill ${anyRunning ? 'done' : 'idle'}">${anyRunning ? '● running' : '○ stopped'}</span>`));
+  // two clearly-labelled statuses: the agent (Claude session) and the dev servers
+  if (sess) l1.appendChild(h(`<span class="pill agent ${sess.state}" title="Agent — the Claude session"><span class="dot ${sess.state}"></span>agent · ${esc(sess.state)}</span>`));
+  l1.appendChild(h(`<span class="pill srv ${anyRunning ? 'done' : 'idle'}" title="Dev servers"><span class="pi">⇅</span>servers · ${anyRunning ? 'running' : 'stopped'}</span>`));
   l1.appendChild(h('<span class="grow"></span>'));
   if (pend) {
     l1.appendChild(h('<button class="btn sm" disabled>working…</button>'));
   } else {
     l1.appendChild(sess ? btn('Go to session ▸', () => goToSession(sess.id), 'primary') : btn('Start session', () => startFeatureSession(f), 'primary'));
-    if (anyRunning) l1.appendChild(btn('Stop stack', () => stopStack(f.name)));
-    else if (anyStartable) l1.appendChild(btn('Run stack', () => runStack(f.name)));
+    if (anyRunning) l1.appendChild(btn('Stop stack', () => stopStack(f.name), 'danger'));
+    else if (anyStartable) l1.appendChild(btn('Run stack', () => runStack(f.name), 'go'));
     const more = h('<button class="btn sm ghost fmore" title="More">⋯</button>');
     more.addEventListener('click', (e) => { e.stopPropagation(); openFeatureMenu(more, f, { anyRunning, sess }); });
     l1.appendChild(more);
@@ -546,8 +546,12 @@ function featureRow(f) {
 
 function closeAnyMenu() { document.querySelectorAll('.fmenu').forEach((m) => m.remove()); }
 function openFeatureMenu(anchor, f, { anyRunning, sess }) {
+  const existing = document.querySelector('.fmenu');
+  const wasThis = existing && existing._anchor === anchor;
   closeAnyMenu();
+  if (wasThis) return; // clicking the same ⋯ again toggles it closed
   const menu = h('<div class="fmenu"></div>');
+  menu._anchor = anchor;
   const item = (label, fn, cls = '') => { const d = h(`<div class="${cls}">${esc(label)}</div>`); d.addEventListener('click', () => { closeAnyMenu(); fn(); }); menu.appendChild(d); };
   item('Open in editor', () => openGroup(f.name));
   if (anyRunning) item('Restart stack', () => restartStack(f.name));
@@ -645,6 +649,10 @@ async function openSettings() {
   const body = $('#settingsBody');
   body.innerHTML = `
     <div class="field">
+      <label>Repo roots <span class="hint">— folders scanned for your repos (one per line)</span></label>
+      <textarea id="setBaseDirs" class="textarea" rows="3" placeholder="~/Desktop/ab-code">${esc((data.baseDirs || []).join('\n'))}</textarea>
+    </div>
+    <div class="field">
       <label>GitHub <span class="hint">— uses the <code>gh</code> CLI</span></label>
       <div class="conn-status">${data.tools.gh ? (data.githubAuthed ? '<span class="ok">✓ gh installed &amp; authenticated</span>' : '<span class="warn">gh installed — run <code>gh auth login</code></span>') : '<span class="warn">gh not installed (brew install gh)</span>'}</div>
     </div>
@@ -667,7 +675,8 @@ async function saveSettings() {
     gitlab: { enabled: $('#setGlEnabled').checked, host: $('#setGlHost').value.trim(), project: $('#setGlProject').value.trim(), token: $('#setGlToken').value.trim() },
     asana: { enabled: $('#setAsEnabled').checked, token: $('#setAsToken').value.trim(), workspace: $('#setAsWorkspace').value.trim() },
   };
-  try { await api('POST', '/api/settings', { sources }); closeSettings(); toast('Connections saved'); } catch (e) { toast(e.message, true); }
+  const baseDirs = $('#setBaseDirs').value.split('\n').map((s) => s.trim()).filter(Boolean);
+  try { await api('POST', '/api/settings', { sources, baseDirs }); closeSettings(); toast('Settings saved'); } catch (e) { toast(e.message, true); }
 }
 
 /* ---------------- theme + wiring ---------------- */

@@ -147,20 +147,27 @@ async function main() {
     const gh = await run('gh', ['auth', 'status'], {});
     res.json({
       sources: cfg.sources || {},
+      baseDirs: cfg.baseDirs || [],
       enabled: sources.enabled(cfg),
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
     });
   });
-  app.post('/api/settings', (req, res) => {
-    const { sources: srcs } = req.body || {};
+  app.post('/api/settings', async (req, res) => {
+    const { sources: srcs, baseDirs } = req.body || {};
     if (srcs) {
       cfg.sources = cfg.sources || {};
       for (const k of Object.keys(srcs)) cfg.sources[k] = { ...(cfg.sources[k] || {}), ...srcs[k] };
     }
+    let rescanNeeded = false;
+    if (Array.isArray(baseDirs)) {
+      const { expandTilde } = require('./util');
+      cfg.baseDirs = baseDirs.map((s) => expandTilde(String(s).trim())).filter(Boolean);
+      rescanNeeded = true;
+    }
     configMod.save(cfg);
-    scheduleBroadcast();
-    res.json({ ok: true, sources: cfg.sources, enabled: sources.enabled(cfg) });
+    if (rescanNeeded) await rescan(); else scheduleBroadcast();
+    res.json({ ok: true, sources: cfg.sources, baseDirs: cfg.baseDirs, enabled: sources.enabled(cfg) });
   });
 
   // ---- sources ----

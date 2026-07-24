@@ -13,12 +13,13 @@ test('deriveBranch picks fix/ for bug-ish titles and feature/ otherwise', () => 
   assert.match(deriveBranch({ title: 'Feature', body: 'this is a bug', id: null }), /^fix\//);
 });
 
-test('seedPrompt includes title, body, url and a plan nudge', () => {
-  const p = seedPrompt({ title: 'T', body: 'B', url: 'http://x/1' });
-  assert.match(p, /We're working on: T/);
-  assert.match(p, /\nB\n/);
-  assert.match(p, /http:\/\/x\/1/);
-  assert.match(p, /promote it to a worktree/);
+test('seedPrompt: freetext is the raw text; issues include title+body+url', () => {
+  // freetext → exactly what the user typed (no wrapper, no duplication)
+  assert.equal(seedPrompt({ source: 'freetext', title: 'Find the DAF', body: 'Find the different DAF card types' }), 'Find the different DAF card types');
+  // issue source → title + body + link, but no boilerplate
+  const p = seedPrompt({ source: 'github', title: 'T', body: 'B', url: 'http://x/1' });
+  assert.match(p, /T/); assert.match(p, /B/); assert.match(p, /http:\/\/x\/1/);
+  assert.doesNotMatch(p, /promote it to a worktree/);
 });
 
 test('status.mapEvent maps lifecycle events to states', () => {

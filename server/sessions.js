@@ -16,11 +16,13 @@ function deriveBranch(seed) {
 }
 
 function seedPrompt(seed) {
-  const lines = [`We're working on: ${seed.title}`];
-  if (seed.body && seed.body.trim()) lines.push('', seed.body.trim());
-  if (seed.url) lines.push('', `Reference: ${seed.url}`);
-  lines.push('', "Let's plan this. When it's ready to build, I'll promote it to a worktree.");
-  return lines.join('\n');
+  // Send the user's prompt as-is. Free text: exactly what they typed (no wrapper,
+  // no duplication). Issue sources: the issue title + body + link (that IS the ask).
+  if (seed.source === 'freetext') return (seed.body || seed.title || '').trim();
+  const parts = [seed.title];
+  if (seed.body && seed.body.trim()) parts.push('', seed.body.trim());
+  if (seed.url) parts.push('', seed.url);
+  return parts.join('\n').trim();
 }
 
 class SessionManager extends EventEmitter {
@@ -88,7 +90,14 @@ class SessionManager extends EventEmitter {
     const res = await worktree.create(repoPath, branch, s.feature, {
       copyPatterns: (this.cfg.copyPatterns && (this.cfg.copyPatterns[repo] || this.cfg.copyPatterns.default)) || [],
     });
-    if (!res.ok) return res;
+    if (!res.ok) {
+      // the repo already has this feature's worktree → attach it instead of failing
+      if (/already exists/i.test(res.error || '') && res.path) {
+        const a = await this.attachRepo(id, { repo, repoPath, worktreePath: res.path, branch: res.branch, wtname: res.name });
+        return a.ok ? { ok: true, session: s, worktree: { name: res.name, path: res.path, branch: res.branch }, attached: true } : a;
+      }
+      return res;
+    }
     s.repos.push({ repo, repoPath, worktree: res.name, worktreePath: res.path, branch: res.branch, primary: false });
     // grant the running session access, live
     await this.mux.sendText(s.muxName, `/add-dir ${res.path}`);

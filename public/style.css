@@ -35,6 +35,10 @@ button { font-family:inherit; }
 .btn.primary { background:var(--brand); border-color:var(--brand); color:var(--brand-ink); }
 .btn.danger { background:#e5484d; border-color:#e5484d; color:#fff; }
 .btn.danger:hover { filter:brightness(1.06); border-color:#e5484d; }
+.btn.go { background:var(--done); border-color:var(--done); color:#06180d; }
+.btn.go:hover { filter:brightness(1.08); border-color:var(--done); }
+.pill.agent { box-shadow:inset 2px 0 0 currentColor; padding-left:9px; }
+.pill.srv { opacity:.95; } .pill .pi { font-size:9px; margin-right:1px; }
 .dlg { width:min(460px,94vw); }
 .dlg-msg { font-size:14px; line-height:1.55; color:var(--ink); }
 .dlg-check { display:flex; align-items:center; gap:8px; font-size:13.5px; }
