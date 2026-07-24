@@ -9,6 +9,7 @@ const configMod = require('./config');
 const muxSelect = require('./multiplexer');
 const gitMod = require('./git');
 const worktree = require('./worktree');
+const review = require('./review');
 const sources = require('./sources');
 const { SessionManager } = require('./sessions');
 const { Servers } = require('./servers');
@@ -282,6 +283,41 @@ async function main() {
 
   app.delete('/api/sessions/:id', A(async (req, res) => {
     res.json(await manager.close(req.params.id, { kill: req.query.kill !== 'false' }));
+  }));
+
+  // ---- review (diff & commit) ----
+  app.get('/api/sessions/:id/changes', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    const out = [];
+    for (const entry of (s.repos || [])) {
+      if (!entry.worktreePath) continue;
+      const repoObj = repos.find((r) => r.name === entry.repo);
+      const { base, files } = await review.changes(entry.worktreePath, repoObj && repoObj.defaultBranch);
+      out.push({ repo: entry.repo, worktreePath: entry.worktreePath, base, files });
+    }
+    res.json({ repos: out });
+  }));
+
+  app.get('/api/sessions/:id/diff', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    const entry = (s.repos || []).find((r) => r.repo === req.query.repo);
+    if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
+    const repoObj = repos.find((r) => r.name === entry.repo);
+    res.type('text/plain').send(await review.fileDiff(entry.worktreePath, repoObj && repoObj.defaultBranch, req.query.file));
+  }));
+
+  app.post('/api/sessions/:id/commit', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    const { repo, message, paths, amend } = req.body || {};
+    if (!s) return res.status(400).json({ error: 'no such session' });
+    const entry = (s.repos || []).find((r) => r.repo === repo);
+    if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
+    if (!message || !message.trim()) return res.status(400).json({ error: 'message is required' });
+    const out = await review.commit(entry.worktreePath, message, { amend, paths });
+    if (out.ok) scheduleBroadcast();
+    res.json(out);
   }));
 
   // ---- worktrees (manual) ----
