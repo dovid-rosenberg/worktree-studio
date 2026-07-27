@@ -989,6 +989,18 @@ function destroyTerminal() {
   ro = ws = term = fit = null;
 }
 
+// A ResizeObserver whose callback fits a terminal synchronously can retrigger itself
+// in the same frame — the browser then reports "ResizeObserver loop completed with
+// undelivered notifications". Coalescing to the next animation frame breaks that loop.
+function rafObserver(cb) {
+  let scheduled = false;
+  return new ResizeObserver(() => {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => { scheduled = false; try { cb(); } catch { /* */ } });
+  });
+}
+
 function openTerminal(s) {
   const wrap = $('#termWrap');
   if (!wrap || !XTerm) return;
@@ -998,7 +1010,7 @@ function openTerminal(s) {
   term.open(wrap);
   try { fit && fit.fit(); } catch { /* */ }
   term.onData((d) => { if (ws && ws.readyState === 1) ws.send(new TextEncoder().encode(d)); });
-  ro = new ResizeObserver(() => { try { fit && fit.fit(); sendResize(); } catch { /* */ } });
+  ro = rafObserver(() => { if (fit) { fit.fit(); sendResize(); } });
   ro.observe(wrap);
   connectTermWS(s, 0);
 }
@@ -1084,7 +1096,7 @@ function openSecondTerm(s) {
   term2.open(wrap);
   try { fit2 && fit2.fit(); } catch { /* */ }
   term2.onData((d) => { if (ws2 && ws2.readyState === 1) ws2.send(new TextEncoder().encode(d)); });
-  ro2 = new ResizeObserver(() => { try { fit2 && fit2.fit(); sendResize2(); } catch { /* */ } });
+  ro2 = rafObserver(() => { if (fit2) { fit2.fit(); sendResize2(); } });
   ro2.observe(wrap);
   connectSecondWS(s.id);
 }
