@@ -264,9 +264,9 @@ test('a deleted file stages as a deletion', async () => {
   rm(dir);
 });
 
-test('staging one hunk of a renamed file carries the rename into the index with it', async () => {
+test('staging a hunk of a renamed file leaves the staged rename intact', async () => {
   const dir = repo({ 'r.txt': `${numbered(20, 'r').join('\n')}\n` });
-  sh(dir, ['mv', 'r.txt', 'r2.txt']); // the rename itself is staged by git mv
+  sh(dir, ['mv', 'r.txt', 'r2.txt']); // git mv already put the rename in the index
   const lines = numbered(20, 'r');
   lines[1] = 'r2 CHANGED';
   lines[18] = 'r19 CHANGED';
@@ -274,9 +274,27 @@ test('staging one hunk of a renamed file carries the rename into the index with 
   const out = await hunks.stage(dir, { file: 'r2.txt', hunks: [0] });
   assert.equal(out.ok, true, out.error);
   const staged = sh(dir, ['diff', '--cached', '-M']);
-  assert.match(staged, /^rename to r2\.txt$/m);
+  assert.match(staged, /^rename to r2\.txt$/m, 'still a rename, now with one hunk of content on top');
   assert.match(staged, /^\+r2 CHANGED$/m);
   assert.doesNotMatch(staged, /r19 CHANGED/, 'the second hunk stayed unstaged');
+  rm(dir);
+});
+
+// Rename detection needs both halves in ONE diff, and every diff here is limited to a
+// single path — so a rename always reaches this layer as a delete of the old name plus
+// an add of the new one. That is a feature, not a gap: each half stages independently
+// and the patch we hand git never has to undo a rename to move one hunk.
+test('a staged rename is modelled as two independent halves, one per path', async () => {
+  const dir = repo({ 'a.txt': `${numbered(20, 'r').join('\n')}\n` });
+  sh(dir, ['mv', 'a.txt', 'b.txt']);
+  sh(dir, ['add', '-A']);
+  const newSide = await hunks.fileHunks(dir, 'b.txt');
+  const oldSide = await hunks.fileHunks(dir, 'a.txt');
+  assert.equal(newSide.staged.status, 'added');
+  assert.equal(oldSide.staged.status, 'deleted');
+  const out = await hunks.unstage(dir, { file: 'b.txt', hunks: [0] });
+  assert.equal(out.ok, true, out.error);
+  assert.equal(sh(dir, ['status', '--porcelain']), 'D  a.txt\n?? b.txt\n', 'only the half we named moved');
   rm(dir);
 });
 
