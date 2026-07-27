@@ -120,6 +120,17 @@ class SessionManager extends EventEmitter {
     return { ok: false, skipped: true, reason: sawClaude ? 'busy' : 'no-claude' };
   }
 
+  // Move the LIVE session into its worktree. `/cd` relocates BOTH Claude's working
+  // directory and its transcript to the worktree's project storage (Claude Code
+  // v2.1.169+), so every future `--resume` finds the conversation there. That is why
+  // we flip `home` to the worktree only once the command was actually delivered — if
+  // it wasn't, the transcript stays in the original dir and `home` must stay with it.
+  async _anchorInWorktree(s) {
+    if (!s || !s.worktreePath || s.home === s.worktreePath) return;
+    const r = await this.sendWhenReady(s.muxName, `/cd ${s.worktreePath}`, s);
+    if (r && r.ok) { s.home = s.worktreePath; this._touch(s.id); }
+  }
+
   // Add a repo to this session's feature: create a same-named worktree there and
   // grant the live session access via /add-dir. Used by the UI button and the CLI
   // (so both David and claude can trigger it).
@@ -279,8 +290,9 @@ class SessionManager extends EventEmitter {
     // rename the mux session to the worktree (best-effort; harmless if unsupported)
     const newMux = `wts-${res.name}`.slice(0, 60);
     if (await this.mux.rename(s.muxName, newMux)) s.muxName = newMux;
-    // tell the running session to continue inside the worktree (gated on claude ready)
-    await this.sendWhenReady(s.muxName, `The worktree is ready at ${res.path} — please cd there and do all further work in that directory.`, s);
+    // move the running session into the worktree — relocates cwd AND transcript,
+    // so resume is seamless from here on (gated on claude being ready)
+    await this._anchorInWorktree(s);
     this._touch(id);
     // fan out to any repos chosen up front, serialized (each addRepo is itself gated)
     for (const pr of s.pendingRepos || []) {
@@ -382,8 +394,10 @@ class SessionManager extends EventEmitter {
       return { ok: false, error: 'worktree missing' };
     }
     const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
-    // Resume from the transcript's home dir (where create ran) so --resume can find
-    // the conversation; a promoted session then gets gated guidance to work in the wt.
+    // Resume from the transcript's home dir so --resume finds the conversation. For a
+    // promoted session home is already the worktree (moved there at promote), so it
+    // launches straight into the worktree; _anchorInWorktree self-heals the rare case
+    // where the promote-time /cd never landed.
     let cwd = s.home || s.repoPath;
     if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
     const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
@@ -391,9 +405,7 @@ class SessionManager extends EventEmitter {
     s.state = 'idle';
     s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
     this._touch(id);
-    if (!r.error && s.worktreePath) {
-      this.sendWhenReady(s.muxName, `Resuming your work — continue in the worktree at ${s.worktreePath} (cd there for all further work).`, s).catch(() => {});
-    }
+    if (!r.error) this._anchorInWorktree(s).catch(() => {});
     return { ok: !r.error, error: r.error };
   }
 
@@ -440,7 +452,8 @@ class SessionManager extends EventEmitter {
         continue;
       }
       const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
-      // Resume from the transcript's home dir so --resume can find the conversation.
+      // Resume from the transcript's home dir so --resume finds the conversation.
+      // Promoted sessions already have home = worktree (moved at promote time).
       let cwd = s.home || s.repoPath;
       if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
       await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
@@ -449,10 +462,8 @@ class SessionManager extends EventEmitter {
       s.tabs = [{ title: 'claude' }];
       s.state = 'idle';
       s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
-      // promoted → re-issue gated guidance to continue in the worktree.
-      if (s.worktreePath) {
-        this.sendWhenReady(s.muxName, `Resuming your work — continue in the worktree at ${s.worktreePath} (cd there for all further work).`, s).catch(() => {});
-      }
+      // self-heal a promote whose /cd never landed (normally a no-op here).
+      this._anchorInWorktree(s).catch(() => {});
       n++;
     }
     this._save();

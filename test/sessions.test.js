@@ -63,6 +63,58 @@ test('promote creates a worktree on the derived branch and updates the session +
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+test('promote moves the live session into the worktree via /cd and re-anchors home there', async () => {
+  const m = manager();
+  const repo = tempRepo('promote-cd');
+  m.sessions.set('p2', {
+    id: 'p2', repoName: 'a', repoPath: repo, home: repo,
+    worktree: null, worktreePath: null, branch: null, feature: 'orig',
+    suggestedBranch: 'feature/x', suggestedName: 'x',
+    muxName: 'mux-p2', pendingRepos: [],
+    repos: [{ repo: 'a', repoPath: repo, worktree: null, worktreePath: null, branch: null, primary: true }],
+    state: 'idle', active: true, createdAt: Date.now(),
+  });
+
+  const out = await m.promote('p2');
+  assert.equal(out.ok, true, out.error);
+  const wtPath = path.join(repo, '.worktrees', 'x');
+  const s = m.get('p2');
+  assert.ok(m._sent.includes(`/cd ${wtPath}`), 'sends /cd <worktree> to relocate cwd + transcript');
+  assert.equal(s.home, wtPath, 'home re-anchors to the worktree so a later --resume finds the moved transcript');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('after promote, a resume launches straight from the worktree (no redundant /cd)', async () => {
+  const m = manager();
+  const repo = tempRepo('promote-resume');
+  m.sessions.set('p3', {
+    id: 'p3', repoName: 'a', repoPath: repo, home: repo,
+    worktree: null, worktreePath: null, branch: null, feature: 'orig',
+    suggestedBranch: 'feature/y', suggestedName: 'y',
+    muxName: 'mux-p3', pendingRepos: [], claudeSessionId: 'sid-9',
+    repos: [{ repo: 'a', repoPath: repo, worktree: null, worktreePath: null, branch: null, primary: true }],
+    state: 'idle', active: true, createdAt: Date.now(),
+  });
+  await m.promote('p3');
+  const s = m.get('p3');
+  const wtPath = s.worktreePath;
+
+  // simulate a restart: swap in a mux that records the resume cwd + any sends
+  let cwd = null; const sent = [];
+  m.mux = {
+    async ensure(n, opts) { cwd = opts.cwd; return {}; },
+    async paneCommand() { return 'node'; }, async sendText(n, t) { sent.push(t); },
+    async kill() {}, async rename() { return false; }, async hasSession() { return false; },
+  };
+  s.active = false; s.state = 'stopped';
+  await m.activate('p3');
+  assert.equal(cwd, wtPath, 'resume launches from the worktree where the transcript now lives');
+  assert.ok(!sent.includes(`/cd ${wtPath}`), 'no redundant /cd — home is already anchored to the worktree');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 test('activate resumes with -r <claudeSessionId> and marks activity resumed when a claude session id is known', async () => {
   const m = manager();
   let cmd = null;
@@ -164,7 +216,7 @@ test('activate/restore resume cwd resolves to home (transcript dir) for a promot
   });
 
   await m.activate('r1');
-  assert.equal(cwd, home, 'promoted session resumes from home (not the worktree) so --resume resolves');
+  assert.equal(cwd, home, 'resume launches from home (the transcript dir) so --resume resolves the conversation');
 
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(wt, { recursive: true, force: true });
