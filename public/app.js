@@ -1384,6 +1384,9 @@ function serverRow(f) {
   l1.appendChild(h('<span class="pill srv done"><span class="pi">⇅</span>servers · running</span>'));
   l1.appendChild(h(`<span class="ports">${ports.map((p) => `<span class="p">${esc(p)}</span>`).join('')}</span>`));
   l1.appendChild(h('<span class="grow"></span>'));
+  // one "Open <frontend> ↗" per running web repo — this is the section you watch when
+  // servers are up, so the browse buttons belong here too (not just under Worktrees).
+  webAppsFor(f.members.filter((m) => m && !m.missing)).forEach((web) => l1.appendChild(btn(`Open ${web.repo} ↗`, () => openApp(web.port), 'primary')));
   if (f.session) l1.appendChild(btn('Go to session ▸', () => goToSession(f.session.id)));
   l1.appendChild(btn('Stop stack', () => stopStack(f.name), 'danger'));
   row.appendChild(l1);
