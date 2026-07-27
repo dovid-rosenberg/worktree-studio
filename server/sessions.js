@@ -5,7 +5,7 @@
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
-const { readJson, writeJson, makeId, shortId, slug, shq, run } = require('./util');
+const { readJson, writeJson, makeId, shortId, realpath, slug, shq, run } = require('./util');
 const status = require('./status');
 const worktree = require('./worktree');
 
@@ -77,17 +77,35 @@ class SessionManager extends EventEmitter {
     s.hookAuth = !!this.cfg._token;
   }
 
+  // Every worktree path any session owns → that session, keyed by RESOLVED path.
+  // One pass over the sessions, reusable for as many lookups as the caller has:
+  // decorating N worktrees used to be N scans of every session, each re-resolving
+  // every session path synchronously (O(worktrees × sessions) blocking syscalls on
+  // the event loop that also serves the terminal WebSockets).
+  //
+  // `resolve` is injectable so a caller that rebuilds this index several times a
+  // second (the SSE broadcast) can memoize resolution across builds; the default
+  // resolves uncached, which is what a one-off lookup wants.
+  sessionIndex(resolve = realpath) {
+    const index = new Map();
+    for (const s of this.sessions.values()) {
+      for (const p of [s.worktreePath, ...(s.repos || []).map((r) => r.worktreePath)]) {
+        if (!p) continue;
+        const key = resolve(p);
+        // First session wins, matching the old first-match-in-insertion-order scan:
+        // two sessions claiming one worktree is a bug, not a shape to average over.
+        if (!index.has(key)) index.set(key, s);
+      }
+    }
+    return index;
+  }
+
   // The session (if any) whose promoted/adopted worktree is this path — used to
-  // surface agent state on a Fleet worktree row.
+  // surface agent state on a Fleet worktree row. For a single lookup; anything
+  // resolving many paths at once should build one sessionIndex() and reuse it.
   sessionForWorktree(worktreePath) {
     if (!worktreePath) return null;
-    const norm = (p) => { try { return require('fs').realpathSync(p); } catch { return p; } };
-    const target = norm(worktreePath);
-    for (const s of this.sessions.values()) {
-      if (s.worktreePath && norm(s.worktreePath) === target) return s;
-      if ((s.repos || []).some((r) => r.worktreePath && norm(r.worktreePath) === target)) return s;
-    }
-    return null;
+    return this.sessionIndex().get(realpath(worktreePath)) || null;
   }
 
   claudeCmd(session, { resume } = {}) {

@@ -6,18 +6,24 @@
 //
 // It is assembled from two halves on purpose. `topology()` is the slow-moving
 // shape (repos → worktrees → features) and `sessionState()` is the live
-// per-session slice. A later change splits the SSE stream into a topology
-// snapshot plus session-state deltas; keeping the two builders apart now means
-// that split is a wiring change, not a rewrite. buildState() merges them and is
-// the only thing anything currently calls.
+// per-session slice. The SSE stream broadcasts them as two named event types at
+// their own rates (server/broadcast.js) — the session half on every Claude hook,
+// the topology half only when the shape actually changes. buildState() merges
+// them for the callers that want the whole world at once: GET /state, SwiftBar,
+// Alfred, resolveGroup.
 const { computeFeatures } = require('./features');
-const { realpath } = require('./servers');
+const { createRealpathCache } = require('./util');
 const sources = require('./sources');
 
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference
 // would go stale the first time either one is rescanned.
 function createState({ cfg, manager, servers, mux, repos, running }) {
+  // Both halves compare worktree paths that reach us from three different sources
+  // (the git scan, a session's stored paths, lsof), so every comparison resolves
+  // symlinks first. One cache serves both halves; prunePaths() invalidates it.
+  const paths = createRealpathCache();
+
   function baseDirOf(repoPath) {
     return (cfg.baseDirs || []).find((b) => repoPath.startsWith(b)) || '';
   }
@@ -26,13 +32,16 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
   // those worktrees roll up into, and the config a client renders its chrome from.
   function topology() {
     const active = running();
+    // One pass over the sessions, then a map lookup per worktree — not a scan of
+    // every session per worktree.
+    const sessionsByPath = manager.sessionIndex(paths.resolve);
     const reposOut = [];
     const flat = [];
     for (const repo of repos()) {
       const wts = [];
       for (const w of repo.worktrees) {
         const dec = servers.decorate({ path: w.path, repo: repo.name }, active);
-        const sess = w.isMain ? null : manager.sessionForWorktree(w.path);
+        const sess = w.isMain ? null : (sessionsByPath.get(paths.resolve(w.path)) || null);
         const wt = {
           repo: repo.name, wtname: w.name, branch: w.branch, path: w.path,
           isMain: w.isMain, detached: w.detached, merged: w.merged,
@@ -80,7 +89,7 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
       if (list.length) {
         serversById[s.id] = {
           repos: list.map((r) => {
-            const hit = active.get(realpath(r.worktreePath));
+            const hit = active.get(paths.resolve(r.worktreePath));
             return { repo: r.repo, worktreePath: r.worktreePath, running: !!hit, ports: hit ? hit.ports : [], canStart: !!servers.startCfg(r.repo) };
           }),
         };
@@ -93,6 +102,19 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
   // the halves may need to do I/O later.
   async function buildState() {
     return { ...topology(), ...sessionState() };
+  }
+
+  // Invalidate the realpath cache against reality. The repo scan is the authority
+  // on which worktrees exist and the session list on which paths are driven, so a
+  // path that neither still names is exactly the signal a cached resolution needs:
+  // a worktree removed now and recreated later must not resolve through its old
+  // entry. server.js calls this after every rescan — the 15 s timer and every
+  // worktree mutation — so invalidation happens whether or not anyone is
+  // listening on SSE, and never depends on who asked for a path recently.
+  function prunePaths() {
+    const live = new Set(manager.sessionIndex((p) => p).keys()); // raw, unresolved
+    for (const repo of repos()) for (const w of repo.worktrees) live.add(w.path);
+    paths.retain(live);
   }
 
   // Resolve a feature/group by name from current state; drop missing members.
@@ -112,7 +134,7 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
     return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);
   }
 
-  return { buildState, topology, sessionState, resolveGroup, conflictsFor };
+  return { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor };
 }
 
 module.exports = { createState };

@@ -75,6 +75,50 @@ function makeId(prefix = '') { return `${prefix}${crypto.randomUUID()}`; }
 // characters. Never use this where the full id is the thing being authenticated.
 function shortId(id) { return String(id).replace(/[^0-9a-f]/gi, '').slice(-8) || 'session'; }
 
+// Resolve a path through its symlinks, falling back to the path itself when it
+// can't be resolved (doesn't exist yet, permission denied). Worktree paths are
+// compared across three independent sources — the git scan, a session's stored
+// paths, and lsof's view of a running process — and any of them may hand us a
+// symlinked spelling (/tmp vs /private/tmp, a symlinked home), so every
+// comparison goes through this first.
+function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
+
+// A memo for realpath(), because resolving a path costs a syscall per path
+// component and the state build resolves the same few dozen worktree paths many
+// times a second.
+//
+// Two rules keep it from going stale, and neither is a clock:
+//   - A failure is never cached. An unresolvable path is one that doesn't exist
+//     *yet*; caching the fallback would pin it even after it appears.
+//   - `retain(livePaths)` drops every entry whose path is not in the caller's
+//     current list of real paths. A resolved path cannot change while the path
+//     keeps existing (it is pure symlink resolution over the components), so the
+//     only way to go stale is removal followed by recreation somewhere else —
+//     and the caller that knows about removals is the one holding the live list.
+// Deliberately NOT usage-based: an entry retained merely because something asked
+// for it recently is exactly the entry that survives a removal.
+function createRealpathCache() {
+  const cache = new Map();
+  let hits = 0, misses = 0;
+  return {
+    resolve(p) {
+      if (!p) return p;
+      if (cache.has(p)) { hits++; return cache.get(p); }
+      misses++;
+      let r;
+      try { r = fs.realpathSync(p); } catch { return p; }
+      cache.set(p, r);
+      return r;
+    },
+    retain(livePaths) {
+      const keep = livePaths instanceof Set ? livePaths : new Set(livePaths);
+      for (const p of cache.keys()) if (!keep.has(p)) cache.delete(p);
+    },
+    get size() { return cache.size; },
+    get stats() { return { hits, misses }; },
+  };
+}
+
 // Turn any string into a safe slug usable as branch/worktree/mux-session name.
 function slug(s, max = 48) {
   return (s || '')
@@ -97,4 +141,4 @@ const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   if (!res.headersSent) res.status(500).json({ error: e.message });
 });
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, shortId, slug, shq, A };
+module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A };
