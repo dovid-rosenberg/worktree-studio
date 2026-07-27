@@ -72,15 +72,46 @@ function isDir(p) { try { return fs.statSync(p).isDirectory(); } catch { return 
 function unref(t) { if (t && typeof t.unref === 'function') t.unref(); return t; }
 
 /**
+ * "Is anyone actually looking?" — the signal that paces the sweeps which cannot be
+ * driven by filesystem events.
+ *
+ * An open SSE stream is NOT sufficient on its own, because only the browser
+ * dashboard subscribes. The SwiftBar menubar re-runs `curl /api/state` every 10s
+ * and Alfred fires one off per keystroke; neither ever opens a stream. Gating on
+ * streams alone would let the menubar — the surface whose entire job is showing
+ * which dev servers are up — sit on state up to two minutes stale in the most
+ * common steady state of all (browser closed, menubar always running). So a recent
+ * poll counts exactly as much as an open stream.
+ *
+ * @param {Function} [streams]      current open SSE stream count
+ * @param {number} [pollWindowMs]   how long a poll keeps counting; comfortably more
+ *                                  than SwiftBar's 10s period so a missed tick or a
+ *                                  slow render doesn't drop us to the idle cadence
+ */
+function attention({ streams, pollWindowMs = 30000 } = {}) {
+  let lastPoll = 0;
+  return {
+    seen() { lastPoll = Date.now(); }, // call this from the state route
+    active() {
+      if (typeof streams === 'function') {
+        try { if (streams() > 0) return true; } catch { return true; } // never go idle on a broken probe
+      }
+      return Date.now() - lastPoll < pollWindowMs;
+    },
+  };
+}
+
+/**
  * Start watching. Returns a handle with { stop, stats, watched, poke }.
  * @param {object} deps
  * @param {object} deps.cfg            loaded config (baseDirs, scanDepth, optional .watch)
  * @param {Function} deps.rescan       re-read repos/worktrees into the state cache
  * @param {Function} [deps.refreshRunning] lsof sweep for dev servers
  * @param {Function} [deps.reconcile]  multiplexer liveness sweep
- * @param {Function} [deps.hasViewers] true while a dashboard is attached (defaults to
- *                                     true, i.e. always-active pacing, so a partial
- *                                     wiring degrades to the old behaviour, not to silence)
+ * @param {Function} [deps.hasViewers] true while anything is watching — see attention()
+ *                                     (defaults to true, i.e. always-active pacing, so a
+ *                                     partial wiring degrades to the old behaviour rather
+ *                                     than to silence)
  * @param {object} [deps.intervals]    DEFAULTS overrides — used by the tests to run the
  *                                     same code paths on a millisecond timescale
  */
@@ -312,4 +343,4 @@ async function start(deps) {
   };
 }
 
-module.exports = { start, DEFAULTS };
+module.exports = { start, attention, DEFAULTS };

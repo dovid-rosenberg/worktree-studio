@@ -144,6 +144,10 @@ async function main() {
 
   // ---- SSE live state ----
   const sseClients = new Set();
+  // Paces the watcher's sweeps. Only the browser subscribes to /api/events — SwiftBar
+  // polls /api/state every 10s and Alfred once per keystroke — so a recent poll has to
+  // count as "someone is looking" too, or the menubar's server dots go minutes stale.
+  const attention = watchMod.attention({ streams: () => sseClients.size });
   let broadcastTimer = null;
   function scheduleBroadcast() {
     if (broadcastTimer) return;
@@ -162,7 +166,7 @@ async function main() {
   app.use(express.text({ type: 'text/*', limit: '8mb' }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
-  app.get('/api/state', A(async (req, res) => res.json(await buildState())));
+  app.get('/api/state', A(async (req, res) => { attention.seen(); res.json(await buildState()); }));
 
   app.get('/api/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -781,7 +785,7 @@ async function main() {
   // ---- boot ----
   process.on('unhandledRejection', (e) => console.error('[wt-studio] unhandledRejection', e));
   process.on('uncaughtException', (e) => console.error('[wt-studio] uncaughtException', e));
-  await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: () => sseClients.size > 0 });
+  await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 

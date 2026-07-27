@@ -232,6 +232,55 @@ test('the dev-server sweep backs off while no dashboard is attached, and catches
   await waitFor(() => sweeps >= 4, { label: 'sweeps to resume once a dashboard attaches' });
 });
 
+test('attention counts a poll as much as an open stream, and forgets a stale one', async () => {
+  const streamed = watch.attention({ streams: () => 1, pollWindowMs: 60 });
+  assert.equal(streamed.active(), true, 'an open SSE stream is enough on its own');
+
+  // SwiftBar and Alfred never open a stream — they curl /api/state and exit.
+  const polled = watch.attention({ streams: () => 0, pollWindowMs: 60 });
+  assert.equal(polled.active(), false, 'nothing is looking yet');
+  polled.seen();
+  assert.equal(polled.active(), true, 'a bare poll counts as looking');
+  await sleep(140);
+  assert.equal(polled.active(), false, 'and stops counting once the window lapses');
+
+  const bare = watch.attention();
+  bare.seen();
+  assert.equal(bare.active(), true, 'works with no stream source wired at all');
+
+  const broken = watch.attention({ streams: () => { throw new Error('nope'); } });
+  assert.equal(broken.active(), true, 'a throwing probe never silently drops us to idle');
+});
+
+test('a bare /api/state poll with no SSE client keeps the dev-server sweep fast', async (t) => {
+  const base = tempBase();
+  makeRepo(path.join(base, 'alpha'));
+  // The menubar-only steady state: browser closed (no streams), SwiftBar polling.
+  // Real cadence is a 10s poll inside a 30s window; scaled down 100x here.
+  const att = watch.attention({ streams: () => 0, pollWindowMs: 300 });
+  let sweeps = 0;
+  const { h } = await boot(base, {
+    intervals: { tickMs: 15, runningActiveMs: 40, runningIdleMs: 3600000 },
+    refreshRunning: async () => { sweeps += 1; },
+    hasViewers: att.active,
+  });
+  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+
+  const quiet = sweeps;
+  await sleep(300);
+  assert.equal(sweeps, quiet, 'idle cadence while genuinely nothing is polling');
+
+  const menubar = setInterval(() => att.seen(), 100); // SwiftBar wakes up
+  t.after(() => clearInterval(menubar));
+  await waitFor(() => sweeps >= quiet + 4, { label: 'the sweep to stay fast while the menubar polls' });
+
+  clearInterval(menubar); // SwiftBar stops (screen locked, Studio quit from the menu…)
+  await sleep(400); // outlive the poll window
+  const settled = sweeps;
+  await sleep(300);
+  assert.equal(sweeps, settled, 'back to the idle cadence once nothing is polling');
+});
+
 test('reconcile is left alone at boot so restore() can still bring sessions back', async (t) => {
   const base = tempBase();
   makeRepo(path.join(base, 'alpha'));
