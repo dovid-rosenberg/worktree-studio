@@ -736,6 +736,8 @@ async function main() {
     res.json({ ok: true });
   }));
 
+  require('./transcript-routes').register(app, { manager, cfg });
+
   // ---- Claude Code hook receiver ----
   app.post('/hook/:event', (req, res) => {
     const id = req.query.wts;

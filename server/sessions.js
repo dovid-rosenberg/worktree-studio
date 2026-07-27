@@ -360,6 +360,11 @@ class SessionManager extends EventEmitter {
     if (event === 'SessionEnd') s.active = false;
     s.lastEventAt = Date.now();
     this._touch(id);
+    // Republish the raw lifecycle event. 'change' fires on every touch and says
+    // nothing about WHICH event caused it; listeners that only care about turn
+    // boundaries (Stop → the transcript now has a complete turn appended) need the
+    // event name, not a state diff.
+    this.emit('hook', { id, event, payload });
   }
 
   async rename(id, title) {
