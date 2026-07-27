@@ -160,7 +160,9 @@ button { font-family:inherit; }
 .term-area.term-split > .term-wrap { min-width:0; }
 .term-area.term-split .panewrap { display:flex; flex-direction:column; min-width:0; min-height:0; }
 .term-area.term-split .panehd { font-family:var(--mono); font-size:10.5px; color:var(--muted); padding:5px 10px; background:var(--elevated); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; flex:none; }
-.panehd .split-select { background:var(--bg); border:1px solid var(--border); border-radius:5px; color:var(--ink); font-family:var(--mono); font-size:10.5px; padding:1px 4px; max-width:220px; }
+.panehd .splittabs { display:flex; align-items:center; gap:3px; flex-wrap:wrap; }
+.panehd .tab.sm { font-size:10.5px; padding:2px 8px; border-radius:5px; border:1px solid transparent; }
+.panehd .tab.sm.on { color:var(--ink); background:var(--bg); border-color:var(--border); }
 .tabstrip .split-toggle { margin-left:6px; }
 .tabstrip .split-toggle.on { border-color:var(--brand); color:var(--brand); }
 
@@ -180,10 +182,6 @@ button { font-family:inherit; }
 
 .serverbar { display:flex; align-items:center; gap:10px; row-gap:8px; flex-wrap:wrap; padding:8px 16px; border-top:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:11.5px; color:var(--muted); flex:none; }
 .serverbar .portchip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:6px; padding:2px 8px; }
-.serverbar .portchip.open { cursor:pointer; }
-.serverbar .portchip.open:hover { border-color:var(--brand); color:var(--brand); }
-.serverbar .portchip .go { color:var(--faint); font-size:10px; }
-.serverbar .portchip.open:hover .go { color:var(--brand); }
 .serverbar .cistat { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border); border-radius:6px; padding:2px 9px; cursor:pointer; color:var(--ink); }
 .serverbar .cistat:hover { border-color:var(--brand); }
 .serverbar .cistat .ck.ok { color:var(--done); }

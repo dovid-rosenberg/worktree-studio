@@ -62,14 +62,27 @@ module.exports = {
     return { created: true };
   },
 
-  // For node-pty: attach an interactive client to the session.
-  attachSpawn(name, { popout = false } = {}) {
+  // For node-pty: attach an interactive client to the session. A grouped session
+  // (popout, or an arbitrary `group` like 'split') shares the window list but keeps
+  // its OWN current window, so a second pane can show a DIFFERENT window than the
+  // primary — and closing it never orphans the embedded client.
+  attachSpawn(name, { popout = false, group } = {}) {
     const base = ['-L', SOCK];
-    if (popout) {
-      // grouped session → independent size, and closing it never orphans the embed
-      return { file: 'tmux', args: [...base, 'new-session', '-A', '-s', `${name}-popout`, '-t', name], env: ENV };
+    const grp = popout ? 'popout' : (group || null);
+    if (grp) {
+      return { file: 'tmux', args: [...base, 'new-session', '-A', '-s', `${name}-${grp}`, '-t', name], env: ENV };
     }
     return { file: 'tmux', args: [...base, 'attach-session', '-t', name], env: ENV };
+  },
+
+  // Point the grouped `-split` session at window `id` so the in-app second pane can
+  // show a window independent of the primary. Ensures the grouped session exists
+  // first (the pane's attach may create it, racing this call) — new-session -A -d.
+  async selectSplitTab(name, id) {
+    if (!(await this.hasSession(`${name}-split`))) {
+      await T(['new-session', '-d', '-s', `${name}-split`, '-t', name]);
+    }
+    return (await T(['select-window', '-t', `${name}-split:${id}`])).code === 0;
   },
 
   async newTab(name, { title, cwd, cmd } = {}) {
@@ -124,6 +137,7 @@ module.exports = {
   async kill(name) {
     await T(['kill-session', '-t', `=${name}`]);
     await T(['kill-session', '-t', `=${name}-popout`]);
+    await T(['kill-session', '-t', `=${name}-split`]);
     return true;
   },
 
