@@ -1,0 +1,26 @@
+{
+  "name": "worktree-studio-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SvelteKit frontend for Worktree Studio. Built to static files and served by the Express daemon; the daemon is the only server.",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./jsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "3.0.10",
+    "@sveltejs/kit": "2.70.1",
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "svelte": "5.56.7",
+    "svelte-check": "4.7.3",
+    "vite": "8.1.5"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/addon-web-links": "0.11.0",
+    "@xterm/xterm": "5.5.0"
+  }
+}
