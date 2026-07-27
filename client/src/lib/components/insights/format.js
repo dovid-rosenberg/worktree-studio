@@ -5,7 +5,7 @@
 // BILLING_MULTIPLIER below for why the UI needs its own answer to "where did the
 // money go" and what makes that answer exact rather than a guess.
 
-/** Thousands-separated exact count: 576324491 → "576,324,491". */
+/** Thousands-separated exact count: 576324491 → "576,324,491". @param {number} n */
 export function exactTokens(n) {
   if (!Number.isFinite(n)) return '—';
   return Math.round(n).toLocaleString('en-US');
@@ -16,6 +16,7 @@ export function exactTokens(n) {
  * magnitude (982 input vs 576,324,491 cache-read), so the raw number is unreadable
  * and — worse — incomparable: nobody eyeballs which of two 9-digit numbers is bigger.
  * The exact value always stays reachable (title attribute + the table view).
+ * @param {number} n
  */
 export function compactTokens(n) {
   if (!Number.isFinite(n)) return '—';
@@ -28,6 +29,7 @@ export function compactTokens(n) {
 
 // One decimal below 100, none above — "9.4M" and "576M" both read in one beat,
 // where "9.4M" and "576.3M" make the eye do arithmetic to compare them.
+/** @param {number} v */
 function trim(v) {
   const a = Math.abs(v);
   return a < 10 ? v.toFixed(2).replace(/\.?0+$/, '') : a < 100 ? v.toFixed(1).replace(/\.0$/, '') : String(Math.round(v));
@@ -37,6 +39,8 @@ function trim(v) {
  * Dollars. Returns null for an unpriced figure so no call site can accidentally
  * render a missing price as "$0.00" — the two mean opposite things and the server
  * is careful to distinguish them (usd: null vs usd: 0).
+ * @param {number|null|undefined} n
+ * @returns {string|null}
  */
 export function usd(n) {
   if (n === null || n === undefined || !Number.isFinite(n)) return null;
@@ -48,12 +52,14 @@ export function usd(n) {
   return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** Percent for a share of a whole, with enough precision to survive 0.02% slivers. */
+/** Percent for a share of a whole, with enough precision to survive 0.02% slivers.
+ * @param {number} part @param {number} whole */
 export function share(part, whole) {
   if (!whole) return 0;
   return (part / whole) * 100;
 }
 
+/** @param {number} v */
 export function pct(v) {
   if (!Number.isFinite(v)) return '—';
   if (v === 0) return '0%';
@@ -64,35 +70,42 @@ export function pct(v) {
 
 const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
 
-/** "just now" / "14m ago" / "3h ago" / "6d ago" / a date past a week. */
+/** "just now" / "14m ago" / "3h ago" / "6d ago" / a date past a week.
+ * @param {number|null|undefined} ms @param {number} [now] */
 export function ago(ms, now = Date.now()) {
-  if (!Number.isFinite(ms)) return '';
-  const d = now - ms;
+  const t = Number(ms);
+  if (!Number.isFinite(t)) return '';
+  const d = now - t;
   if (d < 0) return 'just now';
   if (d < MIN) return 'just now';
   if (d < HOUR) return `${Math.floor(d / MIN)}m ago`;
   if (d < DAY) return `${Math.floor(d / HOUR)}h ago`;
   if (d < 7 * DAY) return `${Math.floor(d / DAY)}d ago`;
-  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+/** @param {number|null|undefined} ms */
 export function stamp(ms) {
-  if (!Number.isFinite(ms)) return '';
-  return new Date(ms).toLocaleString('en-US', {
+  const t = Number(ms);
+  if (!Number.isFinite(t)) return '';
+  return new Date(t).toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
 }
 
-/** Elapsed wall-clock between the first and last priced turn. */
+/** Elapsed wall-clock between the first and last priced turn.
+ * @param {number|null|undefined} fromMs @param {number|null|undefined} toMs */
 export function span(fromMs, toMs) {
-  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return '';
-  const d = toMs - fromMs;
+  const a = Number(fromMs), b = Number(toMs);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return '';
+  const d = b - a;
   if (d < HOUR) return `${Math.round(d / MIN)}m`;
   if (d < DAY) return `${(d / HOUR).toFixed(1).replace(/\.0$/, '')}h`;
   return `${(d / DAY).toFixed(1).replace(/\.0$/, '')}d`;
 }
 
-/** `claude-opus-4-8` → `opus-4-8`; keeps `<synthetic>` legible. */
+/** `claude-opus-4-8` → `opus-4-8`; keeps `<synthetic>` legible.
+ * @param {string|null|undefined} model */
 export function shortModel(model) {
   if (!model) return 'unknown';
   return String(model).replace(/^claude-/, '');
@@ -143,6 +156,7 @@ export const INPUT_CLASSES = [
  * Input-rate-equivalent tokens for one usage record. Exactly proportional to the
  * input-family dollars, model-independent. Cache writes are split by TTL because a
  * 1h write costs 1.6x a 5m one.
+ * @param {Partial<import('./types.js').Tokens>|null|undefined} u
  */
 export function billedWeight(u) {
   if (!u) return 0;
@@ -154,7 +168,8 @@ export function billedWeight(u) {
   );
 }
 
-/** Per-class weight, so a stacked bar can show the same classes on both scales. */
+/** Per-class weight, so a stacked bar can show the same classes on both scales.
+ * @param {Partial<import('./types.js').Tokens>|null|undefined} u */
 export function weightByClass(u) {
   if (!u) return { input: 0, cacheWrite: 0, cacheRead: 0 };
   return {
@@ -166,7 +181,8 @@ export function weightByClass(u) {
   };
 }
 
-/** Raw volume per class, same keys as weightByClass so the two zip together. */
+/** Raw volume per class, same keys as weightByClass so the two zip together.
+ * @param {Partial<import('./types.js').Tokens>|null|undefined} u */
 export function volumeByClass(u) {
   if (!u) return { input: 0, cacheWrite: 0, cacheRead: 0 };
   return {
@@ -176,7 +192,8 @@ export function volumeByClass(u) {
   };
 }
 
-/** Every token the session spent, output included — the honest headline count. */
+/** Every token the session spent, output included — the honest headline count.
+ * @param {Partial<import('./types.js').Tokens>|null|undefined} u */
 export function totalTokens(u) {
   if (!u) return 0;
   const v = volumeByClass(u);
@@ -186,6 +203,7 @@ export function totalTokens(u) {
 /**
  * The effective multiplier a class's TTL mix works out to, for the legend. A session
  * that only ever wrote 1h caches sees "2.0x"; a mixed one sees the blend.
+ * @param {Partial<import('./types.js').Tokens>|null|undefined} u
  */
 export function writeMultiplier(u) {
   const w5 = u?.cacheWrite5m || 0;
