@@ -70,6 +70,7 @@ npm start            # → http://127.0.0.1:7788
 |---|---|
 | `baseDirs`, `scanDepth` | where to discover repos + their worktrees |
 | `web.port` | dashboard port (default 7788, bound to 127.0.0.1) |
+| — | *(not config)* the API token lives at `~/.local/state/worktree-studio/token`, mode 0600. Every request needs it; see `docs/api.md`. |
 | `claude.cmd` | command used to launch a session (default `claude`) |
 | `copyPatterns` | gitignored files carried into new worktrees (per-repo or `default`) |
 | `start.<repo>` | `{ cmd, ports }` dev-server launch config |

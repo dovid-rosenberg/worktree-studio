@@ -6,9 +6,9 @@ Derived from `server/` — this is the contract, not a tutorial. For what the ap
 ## Base URL, versioning, transport
 
 The server binds `config.web.host` / `config.web.port` (default
-`http://127.0.0.1:7788`). It is a loopback-only local dev tool: **no
-authentication, no CORS headers, no rate limiting.** Anything that can reach the
-port can drive it.
+`http://127.0.0.1:7788`). It is a local dev tool, but "loopback-only" is not a
+security boundary — see *Authentication* below. Every request is checked; there
+are still no CORS headers and no rate limiting.
 
 Every API route is registered once and served under two prefixes:
 
@@ -31,11 +31,54 @@ Requests: `application/json` bodies up to 8 MB (`text/*` is also accepted and
 arrives as a string — only the hook receiver uses that). Responses are JSON
 unless stated otherwise.
 
+## Authentication
+
+Three checks, in this order, on **every** request including the static assets and
+the WebSocket upgrade. They stop different attacks; a client has to satisfy all
+of them.
+
+| Check    | Applies to                    | Failure                             |
+| -------- | ----------------------------- | ----------------------------------- |
+| `Host`   | everything                    | `403 { error: 'forbidden host' }`   |
+| `Origin` | everything, when present      | `403 { error: 'forbidden origin' }` |
+| token    | `/api/**`, `/hook/*`, `/ws/term` | `401 { error: 'missing or invalid token' }` |
+
+**Host** must name a loopback host (`127.0.0.1`, `localhost`, `::1`) or the
+configured `web.host`, on the configured port. This is the DNS-rebinding defense:
+a page that re-resolves its own domain to 127.0.0.1 becomes same-origin and CORS
+stops applying, but the browser still sends the attacker's domain in `Host`.
+
+**Origin**, *when the request carries one*, must be `http(s)://<loopback>:<port>`
+for this server's port. Absent is allowed — every non-browser client (curl,
+SwiftBar, Alfred, the CLI, the hook script) sends none, and the token covers
+those. `Origin: null` is refused. Note WebSockets are exempt from CORS entirely,
+so this check on the upgrade is what stops any open browser tab from attaching a
+terminal.
+
+**Token** — a 64-hex-char secret generated on first run and stored at
+`<stateDir>/token`, mode `0600` (`~/.local/state/worktree-studio/token` by
+default; `WT_STUDIO_STATE` moves it). It is stable across restarts, because live
+sessions have it baked into hook URLs. Present it as:
+
+- `x-wts-token: <token>` — preferred; what the web UI, the CLI, SwiftBar and
+  Alfred send.
+- `Authorization: Bearer <token>`.
+- `?token=<token>` — for the two transports that cannot set a header:
+  `EventSource` (`/api/events`) and the terminal WebSocket. The generated hook
+  URLs use this form too.
+
+The web UI gets the token by having it substituted into `index.html` at serve
+time (`window.WTS_TOKEN`). That is safe only because of the `Host`/`Origin`
+gate: a cross-origin page cannot read the document, and a rebinding one is
+refused before there is a document to read.
+
 ### Errors
 
 | Status | Meaning                                                                     |
 | ------ | --------------------------------------------------------------------------- |
 | 400    | Bad or unresolvable input (`{ error }`), e.g. unknown repo, missing field.   |
+| 401    | Missing or invalid token (`{ error }`) — see *Authentication*.                |
+| 403    | Disallowed `Host` or `Origin` (`{ error }`) — see *Authentication*.           |
 | 404    | Named session / feature does not exist (`{ error }`).                        |
 | 409    | No free concurrency slot (`{ ok: false, error }`) — see *Concurrency slots*. |
 | 500    | Unhandled exception in a handler (`{ error: <message> }`), also logged.      |
@@ -569,9 +612,10 @@ configured' }`. Fire-and-forget: a command that fails still answers `ok`.
 
 ## Hook receiver (not versioned)
 
-### `POST /hook/:event?wts=<sessionId>`
+### `POST /hook/:event?wts=<sessionId>&token=<token>`
 
-Where Claude Code's hooks report in. `:event` is one of `SessionStart`,
+Where Claude Code's hooks report in. The token is in the query string because a
+generated settings file can only carry a URL. `:event` is one of `SessionStart`,
 `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`,
 `SubagentStop`, `SessionEnd`. The body is Claude's hook payload (JSON, or a
 `text/*` string that will be parsed, falling back to `{ raw }`).
@@ -585,15 +629,29 @@ agent needs the human); `Stop` → `idle`; `SessionEnd` → `stopped` and
 Always `{ ok: true }`, including for an unknown `wts` — a hook must never block
 the agent. Applying an event triggers an SSE broadcast.
 
+One narrow exemption: a tokenless hook is accepted when `wts` names a session
+whose stored `hookAuth` is not `true`. Those are sessions whose claude process
+was launched with a settings file written before tokens existed — it read that
+file once at startup and will never re-read it, so refusing would silently mute a
+running agent's status. The exemption clears itself the next time the session is
+activated or restored (which rewrites the file and sets `hookAuth`), and it grants
+nothing beyond setting that one session's `state`/`activity`. An unknown `wts` gets
+no exemption.
+
 ---
 
 ## Terminal WebSocket (not versioned)
 
-### `ws://<host>:<port>/ws/term?session=<id>&pane=<pane>&cols=<n>&rows=<n>`
+### `ws://<host>:<port>/ws/term?session=<id>&token=<token>&pane=<pane>&cols=<n>&rows=<n>`
 
 Attaches a pty to the session's multiplexer session. `pane=split` attaches to the
 independent `<muxName>-split` session instead, creating it if needed. `cols`/
 `rows` default to 100×30. An unknown session id closes the socket immediately.
+
+`Host`, `Origin` and the token are all checked **at the upgrade**, before any pty
+is spawned; a failure is a plain HTTP `401`/`403` on the handshake, so the socket
+never reaches `OPEN`. The session id is *not* an access control — it is a
+`crypto.randomUUID()` and unguessable, but the token is what authenticates.
 
 - **Server → client:** raw terminal output.
 - **Client → server:** `{"type":"input","data":"…"}` or
