@@ -32,18 +32,17 @@ function countLines(worktreePath, rel) {
   } catch { return 0; }
 }
 
-// The branch's total delta vs base plus uncommitted working changes, de-duped by
-// path: tracked changes from git diff (numstat counts + name-status), untracked
-// files from git status --porcelain (status 'A', line count as added).
-async function changes(worktreePath, defaultBranch) {
-  const b = await base(worktreePath, defaultBranch);
+// The working tree's UNCOMMITTED changes (vs HEAD), de-duped by path: tracked changes
+// from git diff HEAD (numstat counts + name-status), untracked files from git status
+// --porcelain (status 'A', line count as added). Excludes everything already committed.
+async function working(worktreePath) {
   const byPath = new Map();
   const get = (f) => {
     if (!byPath.has(f)) byPath.set(f, { file: f, status: 'M', added: 0, deleted: 0 });
     return byPath.get(f);
   };
 
-  const numstat = await git(worktreePath, ['diff', '--numstat', b]);
+  const numstat = await git(worktreePath, ['diff', '--numstat', 'HEAD']);
   for (const line of numstat.split('\n')) {
     if (!line) continue;
     const [a, d, ...rest] = line.split('\t');
@@ -52,7 +51,7 @@ async function changes(worktreePath, defaultBranch) {
     e.deleted = d === '-' ? 0 : Number(d) || 0;
   }
 
-  const nameStatus = await git(worktreePath, ['diff', '--name-status', b]);
+  const nameStatus = await git(worktreePath, ['diff', '--name-status', 'HEAD']);
   for (const line of nameStatus.split('\n')) {
     if (!line) continue;
     const parts = line.split('\t');
@@ -68,13 +67,12 @@ async function changes(worktreePath, defaultBranch) {
     e.added = countLines(worktreePath, f);
   }
 
-  return { base: b, files: [...byPath.values()] };
+  return { files: [...byPath.values()] };
 }
 
-// Raw unified diff for one file; untracked files fall back to a /dev/null diff.
-async function fileDiff(worktreePath, defaultBranch, file) {
-  const b = await base(worktreePath, defaultBranch);
-  const r = await gitFull(worktreePath, ['diff', b, '--', file]);
+// Raw unified diff for one working-tree file (vs HEAD); untracked → /dev/null diff.
+async function workingFileDiff(worktreePath, file) {
+  const r = await gitFull(worktreePath, ['diff', 'HEAD', '--', file]);
   if (r.stdout) return r.stdout;
   const st = await git(worktreePath, ['status', '--porcelain', '--', file]);
   if (st.startsWith('??')) {
@@ -82,6 +80,65 @@ async function fileDiff(worktreePath, defaultBranch, file) {
     return u.stdout;
   }
   return r.stdout;
+}
+
+// The commits on this branch (base..HEAD), newest first, each with its totals. One
+// `git log --numstat` call: a REC-prefixed header line per commit, then its numstat rows.
+async function commits(worktreePath, defaultBranch) {
+  const b = await base(worktreePath, defaultBranch);
+  const SEP = '\x1f'; const REC = '\x1e';
+  const raw = await git(worktreePath, ['log', `--format=${REC}%H${SEP}%an${SEP}%ar${SEP}%s`, '--numstat', `${b}..HEAD`]);
+  const list = [];
+  let cur = null;
+  for (const line of raw.split('\n')) {
+    if (line.startsWith(REC)) {
+      const [sha, author, when, subject] = line.slice(1).split(SEP);
+      cur = { sha, author, when, subject: subject || '', added: 0, deleted: 0, fileCount: 0 };
+      list.push(cur);
+    } else if (line.trim() && cur) {
+      const [a, d] = line.split('\t');
+      cur.added += a === '-' ? 0 : Number(a) || 0;
+      cur.deleted += d === '-' ? 0 : Number(d) || 0;
+      cur.fileCount += 1;
+    }
+  }
+  return { base: b, commits: list };
+}
+
+// Per-file breakdown (status + counts + unified diff) for a single commit, or for the
+// working tree when sha === 'uncommitted'. Diffs are inline so the pane can show all
+// files at once and filter to one client-side without another round-trip.
+async function commitDetail(worktreePath, defaultBranch, sha) {
+  if (sha === 'uncommitted') return workingDetail(worktreePath);
+  const byPath = new Map();
+  const get = (f) => {
+    if (!byPath.has(f)) byPath.set(f, { file: f, status: 'M', added: 0, deleted: 0 });
+    return byPath.get(f);
+  };
+  const numstat = await git(worktreePath, ['show', '--format=', '--numstat', sha]);
+  for (const line of numstat.split('\n')) {
+    if (!line) continue;
+    const [a, d, ...rest] = line.split('\t');
+    const e = get(rest.join('\t'));
+    e.added = a === '-' ? 0 : Number(a) || 0;
+    e.deleted = d === '-' ? 0 : Number(d) || 0;
+  }
+  const nameStatus = await git(worktreePath, ['show', '--format=', '--name-status', sha]);
+  for (const line of nameStatus.split('\n')) {
+    if (!line) continue;
+    const parts = line.split('\t');
+    get(parts[parts.length - 1]).status = parts[0][0];
+  }
+  const files = [...byPath.values()];
+  for (const f of files) f.diff = (await gitFull(worktreePath, ['show', '--format=', sha, '--', f.file])).stdout;
+  return { files };
+}
+
+// The working tree's uncommitted changes with inline diffs.
+async function workingDetail(worktreePath) {
+  const { files } = await working(worktreePath);
+  for (const f of files) f.diff = await workingFileDiff(worktreePath, f.file);
+  return { files };
 }
 
 // Stage the given paths (or everything) and commit. Returns { ok, sha, error }.
@@ -96,4 +153,4 @@ async function commit(worktreePath, message, { amend, paths } = {}) {
   return { ok: true, sha: await git(worktreePath, ['rev-parse', 'HEAD']) };
 }
 
-module.exports = { base, changes, fileDiff, commit };
+module.exports = { base, working, commits, commitDetail, commit };

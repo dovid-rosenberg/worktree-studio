@@ -45,9 +45,10 @@ let audioCtx = null;    // lazily created on first beep (needs a user gesture)
 // destroying the live terminal.
 let dockView = 'term';
 let activeTab = 0;
-let changesState = null;   // { repos:[{repo,worktreePath,base,files:[…]}] } for the selected session
-let changesSel = null;     // { repo, file } — the diff currently shown
-const changesUnstaged = new Set(); // ckey()s the user has un-checked (default = staged)
+let commitsState = null;   // { repos:[{repo,branch,base,commits:[…],uncommitted:{…}}] } for the selected session
+let commitSel = null;      // { repo, sha } — the commit (or 'uncommitted') whose detail is shown
+let detailFiles = null;    // [{file,status,added,deleted,diff}] — the selected entry's files
+let fileSel = null;        // a file path to focus (null = show every file's diff)
 let changesRefreshT = null;
 
 // live logs (poll-based tail) state
@@ -417,7 +418,7 @@ function rebuildDock(s) {
   dockView = 'term'; activeTab = 0;
   // split persists per session: restore it if this session was left split
   splitOn = splitSessions.has(s.id); splitTabs = []; splitActive = 0;
-  changesState = null; changesSel = null; changesUnstaged.clear();
+  commitsState = null; commitSel = null; detailFiles = null; fileSel = null;
   logsSel = null; logsOffset.clear(); logsPartial.clear();
   clearTimeout(changesRefreshT);
   const dock = $('#dock');
@@ -431,7 +432,7 @@ function rebuildDock(s) {
   updateDock(s);
   openTerminal(s);
   // eager-load so the ✎ Changes badge shows a count before the tab is opened
-  if (s.worktreePath) { refreshChanges(s, {}); startCiPoll(s); }
+  if (s.worktreePath) { refreshCommits(s, {}); startCiPoll(s); }
 }
 
 function updateDock(s) {
@@ -565,8 +566,7 @@ function injectCiPills(s) {
   }
 }
 
-/* ---------------- changes / diff panel ---------------- */
-const ckey = (repo, file) => `${repo} ${file}`;
+/* ---------------- changes: branch commits + diffs ---------------- */
 
 function renderTabstrip(s) {
   const tabs = $('#dockTabs');
@@ -625,24 +625,15 @@ function applyDockView() {
 }
 
 function changesFileCount() {
-  if (!changesState || !changesState.repos) return 0;
-  return changesState.repos.reduce((n, r) => n + ((r.files && r.files.length) || 0), 0);
-}
-// flat [{repo, file, status, added, deleted}] across every repo
-function allChangeFiles() {
-  const out = [];
-  for (const r of (changesState && changesState.repos) || []) {
-    for (const f of r.files || []) out.push({ repo: r.repo, ...f });
-  }
-  return out;
+  if (!commitsState || !commitsState.repos) return 0;
+  return commitsState.repos.reduce((n, r) => n + ((r.uncommitted && r.uncommitted.fileCount) || 0), 0);
 }
 function branchForRepo(s, repoName) {
   const e = (s.repos || []).find((r) => r.repo === repoName);
   return (e && e.branch) || s.branch || '';
 }
-function statusFor(repo, file) {
-  const f = allChangeFiles().find((x) => x.repo === repo && x.file === file);
-  return (f && f.status ? f.status : 'M').toUpperCase();
+function statHtml(a, d) {
+  return `${a ? `<span class="add">+${esc(a)}</span>` : ''}${a && d ? ' ' : ''}${d ? `<span class="del">−${esc(d)}</span>` : ''}`;
 }
 
 function openChanges(s) {
@@ -651,30 +642,43 @@ function openChanges(s) {
   renderTabstrip(s);
   applyDockView();
   renderChangesPanel(s);
-  refreshChanges(s, { force: true });
+  refreshCommits(s, { force: true });
 }
 
 function scheduleChangesRefresh(s) {
   clearTimeout(changesRefreshT);
-  changesRefreshT = setTimeout(() => { if (selectedId === s.id && dockView === 'changes') refreshChanges(s, {}); }, 400);
+  changesRefreshT = setTimeout(() => { if (selectedId === s.id && dockView === 'changes') refreshCommits(s, {}); }, 400);
 }
 
-async function refreshChanges(s, opts = {}) {
+// The selectable entries in list order: each repo's uncommitted entry (if any), then
+// that repo's commits — matching the left column's render order.
+function commitEntries() {
+  const out = [];
+  const repos = (commitsState && commitsState.repos) || [];
+  for (const r of repos) if (r.uncommitted && r.uncommitted.fileCount) out.push({ repo: r.repo, sha: 'uncommitted' });
+  for (const r of repos) for (const c of (r.commits || [])) out.push({ repo: r.repo, sha: c.sha });
+  return out;
+}
+
+// Fetch the branch's commits (per repo) + uncommitted summary. Keep the current
+// selection if it survives; otherwise open the newest commit (else the uncommitted).
+async function refreshCommits(s, opts = {}) {
   try {
-    const data = await api('GET', `/api/sessions/${s.id}/changes`);
+    const data = await api('GET', `/api/sessions/${s.id}/commits`);
     if (selectedId !== s.id) return;
-    changesState = data;
+    commitsState = data;
     renderTabstrip(s); // refresh the ✎ Changes badge count
-    if (dockView !== 'changes' || !$('#changesFiles')) return;
-    renderChangesFiles(s);
-    renderCommitMeta();
-    const files = allChangeFiles();
-    const stillThere = changesSel && files.some((f) => f.repo === changesSel.repo && f.file === changesSel.file);
+    if (dockView !== 'changes' || !$('#commitList')) return;
+    renderBranchBar(s);
+    renderCommitList(s);
+    const entries = commitEntries();
+    const stillThere = commitSel && entries.some((e) => e.repo === commitSel.repo && e.sha === commitSel.sha);
     if (opts.force || !stillThere) {
-      if (files.length) selectDiff(s, files[0].repo, files[0].file);
-      else { changesSel = null; renderDiffEmpty(); }
+      const def = entries.find((e) => e.sha !== 'uncommitted') || entries[0];
+      if (def) selectCommit(s, def.repo, def.sha);
+      else { commitSel = null; detailFiles = null; renderDetail(s); toggleCommitBar(s); }
     } else if (opts.reloadCurrent) {
-      selectDiff(s, changesSel.repo, changesSel.file);
+      selectCommit(s, commitSel.repo, commitSel.sha);
     }
   } catch (e) { if (dockView === 'changes') toast(e.message, true); }
 }
@@ -683,95 +687,173 @@ function renderChangesPanel(s) {
   const panel = $('#changesPanel');
   if (!panel) return;
   panel.innerHTML = `
-    <div class="changes-cols">
-      <div class="changes-files" id="changesFiles"></div>
-      <div class="changes-diff" id="changesDiff"></div>
+    <div class="branchbar" id="branchBar"></div>
+    <div class="commit-cols">
+      <div class="commit-list" id="commitList"></div>
+      <div class="commit-detail" id="commitDetail"></div>
     </div>
-    <div class="commitbar">
-      <div class="commit-meta">
-        <span id="commitStat"></span>
-        <span class="spacer" style="flex:1"></span>
-        <span class="refresh" id="changesRefresh" title="Reload changes">⟳ Refresh</span>
-      </div>
+    <div class="commitbar" id="commitBar" hidden>
       <div class="commit-row">
         <input class="commit-input" id="commitMsg" placeholder="Commit message…" />
       </div>
       <div class="commit-row">
-        <label class="chk"><input type="checkbox" id="commitAmend"> amend</label>
+        <label class="chk"><input type="checkbox" id="commitAmend"> amend last</label>
+        <span class="commit-meta" id="commitTarget"></span>
         <span class="spacer" style="flex:1"></span>
+        <span class="refresh commit-meta" id="commitsRefresh" title="Reload commits">⟳ Refresh</span>
         <button class="btn sm" id="commitBtn">Commit</button>
         <button class="btn sm go" id="commitPrBtn">Commit &amp; open PR ↗</button>
       </div>
     </div>`;
-  activatable($('#changesRefresh'), () => refreshChanges(s, { reloadCurrent: true }));
+  activatable($('#commitsRefresh'), () => refreshCommits(s, { reloadCurrent: true }));
   $('#commitBtn').addEventListener('click', () => doCommit(s, false));
   $('#commitPrBtn').addEventListener('click', () => doCommit(s, true));
-  renderChangesFiles(s);
-  renderDiffEmpty();
-  renderCommitMeta();
+  renderBranchBar(s);
+  renderCommitList(s);
+  renderDetail(s);
 }
 
-function renderChangesFiles(s) {
-  const el = $('#changesFiles');
+function renderBranchBar(s) {
+  const el = $('#branchBar');
+  if (!el) return;
+  const repos = (commitsState && commitsState.repos) || [];
+  const totalCommits = repos.reduce((n, r) => n + (r.commits ? r.commits.length : 0), 0);
+  const totalUnc = repos.reduce((n, r) => n + ((r.uncommitted && r.uncommitted.fileCount) || 0), 0);
+  const def = (repos[0] && repos[0].defaultBranch) || 'default';
+  const branch = branchForRepo(s, repos[0] && repos[0].repo) || s.branch || '(no branch)';
+  const chips = repos.map((r) => `<span class="chip">⎇ ${esc(r.repo)}${(r.commits && r.commits.length) ? ` · ${esc(r.commits.length)}` : ''}</span>`).join('');
+  el.innerHTML = `
+    <span class="br">${esc(branch)}</span>
+    <span class="chip"><span class="cdot b"></span>${esc(totalCommits)} commit${totalCommits === 1 ? '' : 's'} vs ${esc(def)}</span>
+    ${totalUnc ? `<span class="chip"><span class="cdot a"></span>${esc(totalUnc)} uncommitted</span>` : ''}
+    ${chips}`;
+}
+
+// Left column: uncommitted entries (per repo) pinned at the top, then each repo's
+// commits, newest first, grouped under a repo header.
+function renderCommitList(s) {
+  const el = $('#commitList');
   if (!el) return;
   el.innerHTML = '';
-  const repos = (changesState && changesState.repos) || [];
-  if (!repos.length) { el.appendChild(h(`<div class="chsub">No changes vs the base branch.</div>`)); return; }
-  for (const r of repos) {
-    const branch = branchForRepo(s, r.repo);
-    el.appendChild(h(`<div class="chsub">${esc(r.repo)}${branch ? ` · branch ${esc(branch)}` : ''}</div>`));
-    if (!(r.files && r.files.length)) { el.appendChild(h(`<div class="chsub clean">clean</div>`)); continue; }
-    for (const f of r.files) {
-      const key = ckey(r.repo, f.file);
-      const staged = !changesUnstaged.has(key);
-      const sel = changesSel && changesSel.repo === r.repo && changesSel.file === f.file;
-      const st = (f.status || 'M').toUpperCase();
-      const stc = st === 'A' ? 'a' : st === 'D' ? 'd' : 'm';
-      const row = h(`<div class="cfile ${sel ? 'on' : ''}">
-        <input type="checkbox" ${staged ? 'checked' : ''}>
-        <span class="st ${stc}">${esc(st)}</span>
-        <span class="nm" title="${esc(f.file)}">${esc(f.file)}</span>
-        ${f.added ? `<span class="adds">+${esc(f.added)}</span>` : ''}
-        ${f.deleted ? `<span class="dels">−${esc(f.deleted)}</span>` : ''}
-      </div>`);
-      const cb = row.querySelector('input');
-      cb.setAttribute('aria-label', `Stage ${f.file}`);
-      cb.addEventListener('click', (e) => e.stopPropagation());
-      cb.addEventListener('keydown', (e) => e.stopPropagation()); // let the checkbox own its keys; don't reach the row
-      cb.addEventListener('change', () => { if (cb.checked) changesUnstaged.delete(key); else changesUnstaged.add(key); renderCommitMeta(); });
-      activatable(row, () => selectDiff(s, r.repo, f.file));
+  const repos = (commitsState && commitsState.repos) || [];
+  const withUnc = repos.filter((r) => r.uncommitted && r.uncommitted.fileCount);
+  if (withUnc.length) {
+    el.appendChild(h(`<div class="grouphd">Uncommitted</div>`));
+    for (const r of withUnc) {
+      const u = r.uncommitted;
+      const on = commitSel && commitSel.sha === 'uncommitted' && commitSel.repo === r.repo;
+      const row = h(`<button class="crow uncommitted ${on ? 'on' : ''}">
+        <div class="l1"><span class="sha">●</span><span class="subj">Uncommitted changes</span></div>
+        <div class="l2">${esc(r.repo)} · working tree<span class="stat">${statHtml(u.added, u.deleted)}</span></div>
+      </button>`);
+      activatable(row, () => selectCommit(s, r.repo, 'uncommitted'));
       el.appendChild(row);
     }
   }
-}
-
-function renderDiffEmpty() {
-  const box = $('#changesDiff');
-  if (box) box.innerHTML = `<div class="diff-empty">Select a file to view its diff.</div>`;
-}
-
-async function selectDiff(s, repo, file) {
-  changesSel = { repo, file };
-  renderChangesFiles(s); // move the .on highlight
-  const box = $('#changesDiff');
-  if (!box) return;
-  box.innerHTML = `<div class="diff-fname">${esc(file)} <span class="pill idle">loading…</span></div>`;
-  try {
-    const res = await api('GET', `/api/sessions/${s.id}/diff?repo=${encodeURIComponent(repo)}&file=${encodeURIComponent(file)}`);
-    if (!(changesSel && changesSel.repo === repo && changesSel.file === file)) return; // a newer click won
-    renderDiff(box, repo, file, (res && res.raw) || '');
-  } catch (e) {
-    box.innerHTML = `<div class="diff-fname">${esc(file)}</div><div class="diffline ctx"><span class="ln"></span><span class="tx">${esc(e.message)}</span></div>`;
+  const anyCommits = repos.some((r) => r.commits && r.commits.length);
+  for (const r of repos) {
+    if (!(r.commits && r.commits.length)) continue;
+    el.appendChild(h(`<div class="grouphd">⎇ ${esc(r.repo)}</div>`));
+    for (const c of r.commits) {
+      const on = commitSel && commitSel.sha === c.sha && commitSel.repo === r.repo;
+      const row = h(`<button class="crow ${on ? 'on' : ''}">
+        <div class="l1"><span class="sha">${esc(c.sha.slice(0, 7))}</span><span class="subj" title="${esc(c.subject)}">${esc(c.subject)}</span></div>
+        <div class="l2">${esc(c.author)} · ${esc(c.when)}<span class="stat">${statHtml(c.added, c.deleted)}</span></div>
+      </button>`);
+      activatable(row, () => selectCommit(s, r.repo, c.sha));
+      el.appendChild(row);
+    }
+  }
+  if (!withUnc.length && !anyCommits) {
+    el.appendChild(h(`<div class="chsub clean">No commits on this branch yet, and a clean working tree.</div>`));
   }
 }
 
-// Parse a raw unified diff line-by-line: @@=hunk, +=add, -=del, else context.
+function commitMetaFor(repo, sha) {
+  const r = ((commitsState && commitsState.repos) || []).find((x) => x.repo === repo);
+  return r && (r.commits || []).find((c) => c.sha === sha);
+}
+
+function toggleCommitBar(s) {
+  const bar = $('#commitBar');
+  if (!bar) return;
+  const isU = !!(commitSel && commitSel.sha === 'uncommitted');
+  bar.hidden = !isU;
+  const tgt = $('#commitTarget');
+  if (tgt) tgt.textContent = isU ? `→ ${commitSel.repo}` : '';
+}
+
+// Select a commit (or a repo's 'uncommitted' entry): fetch its per-file diffs, show
+// them all, and reveal the commit bar only for the uncommitted entry.
+async function selectCommit(s, repo, sha) {
+  commitSel = { repo, sha };
+  fileSel = null;
+  detailFiles = null;
+  renderCommitList(s); // move the .on highlight
+  toggleCommitBar(s);
+  const box = $('#commitDetail');
+  if (box) box.innerHTML = `<div class="diff-empty">Loading…</div>`;
+  try {
+    const res = await api('GET', `/api/sessions/${s.id}/commit-detail?repo=${encodeURIComponent(repo)}&sha=${encodeURIComponent(sha)}`);
+    if (!(commitSel && commitSel.repo === repo && commitSel.sha === sha)) return; // a newer click won
+    detailFiles = (res && res.files) || [];
+    renderDetail(s);
+  } catch (e) {
+    if (box) box.innerHTML = `<div class="diff-empty">${esc(e.message)}</div>`;
+  }
+}
+
+// Focus one file's diff (click again to clear back to all files).
+function selectFile(s, file) {
+  fileSel = fileSel === file ? null : file;
+  renderDetail(s);
+}
+
+// Right column: the selected entry's header + its file list. Every file's header is
+// always shown (the "file list"); the diffs below show all files, or just the focused
+// one when a file is selected.
+function renderDetail(s) {
+  const box = $('#commitDetail');
+  if (!box) return;
+  if (!commitSel) { box.innerHTML = `<div class="diff-empty">Select a commit to view its changes.</div>`; return; }
+  const isU = commitSel.sha === 'uncommitted';
+  const meta = isU ? null : commitMetaFor(commitSel.repo, commitSel.sha);
+  const files = detailFiles || [];
+  const totalA = files.reduce((n, f) => n + (f.added || 0), 0);
+  const totalD = files.reduce((n, f) => n + (f.deleted || 0), 0);
+  const head = `<div class="dhd">
+    <h3>${isU ? 'Uncommitted changes' : esc(meta ? meta.subject : commitSel.sha)}</h3>
+    <div class="dmeta">
+      ${isU
+        ? `<span>${esc(commitSel.repo)} · working tree</span>`
+        : `<span class="sha">${esc(commitSel.sha.slice(0, 10))}</span><span>${esc(meta ? meta.author : '')}</span><span>${esc(meta ? meta.when : '')}</span>`}
+      <span>${esc(files.length)} file${files.length === 1 ? '' : 's'}</span>
+      <span class="stat">${statHtml(totalA, totalD)}</span>
+      ${fileSel ? `<span class="allfiles" id="showAllFiles">↩ show all files</span>` : ''}
+    </div>
+  </div>`;
+  const bodyFiles = files.map((f) => {
+    const on = fileSel === f.file;
+    const st = (f.status || 'M').toUpperCase();
+    const stc = st === 'A' ? 'a' : st === 'D' ? 'd' : 'm';
+    const fh = `<div class="filehd ${on ? 'on' : ''}" data-file="${esc(f.file)}">
+      <span class="st ${stc}">${esc(st)}</span>
+      <span class="nm" title="${esc(f.file)}">${esc(f.file)}</span>
+      <span class="fstat">${statHtml(f.added, f.deleted)}</span>
+    </div>`;
+    const diff = (fileSel && !on) ? '' : `<div class="filediff">${diffLinesHtml(f.diff || '')}</div>`;
+    return fh + diff;
+  }).join('');
+  box.innerHTML = head + `<div class="dbody">${files.length ? bodyFiles : '<div class="diff-empty">No file changes.</div>'}</div>`;
+  box.querySelectorAll('.filehd').forEach((el) => activatable(el, () => selectFile(s, el.dataset.file)));
+  const all = $('#showAllFiles');
+  if (all) activatable(all, () => { fileSel = null; renderDetail(s); });
+}
+
+// Parse a raw unified diff into line rows: @@=hunk, +=add, -=del, else context.
 // Header lines (diff --git / index / +++ / --- / mode / rename …) are dropped.
 const MAX_DIFF_LINES = 3000;
-function renderDiff(box, repo, file, text) {
-  const status = statusFor(repo, file);
-  const label = status === 'A' ? 'Added' : status === 'D' ? 'Deleted' : 'Modified';
-  const head = `<div class="diff-fname">${esc(file)} <span class="pill idle">${esc(label)}</span></div>`;
+function diffLinesHtml(text) {
   const skip = /^(diff --git |index |--- |\+\+\+ |new file mode|deleted file mode|old mode |new mode |similarity index|dissimilarity index|rename from |rename to |copy from |copy to |Binary files )/;
   const out = [];
   let oldLn = 0, newLn = 0;
@@ -802,44 +884,22 @@ function renderDiff(box, repo, file, text) {
     else { ln = String(newLn); oldLn++; newLn++; }
     out.push(`<div class="diffline ${cls}"><span class="ln">${esc(ln)}</span><span class="tx">${esc(raw)}</span></div>`);
   }
-  box.innerHTML = head + (out.length ? out.join('') : `<div class="diffline ctx"><span class="ln"></span><span class="tx">(no textual diff)</span></div>`);
+  return out.length ? out.join('') : `<div class="diffline ctx"><span class="ln"></span><span class="tx">(no textual diff)</span></div>`;
 }
 
-function renderCommitMeta() {
-  const el = $('#commitStat');
-  if (!el) return;
-  const files = allChangeFiles();
-  const staged = files.filter((f) => !changesUnstaged.has(ckey(f.repo, f.file)));
-  const add = staged.reduce((n, f) => n + (f.added || 0), 0);
-  const del = staged.reduce((n, f) => n + (f.deleted || 0), 0);
-  el.innerHTML = `${staged.length} of ${files.length} file${files.length === 1 ? '' : 's'} staged · <b style="color:var(--add)">+${add}</b> <b style="color:var(--del)">−${del}</b>`;
-}
-
-// Which repo this commit targets: the selected file's repo (if it has staged
-// files), else the first repo with anything staged. Commit is per-repo.
-function commitRepo() {
-  const staged = allChangeFiles().filter((f) => !changesUnstaged.has(ckey(f.repo, f.file)));
-  if (!staged.length) return null;
-  if (changesSel && staged.some((f) => f.repo === changesSel.repo)) return changesSel.repo;
-  return staged[0].repo;
-}
-function stagedPathsForRepo(repo) {
-  return allChangeFiles().filter((f) => f.repo === repo && !changesUnstaged.has(ckey(f.repo, f.file))).map((f) => f.file);
-}
-
+// Commit the selected repo's working tree (stages everything in that worktree). Only
+// reachable when the Uncommitted entry is selected.
 async function doCommit(s, openPr) {
+  if (!(commitSel && commitSel.sha === 'uncommitted')) return toast('Select an Uncommitted entry to commit.', true);
+  const repo = commitSel.repo;
   const input = $('#commitMsg');
   const msg = input ? input.value.trim() : '';
   if (!msg) return toast('Enter a commit message first.', true);
-  const repo = commitRepo();
-  if (!repo) return toast('No files staged to commit.', true);
-  const paths = stagedPathsForRepo(repo);
-  if (!paths.length) return toast(`No files staged for ${repo}.`, true);
   const amend = !!($('#commitAmend') && $('#commitAmend').checked);
   const btns = [$('#commitBtn'), $('#commitPrBtn')].filter(Boolean);
   btns.forEach((b) => { b.disabled = true; });
   try {
-    const r = await api('POST', `/api/sessions/${s.id}/commit`, { repo, message: msg, paths, amend });
+    const r = await api('POST', `/api/sessions/${s.id}/commit`, { repo, message: msg, amend });
     if (!r.ok) throw new Error(r.error || 'commit failed');
     toast(`Committed ${repo}${r.sha ? ` @ ${r.sha.slice(0, 7)}` : ''}`);
     if (input) input.value = '';
@@ -851,7 +911,7 @@ async function doCommit(s, openPr) {
         : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`).join('');
       await uiDialog({ title: 'Pull / merge requests', messageHtml: html || 'No results', okLabel: 'Done', cancelLabel: '' });
     }
-    await refreshChanges(s, { force: true });
+    await refreshCommits(s, { force: true });
   } catch (e) { toast(e.message, true); }
   finally { btns.forEach((b) => { b.disabled = false; }); }
 }

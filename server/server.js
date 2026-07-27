@@ -394,27 +394,36 @@ async function main() {
     res.json(out);
   }));
 
-  // ---- review (diff & commit) ----
-  app.get('/api/sessions/:id/changes', A(async (req, res) => {
+  // ---- review (commits, per-commit diffs & commit) ----
+  // The branch's commits per repo (+ an uncommitted summary), and one commit's inline
+  // per-file diffs on demand.
+  app.get('/api/sessions/:id/commits', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const out = [];
     for (const entry of (s.repos || [])) {
       if (!entry.worktreePath) continue;
       const repoObj = repos.find((r) => r.name === entry.repo);
-      const { base, files } = await review.changes(entry.worktreePath, repoObj && repoObj.defaultBranch);
-      out.push({ repo: entry.repo, worktreePath: entry.worktreePath, base, files });
+      const def = repoObj && repoObj.defaultBranch;
+      const { base, commits } = await review.commits(entry.worktreePath, def);
+      const wc = await review.working(entry.worktreePath);
+      const uncommitted = {
+        fileCount: wc.files.length,
+        added: wc.files.reduce((n, f) => n + (f.added || 0), 0),
+        deleted: wc.files.reduce((n, f) => n + (f.deleted || 0), 0),
+      };
+      out.push({ repo: entry.repo, worktreePath: entry.worktreePath, branch: entry.branch, base, defaultBranch: def, commits, uncommitted });
     }
     res.json({ repos: out });
   }));
 
-  app.get('/api/sessions/:id/diff', A(async (req, res) => {
+  app.get('/api/sessions/:id/commit-detail', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const entry = (s.repos || []).find((r) => r.repo === req.query.repo);
     if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     const repoObj = repos.find((r) => r.name === entry.repo);
-    res.type('text/plain').send(await review.fileDiff(entry.worktreePath, repoObj && repoObj.defaultBranch, req.query.file));
+    res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, req.query.sha || 'uncommitted'));
   }));
 
   app.post('/api/sessions/:id/commit', A(async (req, res) => {
