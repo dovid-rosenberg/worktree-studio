@@ -8,6 +8,7 @@ const pty = require('node-pty');
 const configMod = require('./config');
 const muxSelect = require('./multiplexer');
 const gitMod = require('./git');
+const watchMod = require('./watch');
 const worktree = require('./worktree');
 const review = require('./review');
 const sources = require('./sources');
@@ -780,12 +781,7 @@ async function main() {
   // ---- boot ----
   process.on('unhandledRejection', (e) => console.error('[wt-studio] unhandledRejection', e));
   process.on('uncaughtException', (e) => console.error('[wt-studio] uncaughtException', e));
-  await rescan();
-  setInterval(rescan, 15000);
-  await refreshRunning();
-  setInterval(refreshRunning, 3000);
-  // Flip sessions whose tmux session died out-of-band to stopped (one has-session each).
-  setInterval(() => manager.reconcile().catch(() => {}), 4000);
+  await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: () => sseClients.size > 0 });
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 

@@ -120,7 +120,7 @@ async function start(deps) {
     let w;
     try {
       w = fs.watch(dir, { persistent: false, recursive: !!recursive });
-    } catch (e) {
+    } catch {
       // recursive watching is unavailable on older Linux/Node — a flat watch on the
       // same directory is strictly better than no watch at all.
       if (recursive) { arm(dir, kind, false); return; }
