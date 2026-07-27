@@ -1318,6 +1318,12 @@ function renderFleet() {
     .sort((a, b) => ((a.state === 'stopped') - (b.state === 'stopped')) || (a.title || '').localeCompare(b.title || ''));
   // worktree features whose dev servers are up (may also appear under Worktrees)
   const serverFeats = feats.filter((f) => f.members.some((m) => m && m.running));
+  // running frontends served from a repo's MAIN checkout — not a worktree, so not a
+  // feature, so otherwise invisible. Common when the BE runs in a worktree and the FE
+  // is served from its main checkout. Surface them so every running FE is openable.
+  const webSet = new Set(state.webRepos || []);
+  const mainWebRunning = (state.repos || []).flatMap((r) => r.worktrees || [])
+    .filter((w) => w.isMain && webSet.has(w.repo) && w.running && (w.ports || []).length);
 
   const flat = feats.flatMap((f) => f.members.filter((m) => m && !m.missing));
   const running = flat.filter((m) => m.running).length;
@@ -1338,10 +1344,14 @@ function renderFleet() {
 
   const list = $('#fleetTable');
   list.innerHTML = '';
-  if (!feats.length && !agents.length) { list.appendChild(h(`<div class="fleet-empty">No worktrees or running agents. Start a session, or create a worktree by promoting one.</div>`)); return; }
+  if (!feats.length && !agents.length && !mainWebRunning.length) { list.appendChild(h(`<div class="fleet-empty">No worktrees or running agents. Start a session, or create a worktree by promoting one.</div>`)); return; }
 
   const section = (label, n) => h(`<div class="sectionrow">${esc(label)} · ${n}</div>`);
-  if (serverFeats.length) { list.appendChild(section('⇅ Servers running', serverFeats.length)); serverFeats.forEach((f) => list.appendChild(serverRow(f))); }
+  if (serverFeats.length || mainWebRunning.length) {
+    list.appendChild(section('⇅ Servers running', serverFeats.length + mainWebRunning.length));
+    serverFeats.forEach((f) => list.appendChild(serverRow(f)));
+    mainWebRunning.forEach((w) => list.appendChild(mainServerRow(w)));
+  }
   if (agents.length) { list.appendChild(section('✦ Agents · no worktree', agents.length)); agents.forEach((s) => list.appendChild(agentRow(s))); }
   if (feats.length) { list.appendChild(section('⎇ Worktrees', feats.length)); feats.forEach((f) => list.appendChild(featureRow(f))); }
 }
@@ -1391,6 +1401,27 @@ function serverRow(f) {
   l1.appendChild(btn('Stop stack', () => stopStack(f.name), 'danger'));
   row.appendChild(l1);
   return row;
+}
+
+// A running web dev-server in a repo's MAIN checkout (not a worktree → not a feature).
+// Surfaced only so it's openable/stoppable, since feature rows never include it.
+function mainServerRow(w) {
+  const btn = (label, fn, cls = '') => { const b = h(`<button class="btn sm ${cls}">${label}</button>`); b.addEventListener('click', fn); return b; };
+  const row = h('<div class="frow srvrow"></div>');
+  const l1 = h('<div class="frow-l1"></div>');
+  l1.appendChild(h(`<span class="fname">${esc(w.repo)} <span class="src">main</span></span>`));
+  l1.appendChild(h('<span class="pill srv done"><span class="pi">⇅</span>servers · running</span>'));
+  l1.appendChild(h(`<span class="ports">${(w.ports || []).map((p) => `<span class="p">${esc(p)}</span>`).join('')}</span>`));
+  l1.appendChild(h('<span class="grow"></span>'));
+  l1.appendChild(btn(`Open ${w.repo} ↗`, () => openApp(w.ports[0]), 'primary'));
+  l1.appendChild(btn('Stop', () => stopMainServer(w), 'danger'));
+  row.appendChild(l1);
+  return row;
+}
+
+async function stopMainServer(w) {
+  try { await api('POST', '/api/servers/stop', { repo: w.repo, worktreePath: w.path }); toast(`Stopped ${w.repo}`); }
+  catch (e) { toast(e.message, true); }
 }
 
 // Option B: a two-line row (decision line + stack line) with an ⋯ overflow menu.
