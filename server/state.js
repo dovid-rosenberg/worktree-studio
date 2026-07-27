@@ -21,7 +21,7 @@ const sources = require('./sources');
 function createState({ cfg, manager, servers, mux, repos, running }) {
   // Both halves compare worktree paths that reach us from three different sources
   // (the git scan, a session's stored paths, lsof), so every comparison resolves
-  // symlinks first. One cache serves both halves, swept by topology() — see there.
+  // symlinks first. One cache serves both halves; prunePaths() invalidates it.
   const paths = createRealpathCache();
 
   function baseDirOf(repoPath) {
@@ -62,11 +62,6 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
       f.session = m ? m.session : null;
       if (servers.slots.has(f.name)) f.slot = servers.slots.get(f.name);
     }
-    // This pass touches a superset of the paths sessionState() does (its session
-    // index resolves every path a session owns, plus every scanned worktree), so
-    // it is the one place that can safely decide which cache entries are still
-    // live. Anything not seen here is a worktree or a session that is gone.
-    paths.sweep();
     return {
       mux: mux ? mux.name : 'none',
       config: { port: cfg.web.port, configFile: cfg._file },
@@ -109,6 +104,19 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
     return { ...topology(), ...sessionState() };
   }
 
+  // Invalidate the realpath cache against reality. The repo scan is the authority
+  // on which worktrees exist and the session list on which paths are driven, so a
+  // path that neither still names is exactly the signal a cached resolution needs:
+  // a worktree removed now and recreated later must not resolve through its old
+  // entry. server.js calls this after every rescan — the 15 s timer and every
+  // worktree mutation — so invalidation happens whether or not anyone is
+  // listening on SSE, and never depends on who asked for a path recently.
+  function prunePaths() {
+    const live = new Set(manager.sessionIndex((p) => p).keys()); // raw, unresolved
+    for (const repo of repos()) for (const w of repo.worktrees) live.add(w.path);
+    paths.retain(live);
+  }
+
   // Resolve a feature/group by name from current state; drop missing members.
   async function resolveGroup(name) {
     const st = await buildState();
@@ -126,7 +134,7 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
     return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);
   }
 
-  return { buildState, topology, sessionState, resolveGroup, conflictsFor };
+  return { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor };
 }
 
 module.exports = { createState };

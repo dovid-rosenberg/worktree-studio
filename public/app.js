@@ -6,7 +6,10 @@ const XTerm = window.Terminal;
 const FitAddonCtor = (window.FitAddon && window.FitAddon.FitAddon) || null;
 const WebLinksCtor = (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon) || null;
 
-let state = { mux: '…', repos: [], sessions: [], servers: {}, sources: [], features: [], groups: [] };
+// The shape render() can rely on before (and between) SSE frames. Each frame
+// carries one half of the payload, so this is also the base both halves merge onto.
+const EMPTY_STATE = { mux: '…', repos: [], sessions: [], servers: {}, sources: [], features: [], groups: [] };
+let state = { ...EMPTY_STATE };
 let selectedId = null;
 let renderedDockId = null;
 let repoFilter = '';
@@ -198,12 +201,19 @@ async function uiPrompt(message, value = '', opts = {}) {
 // drifting on whatever was missed.
 function connectSSE() {
   const ev = new EventSource('/api/events');
+  // Each half is kept VERBATIM as it arrived, and `state` is derived from the two
+  // on every frame. Deriving (rather than patching `state` in place) is what makes
+  // stitching safe: it always runs against the session ids the server actually
+  // embedded, so an event order of topology-then-sessions can't erase a link that
+  // the next frame would have resolved.
+  let lastTopology = {};
+  let lastSessions = {};
   const apply = (isSessionHalf) => (e) => {
     let frame;
     try { frame = JSON.parse(e.data); } catch { return; }
-    if (isSessionHalf) detectAttention(frame); // diff old vs new BEFORE swapping in
-    state = { ...state, ...frame };
-    restitchSessions();
+    if (isSessionHalf) { detectAttention(frame); lastSessions = frame; } // diff BEFORE swapping in
+    else lastTopology = frame;
+    state = stitchSessions({ ...EMPTY_STATE, ...lastTopology, ...lastSessions });
     render();
   };
   ev.addEventListener('topology', apply(false));
@@ -214,23 +224,30 @@ function connectSSE() {
 // Worktree rows, features and groups each embed a trimmed copy of their driving
 // session ({id,state,activity,muxName}), frozen at the moment the topology was
 // built. Agent state changes orders of magnitude more often than topology does,
-// so re-project the live sessions onto those copies after every frame: without
-// this a Fleet row would show the state from the last topology rebuild (up to 15s
-// stale) and a closed session would linger on its worktree forever.
-function restitchSessions() {
-  const byId = new Map((state.sessions || []).map((s) => [s.id, s]));
+// so re-project the live sessions onto those copies, keyed by id: without this a
+// Fleet row would show the state from the last topology rebuild (up to 15 s
+// stale) and a closed session would linger on its worktree forever. Returns a new
+// object — the frames it reads from are kept pristine for the next projection.
+function stitchSessions(next) {
+  const byId = new Map((next.sessions || []).map((s) => [s.id, s]));
   const fresh = (embedded) => {
     if (!embedded) return null;
     const s = byId.get(embedded.id);
     return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName } : null;
   };
-  for (const r of state.repos || []) for (const w of r.worktrees || []) w.session = fresh(w.session);
   // A feature's members are serialized separately from repos[].worktrees, so on
   // this side they are distinct objects and need the same projection.
-  for (const f of [...(state.features || []), ...(state.groups || [])]) {
-    f.session = fresh(f.session);
-    for (const m of f.members || []) if (m && !m.missing) m.session = fresh(m.session);
-  }
+  const feat = (list) => (list || []).map((f) => ({
+    ...f,
+    session: fresh(f.session),
+    members: (f.members || []).map((m) => (m && !m.missing ? { ...m, session: fresh(m.session) } : m)),
+  }));
+  return {
+    ...next,
+    repos: (next.repos || []).map((r) => ({ ...r, worktrees: (r.worktrees || []).map((w) => ({ ...w, session: fresh(w.session) })) })),
+    features: feat(next.features),
+    groups: feat(next.groups),
+  };
 }
 
 /* ---------------- attention notifications ---------------- */

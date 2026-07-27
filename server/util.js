@@ -76,27 +76,26 @@ function makeId(prefix = '') {
 // comparison goes through this first.
 function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
 
-// A memo for realpath(), because resolving a path is one syscall per path
+// A memo for realpath(), because resolving a path costs a syscall per path
 // component and the state build resolves the same few dozen worktree paths many
 // times a second.
 //
-// Invalidation is generational, not time-based. A path's resolved form cannot
-// change while the path keeps existing — it is pure symlink resolution over the
-// components — so the only way an entry goes stale is if the path is removed and
-// later recreated pointing somewhere else. `sweep()` keeps only the entries the
-// caller actually asked for since the previous sweep, so an entry survives
-// exactly as long as its path keeps showing up: a removed worktree drops out on
-// the first pass that no longer lists it, and if it comes back it is resolved
-// fresh. Failures are never cached — an unresolvable path is one that doesn't
-// exist *yet*, and caching it would pin the fallback forever.
+// Two rules keep it from going stale, and neither is a clock:
+//   - A failure is never cached. An unresolvable path is one that doesn't exist
+//     *yet*; caching the fallback would pin it even after it appears.
+//   - `retain(livePaths)` drops every entry whose path is not in the caller's
+//     current list of real paths. A resolved path cannot change while the path
+//     keeps existing (it is pure symlink resolution over the components), so the
+//     only way to go stale is removal followed by recreation somewhere else —
+//     and the caller that knows about removals is the one holding the live list.
+// Deliberately NOT usage-based: an entry retained merely because something asked
+// for it recently is exactly the entry that survives a removal.
 function createRealpathCache() {
   const cache = new Map();
-  let used = new Set();
   let hits = 0, misses = 0;
   return {
     resolve(p) {
       if (!p) return p;
-      used.add(p);
       if (cache.has(p)) { hits++; return cache.get(p); }
       misses++;
       let r;
@@ -104,11 +103,9 @@ function createRealpathCache() {
       cache.set(p, r);
       return r;
     },
-    // Drop everything not touched since the last sweep. Call this from the one
-    // pass that touches a superset of the paths — see server/state.js.
-    sweep() {
-      for (const p of cache.keys()) if (!used.has(p)) cache.delete(p);
-      used = new Set();
+    retain(livePaths) {
+      const keep = livePaths instanceof Set ? livePaths : new Set(livePaths);
+      for (const p of cache.keys()) if (!keep.has(p)) cache.delete(p);
     },
     get size() { return cache.size; },
     get stats() { return { hits, misses }; },

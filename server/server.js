@@ -39,6 +39,7 @@ async function main() {
     scanning = true;
     try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
     scanning = false;
+    prunePaths();        // the fresh scan is what says which worktrees still exist
     broadcastTopology(); // the scan IS the topology
   }
 
@@ -62,7 +63,7 @@ async function main() {
 
   // The state payload lives in state.js; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
-  const { buildState, topology, sessionState, resolveGroup, conflictsFor } = createState({
+  const { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor } = createState({
     cfg, manager, servers, mux, repos: () => repos, running: () => runningCache,
   });
 
