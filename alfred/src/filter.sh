@@ -4,10 +4,18 @@
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 CFG="${WT_STUDIO_CONFIG:-$HOME/.config/worktree-studio/config.json}"
 PORT="$(jq -r '.web.port // 7788' "$CFG" 2>/dev/null || echo 7788)"
-STATE="$(curl -s -m 2 "http://127.0.0.1:$PORT/api/state" 2>/dev/null)"
+# The API needs the boot token — mode 0600 in the state dir, readable only by us.
+STATE_DIR="${WT_STUDIO_STATE:-$HOME/.local/state/worktree-studio}"
+TOKEN="$(cat "$STATE_DIR/token" 2>/dev/null | tr -d '[:space:]')"
+STATE="$(curl -s -m 2 -H "x-wts-token: $TOKEN" "http://127.0.0.1:$PORT/api/state" 2>/dev/null)"
 
-if [ -z "$STATE" ]; then
-  echo '{"items":[{"title":"Worktree Studio not running","subtitle":"Start it with: npm start","valid":false}]}'
+# A refusal is a response, so "empty" no longer means "down" — say which it was.
+if ! echo "$STATE" | jq -e 'has("repos")' >/dev/null 2>&1; then
+  if [ -n "$STATE" ]; then
+    echo "$STATE" | jq -c '{items:[{title:"Worktree Studio refused this request",subtitle:((.error // "unexpected response")+" — check the token in '"$STATE_DIR"'"),valid:false}]}'
+  else
+    echo '{"items":[{"title":"Worktree Studio not running","subtitle":"Start it with: npm start","valid":false}]}'
+  fi
   exit 0
 fi
 

@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { HOME, expandTilde, readJson, writeJson } = require('./util');
+const security = require('./security');
 
 const CONFIG_DIR = process.env.WT_STUDIO_CONFIG_DIR || path.join(HOME, '.config', 'worktree-studio');
 const CONFIG_FILE = process.env.WT_STUDIO_CONFIG || path.join(CONFIG_DIR, 'config.json');
@@ -135,6 +136,11 @@ function load() {
   cfg._stateDir = STATE_DIR;
   cfg.baseDirs = (cfg.baseDirs || []).map(expandTilde);
   fs.mkdirSync(STATE_DIR, { recursive: true });
+  // The boot token lives beside the state, not in config.json — config.json is a file
+  // the user opens and edits (SwiftBar even has an "Edit config…" item). `_`-prefixed
+  // keys are stripped by save(), so it can ride on cfg and reach sessions.js/status.js
+  // without a second plumbing path.
+  cfg._token = security.loadToken(STATE_DIR);
   validateConcurrency(cfg);
   return cfg;
 }

@@ -1,4 +1,5 @@
 'use strict';
+const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const express = require('express');
@@ -16,6 +17,7 @@ const { Servers, featureFromPath } = require('./servers');
 const { createState } = require('./state');
 const { createForge } = require('./forge');
 const orchestrator = require('./orchestrator');
+const { createGuard } = require('./security');
 const { run, has, shq, A } = require('./util');
 
 async function main() {
@@ -73,10 +75,37 @@ async function main() {
 
   // ---- express ----
   const app = express();
+
+  // Everything below sits behind the Host/Origin allowlist — see security.js for
+  // what each gate stops. It runs before the body parsers so a rejected request is
+  // never given the chance to make us buffer 8 MB of its JSON.
+  const guard = createGuard({ cfg, token: cfg._token });
+  app.use(guard.browser);
+
   app.use(express.json({ limit: '8mb' }));
   app.use(express.text({ type: 'text/*', limit: '8mb' }));
-  app.use(express.static(path.join(__dirname, '..', 'public')));
-  require('./routes-review').register(app, { manager, repos: () => repos, broadcast: scheduleBroadcast });
+
+  // The browser tab cannot be handed a header before it exists, so the boot token is
+  // injected into the one document we hand it. That is safe precisely because of the
+  // gate above: a cross-origin page cannot read this response body, and a rebinding
+  // page is refused before there is a body to read. no-store keeps the token out of
+  // the disk cache.
+  const INDEX = path.join(__dirname, '..', 'public', 'index.html');
+  app.get(['/', '/index.html'], (req, res) => {
+    let html;
+    try { html = fs.readFileSync(INDEX, 'utf8'); } catch { return res.status(500).send('index.html is missing'); }
+    return res.type('html').set('Cache-Control', 'no-store').send(html.replace('__WTS_TOKEN__', cfg._token));
+  });
+  // index:false so the directory listing never serves the un-injected index.html.
+  app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
+
+  // Every API route needs the boot token. The Origin/Host gate above only constrains
+  // browsers; this is what stops any other local process — or a browser request that
+  // carries no Origin at all — from driving the studio. It goes on the /api PREFIX
+  // rather than on the router below, so it also covers the routers other modules
+  // mount there themselves (transcript-routes); /api/v1 is nested under /api, so one
+  // line covers both prefixes.
+  app.use('/api', guard.authed);
 
   // Every route below is registered once on this router and served at BOTH
   // /api/v1/* (the versioned contract new clients should use) and /api/* (the
@@ -452,11 +481,21 @@ async function main() {
   }));
 
   require('./transcript-routes').register(app, { manager, cfg });
+  require('./routes-review').register(app, { manager, repos: () => repos, broadcast: scheduleBroadcast });
 
   // ---- Claude Code hook receiver ----
   // Not under /api: the URL is baked into every session's generated settings file.
+  // Those files are read once, at claude's launch — so a session that was already
+  // running when this build first started still POSTs a tokenless URL and cannot be
+  // told otherwise without killing it. `hookAuth` marks the sessions whose settings
+  // file we have since written *with* a token; anything else is grandfathered in.
+  // The exemption is narrow (this route only sets a session's state/activity string)
+  // and self-clearing (activate/restore rewrites the file and sets the flag).
   app.post('/hook/:event', (req, res) => {
     const id = req.query.wts;
+    const known = id ? manager.get(id) : null;
+    const deny = guard.denyToken(req);
+    if (deny && !(known && known.hookAuth !== true)) return res.status(deny.status).json({ error: deny.error });
     let payload = req.body;
     if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch { payload = { raw: payload }; } }
     if (id) manager.applyHook(id, req.params.event, payload || {});
@@ -465,7 +504,28 @@ async function main() {
 
   // ---- HTTP + WS ----
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws/term' });
+
+  // noServer + a hand-written upgrade handler, not `{ server }`: the checks have to
+  // run and the socket has to be destroyed BEFORE ws accepts the handshake and this
+  // module's connection handler spawns a pty. WebSockets are exempt from CORS, so
+  // the Origin check here is the only thing standing between an open browser tab on
+  // any site and a read/write shell in the user's tmux.
+  const wss = new WebSocketServer({ noServer: true });
+  server.on('upgrade', (req, socket, head) => {
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); } catch { socket.destroy(); return; }
+    if (url.pathname !== '/ws/term') { socket.destroy(); return; }
+    const deny = guard.denyBrowser(req) || guard.denyToken(req, url.searchParams.get('token'));
+    if (deny) {
+      // A plain HTTP response, then close: the client never reaches ws state OPEN, so
+      // it sees a failed handshake rather than a socket that opens and dies.
+      socket.write(`HTTP/1.1 ${deny.status} ${deny.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\n\r\n`);
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+
   wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
     const id = url.searchParams.get('session');

@@ -11,13 +11,24 @@ CFG="${WT_STUDIO_CONFIG:-$HOME/.config/worktree-studio/config.json}"
 PORT="$(jq -r '.web.port // 7788' "$CFG" 2>/dev/null || echo 7788)"
 BASE="http://127.0.0.1:$PORT"
 ACT="$HOME/worktree-studio/swiftbar/wts-action.sh"
+# The API needs the boot token; it lives in the state dir at mode 0600, so only
+# processes running as this user can read it.
+STATE_DIR="${WT_STUDIO_STATE:-$HOME/.local/state/worktree-studio}"
+TOKEN="$(cat "$STATE_DIR/token" 2>/dev/null | tr -d '[:space:]')"
 
-STATE="$(curl -s -m 2 "$BASE/api/state" 2>/dev/null)"
-if [ -z "$STATE" ]; then
+STATE="$(curl -s -m 2 -H "x-wts-token: $TOKEN" "$BASE/api/state" 2>/dev/null)"
+# A refusal is a *response*, so "empty" no longer means "down" — tell the two apart
+# rather than reporting a rejected token as a stopped server.
+if ! echo "$STATE" | jq -e 'has("sessions")' >/dev/null 2>&1; then
   echo "⎇ ⚠"
   echo "---"
-  echo "Worktree Studio not running | color=#d05f30"
-  echo "Start it | bash=/bin/bash param1=-lc param2=cd $HOME/worktree-studio && npm start terminal=true"
+  if [ -n "$STATE" ]; then
+    echo "Worktree Studio refused this request | color=#d05f30"
+    echo "$(echo "$STATE" | jq -r '.error // "unexpected response"') — check $STATE_DIR/token"
+  else
+    echo "Worktree Studio not running | color=#d05f30"
+    echo "Start it | bash=/bin/bash param1=-lc param2=cd $HOME/worktree-studio && npm start terminal=true"
+  fi
   exit 0
 fi
 

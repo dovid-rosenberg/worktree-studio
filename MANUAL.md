@@ -254,7 +254,7 @@ load, so you always get the full set even if your file lists an older subset).
 |-----|---------|---------|
 | `baseDirs` | `['~/Desktop/ab-code']` | Roots scanned for git repos |
 | `scanDepth` | `3` | How deep to scan for repos |
-| `web.port` / `web.host` | `7788` / `127.0.0.1` | Server bind |
+| `web.port` / `web.host` | `7788` / `127.0.0.1` | Server bind (also the `Host`/`Origin` allowlist) |
 | `claude.cmd` | `claude` | The agent binary (swappable) |
 | `editors` | WebStorm, Zed | `{ name: { open: 'cmd {path}' } }` |
 | `defaultEditor` | `WebStorm` | Editor used by “Open in editor” |
@@ -304,6 +304,13 @@ to the running server and creates + `/add-dir`s the new worktree.
 ## HTTP & WebSocket API
 
 Base URL `http://127.0.0.1:7788`. All JSON.
+
+Every request is authenticated. Send `x-wts-token: $(cat
+~/.local/state/worktree-studio/token)` — or `?token=…` for `EventSource` and the
+WebSocket, which can't set headers. The server also refuses any request whose
+`Host` isn't a loopback name (DNS-rebinding defense) or whose `Origin`, if it has
+one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred and
+`wt-studio` clients already do all of this.
 
 **State & events**
 - `GET /api/state` — full snapshot (repos, worktrees, sessions, features, servers, webRepos).
