@@ -450,6 +450,8 @@ async function main() {
     res.json({ ok: true });
   }));
 
+  require('./transcript-routes').register(app, { manager, cfg });
+
   // ---- Claude Code hook receiver ----
   // Not under /api: the URL is baked into every session's generated settings file.
   app.post('/hook/:event', (req, res) => {
