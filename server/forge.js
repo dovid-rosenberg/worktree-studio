@@ -80,10 +80,11 @@ const gitlab = {
 
 const PROVIDERS = [github, gitlab];
 
-// `providers` is injectable so tests can drive the provider contract without gh/glab
-// installed. CLI presence is probed once, at startup, exactly as before.
-function createForge({ manager, resolveGroup, providers = PROVIDERS } = {}) {
-  const installed = providers.filter((p) => has(p.cli));
+// `providers` / `isInstalled` are injectable so tests can drive the provider contract
+// on a machine without gh or glab. CLI presence is probed once, at startup, exactly
+// as before — a `has()` per request would shell out on every poll.
+function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli) } = {}) {
+  const installed = providers.filter(isInstalled);
   const ciCache = new Map();
 
   // Look up a single repo's PR/MR + checks (GitHub first, then GitLab). Never
