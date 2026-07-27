@@ -92,6 +92,10 @@ button { font-family:inherit; }
 .pill.working{ color:var(--working); background:var(--working-bg); } .pill.waiting{ color:var(--waiting); background:var(--waiting-bg); }
 .pill.done{ color:var(--done); background:var(--done-bg); } .pill.idle{ color:var(--muted); background:var(--idle-bg); }
 .pill.stopped{ color:var(--faint); background:var(--idle-bg); }
+.pill.run{ color:var(--done); background:var(--done-bg); display:inline-flex; align-items:center; gap:4px; }
+.pill.run .pi{ font-style:normal; }
+.scard.running{ box-shadow:inset 3px 0 0 var(--done); }
+.scard.running.sel{ box-shadow:inset 3px 0 0 var(--done); }
 
 .grp, .link, .src { font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; border:1px solid var(--border); border-radius:5px; padding:1px 6px; color:var(--muted); }
 .link { color:var(--brand); border-color:var(--brand); text-transform:none; }

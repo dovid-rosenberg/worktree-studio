@@ -332,12 +332,15 @@ function railOrderedSessions() {
 
 function sessionCard(s) {
   const promoted = !!s.worktreePath;
+  const srv = (state.servers[s.id] && state.servers[s.id].repos) || [];
+  const running = srv.filter((r) => r.running);
+  const ports = running.flatMap((r) => r.ports || []);
   const card = h(`
-    <div class="scard ${s.id === selectedId ? 'sel' : ''}" data-id="${s.id}">
+    <div class="scard ${s.id === selectedId ? 'sel' : ''} ${running.length ? 'running' : ''}" data-id="${s.id}">
       <div class="scard-top">
         ${stateDot(s.state)}
         <span class="scard-title">${esc(s.title)}</span>
-        <span class="pill ${s.state}">${esc(s.state)}</span>
+        ${running.length ? `<span class="pill run" title="Dev servers running${ports.length ? ` — :${ports.join(' :')}` : ''}"><span class="pi">⇅</span>running</span>` : `<span class="pill ${s.state}">${esc(s.state)}</span>`}
       </div>
       <div class="scard-meta">
         <span class="src">${esc(s.source)}</span>
