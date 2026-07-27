@@ -5,7 +5,7 @@
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
-const { readJson, writeJson, makeId, slug, shq, run } = require('./util');
+const { readJson, writeJson, makeId, shortId, slug, shq, run } = require('./util');
 const status = require('./status');
 const worktree = require('./worktree');
 
@@ -54,6 +54,16 @@ class SessionManager extends EventEmitter {
   get(id) { return this.sessions.get(id); }
   _save() { writeJson(this.file, this.all()); }
   _touch(id) { this._save(); this.emit('change', { type: 'session', id }); }
+
+  // (Re)write a session's Claude Code hook settings file and record that its URLs now
+  // carry the boot token. The flag is what lets the /hook receiver keep accepting
+  // tokenless reports from sessions whose claude was launched by an older build —
+  // that process already read its settings file and will never re-read it. The
+  // exemption clears itself the moment the session is relaunched through here.
+  _writeHookSettings(s) {
+    s.settingsFile = status.settingsFile(this.cfg._stateDir, s.id, this.cfg.web.port, this.cfg._token);
+    s.hookAuth = !!this.cfg._token;
+  }
 
   // The session (if any) whose promoted/adopted worktree is this path — used to
   // surface agent state on a Fleet worktree row.
@@ -173,7 +183,10 @@ class SessionManager extends EventEmitter {
     const id = makeId('s_');
     const title = seed.title || 'New session';
     const name = slug(title);
-    const muxName = `wts-${name}-${id.slice(2)}`.slice(0, 60);
+    // The id is a UUID now, so only a short tail of it goes in the tmux session name
+    // (a label, not the credential). muxName is persisted per session, so sessions
+    // named under the old scheme keep the name they already have.
+    const muxName = `wts-${name}-${shortId(id)}`.slice(0, 60);
     const session = {
       id,
       title,
@@ -203,7 +216,7 @@ class SessionManager extends EventEmitter {
       createdAt: Date.now(),
       promotedAt: null,
     };
-    session.settingsFile = status.settingsFile(this.cfg._stateDir, id, this.cfg.web.port);
+    this._writeHookSettings(session);
     this.sessions.set(id, session);
 
     const cmd = this.claudeCmd(session);
@@ -229,7 +242,7 @@ class SessionManager extends EventEmitter {
     const s = seed || { source: 'freetext', title: wtname || require('path').basename(worktreePath), body: '', url: null };
     const id = makeId('s_');
     const title = s.title;
-    const muxName = `wts-${slug(wtname || title)}-${id.slice(2)}`.slice(0, 60);
+    const muxName = `wts-${slug(wtname || title)}-${shortId(id)}`.slice(0, 60);
     const session = {
       id, title, source: s.source, sourceId: s.id || null, sourceUrl: s.url || null,
       repoName, repoPath, home: worktreePath, // launch/transcript dir (claude runs here) — so --resume finds it
@@ -242,7 +255,7 @@ class SessionManager extends EventEmitter {
       tabs: [{ title: 'claude' }], seed: seed ? collapse(seedPrompt(seed)) : null, active: true,
       createdAt: Date.now(), promotedAt: Date.now(), adopted: true,
     };
-    session.settingsFile = status.settingsFile(this.cfg._stateDir, id, this.cfg.web.port);
+    this._writeHookSettings(session);
     this.sessions.set(id, session);
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
@@ -400,7 +413,7 @@ class SessionManager extends EventEmitter {
     }
     // Regenerate the hook settings file so it tracks the current install path/port —
     // makes a relaunch self-heal after the studio dir is moved or the port changes.
-    s.settingsFile = status.settingsFile(this.cfg._stateDir, id, this.cfg.web.port);
+    this._writeHookSettings(s);
     const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
     // Resume from the transcript's home dir so --resume finds the conversation. For a
     // promoted session home is already the worktree (moved there at promote), so it
@@ -460,7 +473,7 @@ class SessionManager extends EventEmitter {
         continue;
       }
       // Refresh the hook settings file to the current install path/port before relaunch.
-      s.settingsFile = status.settingsFile(this.cfg._stateDir, s.id, this.cfg.web.port);
+      this._writeHookSettings(s);
       const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
       // Resume from the transcript's home dir so --resume finds the conversation.
       // Promoted sessions already have home = worktree (moved at promote time).

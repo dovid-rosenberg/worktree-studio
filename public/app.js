@@ -116,8 +116,14 @@ function webAppsFor(list) {
 }
 function openApp(port) { window.open(`http://localhost:${port}`, '_blank', 'noopener'); }
 
+// The boot token, substituted into index.html by the server. Every call to the API
+// carries it — as a header where we can set one, and as a ?token= query param on the
+// two transports that cannot (EventSource and WebSocket).
+const TOKEN = window.WTS_TOKEN || '';
+const tokenQuery = (sep) => (TOKEN ? `${sep}token=${encodeURIComponent(TOKEN)}` : '');
+
 async function api(method, url, body) {
-  const opt = { method, headers: {} };
+  const opt = { method, headers: { 'x-wts-token': TOKEN } };
   if (body !== undefined) { opt.headers['content-type'] = 'application/json'; opt.body = JSON.stringify(body); }
   const res = await fetch(url, opt);
   const txt = await res.text();
@@ -188,7 +194,7 @@ async function uiPrompt(message, value = '', opts = {}) {
 
 /* ---------------- SSE ---------------- */
 function connectSSE() {
-  const ev = new EventSource('/api/events');
+  const ev = new EventSource(`/api/events${tokenQuery('?')}`);
   ev.onmessage = (e) => {
     try {
       const next = JSON.parse(e.data);
@@ -1088,7 +1094,7 @@ function connectTermWS(s, attempt) {
   if (!term) return;
   const theTerm = term; // capture so a later select/dispose can stop this chain
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(s.id)}&cols=${theTerm.cols}&rows=${theTerm.rows}`);
+  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(s.id)}&cols=${theTerm.cols}&rows=${theTerm.rows}${tokenQuery('&')}`);
   sock.binaryType = 'arraybuffer';
   ws = sock;
   sock.onmessage = (e) => { if (typeof e.data === 'string') theTerm.write(e.data); else theTerm.write(new Uint8Array(e.data)); };
@@ -1233,7 +1239,7 @@ function connectSecondWS(sessionId) {
   if (!term2) return;
   const theTerm = term2; // capture so a select/dispose can orphan this socket
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(sessionId)}&pane=split&cols=${theTerm.cols}&rows=${theTerm.rows}`);
+  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(sessionId)}&pane=split&cols=${theTerm.cols}&rows=${theTerm.rows}${tokenQuery('&')}`);
   sock.binaryType = 'arraybuffer';
   ws2 = sock;
   sock.onmessage = (e) => { if (typeof e.data === 'string') theTerm.write(e.data); else theTerm.write(new Uint8Array(e.data)); };

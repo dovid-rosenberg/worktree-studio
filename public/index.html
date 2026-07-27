@@ -107,6 +107,11 @@
     </div>
   </div>
 
+  <!-- The server substitutes the boot token here when it serves this document (see
+       server.js). It can only be delivered this way: the tab has no other channel,
+       and any endpoint that handed it out would also hand it to a cross-origin
+       <script src>. Reading this document cross-origin is what browsers forbid. -->
+  <script>window.WTS_TOKEN = "__WTS_TOKEN__";</script>
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
   <script src="/vendor/addon-web-links.js"></script>
