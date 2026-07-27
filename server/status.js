@@ -25,8 +25,8 @@ function mapEvent(event, payload) {
 
 // Build the settings JSON for a studio session; hooks curl back with ?wts=<id>.
 // The boot token rides in the query string because that URL is all the hook script
-// gets — it cannot be handed a header. The settings file is written under the state
-// dir (0700 by default) and read only by the session's own claude process.
+// gets — it cannot be handed a header. The file now holds a secret, so it and its
+// directory are written 0600/0700; only the session's own claude process reads it.
 function buildSettings(studioId, port, token) {
   const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd'];
   const hooks = {};

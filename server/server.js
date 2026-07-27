@@ -93,24 +93,24 @@ async function main() {
   const INDEX = path.join(__dirname, '..', 'public', 'index.html');
   app.get(['/', '/index.html'], (req, res) => {
     let html;
-    try { html = fs.readFileSync(INDEX, 'utf8'); } catch (e) { return res.status(500).send('index.html is missing'); }
+    try { html = fs.readFileSync(INDEX, 'utf8'); } catch { return res.status(500).send('index.html is missing'); }
     return res.type('html').set('Cache-Control', 'no-store').send(html.replace('__WTS_TOKEN__', cfg._token));
   });
   // index:false so the directory listing never serves the un-injected index.html.
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
 
+  // Every API route needs the boot token. The Origin/Host gate above only constrains
+  // browsers; this is what stops any other local process — or a browser request that
+  // carries no Origin at all — from driving the studio. It goes on the /api PREFIX
+  // rather than on the router below, so it also covers the routers other modules
+  // mount there themselves (transcript-routes); /api/v1 is nested under /api, so one
+  // line covers both prefixes.
+  app.use('/api', guard.authed);
+
   // Every route below is registered once on this router and served at BOTH
   // /api/v1/* (the versioned contract new clients should use) and /api/* (the
   // unversioned aliases SwiftBar, Alfred and the current web UI already call).
   // Feature modules register onto the same router — one line each, see below.
-  // Every API route needs the boot token. The Origin/Host gate above only constrains
-  // browsers; this is what stops any other local process — or a browser request that
-  // carries no Origin at all — from driving the studio. Mounted on the /api prefix
-  // rather than on the router below so it also covers the routers other modules mount
-  // there themselves (transcript-routes); /api/v1 is nested under /api, so one line
-  // covers both prefixes.
-  app.use('/api', guard.authed);
-
   const api = express.Router();
   app.use('/api', api);
   app.use('/api/v1', api);

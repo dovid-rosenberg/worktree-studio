@@ -107,7 +107,10 @@ function createGuard({ cfg, token }) {
       loggedAt.set(error, now);
       const h = (req.headers && req.headers.host) || '-';
       const o = (req.headers && req.headers.origin) || '-';
-      console.warn(`[wt-studio] refused ${req.method || 'UPGRADE'} ${String(req.url).split('?')[0]} — ${error} (host=${h} origin=${o})`);
+      // originalUrl, not url: express rewrites req.url to be relative to the mount
+      // point, which would log a bare '/state' for a refused '/api/v1/state'.
+      const where = String(req.originalUrl || req.url || '').split('?')[0];
+      console.warn(`[wt-studio] refused ${req.method || 'UPGRADE'} ${where} — ${error} (host=${h} origin=${o})`);
     }
     return { status, error };
   }
