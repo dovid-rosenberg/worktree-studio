@@ -162,6 +162,39 @@ test('commitDetail(uncommitted) of an untracked file shows it as a new file', as
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('commitDetail() carries the structured model alongside the raw patch', async () => {
+  const { dir, commitSha } = tempRepo();
+  const { files } = await review.commitDetail(dir, 'main', commitSha);
+  const f = fileOf(files, 'committed.txt');
+  assert.equal(f.parsed.path, 'committed.txt');
+  assert.equal(f.parsed.status, 'added');
+  assert.equal(f.parsed.hunks.length, 1);
+  assert.deepEqual(f.parsed.hunks[0].lines.map((l) => [l.type, l.text]), [['add', 'committed work']]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('commitDetail(uncommitted) aligns a changed line into one side-by-side row', async () => {
+  const { dir } = tempRepo();
+  const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
+  const m = fileOf(files, 'modified.txt');
+  const [h] = m.parsed.hunks;
+  const change = h.rows.find((r) => r.type === 'change');
+  assert.equal(h.lines[change.left].text, 'line one', 'the old version on the left');
+  assert.equal(h.lines[change.right].text, 'line ONE changed', 'the new one on the right');
+  assert.equal(h.lines[change.left].oldLine, 1);
+  assert.equal(h.lines[change.right].newLine, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('commitDetail(uncommitted) models a deleted file as one all-removed hunk', async () => {
+  const { dir } = tempRepo();
+  const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
+  const d = fileOf(files, 'deleted.txt');
+  assert.equal(d.parsed.status, 'deleted');
+  assert.ok(d.parsed.hunks[0].rows.every((r) => r.type === 'del' && r.right === null));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('commit() advances HEAD to a new commit', async () => {
   const { dir } = tempRepo();
   const before = sh(dir, ['rev-parse', 'HEAD']);

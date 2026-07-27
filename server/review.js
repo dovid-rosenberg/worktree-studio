@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { git, gitFull } = require('./util');
+const { parsePatch } = require('./diff');
 
 // The review baseline: the merge-base of HEAD with the default branch. A branch is
 // often cut from origin/<default> while the LOCAL <default> ref lags behind — basing
@@ -130,15 +131,31 @@ async function commitDetail(worktreePath, defaultBranch, sha) {
     get(parts[parts.length - 1]).status = parts[0][0];
   }
   const files = [...byPath.values()];
-  for (const f of files) f.diff = (await gitFull(worktreePath, ['show', '--format=', sha, '--', f.file])).stdout;
+  for (const f of files) {
+    f.diff = (await gitFull(worktreePath, ['show', '--format=', sha, '--', f.file])).stdout;
+    f.parsed = structure(f.diff);
+  }
   return { files };
 }
 
 // The working tree's uncommitted changes with inline diffs.
 async function workingDetail(worktreePath) {
   const { files } = await working(worktreePath);
-  for (const f of files) f.diff = await workingFileDiff(worktreePath, f.file);
+  for (const f of files) {
+    f.diff = await workingFileDiff(worktreePath, f.file);
+    f.parsed = structure(f.diff);
+  }
   return { files };
+}
+
+// The structured side-by-side model for one file's diff (see server/diff.js): hunks with
+// aligned left/right rows and line numbers on both sides, so a client can render either
+// layout without re-parsing the text. `diff` stays alongside it — the raw patch is still
+// what git speaks, and dropping it would break anything that renders the text directly.
+function structure(diffText) {
+  if (!diffText) return null;
+  // Each diff here is already scoped to a single path, so there is exactly one entry.
+  return parsePatch(diffText)[0] || null;
 }
 
 // Stage the given paths (or everything) and commit. Returns { ok, sha, error }.
