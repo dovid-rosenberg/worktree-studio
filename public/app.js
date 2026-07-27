@@ -24,14 +24,12 @@ let settingsTrap = null, settingsPrevFocus = null;
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
-// split-view second pane — a fully independent terminal (own xterm + socket) bound
-// to the CURRENT session, showing another tab (tmux window) of it via a grouped
-// `-split` attach. Only ever touched through openSecondTerm/closeSecondTerm; the
-// primary pane above never learns it exists, so split is additive and zero-risk.
+// split-view second pane — an independent working shell (own xterm + socket) in the
+// CURRENT session's worktree, via a standalone `-split` tmux session. It is NOT the
+// Claude pane, so nothing is mirrored. Only ever touched through openSecondTerm/
+// closeSecondTerm; the primary pane above never learns it exists.
 let splitOn = false;                    // is the split toggle engaged for the current session?
-let splitTab = null;                    // window (tab) index the second pane currently shows
 const splitSessions = new Set();        // session ids marked split — persists across session switches
-const splitTabBySession = new Map();    // session id → chosen second-pane window index
 let term2 = null, fit2 = null, ws2 = null, ro2 = null;
 
 // attention notifications: previous per-session state (id → state) so we can diff
@@ -414,7 +412,7 @@ function rebuildDock(s) {
   // reset the client-side dock view whenever the selected session changes
   dockView = 'term'; activeTab = 0;
   // split persists per session: restore it if this session was left split
-  splitOn = splitSessions.has(s.id); splitTab = null;
+  splitOn = splitSessions.has(s.id);
   changesState = null; changesSel = null; changesUnstaged.clear();
   logsSel = null; logsOffset.clear(); logsPartial.clear();
   clearTimeout(changesRefreshT);
@@ -601,7 +599,7 @@ function renderTabstrip(s) {
   // ⊟ Split — second live terminal beside the primary. Only meaningful in the
   // term view, so it only appears there.
   if (dockView === 'term') {
-    const sp = h(`<button class="btn xs split-toggle ${splitOn ? 'on' : ''}" title="Show another tab of THIS session in a second terminal alongside this one">⊟ Split</button>`);
+    const sp = h(`<button class="btn xs split-toggle ${splitOn ? 'on' : ''}" title="Open an independent working shell in this worktree, beside the Claude terminal">⊟ Split</button>`);
     sp.addEventListener('click', () => {
       splitOn = !splitOn;
       if (splitOn) splitSessions.add(s.id); else splitSessions.delete(s.id);
@@ -619,8 +617,6 @@ function applyDockView() {
   // Reconcile the split pane: it only lives while the term view is showing, so
   // leaving for Changes/Logs tears it down and returning rebuilds it.
   applySplit();
-  // keep the second pane's tab-strip in sync with the session's tabs on each tick
-  if ($('#termPane2')) renderSecondTabstrip(state.sessions.find((x) => x.id === selectedId));
 }
 
 function changesFileCount() {
@@ -1052,7 +1048,7 @@ function applySplit() {
   const has = !!$('#termPane2');
   if (want && !has) {
     ta.classList.add('term-split');
-    ta.appendChild(buildSecondPane(s));
+    ta.appendChild(buildSecondPane());
     openSecondTerm(s);
     refitPrimary(); // primary just lost half its width — refit so it isn't stale
   } else if (!want && has) {
@@ -1063,63 +1059,11 @@ function applySplit() {
   }
 }
 
-// The second pane shows a DIFFERENT tab than the primary — a remembered choice if
-// still valid, else the shell tab, else any non-active tab, else the active tab
-// (single-tab sessions get a shell tab created before the pane opens).
-function defaultSplitTab(s) {
-  const tabs = s.tabs || [];
-  const remembered = splitTabBySession.get(s.id);
-  if (remembered != null && remembered < tabs.length) return remembered;
-  const shellIdx = tabs.findIndex((t, i) => i !== activeTab && /shell/i.test(t.title || ''));
-  if (shellIdx >= 0) return shellIdx;
-  const otherIdx = tabs.findIndex((t, i) => i !== activeTab);
-  return otherIdx >= 0 ? otherIdx : activeTab;
-}
-
-function buildSecondPane(s) {
-  const pane = h(`<div class="panewrap" id="termPane2">
-    <div class="panehd"><span class="dot idle"></span><div class="splittabs" id="splitTabs"></div></div>
+function buildSecondPane() {
+  return h(`<div class="panewrap" id="termPane2">
+    <div class="panehd"><span class="dot idle"></span><span class="panehd-label">shell</span></div>
     <div class="term-wrap" id="termWrap2"></div>
   </div>`);
-  renderSecondTabstrip(s, pane.querySelector('#splitTabs'));
-  return pane;
-}
-
-// The second pane's own tab-strip — limited to THIS session's tabs. Selecting one
-// select-windows the grouped `-split` session so the two panes show different windows.
-function renderSecondTabstrip(s, el) {
-  el = el || $('#splitTabs');
-  if (!el || !s) return;
-  el.innerHTML = '';
-  (s.tabs || [{ title: 'claude' }]).forEach((t, i) => {
-    const tab = h(`<span class="tab sm ${i === splitTab ? 'on' : ''}">${esc(t.title)}</span>`);
-    activatable(tab, () => selectSecondTab(s, i));
-    el.appendChild(tab);
-  });
-}
-
-function selectSecondTab(s, i) {
-  splitTab = i;
-  splitTabBySession.set(s.id, i);
-  selectSplitWindow(s, i);
-  renderSecondTabstrip(s);
-}
-
-// Point the grouped `-split` session at window `index` — independent of the primary.
-async function selectSplitWindow(s, index) {
-  try { await api('POST', `/api/sessions/${s.id}/split-tab`, { index }); } catch { /* */ }
-}
-
-// Ensure the session has a second (shell) tab for the split pane to show, via the
-// existing add-tab path; then restore the primary to its own tab (add-tab selects
-// the new window on the base session). Returns the new tab's window index.
-async function ensureShellTab(s) {
-  const idx = (s.tabs || []).length; // the new window is appended at this index
-  try {
-    await api('POST', `/api/sessions/${s.id}/tabs`, { title: 'shell' });
-    await api('POST', `/api/sessions/${s.id}/select-tab`, { index: activeTab });
-  } catch { /* */ }
-  return idx;
 }
 
 // Refit the PRIMARY terminal after its width changes (entering/leaving split).
@@ -1131,19 +1075,9 @@ function refitPrimary() {
   requestAnimationFrame(() => { try { fit.fit(); sendResize(); } catch { /* */ } });
 }
 
-async function openSecondTerm(s) {
+function openSecondTerm(s) {
   const wrap = $('#termWrap2');
   if (!wrap || !XTerm || !s) return;
-  // The pane shows a different tab than the primary; a single-tab session gets a
-  // shell tab first so the two panes aren't redundant.
-  let target = defaultSplitTab(s);
-  if (target === activeTab && (s.tabs || []).length < 2) target = await ensureShellTab(s);
-  // the split may have been toggled off (or the session switched) during the await
-  if (!splitOn || selectedId !== s.id || !$('#termWrap2')) return;
-  splitTab = target;
-  splitTabBySession.set(s.id, target);
-  renderSecondTabstrip(s);
-
   term2 = new XTerm({ fontFamily: 'ui-monospace, SF Mono, Menlo, monospace', fontSize: 12.5, cursorBlink: true, scrollback: 8000, allowProposedApi: true, theme: themeForTerm() });
   if (FitAddonCtor) { fit2 = new FitAddonCtor(); term2.loadAddon(fit2); }
   if (WebLinksCtor) { try { term2.loadAddon(new WebLinksCtor()); } catch { /* */ } }
@@ -1153,11 +1087,10 @@ async function openSecondTerm(s) {
   ro2 = new ResizeObserver(() => { try { fit2 && fit2.fit(); sendResize2(); } catch { /* */ } });
   ro2.observe(wrap);
   connectSecondWS(s.id);
-  selectSplitWindow(s, target); // point the grouped -split session at the chosen window
 }
 
-// Plain connect — no reconnect/backoff — over the grouped `-split` session (pane=split)
-// so it can show a different window than the primary. On close, a display-only notice.
+// Plain connect — no reconnect/backoff — over the standalone `-split` shell session
+// (pane=split), independent of the primary. On close, a display-only notice.
 function connectSecondWS(sessionId) {
   if (!term2) return;
   const theTerm = term2; // capture so a select/dispose can orphan this socket

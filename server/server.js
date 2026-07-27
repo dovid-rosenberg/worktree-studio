@@ -311,15 +311,6 @@ async function main() {
     res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
   }));
 
-  // Select a window on the session's grouped `-split` session — lets the in-app
-  // second pane show a different tab than the primary, independently.
-  app.post('/api/sessions/:id/split-tab', A(async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    const ok = await manager.mux.selectSplitTab(s.muxName, (req.body && req.body.index) || 0);
-    res.json({ ok });
-  }));
-
   app.post('/api/sessions/:id/close-tab', A(async (req, res) => {
     res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
   }));
@@ -730,9 +721,12 @@ async function main() {
     const rows = Number(url.searchParams.get('rows')) || 30;
     const s = manager.get(id);
     if (!s) { ws.close(); return; }
-    // The second (split) pane attaches via the grouped `-split` session so it can
-    // show a different window than the primary; the primary path is untouched.
-    const spec = manager.mux.attachSpawn(s.muxName, pane === 'split' ? { group: 'split' } : {});
+    // The second (split) pane is a standalone shell in the worktree — independent of
+    // the primary Claude session, so keystrokes are never mirrored. Primary untouched.
+    const spec = manager.mux.attachSpawn(
+      s.muxName,
+      pane === 'split' ? { group: 'split', cwd: s.worktreePath || s.repoPath } : {},
+    );
     const term = pty.spawn(spec.file, spec.args, {
       name: 'xterm-256color', cols, rows, cwd: s.worktreePath || s.repoPath, env: spec.env || process.env,
     });

@@ -160,9 +160,7 @@ button { font-family:inherit; }
 .term-area.term-split > .term-wrap { min-width:0; }
 .term-area.term-split .panewrap { display:flex; flex-direction:column; min-width:0; min-height:0; }
 .term-area.term-split .panehd { font-family:var(--mono); font-size:10.5px; color:var(--muted); padding:5px 10px; background:var(--elevated); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; flex:none; }
-.panehd .splittabs { display:flex; align-items:center; gap:3px; flex-wrap:wrap; }
-.panehd .tab.sm { font-size:10.5px; padding:2px 8px; border-radius:5px; border:1px solid transparent; }
-.panehd .tab.sm.on { color:var(--ink); background:var(--bg); border-color:var(--border); }
+.panehd .panehd-label { letter-spacing:.04em; text-transform:uppercase; }
 .tabstrip .split-toggle { margin-left:6px; }
 .tabstrip .split-toggle.on { border-color:var(--brand); color:var(--brand); }
 
