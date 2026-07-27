@@ -6,10 +6,11 @@
 //
 // It is assembled from two halves on purpose. `topology()` is the slow-moving
 // shape (repos → worktrees → features) and `sessionState()` is the live
-// per-session slice. A later change splits the SSE stream into a topology
-// snapshot plus session-state deltas; keeping the two builders apart now means
-// that split is a wiring change, not a rewrite. buildState() merges them and is
-// the only thing anything currently calls.
+// per-session slice. The SSE stream broadcasts them as two named event types at
+// their own rates (server/broadcast.js) — the session half on every Claude hook,
+// the topology half only when the shape actually changes. buildState() merges
+// them for the callers that want the whole world at once: GET /state, SwiftBar,
+// Alfred, resolveGroup.
 const { computeFeatures } = require('./features');
 const { createRealpathCache } = require('./util');
 const sources = require('./sources');

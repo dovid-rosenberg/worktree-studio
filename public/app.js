@@ -187,17 +187,50 @@ async function uiPrompt(message, value = '', opts = {}) {
 }
 
 /* ---------------- SSE ---------------- */
+// The stream carries two named event types, each a FULL REPLACEMENT of its half
+// of the state payload (docs/api.md):
+//   topology       repos, worktrees, features/groups, config — rebuilt on a git
+//                  rescan or a real mutation, so it arrives rarely.
+//   session-state  { sessions, servers } — re-sent on every Claude hook, i.e.
+//                  every tool call, which is why it's the small half.
+// The server sends one of each on connect, so both a first load and the
+// EventSource's own automatic reconnect start from a complete snapshot instead of
+// drifting on whatever was missed.
 function connectSSE() {
   const ev = new EventSource('/api/events');
-  ev.onmessage = (e) => {
-    try {
-      const next = JSON.parse(e.data);
-      detectAttention(next); // diff old vs new BEFORE swapping in the new state
-      state = next;
-      render();
-    } catch { /* */ }
+  const apply = (isSessionHalf) => (e) => {
+    let frame;
+    try { frame = JSON.parse(e.data); } catch { return; }
+    if (isSessionHalf) detectAttention(frame); // diff old vs new BEFORE swapping in
+    state = { ...state, ...frame };
+    restitchSessions();
+    render();
   };
+  ev.addEventListener('topology', apply(false));
+  ev.addEventListener('session-state', apply(true));
   ev.onerror = () => { /* browser auto-reconnects */ };
+}
+
+// Worktree rows, features and groups each embed a trimmed copy of their driving
+// session ({id,state,activity,muxName}), frozen at the moment the topology was
+// built. Agent state changes orders of magnitude more often than topology does,
+// so re-project the live sessions onto those copies after every frame: without
+// this a Fleet row would show the state from the last topology rebuild (up to 15s
+// stale) and a closed session would linger on its worktree forever.
+function restitchSessions() {
+  const byId = new Map((state.sessions || []).map((s) => [s.id, s]));
+  const fresh = (embedded) => {
+    if (!embedded) return null;
+    const s = byId.get(embedded.id);
+    return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName } : null;
+  };
+  for (const r of state.repos || []) for (const w of r.worktrees || []) w.session = fresh(w.session);
+  // A feature's members are serialized separately from repos[].worktrees, so on
+  // this side they are distinct objects and need the same projection.
+  for (const f of [...(state.features || []), ...(state.groups || [])]) {
+    f.session = fresh(f.session);
+    for (const m of f.members || []) if (m && !m.missing) m.session = fresh(m.session);
+  }
 }
 
 /* ---------------- attention notifications ---------------- */

@@ -72,18 +72,44 @@ The whole world in one document. Returns the **state payload** (below).
 
 ### `GET /events`
 
-`text/event-stream`. Emits the same state payload as a `data:` frame — once
-immediately on connect, then whenever anything changes (coalesced with an 80 ms
-debounce). `:hb` comments every 25 s keep the connection alive. There are no
-named event types and no incremental deltas: every frame is a complete payload.
+`text/event-stream`, carrying the state payload split into two **named event
+types** — the payload's two halves have very different change rates, and a
+client that re-renders the world on every Claude tool call pays for the
+difference:
+
+| Event           | `data:` shape                            | Sent when                                                                                             |
+| --------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `topology`      | every top-level field except `sessions`/`servers` | The repo→worktree shape or the client's chrome changed: a git rescan (~15 s), a worktree/session mutation, dev-server discovery finding something new, a config save. |
+| `session-state` | `{ sessions, servers }`                  | Every state change of any session — i.e. every Claude Code hook, so every tool call. Also rides along with every `topology` frame. |
+
+Both events are **full replacements of their half**, never per-item deltas. A
+client applies a frame with `state = { ...state, ...frame }`; that is
+idempotent, order-independent, and communicates removals for free (a closed
+session is simply absent from `sessions`).
+
+On connect the server writes one `topology` and one `session-state` frame
+before the client joins the fan-out, so the pair is always a **complete
+snapshot** and a client can never receive an event that predates its snapshot.
+A browser's `EventSource` reconnects on its own; a reconnect is just a new
+subscriber, so it re-snapshots and converges rather than drifting.
+
+Frames are coalesced with an 80 ms debounce. `:hb` comments every 25 s keep the
+connection alive.
+
+> Because a session's `{id, state, activity, muxName}` is embedded in
+> `repos[].worktrees[].session` and in `features`/`groups`, those copies are
+> only as fresh as the last `topology` frame. A client that renders them should
+> re-project the live `sessions` onto them after each frame, keyed by session id
+> (`public/app.js`'s `restitchSessions()`).
 
 ---
 
 ## The state payload
 
-The single document returned by `GET /state` and carried by every SSE frame.
-Built in `server/state.js` from two halves: a *topology* half (`mux` …`groups`)
-and a *session-state* half (`sessions`, `servers`).
+The single document returned by `GET /state`. Built in `server/state.js` from
+two halves — a *topology* half (`mux` …`groups`) and a *session-state* half
+(`sessions`, `servers`) — which `GET /events` streams separately, at their own
+rates, as the two named events above.
 
 ### Top level
 
@@ -583,7 +609,9 @@ agent needs the human); `Stop` → `idle`; `SessionEnd` → `stopped` and
 `claudeSessionId`, which is what later enables `--resume`.
 
 Always `{ ok: true }`, including for an unknown `wts` — a hook must never block
-the agent. Applying an event triggers an SSE broadcast.
+the agent. Applying an event triggers a `session-state` SSE broadcast — never a
+`topology` one, so hook traffic can't make the server rebuild every repo's
+worktree list.
 
 ---
 

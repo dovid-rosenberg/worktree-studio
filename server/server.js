@@ -14,6 +14,7 @@ const sources = require('./sources');
 const { SessionManager } = require('./sessions');
 const { Servers, featureFromPath } = require('./servers');
 const { createState } = require('./state');
+const { createBroadcast } = require('./broadcast');
 const { createForge } = require('./forge');
 const orchestrator = require('./orchestrator');
 const { run, has, shq, A } = require('./util');
@@ -38,37 +39,42 @@ async function main() {
     scanning = true;
     try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
     scanning = false;
-    scheduleBroadcast();
+    broadcastTopology(); // the scan IS the topology
   }
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
   // every SSE broadcast (which fires per Claude hook → per tool call).
   let runningCache = new Map();
+  let runningSig = '';
   async function refreshRunning() {
     try {
       runningCache = await servers.discoverRunning();
       servers.reconcileSlots(runningCache); // self-heal leaked/stale slots against reality
-    } catch { /* */ }
+    } catch { return; }
+    // Discovery feeds the topology half (each worktree's running/ports), so a new
+    // or vanished server has to push one — but only when what lsof found actually
+    // changed, or this 3 s timer would re-send the slow half 20 times a minute.
+    const sig = [...runningCache].map(([p, v]) => `${p}:${(v.ports || []).join(',')}`).sort().join('|');
+    if (sig === runningSig) return;
+    runningSig = sig;
+    broadcastTopology();
   }
 
   // The state payload lives in state.js; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
-  const { buildState, resolveGroup, conflictsFor } = createState({
+  const { buildState, topology, sessionState, resolveGroup, conflictsFor } = createState({
     cfg, manager, servers, mux, repos: () => repos, running: () => runningCache,
   });
 
   // ---- SSE live state ----
-  const sseClients = new Set();
-  let broadcastTimer = null;
-  function scheduleBroadcast() {
-    if (broadcastTimer) return;
-    broadcastTimer = setTimeout(async () => {
-      broadcastTimer = null;
-      const state = await buildState();
-      const payload = `data: ${JSON.stringify(state)}\n\n`;
-      for (const res of sseClients) { try { res.write(payload); } catch { /* */ } }
-    }, 80);
-  }
+  // Two named event types with very different rates (see broadcast.js).
+  // scheduleBroadcast() sends the small session half only — that is what every
+  // Claude hook gets. broadcastTopology() adds the slow half and is called by the
+  // handful of things that can actually change the repo → worktree shape (a git
+  // rescan, a worktree/session mutation, dev-server discovery, a config save).
+  const bus = createBroadcast({ topology, sessionState });
+  const scheduleBroadcast = () => bus.schedule();
+  const broadcastTopology = () => bus.schedule({ topology: true });
   manager.on('change', scheduleBroadcast);
 
   // ---- express ----
@@ -90,11 +96,12 @@ async function main() {
   api.get('/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.flushHeaders();
-    res.write(':ok\n\n');
-    sseClients.add(res);
-    buildState().then((st) => res.write(`data: ${JSON.stringify(st)}\n\n`));
+    // subscribe() writes the full snapshot (one `topology` + one `session-state`)
+    // before this client joins the fan-out, so it can never miss the snapshot or
+    // see an event that predates it.
+    const unsubscribe = bus.subscribe(res);
     const hb = setInterval(() => { try { res.write(':hb\n\n'); } catch { /* */ } }, 25000);
-    req.on('close', () => { clearInterval(hb); sseClients.delete(res); });
+    req.on('close', () => { clearInterval(hb); unsubscribe(); });
   });
 
   // ---- settings / connections ----
@@ -164,7 +171,7 @@ async function main() {
       rescanNeeded = true;
     }
     configMod.save(cfg);
-    if (rescanNeeded) await rescan(); else scheduleBroadcast();
+    if (rescanNeeded) await rescan(); else broadcastTopology();
     res.json({
       ok: true,
       sources: cfg.sources,
@@ -282,7 +289,7 @@ async function main() {
       results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, feat))) });
     }
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json({ ok: results.some((r) => r.ok), results });
   }));
   api.post('/sessions/:id/servers/stop', A(async (req, res) => {
@@ -292,7 +299,7 @@ async function main() {
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath)); // whole stack stopped → free the feature's slot
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json({ ok: true });
   }));
 
@@ -314,7 +321,7 @@ async function main() {
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
     for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath));
-    if (owned.length) { await refreshRunning(); scheduleBroadcast(); }
+    if (owned.length) { await refreshRunning(); broadcastTopology(); }
     res.json(out);
   }));
 
@@ -358,7 +365,7 @@ async function main() {
     if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     if (!message || !message.trim()) return res.status(400).json({ error: 'message is required' });
     const out = await review.commit(entry.worktreePath, message, { amend, paths });
-    if (out.ok) scheduleBroadcast();
+    if (out.ok) broadcastTopology();
     res.json(out);
   }));
 
@@ -392,7 +399,7 @@ async function main() {
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const out = await servers.start(repo, worktreePath, servers.launchOpts(repo, feature));
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json(out);
   }));
   api.post('/servers/stop', A(async (req, res) => {
@@ -402,7 +409,7 @@ async function main() {
     // only free the feature's slot once no sibling repo of the feature is still running
     const feature = featureFromPath(worktreePath);
     if (![...runningCache.keys()].some((p) => featureFromPath(p) === feature)) servers.releaseSlot(feature);
-    scheduleBroadcast();
+    broadcastTopology();
     res.json(out);
   }));
   api.post('/servers/restart', A(async (req, res) => {
@@ -412,7 +419,7 @@ async function main() {
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const out = await servers.restart(repo, worktreePath, servers.launchOpts(repo, feature));
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json(out);
   }));
   api.get('/servers/logs', (req, res) => {
@@ -422,7 +429,7 @@ async function main() {
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
   orchestrator.register(api, {
-    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast, rescan,
+    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast: broadcastTopology, rescan,
   });
 
   // ---- PR/MR + CI status (serverbar pill) ----
@@ -436,7 +443,7 @@ async function main() {
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     let s = await manager.adopt({ worktreePath, repoName: repo, repoPath: repoObj.path, branch, wtname });
     if (!s) s = manager.sessionForWorktree(worktreePath); // an adopt was already in flight
-    scheduleBroadcast();
+    broadcastTopology();
     res.json(s || { error: 'session is already being opened' });
   }));
 
