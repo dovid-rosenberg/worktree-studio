@@ -65,10 +65,10 @@ module.exports = {
   // For node-pty: attach an interactive client to the session.
   //  - popout: a GROUPED session (`-t name`) — a native window mirroring the same
   //    live session, which is exactly what "pop out to a terminal" should do.
-  //  - split: attach the embedded second pane to the GROUPED `-split` session (which
-  //    ensureSplit created + pointed at a DIFFERENT window). Grouped sessions share the
-  //    window list but keep their own current window, so the two panes show different
-  //    tabs without mirroring. Call ensureSplit(name, idx) first.
+  //  - split: attach the embedded second pane to the `-split` session — a SEPARATE,
+  //    standalone tmux session (not grouped) with its own window list. It's just
+  //    "another terminal" in the same worktree, with its own independent tabs, so
+  //    nothing mirrors the primary. Call ensureSplit(name, {cwd}) first.
   //  - default: attach the embedded primary client to the session.
   attachSpawn(name, { popout = false, group } = {}) {
     const base = ['-L', SOCK];
@@ -81,18 +81,13 @@ module.exports = {
     return { file: 'tmux', args: [...base, 'attach-session', '-t', name], env: ENV };
   },
 
-  // Ensure the grouped `-split` session exists and shows window `idx` BEFORE the pane's
-  // pty attaches — so it never momentarily lands on the primary's window (which mirrors).
-  async ensureSplit(name, idx = 0) {
-    if (!(await this.hasSession(`${name}-split`))) {
-      await T(['new-session', '-d', '-s', `${name}-split`, '-t', name]);
-    }
-    await T(['select-window', '-t', `${name}-split:${idx}`]);
-  },
-
-  // Live-switch which window the split pane shows (the attached client follows).
-  selectSplitTab(name, idx) {
-    return T(['select-window', '-t', `${name}-split:${idx}`]);
+  // Ensure the standalone `-split` session exists with its own shell window. It is
+  // independent of the primary (not grouped): its own tabs, no shared windows. Tab
+  // ops (newTab/selectTab/closeTab/listTabs) target `${name}-split` and just work.
+  async ensureSplit(name, { cwd } = {}) {
+    if (await this.hasSession(`${name}-split`)) return;
+    await T(['new-session', '-d', '-s', `${name}-split`, '-n', 'shell', '-x', '220', '-y', '50', '-c', cwd || process.env.HOME]);
+    await T(['set-option', '-t', `${name}-split`, 'remain-on-exit', 'off']);
   },
 
   async newTab(name, { title, cwd, cmd } = {}) {

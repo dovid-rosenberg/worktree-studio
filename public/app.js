@@ -24,13 +24,13 @@ let settingsTrap = null, settingsPrevFocus = null;
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
-// split-view second pane — a second view (own xterm + socket) into the CURRENT session,
-// via the GROUPED `-split` tmux session. It has its own tab-strip and shows a DIFFERENT
-// window (tab) than the primary, so two shells are visible at once with no mirroring.
+// split-view second pane — an INDEPENDENT terminal beside the primary, backed by the
+// standalone `-split` tmux session (own xterm + socket). It has its own tabs (its own
+// window list), so it's just "another terminal" in the same worktree — nothing mirrors.
 let splitOn = false;                    // is the split toggle engaged for the current session?
-let splitTab = 0;                       // which window (tab) the split pane shows
+let splitTabs = [];                     // the split session's own tabs [{id,title,active}]
+let splitActive = 0;                    // active tab index within the split session
 const splitSessions = new Set();        // session ids marked split — persists across session switches
-const splitTabBySession = new Map();    // session id → chosen split tab index
 let term2 = null, fit2 = null, ws2 = null, ro2 = null;
 
 // attention notifications: previous per-session state (id → state) so we can diff
@@ -416,7 +416,7 @@ function rebuildDock(s) {
   // reset the client-side dock view whenever the selected session changes
   dockView = 'term'; activeTab = 0;
   // split persists per session: restore it if this session was left split
-  splitOn = splitSessions.has(s.id); splitTab = 0;
+  splitOn = splitSessions.has(s.id); splitTabs = []; splitActive = 0;
   changesState = null; changesSel = null; changesUnstaged.clear();
   logsSel = null; logsOffset.clear(); logsPartial.clear();
   clearTimeout(changesRefreshT);
@@ -1078,39 +1078,65 @@ function applySplit() {
 
 function buildSecondPane(s) {
   const pane = h(`<div class="panewrap" id="termPane2">
-    <div class="panehd"><span class="dot idle"></span><div class="splittabs" id="splitTabs"></div></div>
+    <div class="panehd"><div class="splittabs" id="splitTabs"></div></div>
     <div class="term-wrap" id="termWrap2"></div>
   </div>`);
   renderSecondTabstrip(s, pane.querySelector('#splitTabs'));
   return pane;
 }
 
-// Default the split to a tab that ISN'T the primary's active one (same window mirrors).
-function defaultSplitTab(s) {
-  const tabs = s.tabs || [];
-  const remembered = splitTabBySession.get(s.id);
-  if (remembered != null && remembered < tabs.length && remembered !== activeTab) return remembered;
-  for (let i = 0; i < tabs.length; i += 1) if (i !== activeTab) return i;
-  return activeTab;
-}
-
-// The split pane's own tab-strip — the session's windows; click to show one in the split.
+// The split pane's OWN tab-strip — the split session's independent windows, with add
+// and close, mirroring the primary strip's affordances (just smaller).
 function renderSecondTabstrip(s, el) {
   el = el || $('#splitTabs');
   if (!el || !s) return;
   el.innerHTML = '';
-  (s.tabs || [{ title: 'claude' }]).forEach((t, i) => {
-    const tab = h(`<span class="tab sm ${i === splitTab ? 'on' : ''}">${esc(t.title)}</span>`);
+  const list = splitTabs.length ? splitTabs : [{ title: 'shell' }];
+  list.forEach((t, i) => {
+    const closable = list.length > 1;
+    const tab = h(`<span class="tab sm ${i === splitActive ? 'on' : ''}">${esc(t.title)}${closable ? ' <span class="tabclose" title="Close tab" aria-label="Close tab">✕</span>' : ''}</span>`);
     activatable(tab, () => selectSecondTab(s, i));
+    const x = tab.querySelector('.tabclose');
+    if (x) activatable(x, (e) => { if (e) e.stopPropagation(); closeSecondTab(s, i); });
     el.appendChild(tab);
   });
+  const add = h(`<span class="tab sm" aria-label="New split tab"><span class="newtab">＋</span></span>`);
+  activatable(add, () => guardBtn(add, () => addSecondTab(s)));
+  el.appendChild(add);
+}
+
+// Load the split session's tab list from the server (also creates it if needed).
+async function fetchSplitTabs(s) {
+  try {
+    const r = await api('GET', `/api/sessions/${s.id}/split/tabs`);
+    splitTabs = r.tabs || [];
+    const ai = splitTabs.findIndex((t) => t.active);
+    splitActive = ai >= 0 ? ai : 0;
+  } catch { splitTabs = []; splitActive = 0; }
 }
 
 async function selectSecondTab(s, i) {
-  splitTab = i;
-  splitTabBySession.set(s.id, i);
-  try { await api('POST', `/api/sessions/${s.id}/split-tab`, { index: i }); } catch { /* */ }
+  splitActive = i;
   renderSecondTabstrip(s);
+  try { await api('POST', `/api/sessions/${s.id}/split/select-tab`, { index: i }); if (term2) term2.focus(); } catch { /* */ }
+}
+
+async function addSecondTab(s) {
+  try {
+    await api('POST', `/api/sessions/${s.id}/split/tabs`, { title: 'shell' });
+    await fetchSplitTabs(s);
+    splitActive = Math.max(0, splitTabs.length - 1);
+    await api('POST', `/api/sessions/${s.id}/split/select-tab`, { index: splitActive });
+    renderSecondTabstrip(s);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function closeSecondTab(s, i) {
+  try {
+    await api('POST', `/api/sessions/${s.id}/split/close-tab`, { index: i });
+    await fetchSplitTabs(s);
+    renderSecondTabstrip(s);
+  } catch (e) { toast(e.message, true); }
 }
 
 // Refit the PRIMARY terminal after its width changes (entering/leaving split).
@@ -1125,18 +1151,10 @@ function refitPrimary() {
 async function openSecondTerm(s) {
   const wrap = $('#termWrap2');
   if (!wrap || !XTerm || !s) return;
-  // A single-tab session has nothing but the primary's window to show — give the split
-  // its own shell first (add-tab selects it on the base, so restore the primary after).
-  if ((s.tabs || []).length < 2) {
-    try {
-      await api('POST', `/api/sessions/${s.id}/tabs`, { title: 'shell' });
-      s.tabs = [...(s.tabs || []), { title: 'shell' }];
-      await api('POST', `/api/sessions/${s.id}/select-tab`, { index: activeTab });
-    } catch { /* */ }
-    if (!splitOn || selectedId !== s.id || !$('#termWrap2')) return; // toggled off mid-await
-  }
-  splitTab = defaultSplitTab(s);
-  splitTabBySession.set(s.id, splitTab);
+  // The split is a standalone session; fetch its own tabs (the GET creates it with a
+  // shell if it doesn't exist yet) before attaching.
+  await fetchSplitTabs(s);
+  if (!splitOn || selectedId !== s.id || !$('#termWrap2')) return; // toggled off mid-await
   renderSecondTabstrip(s);
   term2 = new XTerm({ fontFamily: 'ui-monospace, SF Mono, Menlo, monospace', fontSize: 12.5, cursorBlink: true, scrollback: 8000, allowProposedApi: true, theme: themeForTerm() });
   if (FitAddonCtor) { fit2 = new FitAddonCtor(); term2.loadAddon(fit2); }
@@ -1146,16 +1164,16 @@ async function openSecondTerm(s) {
   term2.onData((d) => { if (ws2 && ws2.readyState === 1) ws2.send(new TextEncoder().encode(d)); });
   ro2 = rafObserver(() => { if (fit2) { fit2.fit(); sendResize2(); } });
   ro2.observe(wrap);
-  connectSecondWS(s.id, splitTab);
+  connectSecondWS(s.id);
 }
 
-// Connect over the GROUPED `-split` session (pane=split) pointed at window `tab`, so the
-// split shows a different tab than the primary. On close, a display-only notice.
-function connectSecondWS(sessionId, tab) {
+// Connect over the standalone `-split` session (pane=split). It follows its own active
+// window, so tab switches need no reconnect. On close, a display-only notice.
+function connectSecondWS(sessionId) {
   if (!term2) return;
   const theTerm = term2; // capture so a select/dispose can orphan this socket
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(sessionId)}&pane=split&tab=${tab || 0}&cols=${theTerm.cols}&rows=${theTerm.rows}`);
+  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(sessionId)}&pane=split&cols=${theTerm.cols}&rows=${theTerm.rows}`);
   sock.binaryType = 'arraybuffer';
   ws2 = sock;
   sock.onmessage = (e) => { if (typeof e.data === 'string') theTerm.write(e.data); else theTerm.write(new Uint8Array(e.data)); };

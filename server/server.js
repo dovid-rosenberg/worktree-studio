@@ -311,13 +311,30 @@ async function main() {
     res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
   }));
 
-  // Point the split pane's grouped session at a window — lets it show a different tab
-  // than the primary, switched live.
-  app.post('/api/sessions/:id/split-tab', A(async (req, res) => {
+  // The split pane is a standalone `-split` session with its own tabs. These operate on
+  // it directly through the mux (tmux is the source of truth for its window list).
+  app.get('/api/sessions/:id/split/tabs', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
-    await manager.mux.selectSplitTab(s.muxName, (req.body && req.body.index) || 0);
-    res.json({ ok: true });
+    await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
+    res.json({ tabs: await manager.mux.listTabs(`${s.muxName}-split`) });
+  }));
+  app.post('/api/sessions/:id/split/tabs', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
+    const r = await manager.mux.newTab(`${s.muxName}-split`, { title: (req.body && req.body.title) || 'shell', cwd: s.worktreePath || s.repoPath });
+    res.json(r);
+  }));
+  app.post('/api/sessions/:id/split/select-tab', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    res.json({ ok: await manager.mux.selectTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
+  }));
+  app.post('/api/sessions/:id/split/close-tab', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    res.json({ ok: await manager.mux.closeTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
   }));
 
   app.post('/api/sessions/:id/close-tab', A(async (req, res) => {
@@ -726,14 +743,13 @@ async function main() {
     const url = new URL(req.url, 'http://localhost');
     const id = url.searchParams.get('session');
     const pane = url.searchParams.get('pane');
-    const tab = Number(url.searchParams.get('tab')) || 0;
     const cols = Number(url.searchParams.get('cols')) || 100;
     const rows = Number(url.searchParams.get('rows')) || 30;
     const s = manager.get(id);
     if (!s) { ws.close(); return; }
-    // The split pane attaches to the GROUPED `-split` session, pre-pointed at a different
-    // window than the primary so the two tabs show side by side without mirroring.
-    if (pane === 'split') { try { await manager.mux.ensureSplit(s.muxName, tab); } catch { /* */ } }
+    // The split pane attaches to the standalone `-split` session — a separate terminal
+    // in the same worktree with its own tabs. Ensure it exists before the pty attaches.
+    if (pane === 'split') { try { await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath }); } catch { /* */ } }
     const spec = manager.mux.attachSpawn(s.muxName, pane === 'split' ? { group: 'split' } : {});
     const term = pty.spawn(spec.file, spec.args, {
       name: 'xterm-256color', cols, rows, cwd: s.worktreePath || s.repoPath, env: spec.env || process.env,
