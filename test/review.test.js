@@ -37,6 +37,33 @@ test('changes() reports the merge-base as the review base', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('changes() bases on origin/<default> when the local default ref is stale (branch cut from origin)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-review-stale-'));
+  sh(dir, ['init', '-q', '-b', 'main']);
+  sh(dir, ['config', 'user.email', 't@t.t']);
+  sh(dir, ['config', 'user.name', 't']);
+  fs.writeFileSync(path.join(dir, 'f.txt'), 'A\n');
+  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'A']);
+  const A = sh(dir, ['rev-parse', 'HEAD']);
+  // the mainline advances with someone else's commit
+  fs.writeFileSync(path.join(dir, 'other.txt'), 'not my work\n');
+  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'B (someone else)']);
+  const B = sh(dir, ['rev-parse', 'HEAD']);
+  // origin/main is current at B; the feature branch was cut from B and adds a commit
+  sh(dir, ['update-ref', 'refs/remotes/origin/main', B]);
+  sh(dir, ['checkout', '-q', '-b', 'feature/mine', B]);
+  // now (off main) rewind local main to A so it lags behind origin/main
+  sh(dir, ['branch', '-f', 'main', A]);
+  fs.writeFileSync(path.join(dir, 'mine.txt'), 'my change\n');
+  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'my commit']);
+
+  const out = await review.changes(dir, 'main');
+  assert.equal(out.base, B, 'bases on origin/main (B), not the stale local main (A)');
+  assert.ok(!fileOf(out.files, 'other.txt'), 'a commit already on the mainline is excluded from the diff');
+  assert.ok(fileOf(out.files, 'mine.txt'), 'the branch’s own change is still included');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('changes() lists a modified file with status M and add/delete counts', async () => {
   const { dir } = tempRepo();
   const { files } = await review.changes(dir, 'main');

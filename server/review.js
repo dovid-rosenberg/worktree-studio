@@ -6,12 +6,20 @@ const fs = require('fs');
 const path = require('path');
 const { git, gitFull } = require('./util');
 
-// The review baseline: merge-base of HEAD and the default branch (local, then
-// origin), falling back to the default branch ref itself.
+// The review baseline: the merge-base of HEAD with the default branch. A branch is
+// often cut from origin/<default> while the LOCAL <default> ref lags behind — basing
+// on the stale local ref drags in commits already on the mainline (the classic "why
+// am I seeing another branch's changes?"). So when both a local and a remote merge-base
+// exist, use the one CLOSEST to HEAD (the descendant of the two): the tightest correct
+// baseline no matter which ref is stale.
 async function base(worktreePath, defaultBranch) {
-  return (await git(worktreePath, ['merge-base', 'HEAD', defaultBranch]))
-    || (await git(worktreePath, ['merge-base', 'HEAD', `origin/${defaultBranch}`]))
-    || defaultBranch;
+  const local = await git(worktreePath, ['merge-base', 'HEAD', defaultBranch]);
+  const remote = await git(worktreePath, ['merge-base', 'HEAD', `origin/${defaultBranch}`]);
+  if (local && remote && local !== remote) {
+    const localIsAncestor = (await gitFull(worktreePath, ['merge-base', '--is-ancestor', local, remote])).code === 0;
+    return localIsAncestor ? remote : local;
+  }
+  return local || remote || defaultBranch;
 }
 
 function countLines(worktreePath, rel) {
