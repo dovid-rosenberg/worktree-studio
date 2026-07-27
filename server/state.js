@@ -11,13 +11,18 @@
 // that split is a wiring change, not a rewrite. buildState() merges them and is
 // the only thing anything currently calls.
 const { computeFeatures } = require('./features');
-const { realpath } = require('./servers');
+const { createRealpathCache } = require('./util');
 const sources = require('./sources');
 
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference
 // would go stale the first time either one is rescanned.
 function createState({ cfg, manager, servers, mux, repos, running }) {
+  // Both halves compare worktree paths that reach us from three different sources
+  // (the git scan, a session's stored paths, lsof), so every comparison resolves
+  // symlinks first. One cache serves both halves, swept by topology() — see there.
+  const paths = createRealpathCache();
+
   function baseDirOf(repoPath) {
     return (cfg.baseDirs || []).find((b) => repoPath.startsWith(b)) || '';
   }
@@ -26,13 +31,16 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
   // those worktrees roll up into, and the config a client renders its chrome from.
   function topology() {
     const active = running();
+    // One pass over the sessions, then a map lookup per worktree — not a scan of
+    // every session per worktree.
+    const sessionsByPath = manager.sessionIndex(paths.resolve);
     const reposOut = [];
     const flat = [];
     for (const repo of repos()) {
       const wts = [];
       for (const w of repo.worktrees) {
         const dec = servers.decorate({ path: w.path, repo: repo.name }, active);
-        const sess = w.isMain ? null : manager.sessionForWorktree(w.path);
+        const sess = w.isMain ? null : (sessionsByPath.get(paths.resolve(w.path)) || null);
         const wt = {
           repo: repo.name, wtname: w.name, branch: w.branch, path: w.path,
           isMain: w.isMain, detached: w.detached, merged: w.merged,
@@ -53,6 +61,11 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
       f.session = m ? m.session : null;
       if (servers.slots.has(f.name)) f.slot = servers.slots.get(f.name);
     }
+    // This pass touches a superset of the paths sessionState() does (its session
+    // index resolves every path a session owns, plus every scanned worktree), so
+    // it is the one place that can safely decide which cache entries are still
+    // live. Anything not seen here is a worktree or a session that is gone.
+    paths.sweep();
     return {
       mux: mux ? mux.name : 'none',
       config: { port: cfg.web.port, configFile: cfg._file },
@@ -80,7 +93,7 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
       if (list.length) {
         serversById[s.id] = {
           repos: list.map((r) => {
-            const hit = active.get(realpath(r.worktreePath));
+            const hit = active.get(paths.resolve(r.worktreePath));
             return { repo: r.repo, worktreePath: r.worktreePath, running: !!hit, ports: hit ? hit.ports : [], canStart: !!servers.startCfg(r.repo) };
           }),
         };

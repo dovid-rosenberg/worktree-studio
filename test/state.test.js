@@ -21,10 +21,12 @@ function fakeServers({ startable = [], slotted = [], slots = new Map() } = {}) {
   };
 }
 
+// The real manager hands topology() one Map(resolvedPath → session); these
+// fixtures use paths that resolve to themselves.
 function fakeManager(sessions = [], byWorktree = {}) {
   return {
     all: () => sessions,
-    sessionForWorktree: (p) => byWorktree[p] || null,
+    sessionIndex: (resolve = (p) => p) => new Map(Object.entries(byWorktree).map(([p, s]) => [resolve(p), s])),
   };
 }
 

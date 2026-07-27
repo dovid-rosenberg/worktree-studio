@@ -68,6 +68,53 @@ function makeId(prefix = '') {
   return prefix ? `${prefix}${s}` : s;
 }
 
+// Resolve a path through its symlinks, falling back to the path itself when it
+// can't be resolved (doesn't exist yet, permission denied). Worktree paths are
+// compared across three independent sources — the git scan, a session's stored
+// paths, and lsof's view of a running process — and any of them may hand us a
+// symlinked spelling (/tmp vs /private/tmp, a symlinked home), so every
+// comparison goes through this first.
+function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
+
+// A memo for realpath(), because resolving a path is one syscall per path
+// component and the state build resolves the same few dozen worktree paths many
+// times a second.
+//
+// Invalidation is generational, not time-based. A path's resolved form cannot
+// change while the path keeps existing — it is pure symlink resolution over the
+// components — so the only way an entry goes stale is if the path is removed and
+// later recreated pointing somewhere else. `sweep()` keeps only the entries the
+// caller actually asked for since the previous sweep, so an entry survives
+// exactly as long as its path keeps showing up: a removed worktree drops out on
+// the first pass that no longer lists it, and if it comes back it is resolved
+// fresh. Failures are never cached — an unresolvable path is one that doesn't
+// exist *yet*, and caching it would pin the fallback forever.
+function createRealpathCache() {
+  const cache = new Map();
+  let used = new Set();
+  let hits = 0, misses = 0;
+  return {
+    resolve(p) {
+      if (!p) return p;
+      used.add(p);
+      if (cache.has(p)) { hits++; return cache.get(p); }
+      misses++;
+      let r;
+      try { r = fs.realpathSync(p); } catch { return p; }
+      cache.set(p, r);
+      return r;
+    },
+    // Drop everything not touched since the last sweep. Call this from the one
+    // pass that touches a superset of the paths — see server/state.js.
+    sweep() {
+      for (const p of cache.keys()) if (!used.has(p)) cache.delete(p);
+      used = new Set();
+    },
+    get size() { return cache.size; },
+    get stats() { return { hits, misses }; },
+  };
+}
+
 // Turn any string into a safe slug usable as branch/worktree/mux-session name.
 function slug(s, max = 48) {
   return (s || '')
@@ -90,4 +137,4 @@ const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   if (!res.headersSent) res.status(500).json({ error: e.message });
 });
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, slug, shq, A };
+module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, realpath, createRealpathCache, slug, shq, A };

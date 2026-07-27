@@ -7,13 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { run, readJson, writeJson, slug } = require('./util');
+const { run, readJson, writeJson, realpath, slug } = require('./util');
 const { deriveEnv, allocSlot, rewriteAllSiblingPorts } = require('./concurrency');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
-
-function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
 
 // Feature identity of a worktree: its `.worktrees/<name>` basename (the name
 // shared across repos). Main checkouts have no `.worktrees` segment → basename.
