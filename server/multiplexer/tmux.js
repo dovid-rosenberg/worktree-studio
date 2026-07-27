@@ -65,22 +65,34 @@ module.exports = {
   // For node-pty: attach an interactive client to the session.
   //  - popout: a GROUPED session (`-t name`) — a native window mirroring the same
   //    live session, which is exactly what "pop out to a terminal" should do.
-  //  - split: a STANDALONE session running its own shell in the worktree (`cwd`),
-  //    NOT grouped to `name`. Grouped sessions share the window list, so two clients
-  //    on the same window mirror keystrokes; a standalone shell is truly independent —
-  //    Claude on one side, a working shell on the other.
+  //  - split: attach the embedded second pane to the GROUPED `-split` session (which
+  //    ensureSplit created + pointed at a DIFFERENT window). Grouped sessions share the
+  //    window list but keep their own current window, so the two panes show different
+  //    tabs without mirroring. Call ensureSplit(name, idx) first.
   //  - default: attach the embedded primary client to the session.
-  attachSpawn(name, { popout = false, group, cwd } = {}) {
+  attachSpawn(name, { popout = false, group } = {}) {
     const base = ['-L', SOCK];
     if (popout) {
       return { file: 'tmux', args: [...base, 'new-session', '-A', '-s', `${name}-popout`, '-t', name], env: ENV };
     }
     if (group === 'split') {
-      const args = [...base, 'new-session', '-A', '-s', `${name}-split`];
-      if (cwd) args.push('-c', cwd);
-      return { file: 'tmux', args, env: ENV };
+      return { file: 'tmux', args: [...base, 'attach-session', '-t', `${name}-split`], env: ENV };
     }
     return { file: 'tmux', args: [...base, 'attach-session', '-t', name], env: ENV };
+  },
+
+  // Ensure the grouped `-split` session exists and shows window `idx` BEFORE the pane's
+  // pty attaches — so it never momentarily lands on the primary's window (which mirrors).
+  async ensureSplit(name, idx = 0) {
+    if (!(await this.hasSession(`${name}-split`))) {
+      await T(['new-session', '-d', '-s', `${name}-split`, '-t', name]);
+    }
+    await T(['select-window', '-t', `${name}-split:${idx}`]);
+  },
+
+  // Live-switch which window the split pane shows (the attached client follows).
+  selectSplitTab(name, idx) {
+    return T(['select-window', '-t', `${name}-split:${idx}`]);
   },
 
   async newTab(name, { title, cwd, cmd } = {}) {

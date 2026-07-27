@@ -311,6 +311,15 @@ async function main() {
     res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
   }));
 
+  // Point the split pane's grouped session at a window — lets it show a different tab
+  // than the primary, switched live.
+  app.post('/api/sessions/:id/split-tab', A(async (req, res) => {
+    const s = manager.get(req.params.id);
+    if (!s) return res.status(404).json({ error: 'no such session' });
+    await manager.mux.selectSplitTab(s.muxName, (req.body && req.body.index) || 0);
+    res.json({ ok: true });
+  }));
+
   app.post('/api/sessions/:id/close-tab', A(async (req, res) => {
     res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
   }));
@@ -713,20 +722,19 @@ async function main() {
   // ---- HTTP + WS ----
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws/term' });
-  wss.on('connection', (ws, req) => {
+  wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
     const id = url.searchParams.get('session');
     const pane = url.searchParams.get('pane');
+    const tab = Number(url.searchParams.get('tab')) || 0;
     const cols = Number(url.searchParams.get('cols')) || 100;
     const rows = Number(url.searchParams.get('rows')) || 30;
     const s = manager.get(id);
     if (!s) { ws.close(); return; }
-    // The second (split) pane is a standalone shell in the worktree — independent of
-    // the primary Claude session, so keystrokes are never mirrored. Primary untouched.
-    const spec = manager.mux.attachSpawn(
-      s.muxName,
-      pane === 'split' ? { group: 'split', cwd: s.worktreePath || s.repoPath } : {},
-    );
+    // The split pane attaches to the GROUPED `-split` session, pre-pointed at a different
+    // window than the primary so the two tabs show side by side without mirroring.
+    if (pane === 'split') { try { await manager.mux.ensureSplit(s.muxName, tab); } catch { /* */ } }
+    const spec = manager.mux.attachSpawn(s.muxName, pane === 'split' ? { group: 'split' } : {});
     const term = pty.spawn(spec.file, spec.args, {
       name: 'xterm-256color', cols, rows, cwd: s.worktreePath || s.repoPath, env: spec.env || process.env,
     });

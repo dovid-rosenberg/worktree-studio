@@ -24,12 +24,13 @@ let settingsTrap = null, settingsPrevFocus = null;
 // terminal state
 let term = null, fit = null, ws = null, ro = null;
 
-// split-view second pane — an independent working shell (own xterm + socket) in the
-// CURRENT session's worktree, via a standalone `-split` tmux session. It is NOT the
-// Claude pane, so nothing is mirrored. Only ever touched through openSecondTerm/
-// closeSecondTerm; the primary pane above never learns it exists.
+// split-view second pane — a second view (own xterm + socket) into the CURRENT session,
+// via the GROUPED `-split` tmux session. It has its own tab-strip and shows a DIFFERENT
+// window (tab) than the primary, so two shells are visible at once with no mirroring.
 let splitOn = false;                    // is the split toggle engaged for the current session?
+let splitTab = 0;                       // which window (tab) the split pane shows
 const splitSessions = new Set();        // session ids marked split — persists across session switches
+const splitTabBySession = new Map();    // session id → chosen split tab index
 let term2 = null, fit2 = null, ws2 = null, ro2 = null;
 
 // attention notifications: previous per-session state (id → state) so we can diff
@@ -412,7 +413,7 @@ function rebuildDock(s) {
   // reset the client-side dock view whenever the selected session changes
   dockView = 'term'; activeTab = 0;
   // split persists per session: restore it if this session was left split
-  splitOn = splitSessions.has(s.id);
+  splitOn = splitSessions.has(s.id); splitTab = 0;
   changesState = null; changesSel = null; changesUnstaged.clear();
   logsSel = null; logsOffset.clear(); logsPartial.clear();
   clearTimeout(changesRefreshT);
@@ -617,6 +618,7 @@ function applyDockView() {
   // Reconcile the split pane: it only lives while the term view is showing, so
   // leaving for Changes/Logs tears it down and returning rebuilds it.
   applySplit();
+  if ($('#termPane2')) renderSecondTabstrip(state.sessions.find((x) => x.id === selectedId));
 }
 
 function changesFileCount() {
@@ -1060,7 +1062,7 @@ function applySplit() {
   const has = !!$('#termPane2');
   if (want && !has) {
     ta.classList.add('term-split');
-    ta.appendChild(buildSecondPane());
+    ta.appendChild(buildSecondPane(s));
     openSecondTerm(s);
     refitPrimary(); // primary just lost half its width — refit so it isn't stale
   } else if (!want && has) {
@@ -1071,11 +1073,41 @@ function applySplit() {
   }
 }
 
-function buildSecondPane() {
-  return h(`<div class="panewrap" id="termPane2">
-    <div class="panehd"><span class="dot idle"></span><span class="panehd-label">shell</span></div>
+function buildSecondPane(s) {
+  const pane = h(`<div class="panewrap" id="termPane2">
+    <div class="panehd"><span class="dot idle"></span><div class="splittabs" id="splitTabs"></div></div>
     <div class="term-wrap" id="termWrap2"></div>
   </div>`);
+  renderSecondTabstrip(s, pane.querySelector('#splitTabs'));
+  return pane;
+}
+
+// Default the split to a tab that ISN'T the primary's active one (same window mirrors).
+function defaultSplitTab(s) {
+  const tabs = s.tabs || [];
+  const remembered = splitTabBySession.get(s.id);
+  if (remembered != null && remembered < tabs.length && remembered !== activeTab) return remembered;
+  for (let i = 0; i < tabs.length; i += 1) if (i !== activeTab) return i;
+  return activeTab;
+}
+
+// The split pane's own tab-strip — the session's windows; click to show one in the split.
+function renderSecondTabstrip(s, el) {
+  el = el || $('#splitTabs');
+  if (!el || !s) return;
+  el.innerHTML = '';
+  (s.tabs || [{ title: 'claude' }]).forEach((t, i) => {
+    const tab = h(`<span class="tab sm ${i === splitTab ? 'on' : ''}">${esc(t.title)}</span>`);
+    activatable(tab, () => selectSecondTab(s, i));
+    el.appendChild(tab);
+  });
+}
+
+async function selectSecondTab(s, i) {
+  splitTab = i;
+  splitTabBySession.set(s.id, i);
+  try { await api('POST', `/api/sessions/${s.id}/split-tab`, { index: i }); } catch { /* */ }
+  renderSecondTabstrip(s);
 }
 
 // Refit the PRIMARY terminal after its width changes (entering/leaving split).
@@ -1087,9 +1119,22 @@ function refitPrimary() {
   requestAnimationFrame(() => { try { fit.fit(); sendResize(); } catch { /* */ } });
 }
 
-function openSecondTerm(s) {
+async function openSecondTerm(s) {
   const wrap = $('#termWrap2');
   if (!wrap || !XTerm || !s) return;
+  // A single-tab session has nothing but the primary's window to show — give the split
+  // its own shell first (add-tab selects it on the base, so restore the primary after).
+  if ((s.tabs || []).length < 2) {
+    try {
+      await api('POST', `/api/sessions/${s.id}/tabs`, { title: 'shell' });
+      s.tabs = [...(s.tabs || []), { title: 'shell' }];
+      await api('POST', `/api/sessions/${s.id}/select-tab`, { index: activeTab });
+    } catch { /* */ }
+    if (!splitOn || selectedId !== s.id || !$('#termWrap2')) return; // toggled off mid-await
+  }
+  splitTab = defaultSplitTab(s);
+  splitTabBySession.set(s.id, splitTab);
+  renderSecondTabstrip(s);
   term2 = new XTerm({ fontFamily: 'ui-monospace, SF Mono, Menlo, monospace', fontSize: 12.5, cursorBlink: true, scrollback: 8000, allowProposedApi: true, theme: themeForTerm() });
   if (FitAddonCtor) { fit2 = new FitAddonCtor(); term2.loadAddon(fit2); }
   if (WebLinksCtor) { try { term2.loadAddon(new WebLinksCtor()); } catch { /* */ } }
@@ -1098,16 +1143,16 @@ function openSecondTerm(s) {
   term2.onData((d) => { if (ws2 && ws2.readyState === 1) ws2.send(new TextEncoder().encode(d)); });
   ro2 = rafObserver(() => { if (fit2) { fit2.fit(); sendResize2(); } });
   ro2.observe(wrap);
-  connectSecondWS(s.id);
+  connectSecondWS(s.id, splitTab);
 }
 
-// Plain connect — no reconnect/backoff — over the standalone `-split` shell session
-// (pane=split), independent of the primary. On close, a display-only notice.
-function connectSecondWS(sessionId) {
+// Connect over the GROUPED `-split` session (pane=split) pointed at window `tab`, so the
+// split shows a different tab than the primary. On close, a display-only notice.
+function connectSecondWS(sessionId, tab) {
   if (!term2) return;
   const theTerm = term2; // capture so a select/dispose can orphan this socket
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(sessionId)}&pane=split&cols=${theTerm.cols}&rows=${theTerm.rows}`);
+  const sock = new WebSocket(`${proto}://${location.host}/ws/term?session=${encodeURIComponent(sessionId)}&pane=split&tab=${tab || 0}&cols=${theTerm.cols}&rows=${theTerm.rows}`);
   sock.binaryType = 'arraybuffer';
   ws2 = sock;
   sock.onmessage = (e) => { if (typeof e.data === 'string') theTerm.write(e.data); else theTerm.write(new Uint8Array(e.data)); };
