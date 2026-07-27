@@ -307,7 +307,10 @@ Base URL `http://127.0.0.1:7788`. All JSON.
 
 **State & events**
 - `GET /api/state` — full snapshot (repos, worktrees, sessions, features, servers, webRepos).
-- `GET /api/events` — Server-Sent Events stream (live updates).
+- `GET /api/events` — Server-Sent Events stream (live updates). Two named events:
+  `topology` (repos/worktrees/features, sent when the shape changes) and
+  `session-state` (`{sessions, servers}`, sent on every Claude hook). One of each
+  on connect = a full snapshot. See `docs/api.md`.
 - `GET /api/settings` · `POST /api/settings` — read/write config.
 - `GET /api/sources` · `GET /api/sources/:source/items` — intake sources & their items.
 
