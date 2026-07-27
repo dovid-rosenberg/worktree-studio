@@ -76,6 +76,7 @@ async function main() {
   app.use(express.json({ limit: '8mb' }));
   app.use(express.text({ type: 'text/*', limit: '8mb' }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
+  require('./routes-review').register(app, { manager, repos: () => repos, broadcast: scheduleBroadcast });
 
   // Every route below is registered once on this router and served at BOTH
   // /api/v1/* (the versioned contract new clients should use) and /api/* (the
