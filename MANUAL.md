@@ -105,9 +105,13 @@ button that opens `localhost:<port>`. Stop/restart from the same place.
 
 ### 5. Review, commit, PR
 Open the **✎ Changes** tab (or `⌘D`):
-- See changed files (working tree + branch-vs-base), per-file unified diff, ± counts.
-- Stage files, write a commit message, **Commit** or **Commit & PR**.
-- “Draft message from the diff” asks the session to summarize the change for you.
+- The left column lists the branch’s **commits** (base..HEAD) grouped by repo, newest
+  first, with sha/author/time/± — plus each repo’s **uncommitted** working changes pinned
+  at the top.
+- Click a commit to see **all its files’ diffs**; the file list stays visible, and clicking
+  a file focuses **just that file’s** diff.
+- Select an **Uncommitted** entry to write a commit message and **Commit** / **Commit & PR**
+  (with amend) — it targets that repo’s worktree.
 
 ### 6. Close or delete the feature
 From **Fleet → ⋯**:
@@ -126,9 +130,10 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
 - **Tabs** per session (`claude`, `shell`, …) — add, select, close tabs.
 - **Pop-out** — open the same live session in a native macOS terminal window (grouped
   tmux session; both stay in sync).
-- **⊟ Split** — open a **second, independent working shell** in the worktree beside the
-  Claude pane. It’s a standalone tmux session (not a mirror), so nothing you type is
-  echoed into Claude. Persists per session across switches.
+- **⊟ Split** (a sub-feature of the terminal) — open a **second, independent terminal**
+  beside the primary. It’s a standalone tmux session with its **own tabs** (add/select/close
+  per side), so nothing you type is echoed into the other pane. Persists per session across
+  switches.
 - **Resume after restart** — Studio restarts and re-attaches every active session; the
   Claude conversation resumes with full history.
 - **Rename** a session; **Deactivate** (stop but keep) / **Resume** (relaunch) it.
@@ -147,10 +152,12 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
 - **Open ‹frontend› ↗** buttons wherever a web repo is running (session bar **and** the
   Fleet “Servers running” section).
 
-### Changes / diff / commit
-- Aggregated across all repos of a feature.
-- Working-tree changes **plus** branch-vs-merge-base.
-- Per-file diff, stage checkboxes, commit (with amend), Commit & PR.
+### Changes / commits / diff
+- Aggregated across all repos of a feature, grouped by repo.
+- The branch’s commits (base..HEAD, base = the closest merge-base with the default
+  branch), newest first, plus each repo’s uncommitted working-tree changes pinned on top.
+- Click a commit → all its file diffs; click a file → just that file. Commit an uncommitted
+  entry (with amend), Commit & PR.
 
 ### PR / CI
 - **PR/CI pill** per promoted session: polls `gh pr checks` / `glab ci status`, shows
@@ -310,9 +317,10 @@ Base URL `http://127.0.0.1:7788`. All JSON.
 - `POST /api/sessions/:id/promote` — promote to a worktree (`{branch, name, confirm}`).
 - `POST /api/sessions/:id/activate` · `/deactivate` — resume / stop.
 - `POST /api/sessions/:id/rename` · `/popout` · `/add-repo`.
-- `POST /api/sessions/:id/tabs` · `/select-tab` · `/close-tab`.
+- `POST /api/sessions/:id/tabs` · `/select-tab` · `/close-tab` — primary-terminal tabs.
+- `GET/POST /api/sessions/:id/split/tabs` · `/split/select-tab` · `/split/close-tab` — split-pane tabs.
 - `POST /api/sessions/:id/servers/start` · `/servers/stop`.
-- `GET  /api/sessions/:id/changes` · `/diff?file=` · `POST /commit` — review/commit.
+- `GET  /api/sessions/:id/commits` · `/commit-detail?repo=&sha=` · `POST /commit` — review/commit.
 - `GET  /api/sessions/:id/ci` — PR/CI status.
 
 **Features / groups**
