@@ -393,6 +393,9 @@ class SessionManager extends EventEmitter {
       this._touch(id);
       return { ok: false, error: 'worktree missing' };
     }
+    // Regenerate the hook settings file so it tracks the current install path/port —
+    // makes a relaunch self-heal after the studio dir is moved or the port changes.
+    s.settingsFile = status.settingsFile(this.cfg._stateDir, id, this.cfg.web.port);
     const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
     // Resume from the transcript's home dir so --resume finds the conversation. For a
     // promoted session home is already the worktree (moved there at promote), so it
@@ -451,6 +454,8 @@ class SessionManager extends EventEmitter {
         s.state = 'stopped'; s.activity = 'worktree missing';
         continue;
       }
+      // Refresh the hook settings file to the current install path/port before relaunch.
+      s.settingsFile = status.settingsFile(this.cfg._stateDir, s.id, this.cfg.web.port);
       const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
       // Resume from the transcript's home dir so --resume finds the conversation.
       // Promoted sessions already have home = worktree (moved at promote time).
