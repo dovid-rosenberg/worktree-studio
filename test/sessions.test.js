@@ -214,6 +214,75 @@ test('tmux sendText sends the body literally (-l) then submits with a separate E
   }
 });
 
+test('promote returns needsConfirm when the main checkout is dirty, and does not promote', async () => {
+  const m = manager();
+  const repo = tempRepo('dirty');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# uncommitted change\n'); // dirty the main checkout
+  m.sessions.set('d1', {
+    id: 'd1', repoName: 'a', repoPath: repo, home: repo,
+    worktree: null, worktreePath: null, branch: null, feature: 'orig',
+    suggestedBranch: 'feature/x', suggestedName: 'x', muxName: 'mux-d1', pendingRepos: [],
+    repos: [{ repo: 'a', repoPath: repo, worktree: null, worktreePath: null, branch: null, primary: true }],
+    state: 'idle', active: true, createdAt: Date.now(),
+  });
+
+  const out = await m.promote('d1');
+  assert.equal(out.ok, false);
+  assert.equal(out.needsConfirm, true);
+  assert.ok(out.dirty.some((f) => /README\.md/.test(f)), `expected README in dirty list: ${JSON.stringify(out.dirty)}`);
+  assert.equal(m.get('d1').worktreePath, null, 'session is not promoted while unconfirmed');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('promote with confirm:true proceeds past a dirty main and creates the worktree', async () => {
+  const m = manager();
+  const repo = tempRepo('dirty-confirm');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# uncommitted change\n');
+  m.sessions.set('d2', {
+    id: 'd2', repoName: 'a', repoPath: repo, home: repo,
+    worktree: null, worktreePath: null, branch: null, feature: 'orig',
+    suggestedBranch: 'feature/x', suggestedName: 'x', muxName: 'mux-d2', pendingRepos: [],
+    repos: [{ repo: 'a', repoPath: repo, worktree: null, worktreePath: null, branch: null, primary: true }],
+    state: 'idle', active: true, createdAt: Date.now(),
+  });
+
+  const out = await m.promote('d2', { confirm: true });
+  assert.equal(out.ok, true, out.error);
+  assert.ok(m.get('d2').worktreePath, 'promoted after confirm');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('reconcile flips a session whose mux session vanished to stopped and leaves a live one alone', async () => {
+  const m = manager();
+  m.mux = { async hasSession(n) { return n === 'live-mux'; } };
+  m.sessions.set('dead', { id: 'dead', muxName: 'dead-mux', state: 'idle', active: true, createdAt: Date.now() });
+  m.sessions.set('live', { id: 'live', muxName: 'live-mux', state: 'working', active: true, createdAt: Date.now() });
+
+  await m.reconcile();
+
+  const dead = m.get('dead');
+  assert.equal(dead.state, 'stopped');
+  assert.equal(dead.active, false);
+  assert.equal(dead.activity, 'session ended');
+  const live = m.get('live');
+  assert.equal(live.state, 'working', 'a live session is left untouched');
+  assert.equal(live.active, true);
+});
+
+test('reconcile leaves an already-stopped session untouched (no redundant flip)', async () => {
+  const m = manager();
+  let queried = 0;
+  m.mux = { async hasSession() { queried++; return false; } };
+  m.sessions.set('s1', { id: 's1', muxName: 'm', state: 'stopped', active: false, activity: 'deactivated', createdAt: Date.now() });
+
+  await m.reconcile();
+
+  assert.equal(queried, 0, 'does not even query the mux for a stopped/deactivated session');
+  assert.equal(m.get('s1').activity, 'deactivated', 'activity is not overwritten');
+});
+
 // adopt launches claude in the worktree, so that's where the transcript lives —
 // home must equal it or --resume (which resumes from home) can't find the conversation.
 test('adopt sets home to the worktree launch dir (so resume resolves the conversation)', async () => {

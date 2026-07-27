@@ -296,6 +296,8 @@ async function main() {
 
   app.post('/api/sessions/:id/promote', A(async (req, res) => {
     const out = await manager.promote(req.params.id, req.body || {});
+    // Dirty-main warning: 200 (not 400) so the client can read needsConfirm and re-prompt.
+    if (out.needsConfirm) return res.json(out);
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the new worktree(s) so features update immediately
     res.json(out);
@@ -363,7 +365,16 @@ async function main() {
   }));
 
   app.delete('/api/sessions/:id', A(async (req, res) => {
-    res.json(await manager.close(req.params.id, { kill: req.query.kill !== 'false' }));
+    // Capture the session BEFORE close (close deletes it). Mirror /api/group/delete's
+    // orphan cleanup: stop each owned worktree's dev servers + release its slot, else a
+    // running server is orphaned and its concurrency slot leaks.
+    const s = manager.get(req.params.id);
+    const owned = s ? (s.repos || []).filter((r) => r.worktreePath) : [];
+    for (const r of owned) await servers.stop(r.repo, r.worktreePath);
+    const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
+    for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath));
+    if (owned.length) { await refreshRunning(); scheduleBroadcast(); }
+    res.json(out);
   }));
 
   // ---- review (diff & commit) ----
@@ -647,11 +658,12 @@ async function main() {
     // Neither CLI installed → answer instantly without shelling out.
     if (!hasGh && !hasGlab) return res.json({ repos: entries.map((r) => ({ repo: r.repo, hasPR: false })) });
     const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
-    const repos = [];
-    for (const entry of entries) {
-      try { repos.push(await ciForRepo(entry, env)); }
-      catch { repos.push({ repo: entry.repo, hasPR: false }); }
-    }
+    // Per-repo lookups are independent (and each is cached + never throws) — run them
+    // in parallel so a multi-repo feature isn't gated on serial gh/glab round-trips.
+    const repos = await Promise.all(entries.map(async (entry) => {
+      try { return await ciForRepo(entry, env); }
+      catch { return { repo: entry.repo, hasPR: false }; }
+    }));
     res.json({ repos });
   }));
 
@@ -745,6 +757,8 @@ async function main() {
   setInterval(rescan, 15000);
   await refreshRunning();
   setInterval(refreshRunning, 3000);
+  // Flip sessions whose tmux session died out-of-band to stopped (one has-session each).
+  setInterval(() => manager.reconcile().catch(() => {}), 4000);
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 

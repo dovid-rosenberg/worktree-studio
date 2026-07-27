@@ -1192,7 +1192,14 @@ async function promote(s) {
   const branch = await uiPrompt('Branch to create for this worktree:', s.suggestedBranch || 'feature/x');
   if (!branch) return;
   try {
-    const r = await api('POST', `/api/sessions/${s.id}/promote`, { branch });
+    let r = await api('POST', `/api/sessions/${s.id}/promote`, { branch });
+    // Dirty main → warn before stranding pre-promote edits (they stay in main).
+    if (r.needsConfirm) {
+      const n = (r.dirty || []).length;
+      const ok = await uiConfirm(`Your main checkout has ${n} uncommitted change(s) that will stay in main, not move to the new worktree. Promote anyway?`, { title: 'Uncommitted changes in main', okLabel: 'Promote anyway', danger: true });
+      if (!ok) return;
+      r = await api('POST', `/api/sessions/${s.id}/promote`, { branch, confirm: true });
+    }
     const w = r.worktree || {};
     const warn = (w.warnings || []).find((x) => /taken/.test(x));
     toast(warn ? `Promoted as “${w.name}” — ${warn}` : `Promoted → ${w.branch || branch}`);

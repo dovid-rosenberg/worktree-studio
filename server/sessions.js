@@ -5,7 +5,7 @@
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
-const { readJson, writeJson, makeId, slug, shq } = require('./util');
+const { readJson, writeJson, makeId, slug, shq, run } = require('./util');
 const status = require('./status');
 const worktree = require('./worktree');
 
@@ -240,10 +240,27 @@ class SessionManager extends EventEmitter {
     return session;
   }
 
-  async promote(id, { branch, name } = {}) {
+  // Files dirty in the main checkout (uncommitted work that would be stranded in
+  // main when we branch the worktree cleanly off the default branch).
+  async _dirtyMain(repoPath) {
+    try {
+      const r = await run('git', ['-C', repoPath, 'status', '--porcelain']);
+      if (r.code !== 0) return [];
+      return r.stdout.split('\n').filter(Boolean).map((l) => l.slice(3));
+    } catch { return []; }
+  }
+
+  async promote(id, { branch, name, confirm } = {}) {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
     if (s.worktreePath) return { ok: false, error: 'already promoted' };
+    // Claude launched with cwd in the main checkout; the worktree is branched clean
+    // off the default branch, so pre-promote edits stay in main. Warn (don't strand
+    // silently) unless the caller has already confirmed.
+    if (!confirm) {
+      const dirty = await this._dirtyMain(s.repoPath);
+      if (dirty.length) return { ok: false, needsConfirm: true, dirty };
+    }
     const br = branch || s.suggestedBranch;
     const wtName = name || s.suggestedName;
     const res = await worktree.create(s.repoPath, br, wtName, {
@@ -389,6 +406,24 @@ class SessionManager extends EventEmitter {
       // keep our stored titles by position; fall back to the live window name
       s.tabs = live.map((w, i) => ({ title: (prev[i] && prev[i].title) || w.title }));
     } catch { /* leave tabs as-is if the mux can't be queried */ }
+  }
+
+  // Self-heal live state against the multiplexer: a session whose tmux session was
+  // killed out-of-band (manual `tmux kill-session`, crash) shows a stale live state
+  // until an action fails. Flip any such session to stopped. Cheap: one has-session
+  // per active session. Already-stopped/deactivated sessions are left untouched, and
+  // a query error is treated as "still alive" so we never flip on a transient failure.
+  async reconcile() {
+    for (const s of this.sessions.values()) {
+      if (!s.muxName || s.active === false || s.state === 'stopped') continue;
+      let alive = true;
+      try { alive = await this.mux.hasSession(s.muxName); } catch { alive = true; }
+      if (alive) continue;
+      s.state = 'stopped';
+      s.active = false;
+      s.activity = 'session ended';
+      this._touch(s.id);
+    }
   }
 
   // Recreate every persisted session after a restart, resuming the conversation.

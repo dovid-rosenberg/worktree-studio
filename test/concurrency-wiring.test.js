@@ -9,7 +9,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { Servers } = require('../server/servers');
+const { Servers, featureFromPath } = require('../server/servers');
 const { validateConcurrency } = require('../server/config');
 
 // accept-blue's real port map + FE configPatch wiring — mirrors config.js defaults.
@@ -378,6 +378,74 @@ test('A8: a colliding offsetStep (step 1) is flagged for the accept-blue port fa
 test('A8: a disabled concurrency block is never validated', () => {
   const msgs = captureWarn(() => validateConcurrency({ concurrency: { ...SHIPPED, enabled: false, maxSlots: 99 } }));
   assert.deepEqual(msgs, []);
+});
+
+// ---------------------------------------------------------------------------
+// Orphan-on-delete: stopping a tracked server frees its slot (DELETE-route semantics)
+// ---------------------------------------------------------------------------
+
+test('orphan cleanup: stop() drops the tracked entry and releaseSlot frees the feature slot', async () => {
+  const s = servers();
+  s.portPid = async () => null; // no real lsof
+  s.alive = () => false;        // don't signal a made-up pid
+  const wt = '/repo/.worktrees/feat-a';
+  s.tracked[wt] = { pid: 999999, repo: 'accept-blue', log: '/x.log' };
+  s.allocSlotFor(featureFromPath(wt));
+  assert.equal(s.slots.has('feat-a'), true, 'slot allocated for the feature');
+
+  const r = await s.stop('accept-blue', wt);
+  assert.equal(r.ok, true);
+  assert.equal(s.tracked[wt], undefined, 'tracked entry removed (server not orphaned)');
+
+  s.releaseSlot(featureFromPath(wt));
+  assert.equal(s.slots.has('feat-a'), false, 'concurrency slot released (not leaked)');
+});
+
+test('stop() targets only the worktree\'s known ports (no full discovery scan)', async () => {
+  const s = servers();
+  s.alive = () => false;
+  const probed = [];
+  s.portPid = async (p) => { probed.push(p); return null; };
+  // accept-blue at slot 0 → its base port family
+  s.allocSlotFor('feat-a');
+  await s.stop('accept-blue', '/repo/.worktrees/feat-a');
+  assert.deepEqual(probed.sort((a, b) => a - b), [1231, 1232, 1233, 1239, 1999], 'probes just this worktree\'s ports');
+});
+
+// ---------------------------------------------------------------------------
+// discoverRunning per-pid cache — resolve each pid once, reuse across scans
+// ---------------------------------------------------------------------------
+
+test('discoverRunning resolves each listening pid once and reuses it on the next scan', async () => {
+  const s = servers();
+  s._listeningPids = async () => new Map([['100', new Set([3000])], ['200', new Set([4000])]]);
+  let calls = 0;
+  s._resolvePid = async (pid) => { calls++; return { cwd: `/cwd/${pid}`, top: `/top/${pid}` }; };
+
+  const a = await s.discoverRunning();
+  const b = await s.discoverRunning();
+  assert.equal(calls, 2, 'each pid resolved once; the second scan is served from cache');
+  assert.deepEqual([...a.keys()].sort(), ['/top/100', '/top/200']);
+  assert.deepEqual(a.get('/top/100'), { pid: 100, ports: [3000] });
+  assert.deepEqual(b, a, 'identical output across scans');
+});
+
+test('discoverRunning drops cache entries for pids that stop listening', async () => {
+  const s = servers();
+  let live = new Map([['100', new Set([3000])]]);
+  s._listeningPids = async () => live;
+  let calls = 0;
+  s._resolvePid = async (pid) => { calls++; return { cwd: `/c/${pid}`, top: `/top/${pid}` }; };
+
+  await s.discoverRunning();            // resolves 100
+  await s.discoverRunning();            // cached → no new resolve
+  assert.equal(calls, 1, '100 resolved once across two scans');
+
+  live = new Map([['200', new Set([4000])]]); // 100 gone, 200 appears
+  await s.discoverRunning();
+  assert.equal(calls, 2, '200 resolved once');
+  assert.equal(s._pidInfoCache.has('100'), false, 'stale pid pruned from the cache');
+  assert.equal(s._pidInfoCache.has('200'), true, 'live pid cached');
 });
 
 // isSlotted — drives the "no stop & switch conflict" behavior for concurrency repos

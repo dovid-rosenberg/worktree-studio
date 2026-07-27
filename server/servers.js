@@ -48,6 +48,9 @@ class Servers {
     // featureName → slot (concurrency: one slot per feature, shared by its repos). Persisted
     // so a Studio restart while features run doesn't re-slot a running feature to slot 0.
     this.slots = new Map(Object.entries(saved.slots || {}).map(([k, v]) => [k, Number(v)]));
+    // pid (string) → { cwd, top } — a process's cwd/git-toplevel never change, so we
+    // resolve each listening pid once and reuse it across discoverRunning scans.
+    this._pidInfoCache = new Map();
   }
 
   _save() { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
@@ -141,14 +144,13 @@ class Servers {
     return pid ? Number(pid) : null;
   }
 
-  // Map every LISTEN socket → owning process cwd → git worktree top-level.
-  // Returns Map(realpath(worktreeTopLevel) → { pid, ports:[int] }).
-  async discoverRunning() {
-    const out = new Map();
-    const r = await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'], { env: ENV });
-    if (r.code !== 0 && !r.stdout) return out;
-    // parse -F output: `p<pid>` starts a process block; `n<host>:<port>` are its sockets
+  // Parse `lsof -Fpn` LISTEN output into Map(pid(string) → Set(port:int)),
+  // filtering ephemeral ports and Studio's own port.
+  async _listeningPids() {
     const byPid = new Map();
+    const r = await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'], { env: ENV });
+    if (r.code !== 0 && !r.stdout) return byPid;
+    // parse -F output: `p<pid>` starts a process block; `n<host>:<port>` are its sockets
     let pid = null;
     for (const line of r.stdout.split('\n')) {
       if (line[0] === 'p') { pid = line.slice(1); if (!byPid.has(pid)) byPid.set(pid, new Set()); }
@@ -160,20 +162,44 @@ class Servers {
         }
       }
     }
+    return byPid;
+  }
+
+  // Resolve one pid → { cwd, top(=realpath git worktree top-level) }, or null if it
+  // isn't inside a git worktree. The two lsof/git spawns here are what the per-pid
+  // cache in discoverRunning elides on subsequent scans.
+  async _resolvePid(pid) {
+    const c = await run('lsof', ['-p', pid, '-a', '-d', 'cwd', '-Fn'], { env: ENV });
+    const cwdLine = c.stdout.split('\n').find((l) => l[0] === 'n');
+    if (!cwdLine) return null;
+    const cwd = cwdLine.slice(1);
+    const top = await run('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { env: ENV });
+    if (top.code !== 0) return null;
+    return { cwd, top: realpath(top.stdout.trim()) };
+  }
+
+  // Map every LISTEN socket → owning process cwd → git worktree top-level.
+  // Returns Map(realpath(worktreeTopLevel) → { pid, ports:[int] }).
+  // Per-pid cwd/toplevel resolution is cached (a process's cwd never changes), so
+  // steady-state scans only re-run the single LISTEN lsof, not a git+lsof per pid.
+  async discoverRunning() {
+    const out = new Map();
+    const byPid = await this._listeningPids();
     for (const [p, ports] of byPid) {
       if (!ports.size) continue;
-      // cwd of the process
-      const c = await run('lsof', ['-p', p, '-a', '-d', 'cwd', '-Fn'], { env: ENV });
-      const cwdLine = c.stdout.split('\n').find((l) => l[0] === 'n');
-      if (!cwdLine) continue;
-      const cwd = cwdLine.slice(1);
-      const top = await run('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { env: ENV });
-      if (top.code !== 0) continue;
-      const key = realpath(top.stdout.trim());
+      let info = this._pidInfoCache.get(p);
+      if (!info) {
+        info = await this._resolvePid(p);
+        if (!info) continue; // not in a git worktree — retry next scan (don't cache misses)
+        this._pidInfoCache.set(p, info);
+      }
+      const key = info.top;
       const cur = out.get(key) || { pid: Number(p), ports: [] };
       cur.ports = [...new Set([...cur.ports, ...ports])].sort((a, b) => a - b);
       out.set(key, cur);
     }
+    // drop cache entries for pids that are no longer listening
+    for (const p of [...this._pidInfoCache.keys()]) if (!byPid.has(p)) this._pidInfoCache.delete(p);
     return out;
   }
 
@@ -237,16 +263,27 @@ class Servers {
     } finally { this._unlock(lock); }
   }
 
+  // Ports a server in this worktree would be listening on: the feature's
+  // slot-derived ports when concurrency-slotted, else the repo's configured ports.
+  _portsFor(repo, worktreePath) {
+    const opts = this.launchOpts(repo, featureFromPath(worktreePath));
+    if (opts.ports && opts.ports.length) return opts.ports;
+    const sc = this.startCfg(repo);
+    return sc ? sc.ports : [];
+  }
+
   async stop(repo, worktreePath) {
     let killed = false;
     const t = this.tracked[worktreePath];
     if (t && this.alive(t.pid)) {
       try { process.kill(-t.pid, 'SIGTERM'); killed = true; } catch { try { process.kill(t.pid, 'SIGTERM'); killed = true; } catch { /* */ } }
     }
-    // also free any port currently held by a server in this worktree
-    const running = await this.discoverRunning();
-    const hit = running.get(realpath(worktreePath));
-    if (hit) { try { process.kill(hit.pid, 'SIGTERM'); killed = true; } catch { /* */ } }
+    // Also free any listener still holding one of this worktree's known ports —
+    // a targeted per-port lookup rather than a full lsof-all-sockets discovery scan.
+    for (const p of this._portsFor(repo, worktreePath)) {
+      const pid = await this.portPid(p);
+      if (pid && (!t || pid !== t.pid)) { try { process.kill(pid, 'SIGTERM'); killed = true; } catch { /* */ } }
+    }
     delete this.tracked[worktreePath];
     this._save();
     return { ok: true, killed };
