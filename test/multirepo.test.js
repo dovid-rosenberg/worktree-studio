@@ -23,7 +23,7 @@ function manager() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-'));
   const cfg = { _stateDir: stateDir, _file: path.join(stateDir, 'config.json'), web: { port: 0 }, claude: { cmd: 'claude' }, baseDirs: [], copyPatterns: {} };
   const sent = [];
-  const mux = { name: 'stub', async sendText(n, t) { sent.push(t); }, async ensure() { return {}; }, async kill() {}, async rename() { return false; }, async hasSession() { return false; } };
+  const mux = { name: 'stub', async sendText(n, t) { sent.push(t); }, async paneCommand() { return 'node'; }, async ensure() { return {}; }, async kill() {}, async rename() { return false; }, async hasSession() { return false; } };
   const m = new SessionManager(cfg, mux);
   m._sent = sent;
   return m;

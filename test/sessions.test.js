@@ -24,7 +24,7 @@ function manager() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-'));
   const cfg = { _stateDir: stateDir, _file: path.join(stateDir, 'config.json'), web: { port: 0 }, claude: { cmd: 'claude' }, baseDirs: [], copyPatterns: {} };
   const sent = [];
-  const mux = { name: 'stub', async sendText(n, t) { sent.push(t); }, async ensure() { return {}; }, async kill() {}, async rename() { return false; }, async hasSession() { return false; } };
+  const mux = { name: 'stub', async sendText(n, t) { sent.push(t); }, async paneCommand() { return 'node'; }, async ensure() { return {}; }, async kill() {}, async rename() { return false; }, async hasSession() { return false; } };
   const m = new SessionManager(cfg, mux);
   m._sent = sent;
   return m;
@@ -131,4 +131,96 @@ test('applyHook SessionEnd deactivates the session and marks it stopped', () => 
   const s = m.get('h5');
   assert.equal(s.active, false);
   assert.equal(s.state, 'stopped');
+});
+
+test('claudeCmd appends the seed as the final positional arg on a FRESH launch, and omits it on resume', () => {
+  const m = manager();
+  const s = { settingsFile: '/tmp/s.settings.json', feature: 'f', repos: [{ primary: true }], seed: 'fix the wallet bug', claudeSessionId: 'sid-9' };
+
+  const fresh = m.claudeCmd(s);
+  assert.ok(fresh.trimEnd().endsWith(shq('fix the wallet bug')), `seed should be the final arg on a fresh launch: ${fresh}`);
+  assert.ok(!/ -r /.test(fresh), `fresh launch should not resume: ${fresh}`);
+
+  const resumed = m.claudeCmd(s, { resume: true });
+  assert.ok(!resumed.includes(shq('fix the wallet bug')), `seed must NOT be re-sent on resume: ${resumed}`);
+  assert.ok(resumed.includes(`-r ${shq('sid-9')}`), `resume should still add -r <id>: ${resumed}`);
+});
+
+test('activate/restore resume cwd resolves to home (transcript dir) for a promoted session', async () => {
+  const m = manager();
+  const home = tempRepo('home');
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-wt-'));
+  let cwd = null;
+  m.mux = {
+    async ensure(n, opts) { cwd = opts.cwd; return {}; },
+    async paneCommand() { return 'node'; }, async sendText() {},
+    async kill() {}, async rename() { return false; }, async hasSession() { return false; },
+  };
+  m.sessions.set('r1', {
+    id: 'r1', muxName: 'mux-r1', repoName: 'a', repoPath: home, home,
+    worktree: 'feat', worktreePath: wt, branch: 'feature/feat',
+    settingsFile: '/tmp/r1.settings.json', repos: [{ repo: 'a', primary: true }],
+    claudeSessionId: 'sid-1', active: false, state: 'stopped', createdAt: Date.now(),
+  });
+
+  await m.activate('r1');
+  assert.equal(cwd, home, 'promoted session resumes from home (not the worktree) so --resume resolves');
+
+  fs.rmSync(home, { recursive: true, force: true });
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('restore flags a promoted session whose worktree dir is gone instead of faking a resume', async () => {
+  const m = manager();
+  const ensured = [];
+  m.mux = { async ensure(n) { ensured.push(n); return {}; }, async hasSession() { return false; }, async sendText() {}, async paneCommand() { return 'node'; } };
+  m.sessions.set('g1', {
+    id: 'g1', muxName: 'mux-g1', repoPath: '/tmp/gone', home: '/tmp/gone',
+    worktree: 'feat', worktreePath: '/tmp/does-not-exist-wts-xyz', branch: 'feature/feat',
+    claudeSessionId: 'sid-1', active: true, state: 'idle', createdAt: Date.now(),
+  });
+
+  const n = await m.restore();
+  assert.equal(n, 0, 'a session with a missing worktree is not counted as restored');
+  assert.equal(ensured.length, 0, 'mux.ensure is not called for a missing worktree');
+  const s = m.get('g1');
+  assert.equal(s.state, 'stopped');
+  assert.equal(s.activity, 'worktree missing');
+});
+
+test('tmux sendText sends the body literally (-l) then submits with a separate Enter', async (t) => {
+  const tmux = require('../server/multiplexer/tmux');
+  if (!(await tmux.available())) { t.skip('tmux not installed'); return; }
+  const name = `wts-test-sendtext-${Date.now().toString(36)}`;
+  const outFile = path.join(os.tmpdir(), `${name}.txt`);
+  // `cat > file` writes each submitted line to the file; a literal send must land
+  // tokens like `Enter`/`;` verbatim (an interpreted send would fire real keys).
+  await tmux.ensure(name, { cwd: os.tmpdir(), cmd: `cat > ${shq(outFile)}` });
+  try {
+    // wait for cat to become the pane's foreground program
+    for (let i = 0; i < 50 && (await tmux.paneCommand(name)) !== 'cat'; i++) await new Promise((r) => setTimeout(r, 100));
+    const literal = 'echo hi; Enter Space done';
+    await tmux.sendText(name, literal);
+    let got = '';
+    for (let i = 0; i < 50; i++) {
+      got = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
+      if (got.includes('done')) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(got.trim(), literal, 'the exact literal string (incl. `;`/`Enter`) was delivered');
+  } finally {
+    await tmux.kill(name);
+    fs.rmSync(outFile, { force: true });
+  }
+});
+
+// adopt launches claude in the worktree, so that's where the transcript lives —
+// home must equal it or --resume (which resumes from home) can't find the conversation.
+test('adopt sets home to the worktree launch dir (so resume resolves the conversation)', async () => {
+  const m = manager();
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-adopt-home-'));
+  const s = await m.adopt({ worktreePath: wt, repoName: 'r', repoPath: '/tmp/r', branch: 'b', wtname: 'feat' });
+  assert.ok(s && s.id, 'session adopted');
+  assert.equal(s.home, wt, 'home is the worktree (launch/transcript dir), not repoPath');
+  fs.rmSync(wt, { recursive: true, force: true });
 });

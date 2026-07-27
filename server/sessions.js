@@ -3,10 +3,24 @@
 // a multiplexer session. Create (seeded on CLAUDE.md, in the main repo) →
 // promote to a worktree (same session continues) → pop-out / tabs / restore.
 const { EventEmitter } = require('events');
+const fs = require('fs');
 const path = require('path');
 const { readJson, writeJson, makeId, slug, shq } = require('./util');
 const status = require('./status');
 const worktree = require('./worktree');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Collapse a (possibly multi-line) seed to a single line so it can ride along as
+// one launch arg / one submitted message.
+function collapse(text) { return (text || '').replace(/\s*\n\s*/g, ' ').trim(); }
+
+// Is `cmd` a bare login/interactive shell (i.e. claude is NOT the foreground
+// program in the pane)? tmux's pane_current_command may be prefixed with '-'.
+function isShell(cmd) {
+  const c = String(cmd || '').replace(/^-/, '');
+  return /^(?:bash|zsh|sh|fish|dash|ksh|csh|tcsh|login)$/i.test(c);
+}
 
 function deriveBranch(seed) {
   const s = slug(seed.title);
@@ -55,9 +69,9 @@ class SessionManager extends EventEmitter {
   }
 
   claudeCmd(session, { resume } = {}) {
-    // Launch claude clean; the seeded first message is typed in once the session
-    // is ready (see injectPrompt) — passing a multi-line prompt as a launch arg
-    // was unreliable through the multiplexer layout.
+    // Launch claude clean. On a FRESH launch the single-line seed rides along as
+    // claude's final positional arg (see below) — no post-launch typing race. On
+    // resume the conversation already contains it, so we don't re-send it.
     // NB: the installed claude rejects -n/--name, so we don't set a display name here.
     // Scrub claude env markers inherited from the parent process so each session
     // is a clean, top-level claude (transcripts on, no "child session" behavior).
@@ -76,7 +90,34 @@ class SessionManager extends EventEmitter {
     const cli = require('path').join(__dirname, '..', 'bin', 'wt-studio.js');
     const note = `You're in a Worktree Studio session (feature "${session.feature}"). If this work needs changes in another repo, run: ${cli} add-repo <repo-name> — it creates a same-named worktree in that repo and grants you access. Repos live under ${(this.cfg.baseDirs || []).join(', ')}.`;
     parts.push('--append-system-prompt', shq(note));
+    // Fresh launch → deliver the seed as claude's final positional (the prompt) arg.
+    // On resume it's already in the conversation, so skip it.
+    if (!resume && session.seed) parts.push(shq(session.seed));
     return parts.join(' ');
+  }
+
+  // Send `text` into a session's claude pane, but only once claude is actually the
+  // foreground program AND (preferably) not mid-turn. If claude never comes up we
+  // no-op and flag it for the UI rather than typing a command into a bare shell.
+  // Used for live injections: /add-dir on add-repo and the promote "cd" guidance.
+  async sendWhenReady(muxName, text, session) {
+    const delays = [0, 400, 800, 1500, 2500];
+    let sawClaude = false;
+    for (let i = 0; i < delays.length; i++) {
+      if (delays[i]) await sleep(delays[i]);
+      let cmd = '';
+      try { cmd = this.mux.paneCommand ? await this.mux.paneCommand(muxName) : 'claude'; } catch { cmd = ''; }
+      if (!cmd || isShell(cmd)) continue; // claude not in the foreground yet
+      sawClaude = true;
+      const st = session && session.state;
+      const midTurn = st && st !== 'idle' && st !== 'waiting';
+      if (midTurn && i < delays.length - 1) continue; // busy → back off and retry
+      await this.mux.sendText(muxName, text);
+      return { ok: true };
+    }
+    // Never saw claude → don't type into a shell; surface it so the UI can prompt.
+    if (session) { session.activity = 'action pending (claude not ready)'; this._touch(session.id); }
+    return { ok: false, skipped: true, reason: sawClaude ? 'busy' : 'no-claude' };
   }
 
   // Add a repo to this session's feature: create a same-named worktree there and
@@ -99,8 +140,8 @@ class SessionManager extends EventEmitter {
       return res;
     }
     s.repos.push({ repo, repoPath, worktree: res.name, worktreePath: res.path, branch: res.branch, primary: false });
-    // grant the running session access, live
-    await this.mux.sendText(s.muxName, `/add-dir ${res.path}`);
+    // grant the running session access, live (gated on claude being ready)
+    await this.sendWhenReady(s.muxName, `/add-dir ${res.path}`, s);
     this._touch(id);
     return { ok: true, session: s, worktree: res };
   }
@@ -112,19 +153,9 @@ class SessionManager extends EventEmitter {
     if (!s) return { ok: false };
     if ((s.repos || []).some((r) => r.worktreePath === worktreePath)) return { ok: true, already: true };
     s.repos.push({ repo, repoPath, worktree: wtname, worktreePath, branch, primary: false });
-    await this.mux.sendText(s.muxName, `/add-dir ${worktreePath}`);
+    await this.sendWhenReady(s.muxName, `/add-dir ${worktreePath}`, s);
     this._touch(id);
     return { ok: true };
-  }
-
-  // Type the seeded first message into a freshly-started session and submit it.
-  // Collapsed to one line so a single Enter submits (newlines would submit early).
-  async injectPrompt(id) {
-    const s = this.get(id);
-    if (!s || !s.pendingPrompt) return;
-    const line = s.pendingPrompt.replace(/\s*\n\s*/g, ' ').trim();
-    s.pendingPrompt = null;
-    await this.mux.sendText(s.muxName, line);
   }
 
   async create({ seed, repoPath, repoName, additionalRepos }) {
@@ -156,7 +187,7 @@ class SessionManager extends EventEmitter {
       state: 'idle',
       activity: 'starting…',
       tabs: [{ title: 'claude' }],
-      pendingPrompt: seedPrompt(seed),
+      seed: collapse(seedPrompt(seed)), // single-line seed, delivered as claude's launch arg
       active: true,
       createdAt: Date.now(),
       promotedAt: null,
@@ -167,9 +198,6 @@ class SessionManager extends EventEmitter {
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
-    // Inject the first message once claude is up. The SessionStart hook triggers
-    // it (applyHook); this is a fallback in case the hook is slow/absent.
-    else setTimeout(() => this.injectPrompt(id).catch(() => {}), 12000);
     this._touch(id);
     return session;
   }
@@ -193,14 +221,14 @@ class SessionManager extends EventEmitter {
     const muxName = `wts-${slug(wtname || title)}-${id.slice(2)}`.slice(0, 60);
     const session = {
       id, title, source: s.source, sourceId: s.id || null, sourceUrl: s.url || null,
-      repoName, repoPath, home: repoPath,
+      repoName, repoPath, home: worktreePath, // launch/transcript dir (claude runs here) — so --resume finds it
       worktree: wtname, worktreePath, branch: branch || null,
       feature: slug(wtname || title),
       repos: [{ repo: repoName, repoPath, worktree: wtname, worktreePath, branch: branch || null, primary: true }],
       pendingRepos: [],
       suggestedBranch: branch || null, suggestedName: wtname || slug(title),
       muxName, claudeSessionId: null, state: 'idle', activity: 'starting…',
-      tabs: [{ title: 'claude' }], pendingPrompt: seed ? seedPrompt(seed) : null, active: true,
+      tabs: [{ title: 'claude' }], seed: seed ? collapse(seedPrompt(seed)) : null, active: true,
       createdAt: Date.now(), promotedAt: Date.now(), adopted: true,
     };
     session.settingsFile = status.settingsFile(this.cfg._stateDir, id, this.cfg.web.port);
@@ -208,7 +236,6 @@ class SessionManager extends EventEmitter {
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
-    else if (session.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 12000);
     this._touch(id);
     return session;
   }
@@ -235,10 +262,10 @@ class SessionManager extends EventEmitter {
     // rename the mux session to the worktree (best-effort; harmless if unsupported)
     const newMux = `wts-${res.name}`.slice(0, 60);
     if (await this.mux.rename(s.muxName, newMux)) s.muxName = newMux;
-    // tell the running session to continue inside the worktree
-    await this.mux.sendText(s.muxName, `The worktree is ready at ${res.path} — please cd there and do all further work in that directory.`);
+    // tell the running session to continue inside the worktree (gated on claude ready)
+    await this.sendWhenReady(s.muxName, `The worktree is ready at ${res.path} — please cd there and do all further work in that directory.`, s);
     this._touch(id);
-    // fan out to any repos chosen up front (creates their worktrees + grants access)
+    // fan out to any repos chosen up front, serialized (each addRepo is itself gated)
     for (const pr of s.pendingRepos || []) {
       try { await this.addRepo(id, pr); } catch { /* */ }
     }
@@ -282,6 +309,8 @@ class SessionManager extends EventEmitter {
     const s = this.get(id);
     if (!s) return { ok: false };
     if (kill) await this.mux.kill(s.muxName);
+    // clean up the per-session hook settings file (best-effort)
+    if (s.settingsFile) { try { fs.unlinkSync(s.settingsFile); } catch { /* */ } }
     this.sessions.delete(id);
     this._save();
     this.emit('change', { type: 'session-removed', id });
@@ -294,9 +323,7 @@ class SessionManager extends EventEmitter {
     if (!s) return;
     if (event === 'SessionStart') {
       if (payload && payload.session_id) s.claudeSessionId = payload.session_id;
-      // claude is up — type in the seeded first message. Wait for the TUI input to
-      // be ready (it isn't immediately at SessionStart), else the keystrokes drop.
-      if (s.pendingPrompt) setTimeout(() => this.injectPrompt(id).catch(() => {}), 4000);
+      // The seed is delivered as claude's launch arg (see claudeCmd) — nothing to inject.
     }
     const m = status.mapEvent(event, payload);
     if (m) { s.state = m.state; if (m.activity) s.activity = m.activity; }
@@ -330,13 +357,26 @@ class SessionManager extends EventEmitter {
   async activate(id) {
     const s = this.get(id);
     if (!s) return { ok: false };
+    // A promoted session whose worktree vanished can't continue — flag it instead of
+    // faking a resume into a dead directory.
+    if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
+      s.active = true; s.state = 'stopped'; s.activity = 'worktree missing';
+      this._touch(id);
+      return { ok: false, error: 'worktree missing' };
+    }
     const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
-    const cwd = s.worktreePath || s.home || s.repoPath;
+    // Resume from the transcript's home dir (where create ran) so --resume can find
+    // the conversation; a promoted session then gets gated guidance to work in the wt.
+    let cwd = s.home || s.repoPath;
+    if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
     const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
     s.active = true;
     s.state = 'idle';
     s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
     this._touch(id);
+    if (!r.error && s.worktreePath) {
+      this.sendWhenReady(s.muxName, `Resuming your work — continue in the worktree at ${s.worktreePath} (cd there for all further work).`, s).catch(() => {});
+    }
     return { ok: !r.error, error: r.error };
   }
 
@@ -358,14 +398,26 @@ class SessionManager extends EventEmitter {
       if (!s.muxName) continue;
       if (s.active === false) continue;
       if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
+      // A promoted session whose worktree is gone can't be resumed meaningfully —
+      // flag it rather than launch a dead pane and claim success.
+      if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
+        s.state = 'stopped'; s.activity = 'worktree missing';
+        continue;
+      }
       const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
-      const cwd = s.worktreePath || s.home || s.repoPath;
+      // Resume from the transcript's home dir so --resume can find the conversation.
+      let cwd = s.home || s.repoPath;
+      if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
       await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
       // restore recreates only the primary claude window — drop any stale extra
       // tabs so the tab strip matches the windows that actually exist.
       s.tabs = [{ title: 'claude' }];
       s.state = 'idle';
       s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
+      // promoted → re-issue gated guidance to continue in the worktree.
+      if (s.worktreePath) {
+        this.sendWhenReady(s.muxName, `Resuming your work — continue in the worktree at ${s.worktreePath} (cd there for all further work).`, s).catch(() => {});
+      }
       n++;
     }
     this._save();

@@ -50,10 +50,13 @@ module.exports = {
 
   async ensure(name, { cwd, cmd, env } = {}) {
     if (await this.hasSession(name)) return { created: false };
-    const r = await T(['new-session', '-d', '-s', name, '-n', 'claude', '-x', '220', '-y', '50', '-c', cwd || process.env.HOME]);
+    // Pass env in new-session itself (-e KEY=VAL, tmux ≥3.2) so window 0's shell —
+    // and the claude launched into it — inherits it. set-environment AFTER new-session
+    // is too late: window 0 already spawned without the vars.
+    const envArgs = [];
+    if (env) for (const [k, v] of Object.entries(env)) envArgs.push('-e', `${k}=${String(v)}`);
+    const r = await T(['new-session', '-d', '-s', name, '-n', 'claude', '-x', '220', '-y', '50', '-c', cwd || process.env.HOME, ...envArgs]);
     if (r.code !== 0) return { created: false, error: r.stderr.trim() };
-    // set env vars for the pane, then run the command
-    if (env) for (const [k, v] of Object.entries(env)) await T(['set-environment', '-t', name, k, String(v)]);
     await T(['set-option', '-t', name, 'remain-on-exit', 'off']);
     await T(['send-keys', '-t', `${name}:0`, '--', persistCmd(cmd), 'Enter']);
     return { created: true };
@@ -92,7 +95,18 @@ module.exports = {
   },
 
   async sendText(name, text, target = '0') {
-    return T(['send-keys', '-t', `${name}:${target}`, '--', text, 'Enter']);
+    const t = `${name}:${target}`;
+    // Send the body literally (-l) so tmux never interprets a token like `;`, `Enter`,
+    // or `C-c` inside a prompt as a key. Submit with a SEPARATE explicit Enter.
+    await T(['send-keys', '-t', t, '-l', '--', text]);
+    return T(['send-keys', '-t', t, 'Enter']);
+  },
+
+  // Foreground program in a pane (e.g. 'node'/'claude' when claude is up, a shell
+  // name like 'zsh' when it isn't). Used to gate live keystroke injection.
+  async paneCommand(name, target = '0') {
+    const r = await T(['display-message', '-p', '-t', `${name}:${target}`, '#{pane_current_command}']);
+    return r.code === 0 ? r.stdout.trim() : '';
   },
 
   async selectTab(name, id) {

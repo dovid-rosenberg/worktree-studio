@@ -123,6 +123,13 @@ function load() {
     for (const k of Object.keys(d)) if (!(k in cfg)) cfg[k] = d[k];
     if (!cfg.web) cfg.web = d.web;
     if (!cfg.web.port) cfg.web.port = d.web.port;
+    // Targeted deep-merge for copyPatterns.default only: the shallow merge above skips
+    // it whenever the on-disk config already has a (possibly stale) copyPatterns key, so
+    // newly-shipped default patterns would never reach existing users. Union the shipped
+    // defaults into the user's default array (de-duped, user's extra patterns kept).
+    // Per-repo overrides under copyPatterns are left untouched.
+    cfg.copyPatterns = cfg.copyPatterns || {};
+    cfg.copyPatterns.default = [...new Set([...(cfg.copyPatterns.default || []), ...d.copyPatterns.default])];
   }
   cfg._file = CONFIG_FILE;
   cfg._stateDir = STATE_DIR;
