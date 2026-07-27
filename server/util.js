@@ -82,4 +82,12 @@ function shq(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, slug, shq };
+// Wrap async route handlers so a rejected promise becomes a 500 instead of an
+// unhandled rejection (Express 4 doesn't await handlers). Lives here so every
+// route module wraps its handlers the same way.
+const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
+  console.error('[wt-studio]', e);
+  if (!res.headersSent) res.status(500).json({ error: e.message });
+});
+
+module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, slug, shq, A };
