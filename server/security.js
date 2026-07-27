@@ -96,6 +96,22 @@ function createGuard({ cfg, token }) {
   const bindHost = () => String((cfg.web && cfg.web.host) || '127.0.0.1').toLowerCase();
   const bindPort = () => String((cfg.web && cfg.web.port) || '');
 
+  // A refusal is usually a stale client, not an attack, and the client only gets a
+  // bare 401/403 — so log one line for the human. Deduplicated per reason for a
+  // minute, because a page in a retry loop would otherwise flood the console. Never
+  // logs the presented token.
+  const loggedAt = new Map();
+  function deny(status, error, req) {
+    const now = Date.now();
+    if (!(loggedAt.get(error) > now - 60000)) {
+      loggedAt.set(error, now);
+      const h = (req.headers && req.headers.host) || '-';
+      const o = (req.headers && req.headers.origin) || '-';
+      console.warn(`[wt-studio] refused ${req.method || 'UPGRADE'} ${String(req.url).split('?')[0]} — ${error} (host=${h} origin=${o})`);
+    }
+    return { status, error };
+  }
+
   function hostAllowed(host) {
     // A non-loopback bind host is an explicit choice by the user (they edited
     // config.web.host); keep that address reachable rather than locking them out.
@@ -111,9 +127,7 @@ function createGuard({ cfg, token }) {
   // loopback name is what defeats DNS rebinding.
   function denyHost(req) {
     const parsed = splitHostPort(req.headers && req.headers.host);
-    if (!parsed || !hostAllowed(parsed.host) || !portAllowed(parsed.port)) {
-      return { status: 403, error: 'forbidden host' };
-    }
+    if (!parsed || !hostAllowed(parsed.host) || !portAllowed(parsed.port)) return deny(403, 'forbidden host', req);
     return null;
   }
 
@@ -121,15 +135,18 @@ function createGuard({ cfg, token }) {
   // purpose — every non-browser client (curl, SwiftBar, Alfred, hook script) sends
   // none, and those are gated by the token instead. A browser cannot forge or
   // suppress this header, so "present but wrong" is always an attack.
+  // Note `Origin: null` is refused rather than treated as absent: it is what a
+  // sandboxed iframe or a data: document sends, i.e. an opaque origin the attacker
+  // chose. Nothing legitimate here produces one.
   function denyOrigin(req) {
     const raw = req.headers && req.headers.origin;
-    if (!raw || raw === 'null') return null;
+    if (!raw) return null;
     let u;
-    try { u = new URL(raw); } catch { return { status: 403, error: 'forbidden origin' }; }
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return { status: 403, error: 'forbidden origin' };
+    try { u = new URL(raw); } catch { return deny(403, 'forbidden origin', req); }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return deny(403, 'forbidden origin', req);
     const host = u.hostname.toLowerCase();
     // URL normalises [::1] to ::1 in `hostname`; both spellings are in LOOPBACK.
-    if (!hostAllowed(host) || !portAllowed(u.port)) return { status: 403, error: 'forbidden origin' };
+    if (!hostAllowed(host) || !portAllowed(u.port)) return deny(403, 'forbidden origin', req);
     return null;
   }
 
@@ -150,7 +167,7 @@ function createGuard({ cfg, token }) {
   }
 
   function denyToken(req, queryToken) {
-    return timingSafeEqual(presented(req, queryToken), token) ? null : { status: 401, error: 'missing or invalid token' };
+    return timingSafeEqual(presented(req, queryToken), token) ? null : deny(401, 'missing or invalid token', req);
   }
 
   // Express middleware. `browser` guards everything (including the static assets and

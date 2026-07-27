@@ -22,6 +22,18 @@ function isShell(cmd) {
   return /^(?:bash|zsh|sh|fish|dash|ksh|csh|tcsh|login)$/i.test(c);
 }
 
+// tmux session name for a session: `wts-<feature>-<id tail>`, capped at 60 chars.
+// The cap is taken out of the FEATURE, never out of the tail — two sessions of the
+// same feature are told apart only by that suffix, and truncating the whole string
+// (which is what this did while ids were tiny) silently eats it now that ids are
+// UUIDs. muxName is persisted per session, so existing sessions keep their name.
+const MUX_MAX = 60;
+function muxNameFor(name, id) {
+  const tail = shortId(id);
+  const room = MUX_MAX - 'wts-'.length - 1 - tail.length;
+  return `wts-${String(name || 'session').slice(0, Math.max(1, room))}-${tail}`;
+}
+
 function deriveBranch(seed) {
   const s = slug(seed.title);
   const type = /\b(fix|bug|error|broken|regression|crash|fails?)\b/i.test(`${seed.title} ${seed.body}`) ? 'fix' : 'feature';
@@ -183,10 +195,7 @@ class SessionManager extends EventEmitter {
     const id = makeId('s_');
     const title = seed.title || 'New session';
     const name = slug(title);
-    // The id is a UUID now, so only a short tail of it goes in the tmux session name
-    // (a label, not the credential). muxName is persisted per session, so sessions
-    // named under the old scheme keep the name they already have.
-    const muxName = `wts-${name}-${shortId(id)}`.slice(0, 60);
+    const muxName = muxNameFor(name, id);
     const session = {
       id,
       title,
@@ -242,7 +251,7 @@ class SessionManager extends EventEmitter {
     const s = seed || { source: 'freetext', title: wtname || require('path').basename(worktreePath), body: '', url: null };
     const id = makeId('s_');
     const title = s.title;
-    const muxName = `wts-${slug(wtname || title)}-${shortId(id)}`.slice(0, 60);
+    const muxName = muxNameFor(slug(wtname || title), id);
     const session = {
       id, title, source: s.source, sourceId: s.id || null, sourceUrl: s.url || null,
       repoName, repoPath, home: worktreePath, // launch/transcript dir (claude runs here) — so --resume finds it
@@ -495,4 +504,4 @@ class SessionManager extends EventEmitter {
   }
 }
 
-module.exports = { SessionManager, deriveBranch, seedPrompt };
+module.exports = { SessionManager, deriveBranch, seedPrompt, muxNameFor };

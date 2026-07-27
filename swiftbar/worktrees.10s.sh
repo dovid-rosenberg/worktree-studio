@@ -14,7 +14,7 @@ ACT="$HOME/worktree-studio/swiftbar/wts-action.sh"
 # The API needs the boot token; it lives in the state dir at mode 0600, so only
 # processes running as this user can read it.
 STATE_DIR="${WT_STUDIO_STATE:-$HOME/.local/state/worktree-studio}"
-TOKEN="$(tr -d '[:space:]' <"$STATE_DIR/token" 2>/dev/null)"
+TOKEN="$(cat "$STATE_DIR/token" 2>/dev/null | tr -d '[:space:]')"
 
 STATE="$(curl -s -m 2 -H "x-wts-token: $TOKEN" "$BASE/api/state" 2>/dev/null)"
 # A refusal is a *response*, so "empty" no longer means "down" — tell the two apart

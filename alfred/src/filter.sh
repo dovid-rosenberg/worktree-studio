@@ -6,7 +6,7 @@ CFG="${WT_STUDIO_CONFIG:-$HOME/.config/worktree-studio/config.json}"
 PORT="$(jq -r '.web.port // 7788' "$CFG" 2>/dev/null || echo 7788)"
 # The API needs the boot token — mode 0600 in the state dir, readable only by us.
 STATE_DIR="${WT_STUDIO_STATE:-$HOME/.local/state/worktree-studio}"
-TOKEN="$(tr -d '[:space:]' <"$STATE_DIR/token" 2>/dev/null)"
+TOKEN="$(cat "$STATE_DIR/token" 2>/dev/null | tr -d '[:space:]')"
 STATE="$(curl -s -m 2 -H "x-wts-token: $TOKEN" "http://127.0.0.1:$PORT/api/state" 2>/dev/null)"
 
 # A refusal is a response, so "empty" no longer means "down" — say which it was.
