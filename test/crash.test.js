@@ -117,8 +117,14 @@ test('a daemon that cannot bind its port exits non-zero instead of running on he
   const stateDir = path.join(dir, 'state');
   fs.writeFileSync(configFile, JSON.stringify({ baseDirs: [], web: { host: '127.0.0.1', port: held.port } }));
 
+  // WTS_UI=legacy pins this to `public/`, which is tracked in the repo. Without it the
+  // test depends on `client/build` existing: a missing build is itself a fatal boot
+  // error (webui.resolve), so on a fresh clone this daemon would exit non-zero for the
+  // WRONG reason and the assertion below would report a confusing failure. This test is
+  // about crash policy, not about which UI is served — so pin the part it doesn't care
+  // about. If `public/` is ever removed, this needs a stub UI dir instead.
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'server.js')], {
-    env: { ...process.env, WT_STUDIO_CONFIG: configFile, WT_STUDIO_STATE: stateDir },
+    env: { ...process.env, WT_STUDIO_CONFIG: configFile, WT_STUDIO_STATE: stateDir, WTS_UI: 'legacy' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
