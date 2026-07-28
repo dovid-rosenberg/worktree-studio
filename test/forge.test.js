@@ -8,6 +8,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const express = require('express');
 const { createForge, ghChecks, glChecks, PROVIDERS } = require('../server/forge');
 
 // A worktree path that is deliberately NOT a git repo: openPullRequest pushes first,
@@ -96,6 +97,20 @@ test('ciForRepo caches per worktreePath+branch and re-serves the cached answer',
   assert.equal(calls, 2, 'the repo name is not part of the key — it is stamped onto the answer');
 });
 
+test('invalidate() drops the cache so a triggered refresh really re-looks', async () => {
+  // The push side calls this when it knows the truth changed (a commit, a push, a PR
+  // just opened). Without it a refresh fired inside the TTL would re-serve exactly
+  // the answer it was fired to replace.
+  let calls = 0;
+  const f = forge([provider('github', { view: async () => { calls++; return GH_HIT; } })]);
+  await f.ciForRepo(ENTRY, {});
+  await f.ciForRepo(ENTRY, {});
+  assert.equal(calls, 1);
+  f.invalidate();
+  await f.ciForRepo(ENTRY, {});
+  assert.equal(calls, 2, 'the cached answer is wrong now, not merely old');
+});
+
 test('ciForRepo short-circuits an entry with no worktree or no branch', async () => {
   let asked = false;
   const f = forge([provider('github', { view: async () => { asked = true; return GH_HIT; } })]);
@@ -166,4 +181,76 @@ test('creation is attempted even for a CLI that is not installed', async () => {
 
 test('the shipped providers are GitHub then GitLab', () => {
   assert.deepEqual(PROVIDERS.map((p) => [p.id, p.cli]), [['github', 'gh'], ['gitlab', 'glab']]);
+});
+
+// ---------------------------------------------------------------------------
+// POST /group/pr as a CI trigger
+// ---------------------------------------------------------------------------
+
+// Serve a router carrying only the forge's routes, and hand fn a fetcher.
+async function serving(register, fn) {
+  const app = express();
+  app.use(express.json());
+  const api = express.Router();
+  app.use('/api', api);
+  register(api);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  try { return await fn((p, body) => fetch(`http://127.0.0.1:${server.address().port}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })); }
+  finally { server.close(); }
+}
+
+const GROUP = { name: 'feat-a', members: [{ repo: 'api', path: NOT_A_REPO, branch: 'feature/a' }] };
+
+test('opening a PR invalidates the cache and tells the push side to re-look', async () => {
+  // A branch that had no PR a second ago has one now, and the cached `hasPR: false`
+  // says otherwise — without this the pill would not appear until the TTL expired.
+  let pokes = 0;
+  let views = 0;
+  const f = createForge({
+    providers: [provider('github', {
+      view: async () => (views++ ? GH_HIT : null), // no PR the first time, one after
+      create: async () => ({ ok: true, url: 'https://gh/pr/1' }),
+    })],
+    isInstalled: () => true,
+    resolveGroup: async () => ({ group: GROUP }),
+    onChanged: () => { pokes++; },
+  });
+
+  assert.deepEqual(await f.ciForRepo({ repo: 'api', worktreePath: NOT_A_REPO, branch: 'feature/a' }, {}), { repo: 'api', hasPR: false });
+  await serving((api) => f.register(api), async (post) => {
+    const r = await (await post('/api/group/pr', { group: 'feat-a' })).json();
+    assert.equal(r.ok, true);
+  });
+  assert.equal(pokes, 1);
+  assert.deepEqual(await f.ciForRepo({ repo: 'api', worktreePath: NOT_A_REPO, branch: 'feature/a' }, {}), { repo: 'api', ...GH_HIT },
+    'the stale "no PR" answer was dropped, not re-served');
+});
+
+test('a group whose PRs all failed to open changes nothing', async () => {
+  let pokes = 0;
+  const f = createForge({
+    providers: [provider('github', { create: async () => ({ ok: false, stderr: 'gh: not authenticated' }) })],
+    isInstalled: () => true,
+    resolveGroup: async () => ({ group: GROUP }),
+    onChanged: () => { pokes++; },
+  });
+  await serving((api) => f.register(api), async (post) => {
+    assert.equal((await (await post('/api/group/pr', { group: 'feat-a' })).json()).ok, false);
+  });
+  assert.equal(pokes, 0, 'nothing changed, so nothing is refreshed');
+});
+
+test('a push listener that throws cannot break the PR route', async () => {
+  const f = createForge({
+    providers: [provider('github', { create: async () => ({ ok: true, url: 'https://gh/pr/1' }) })],
+    isInstalled: () => true,
+    resolveGroup: async () => ({ group: GROUP }),
+    onChanged: () => { throw new Error('feed is on fire'); },
+  });
+  await serving((api) => f.register(api), async (post) => {
+    const res = await post('/api/group/pr', { group: 'feat-a' });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).ok, true);
+  });
 });

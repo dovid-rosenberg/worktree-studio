@@ -266,3 +266,95 @@ test('with nobody listening, a flush builds nothing', () => {
   bus.flush();
   assert.equal(builds, 0);
 });
+
+// ---------------------------------------------------------------------------
+// the ci half — a third event precisely so it does NOT ride the hook half
+// ---------------------------------------------------------------------------
+
+const CI = () => ({ ci: { s_1: [{ repo: 'api', hasPR: true, provider: 'github', number: 4, url: 'https://gh/4', state: 'OPEN', checks: { passed: 1, running: 0, failed: 0, total: 1 } }] } });
+
+test('a subscriber gets the CI half in its snapshot too', () => {
+  const { topology, sessionState } = world();
+  const bus = createBroadcast({ topology, sessionState, ci: CI });
+  const c = fakeClient();
+  bus.subscribe(c);
+  const frames = c.frames();
+  assert.deepEqual(frames.map((f) => f.event), ['topology', 'session-state', 'ci']);
+  assert.deepEqual(frames[2].data, CI());
+});
+
+test('hook traffic never re-sends the CI half', () => {
+  let builds = 0;
+  const { topology, sessionState } = world();
+  const bus = createBroadcast({ topology, sessionState, ci: () => { builds++; return CI(); } });
+  const c = fakeClient();
+  bus.subscribe(c);
+  const afterSnapshot = builds;
+  c.chunks.length = 0;
+  for (let i = 0; i < 10; i++) bus.schedule();     // ten tool calls
+  bus.flush();
+  bus.schedule({ topology: true });                // …and a git rescan
+  bus.flush();
+  assert.deepEqual(c.frames().map((f) => f.event), ['session-state', 'topology', 'session-state'],
+    'CI changes on a different timescale — it must not be dragged along by either');
+  assert.equal(builds, afterSnapshot, 'and it is not even serialized');
+});
+
+test('a ci-flagged broadcast sends the CI half, and the flag is consumed', () => {
+  const { topology, sessionState } = world();
+  const bus = createBroadcast({ topology, sessionState, ci: CI });
+  const c = fakeClient();
+  bus.subscribe(c);
+  c.chunks.length = 0;
+  bus.schedule({ ci: true });
+  bus.flush();
+  assert.deepEqual(c.frames().map((f) => f.event), ['session-state', 'ci']);
+  c.chunks.length = 0;
+  bus.schedule();
+  bus.flush();
+  assert.deepEqual(c.frames().map((f) => f.event), ['session-state'], 'not sticky');
+});
+
+test('a ci flag raised inside a debounce window survives the coalescing', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { topology, sessionState } = world();
+  const bus = createBroadcast({ topology, sessionState, ci: CI });
+  const c = fakeClient();
+  bus.subscribe(c);
+  c.chunks.length = 0;
+  bus.schedule();                    // a hook opens the window
+  bus.schedule({ ci: true });        // a sweep lands inside it
+  bus.schedule({ topology: true });
+  t.mock.timers.tick(80);
+  assert.deepEqual(c.frames().map((f) => f.event), ['topology', 'session-state', 'ci']);
+});
+
+test('a bus wired without a CI half behaves exactly as it did with two events', () => {
+  const { topology, sessionState } = world();
+  const bus = createBroadcast({ topology, sessionState });
+  const c = fakeClient();
+  bus.subscribe(c);
+  assert.deepEqual(c.frames().map((f) => f.event), ['topology', 'session-state']);
+  c.chunks.length = 0;
+  bus.schedule({ ci: true });
+  bus.flush();
+  assert.deepEqual(c.frames().map((f) => f.event), ['session-state'], 'a ci flag with no ci half is a no-op');
+});
+
+test('the CI half is read at write time, so a subscriber and a flush cannot disagree', () => {
+  let snapshot = { ci: {} };
+  const { topology, sessionState } = world();
+  const bus = createBroadcast({ topology, sessionState, ci: () => snapshot });
+  const early = fakeClient();
+  bus.subscribe(early);
+  assert.deepEqual(early.frames()[2].data, { ci: {} }, 'nothing known yet');
+
+  snapshot = CI();
+  early.chunks.length = 0;
+  bus.schedule({ ci: true });
+  bus.flush();
+  const late = fakeClient();
+  bus.subscribe(late);
+  assert.deepEqual(early.frames().find((f) => f.event === 'ci').data, snapshot);
+  assert.deepEqual(late.frames().find((f) => f.event === 'ci').data, snapshot, 'late joiner === streamed client');
+});
