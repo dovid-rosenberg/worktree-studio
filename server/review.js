@@ -226,7 +226,15 @@ function structure(diffText) {
 
 // Stage the given paths (or everything) and commit. Returns { ok, sha, error }.
 async function commit(worktreePath, message, { amend, paths } = {}) {
-  const add = paths && paths.length ? ['add', ...paths] : ['add', '-A'];
+  // `paths` is req.body.paths, and it was spread straight into the argv. Without a
+  // `--` separator an element beginning with `-` is an OPTION to git add
+  // (`--chmod=+x`, `--pathspec-from-file=…`), and a non-string element reaches
+  // execFile and throws a TypeError — a 500 for what is a bad request. Every other
+  // git call in this file already separates paths from flags; this one didn't.
+  if (paths != null && !Array.isArray(paths)) return { ok: false, error: 'paths must be an array of strings' };
+  const list = paths || [];
+  if (list.some((p) => typeof p !== 'string' || !p)) return { ok: false, error: 'every entry in paths must be a non-empty string' };
+  const add = list.length ? ['add', '--', ...list] : ['add', '-A'];
   const a = await gitFull(worktreePath, add);
   if (a.code !== 0) return { ok: false, error: a.stderr.trim() || 'git add failed' };
   const args = ['commit', '-m', message];

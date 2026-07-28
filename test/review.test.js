@@ -312,3 +312,45 @@ test('a real sha still resolves, with the option terminator in place', async () 
   assert.ok(detail.files[0].diff.includes('committed work'));
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// `paths` reaches a git argv too
+// ---------------------------------------------------------------------------
+
+test('a path that is really a git flag is treated as a pathspec, not an option', async () => {
+  const { dir } = tempRepo();
+  const target = path.join(dir, 'modified.txt');
+  const modeBefore = fs.statSync(target).mode;
+
+  // Without the `--` separator this is `git add --chmod=+x modified.txt`, which git
+  // honours: the file is staged executable.
+  const r = await review.commit(dir, 'msg', { paths: ['--chmod=+x', 'modified.txt'] });
+
+  assert.equal(r.ok, false, 'the flag was refused, not honoured');
+  assert.match(r.error, /pathspec/, r.error);
+  const staged = sh(dir, ['ls-files', '-s', 'modified.txt']);
+  assert.ok(!staged.startsWith('100755'), `modified.txt was staged as ${staged.split(' ')[0]}`);
+  assert.equal(fs.statSync(target).mode, modeBefore);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a non-string entry in paths is a rejected request, not a TypeError', async () => {
+  const { dir } = tempRepo();
+  for (const bad of [[123], [null], [{}], ['']]) {
+    const r = await review.commit(dir, 'msg', { paths: bad });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.match(r.error, /non-empty string/);
+  }
+  const r = await review.commit(dir, 'msg', { paths: 'modified.txt' });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /must be an array/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('committing a real list of paths still works', async () => {
+  const { dir } = tempRepo();
+  const r = await review.commit(dir, 'just the new file', { paths: ['new.txt'] });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(sh(dir, ['show', '--name-only', '--format=', 'HEAD']).trim(), 'new.txt');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
