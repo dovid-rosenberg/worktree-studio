@@ -161,6 +161,7 @@ export interface Session {
   /** Repos chosen up front, added at promote time. */
   pendingRepos: Array<{ repo: string; repoPath: string }>;
   suggestedBranch: string | null;
+  /** Never null: a slug of the title is the floor. */
   suggestedName: string;
   muxName: string;
   claudeSessionId: string | null;
@@ -216,7 +217,9 @@ export interface Worktree {
   isMain: boolean;
   detached: boolean;
   merged: boolean;
-  baseBranch: string | null;
+  /** The owning repo's defaultBranch, repeated. Never null — git.js falls back to 'main'. */
+  baseBranch: string;
+  /** The scanned baseDir this repo sits under, or '' when none matched. */
   baseDir: string;
   running: boolean;
   pid: number | null;
@@ -238,7 +241,9 @@ export interface Repo {
   name: string;
   repo: string;
   path: string;
-  defaultBranch: string | null;
+  /** origin/HEAD's branch, else the current branch, else 'main' — never null. */
+  defaultBranch: string;
+  /** Main checkout first: `git worktree list` lists it first and isMain is index 0. */
   worktrees: Worktree[];
 }
 
@@ -276,10 +281,13 @@ export interface ResolvedFeature extends Omit<Feature, 'members'> {
   members: Worktree[];
 }
 
-/** The chrome a client renders from, alongside the topology it decorates. */
+/**
+ * The two config values the payload carries. NOT the config file — that is
+ * `GET /settings`. `configFile` is the absolute path of the file that was loaded.
+ */
 export interface StateConfigSummary {
   port: number;
-  configFile: string | undefined;
+  configFile: string;
 }
 
 /** One intake source, as server/sources reports the enabled ones. */
