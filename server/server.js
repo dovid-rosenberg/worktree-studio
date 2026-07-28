@@ -618,6 +618,12 @@ async function main() {
   // A failed bind has to kill the process. Without this the 'error' event has no
   // listener, Node re-throws it, and the daemon runs on with no HTTP server.
   crash.guardListen(server, { host: cfg.web.host, port: cfg.web.port });
+  // servers.json's tracked pids outlive this process — and reboots, after which the
+  // OS starts handing out low pids again. Drop the ones that no longer name a
+  // process we launched before anything can use them as a kill target.
+  for (const d of await servers.pruneTracked()) {
+    console.warn(`[wt-studio] dropped stale tracked pid ${d.pid} for ${d.worktreePath}`);
+  }
   await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
