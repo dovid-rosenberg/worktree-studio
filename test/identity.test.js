@@ -5,6 +5,9 @@
 // because a feature grouped one way and slotted another collides on ports.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { createIdentity, compileBranchMatcher, firstCapture } = require('../server/identity');
 const { computeFeatures } = require('../server/features');
 const { featureFromPath } = require('../server/servers');
@@ -247,4 +250,67 @@ test('manifest picks up a live edit to config.groups (POST /settings replaces th
   assert.equal(id.ofPath(w.path), 'Alpha', 'and slot keying followed it');
   cfg.groups = [];
   assert.equal(id.of(w), 'wt-a', 'and back again');
+});
+
+// ------------------------------------------------- realpath staleness (regression)
+//
+// reindex() indexes both the spelling on disk AND its realpath, because the git scan
+// hands us one and lsof hands us the other. It memoized realpath() in a hand-rolled
+// Map that stored whatever realpath() returned — INCLUDING the raw-path fallback it
+// returns for a path that cannot be resolved yet.
+//
+// So a worktree indexed before its symlink exists pinned the unresolved spelling
+// forever: the resolved path never got indexed, lsof's view of its running dev server
+// never matched, and the server stopped being attributed to the feature. The fix is to
+// use util.createRealpathCache, which deliberately never caches a failure.
+
+test('a worktree indexed before its path resolves is re-resolved once it does', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wts-identity-')));
+  const real = path.join(root, 'real-wt');
+  const link = path.join(root, 'link-wt'); // the spelling the git scan reports
+  fs.mkdirSync(real);
+
+  // `branch` (any non-basename strategy) is what builds the path index at all.
+  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' } });
+  const repos = [{ name: 'api', worktrees: [{ path: link, name: 'link-wt', branch: 'feat/123-ui' }] }];
+
+  // First pass: `link` does not exist yet, so realpath() falls back to `link` itself.
+  id.reindex(repos);
+  assert.equal(id.ofPath(link), '123', 'the spelling on disk resolves either way');
+  assert.equal(id.ofPath(real), 'real-wt', 'the resolved path is not indexed yet — nothing to resolve through');
+
+  // The symlink appears (a worktree created, or a checkout that was still being set up).
+  fs.symlinkSync(real, link);
+  id.reindex(repos);
+
+  assert.equal(
+    id.ofPath(real), '123',
+    'lsof reports the RESOLVED path; a cached failure would keep this at the layout name forever',
+  );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a path that resolves is memoized, and dropped once its worktree goes away', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wts-identity-')));
+  const real = path.join(root, 'real-wt');
+  const link = path.join(root, 'link-wt');
+  fs.mkdirSync(real);
+  fs.symlinkSync(real, link);
+
+  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' } });
+  id.reindex([{ name: 'api', worktrees: [{ path: link, name: 'link-wt', branch: 'feat/123-ui' }] }]);
+  assert.equal(id.ofPath(real), '123');
+
+  // The worktree is removed and `link` is recreated pointing somewhere else. Retaining
+  // only the live paths is what stops the old resolution being reused.
+  fs.unlinkSync(link);
+  id.reindex([{ name: 'api', worktrees: [] }]);
+  const other = path.join(root, 'other-wt');
+  fs.mkdirSync(other);
+  fs.symlinkSync(other, link);
+  id.reindex([{ name: 'api', worktrees: [{ path: link, name: 'link-wt', branch: 'feat/456-ui' }] }]);
+
+  assert.equal(id.ofPath(other), '456', 'the new target resolves');
+  assert.equal(id.ofPath(real), 'real-wt', 'the stale target no longer claims the feature');
+  fs.rmSync(root, { recursive: true, force: true });
 });
