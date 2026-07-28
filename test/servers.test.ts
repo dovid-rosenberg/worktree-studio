@@ -39,7 +39,7 @@ test('start() does not leak the log descriptor it hands the child', async () => 
 // ---------------------------------------------------------------------------
 
 // Write `bytes` of numbered lines, fast (one big buffer, appended in chunks).
-function growLog(file, bytes) {
+function growLog(file: string, bytes: number): void {
   const line = `${'x'.repeat(99)}\n`;
   const chunk = Buffer.from(line.repeat(Math.ceil((1 << 20) / line.length)));
   const fd = fs.openSync(file, 'a');

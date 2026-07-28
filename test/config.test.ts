@@ -15,8 +15,8 @@ process.env.WT_STUDIO_STATE = path.join(TMP, 'state');
 // which would aim load() at the real user config instead of TMP.
 const { load } = await import('../server/config.ts');
 
-function writeConfig(obj) {
-  fs.writeFileSync(process.env.WT_STUDIO_CONFIG, JSON.stringify(obj, null, 2));
+function writeConfig(obj: unknown): void {
+  fs.writeFileSync(FILE, JSON.stringify(obj, null, 2));
 }
 
 // The shipped default patterns that must always be present after load().
@@ -72,8 +72,9 @@ test('the refusal names the file and says the config was not modified', () => {
   fs.writeFileSync(FILE, '{ "baseDirs": [oops] }');
   try { load(); assert.fail('expected a throw'); }
   catch (e) {
-    assert.ok(e.message.includes(FILE), e.message);
-    assert.match(e.message, /has NOT been modified/);
+    const m = e instanceof Error ? e.message : String(e);
+    assert.ok(m.includes(FILE), m);
+    assert.match(m, /has NOT been modified/);
   }
 });
 

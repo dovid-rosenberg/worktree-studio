@@ -104,7 +104,9 @@ test('external expands ~ in root', () => {
 // ---- bad config never throws; it degrades to today's behavior ----
 
 test('an unknown layout falls back to nested', () => {
-  assert.equal(layout.resolve({ worktrees: { layout: 'sideways' } }).mode, 'nested');
+  // A value outside the union on purpose — this test IS the bad-config case, so the
+  // cast is what lets it hand resolve() something a caller could still put in config.json.
+  assert.equal(layout.resolve({ worktrees: { layout: 'sideways' as 'nested' } }).mode, 'nested');
 });
 
 test('external without a root falls back to nested', () => {

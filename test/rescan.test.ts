@@ -10,7 +10,7 @@ import assert from 'node:assert';
 import { createRescan } from '../server/rescan.ts';
 
 // server/server.ts before this change.
-function oldRescan(scan) {
+function oldRescan(scan: () => Promise<unknown>) {
   let scanning = false;
   return async function rescan() {
     if (scanning) return;
@@ -24,22 +24,24 @@ const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => 
 // A scan whose completion the test controls. `started` records the config each
 // scan read AT ITS START, which is the whole question here.
 function gated() {
-  const waiting = [];
-  const started = [];
+  const waiting: Array<() => void> = [];
+  // A scan's tag is whatever the scenario finds worth recording — the baseDirs it read,
+  // or just which call it was.
+  const started: Array<string | number> = [];
   return {
     started,
-    async run(tag) { started.push(tag); await new Promise((r) => waiting.push(r)); },
+    async run(tag: string | number) { started.push(tag); await new Promise<void>((r) => waiting.push(r)); },
     release() { const r = waiting.shift(); if (r) r(); },
     get pending() { return waiting.length; },
   };
 }
 
 // The shape of POST /api/settings: replace baseDirs, then `await rescan()`.
-function scenario(make) {
+function scenario(make: (scan: () => Promise<void>) => () => Promise<unknown>) {
   const g = gated();
   let baseDirs = ['a'];
   const rescan = make(async () => { const dirs = baseDirs.join(','); await g.run(dirs); });
-  return { g, rescan, setBaseDirs: (v) => { baseDirs = v; } };
+  return { g, rescan, setBaseDirs: (v: string[]) => { baseDirs = v; } };
 }
 
 test('a baseDirs change made during a scan gets its own scan', async () => {

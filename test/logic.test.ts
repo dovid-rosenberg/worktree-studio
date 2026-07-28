@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { present } from './helpers.ts';
 import { deriveBranch, seedPrompt } from '../server/sessions.ts';
 import * as status from '../server/status.ts';
 import * as git from '../server/git.ts';
@@ -22,11 +23,11 @@ test('seedPrompt: freetext is the raw text; issues include title+body+url', () =
 });
 
 test('status.mapEvent maps lifecycle events to states', () => {
-  assert.equal(status.mapEvent('Notification', {}).state, 'waiting');
-  assert.equal(status.mapEvent('PreToolUse', { tool_name: 'Bash' }).state, 'working');
-  assert.match(status.mapEvent('PreToolUse', { tool_name: 'Bash' }).activity, /Bash/);
-  assert.equal(status.mapEvent('Stop', {}).state, 'idle');
-  assert.equal(status.mapEvent('SessionEnd', {}).state, 'stopped');
+  assert.equal(present(status.mapEvent('Notification', {})).state, 'waiting');
+  assert.equal(present(status.mapEvent('PreToolUse', { tool_name: 'Bash' })).state, 'working');
+  assert.match(present(status.mapEvent('PreToolUse', { tool_name: 'Bash' })).activity, /Bash/);
+  assert.equal(present(status.mapEvent('Stop', {})).state, 'idle');
+  assert.equal(present(status.mapEvent('SessionEnd', {})).state, 'stopped');
   assert.equal(status.mapEvent('Nonsense', {}), null);
 });
 

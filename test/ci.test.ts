@@ -9,10 +9,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { createCiFeed, DEFAULTS } from '../server/ci.ts';
+import type { CiFeedDeps, CiSession } from '../server/ci.ts';
+import type { CiEntry } from '../server/forge.ts';
+import type { CiPayload, CiRepo } from '../server/types.ts';
+import { present } from './helpers.ts';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
 
-async function waitFor(fn, { timeout = 2000, label = 'condition' } = {}) {
+async function waitFor(fn: () => unknown, { timeout = 2000, label = 'condition' } = {}) {
   const until = Date.now() + timeout;
   for (;;) {
     if (await fn()) return;
@@ -28,16 +32,20 @@ const FAST = { debounceMs: 5, minSweepMs: 0, netMs: 3600000, tickMs: 10, sweepTi
 
 // A stand-in forge: counts lookups (each stands for one spawned gh/glab), answers
 // from a mutable table keyed by worktreePath, and records invalidate() calls.
-function fakeForge(answers = {}) {
+// An answer is either the CiRepo body to hand back (the `repo` is stamped on from the
+// entry) or a function computing one — a few tests need to see the entry they were asked
+// about. Keyed by worktreePath, which is what the sweep looks a repo up by.
+type CiAnswer = Omit<CiRepo, 'repo'> | ((entry: CiEntry) => CiRepo | Promise<CiRepo>);
+function fakeForge(answers: Record<string, CiAnswer> = {}) {
   const f = {
     lookups: 0,
     invalidations: 0,
     answers,
     hang: false,
-    async ciForRepo(entry) {
+    async ciForRepo(entry: CiEntry): Promise<CiRepo> {
       f.lookups += 1;
       if (f.hang) return new Promise(() => {}); // a CLI that never comes back
-      const a = f.answers[entry.worktreePath];
+      const a = entry.worktreePath ? f.answers[entry.worktreePath] : undefined;
       if (typeof a === 'function') return a(entry);
       return a ? { repo: entry.repo, ...a } : { repo: entry.repo, hasPR: false };
     },
@@ -52,12 +60,16 @@ const OPEN_PR = { hasPR: true, provider: 'github', number: 4, url: 'https://gh/4
 // A feed with one attached stream and one promoted session, unless overridden.
 // `sessions`/`streams` take either a value or a thunk, so a test can change the
 // answer mid-flight (a dashboard opening, a session going away).
-/**
- * @param {{ forge?: any, sessions?: any[] | (() => any[]),
- *           streams?: number | (() => number), intervals?: object }} [opts]
- */
-function feed({ forge = fakeForge(), sessions = [SESSION], streams = 1, intervals = FAST } = {}) {
-  const frames = [];
+// `sessions` and `streams` take a value OR a thunk: most tests want a constant, the
+// ones about attention want to change it mid-flight.
+interface FeedOpts {
+  forge?: ReturnType<typeof fakeForge>;
+  sessions?: CiSession[] | (() => CiSession[]);
+  streams?: number | (() => number);
+  intervals?: CiFeedDeps['intervals'];
+}
+function feed({ forge = fakeForge(), sessions = [SESSION], streams = 1, intervals = FAST }: FeedOpts = {}) {
+  const frames: CiPayload[] = [];
   const f = createCiFeed({
     forge,
     sessions: () => (typeof sessions === 'function' ? sessions() : sessions),
@@ -126,7 +138,7 @@ test('the snapshot is re-emitted only when it actually differs', async () => {
   f.poke();
   await waitFor(() => frames.length === 2, { label: 'the failed-checks frame' });
   f.stop();
-  assert.equal(frames[1].ci.s_1[0].checks.failed, 1);
+  assert.equal(present(present(frames[1]).ci.s_1?.[0]?.checks, "s_1's checks").failed, 1);
 });
 
 test('a session with no worktree or no branch is absent from the snapshot and costs no lookup', async () => {
@@ -209,8 +221,8 @@ test('minSweepMs defaults to forge\'s CI_TTL, so the push model cannot shell out
 
 test('a hung forge lookup never rejects and never emits — and a later sweep still runs', async () => {
   const forge = fakeForge({ '/w/a': OPEN_PR });
-  const rejections = [];
-  const onRejection = (e) => rejections.push(e);
+  const rejections: unknown[] = [];
+  const onRejection = (e: unknown) => rejections.push(e);
   process.on('unhandledRejection', onRejection);
   const { feed: f, frames } = feed({ forge, intervals: { ...FAST, sweepTimeoutMs: 40 } });
 
@@ -240,7 +252,7 @@ test('a forge that throws is contained — the session comes back hasPR:false', 
 test('a sessions() that throws cannot take the feed down', async () => {
   let broken = true;
   const forge = fakeForge({ '/w/a': OPEN_PR });
-  const frames = [];
+  const frames: CiPayload[] = [];
   const f = createCiFeed({
     forge,
     sessions: () => { if (broken) throw new Error('mid-restore'); return [SESSION]; },

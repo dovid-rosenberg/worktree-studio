@@ -5,8 +5,10 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import * as review from '../server/review.ts';
+import type { ReviewFile } from '../server/review.ts';
+import { expectErr, expectOk, present } from './helpers.ts';
 
-function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
+function sh(cwd: string, args: string[]) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 
 // A repo with a base commit on `main`, a feature branch with ONE committed change
 // (committed.txt), and three uncommitted working changes on top: a modified file, a
@@ -32,7 +34,15 @@ function tempRepo() {
   return { dir, baseSha, commitSha };
 }
 
-function fileOf(files, name) { return files.find((f) => f.file === name); }
+// `fileOf` stays a plain find — one test uses it to assert a file is ABSENT. `mustFind`
+// is for the rest, which read fields off the row and want a named failure instead of a
+// `possibly undefined` at each of a dozen sites.
+function fileOf(files: ReviewFile[], name: string): ReviewFile | undefined {
+  return files.find((f) => f.file === name);
+}
+function mustFind(files: ReviewFile[], name: string): ReviewFile {
+  return present(fileOf(files, name), `the diff for ${name}`);
+}
 
 test('base() reports the merge-base with the default branch', async () => {
   const { dir, baseSha } = tempRepo();
@@ -90,7 +100,7 @@ test('commits() excludes commits already on the mainline and includes the branch
 test('working() lists a modified file with status M and add/delete counts', async () => {
   const { dir } = tempRepo();
   const { files } = await review.working(dir);
-  const m = fileOf(files, 'modified.txt');
+  const m = mustFind(files, 'modified.txt');
   assert.equal(m.status, 'M');
   assert.equal(m.added, 1);
   assert.equal(m.deleted, 1);
@@ -100,7 +110,7 @@ test('working() lists a modified file with status M and add/delete counts', asyn
 test('working() lists an untracked file with status A and its line count added', async () => {
   const { dir } = tempRepo();
   const { files } = await review.working(dir);
-  const n = fileOf(files, 'new.txt');
+  const n = mustFind(files, 'new.txt');
   assert.equal(n.status, 'A');
   assert.equal(n.added, 2);
   assert.equal(n.deleted, 0);
@@ -110,7 +120,7 @@ test('working() lists an untracked file with status A and its line count added',
 test('working() lists a deleted file with status D and deleted count', async () => {
   const { dir } = tempRepo();
   const { files } = await review.working(dir);
-  const d = fileOf(files, 'deleted.txt');
+  const d = mustFind(files, 'deleted.txt');
   assert.equal(d.status, 'D');
   assert.equal(d.added, 0);
   assert.equal(d.deleted, 1);
@@ -137,68 +147,69 @@ test('commits() lists the branch’s commit with its totals', async () => {
 test('commitDetail() returns a commit’s files with their inline diffs', async () => {
   const { dir, commitSha } = tempRepo();
   const { files } = await review.commitDetail(dir, 'main', commitSha);
-  const f = fileOf(files, 'committed.txt');
+  const f = mustFind(files, 'committed.txt');
   assert.equal(f.status, 'A');
-  assert.match(f.diff, /^\+committed work$/m);
+  assert.match(present(f.diff, 'the diff text'), /^\+committed work$/m);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('commitDetail(uncommitted) of a modified file shows the removed and added lines', async () => {
   const { dir } = tempRepo();
   const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
-  const m = fileOf(files, 'modified.txt');
-  assert.match(m.diff, /^-line one$/m);
-  assert.match(m.diff, /^\+line ONE changed$/m);
+  const m = mustFind(files, 'modified.txt');
+  assert.match(present(m.diff, 'the diff text'), /^-line one$/m);
+  assert.match(present(m.diff, 'the diff text'), /^\+line ONE changed$/m);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('commitDetail(uncommitted) of an untracked file shows it as a new file', async () => {
   const { dir } = tempRepo();
   const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
-  const n = fileOf(files, 'new.txt');
-  assert.match(n.diff, /new file/);
-  assert.match(n.diff, /^\+brand new$/m);
+  const n = mustFind(files, 'new.txt');
+  assert.match(present(n.diff, 'the diff text'), /new file/);
+  assert.match(present(n.diff, 'the diff text'), /^\+brand new$/m);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('commitDetail() carries the structured model alongside the raw patch', async () => {
   const { dir, commitSha } = tempRepo();
   const { files } = await review.commitDetail(dir, 'main', commitSha);
-  const f = fileOf(files, 'committed.txt');
-  assert.equal(f.parsed.path, 'committed.txt');
-  assert.equal(f.parsed.status, 'added');
-  assert.equal(f.parsed.hunks.length, 1);
-  assert.deepEqual(f.parsed.hunks[0].lines.map((l) => [l.type, l.text]), [['add', 'committed work']]);
+  const f = mustFind(files, 'committed.txt');
+  assert.equal(present(f.parsed, 'the parsed diff').path, 'committed.txt');
+  assert.equal(present(f.parsed, 'the parsed diff').status, 'added');
+  assert.equal(present(f.parsed, 'the parsed diff').hunks.length, 1);
+  assert.deepEqual(present(present(f.parsed, 'the parsed diff').hunks[0]).lines.map((l) => [l.type, l.text]), [['add', 'committed work']]);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('commitDetail(uncommitted) aligns a changed line into one side-by-side row', async () => {
   const { dir } = tempRepo();
   const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
-  const m = fileOf(files, 'modified.txt');
-  const [h] = m.parsed.hunks;
-  const change = h.rows.find((r) => r.type === 'change');
-  assert.equal(h.lines[change.left].text, 'line one', 'the old version on the left');
-  assert.equal(h.lines[change.right].text, 'line ONE changed', 'the new one on the right');
-  assert.equal(h.lines[change.left].oldLine, 1);
-  assert.equal(h.lines[change.right].newLine, 1);
+  const m = mustFind(files, 'modified.txt');
+  const h = present(present(m.parsed, 'the parsed diff').hunks[0], 'the first hunk');
+  const change = present(h.rows.find((r) => r.type === 'change'), 'a change row');
+  const left = present(h.lines[present(change.left, 'left index')]);
+  const right = present(h.lines[present(change.right, 'right index')]);
+  assert.equal(left.text, 'line one', 'the old version on the left');
+  assert.equal(right.text, 'line ONE changed', 'the new one on the right');
+  assert.equal(left.oldLine, 1);
+  assert.equal(right.newLine, 1);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('commitDetail(uncommitted) models a deleted file as one all-removed hunk', async () => {
   const { dir } = tempRepo();
   const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
-  const d = fileOf(files, 'deleted.txt');
-  assert.equal(d.parsed.status, 'deleted');
-  assert.ok(d.parsed.hunks[0].rows.every((r) => r.type === 'del' && r.right === null));
+  const d = mustFind(files, 'deleted.txt');
+  assert.equal(present(d.parsed, 'the parsed diff').status, 'deleted');
+  assert.ok(present(present(d.parsed, 'the parsed diff').hunks[0]).rows.every((r) => r.type === 'del' && r.right === null));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('commit() advances HEAD to a new commit', async () => {
   const { dir } = tempRepo();
   const before = sh(dir, ['rev-parse', 'HEAD']);
-  const out = await review.commit(dir, 'do the work', {});
-  assert.equal(out.ok, true, out.error);
+  const out = expectOk(await review.commit(dir, 'do the work', {}), 'commit()');
   assert.equal(out.sha, sh(dir, ['rev-parse', 'HEAD']));
   assert.notEqual(out.sha, before);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -308,7 +319,7 @@ test('a real sha still resolves, with the option terminator in place', async () 
   const { dir, commitSha } = tempRepo();
   const detail = await review.commitDetail(dir, 'main', commitSha);
   assert.deepEqual(detail.files.map((f) => f.file), ['committed.txt']);
-  assert.ok(detail.files[0].diff.includes('committed work'));
+  assert.ok(present(present(detail.files[0]).diff, 'the diff text').includes('committed work'));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -325,8 +336,8 @@ test('a path that is really a git flag is treated as a pathspec, not an option',
   // honours: the file is staged executable.
   const r = await review.commit(dir, 'msg', { paths: ['--chmod=+x', 'modified.txt'] });
 
-  assert.equal(r.ok, false, 'the flag was refused, not honoured');
-  assert.match(r.error, /pathspec/, r.error);
+  const refused = expectErr(r, 'a --chmod pathspec');
+  assert.match(refused.error, /pathspec/, refused.error);
   const staged = sh(dir, ['ls-files', '-s', 'modified.txt']);
   assert.ok(!staged.startsWith('100755'), `modified.txt was staged as ${staged.split(' ')[0]}`);
   assert.equal(fs.statSync(target).mode, modeBefore);
@@ -336,21 +347,20 @@ test('a path that is really a git flag is treated as a pathspec, not an option',
 test('a non-string entry in paths is a rejected request, not a TypeError', async () => {
   const { dir } = tempRepo();
   // Deliberately ill-typed input: the point is that a bad request is answered, not thrown.
-  for (const bad of /** @type {any[]} */ ([[123], [null], [{}], ['']])) {
+  // Deliberately ill-typed input, so the casts are the test: a caller CAN send this
+  // over the wire, and the point is that it is answered rather than thrown.
+  for (const bad of [[123], [null], [{}], ['']] as unknown as string[][]) {
     const r = await review.commit(dir, 'msg', { paths: bad });
-    assert.equal(r.ok, false, JSON.stringify(bad));
-    assert.match(r.error, /non-empty string/);
+    assert.match(expectErr(r, JSON.stringify(bad)).error, /non-empty string/);
   }
-  const r = await review.commit(dir, 'msg', { paths: /** @type {any} */ ('modified.txt') });
-  assert.equal(r.ok, false);
-  assert.match(r.error, /must be an array/);
+  const r = await review.commit(dir, 'msg', { paths: 'modified.txt' as unknown as string[] });
+  assert.match(expectErr(r, 'a non-array paths').error, /must be an array/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('committing a real list of paths still works', async () => {
   const { dir } = tempRepo();
-  const r = await review.commit(dir, 'just the new file', { paths: ['new.txt'] });
-  assert.equal(r.ok, true, r.error);
+  expectOk(await review.commit(dir, 'just the new file', { paths: ['new.txt'] }), 'commit()');
   assert.equal(sh(dir, ['show', '--name-only', '--format=', 'HEAD']).trim(), 'new.txt');
   fs.rmSync(dir, { recursive: true, force: true });
 });

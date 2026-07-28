@@ -7,6 +7,7 @@
 // has to be execFile's own `timeout`.
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { expectOk } from './helpers.ts';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -19,7 +20,7 @@ const REAL_GIT = execFileSync('/usr/bin/which', ['git']).toString().trim();
 
 // A directory holding a `git` that sleeps forever — on every subcommand, or only
 // on the one named. Everything else is handed to the real git.
-function fakeGitBin(dir, onlyFor) {
+function fakeGitBin(dir: string, onlyFor?: string) {
   const bin = path.join(dir, 'fakebin');
   fs.mkdirSync(bin, { recursive: true });
   const guard = onlyFor
@@ -31,7 +32,7 @@ function fakeGitBin(dir, onlyFor) {
 
 function tempRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-timeout-'));
-  const sh = (cmd, args) => execFileSync(cmd, args, { cwd: dir, stdio: 'ignore' });
+  const sh = (cmd: string, args: string[]) => execFileSync(cmd, args, { cwd: dir, stdio: 'ignore' });
   sh('git', ['init', '-q', '-b', 'main']);
   sh('git', ['config', 'user.email', 't@t.t']);
   sh('git', ['config', 'user.name', 't']);
@@ -79,8 +80,7 @@ test('create() survives a `git fetch` that never answers', async () => {
     const t0 = Date.now();
     const res = await worktree.create(repo, 'feature/hang', 'hang', { fetchTimeoutMs: 400, copyPatterns: [], copyAlways: [] });
     const ms = Date.now() - t0;
-    assert.equal(res.ok, true, res.error);
-    assert.ok(fs.existsSync(res.path), 'the worktree is still created from the refs already local');
+    assert.ok(fs.existsSync(expectOk(res, 'create()').path), 'the worktree is still created from the refs already local');
     assert.ok(ms < 10000, `create() took ${ms}ms — the fetch is unbounded`);
   } finally {
     process.env.PATH = oldPath;
@@ -123,7 +123,7 @@ test('openPullRequest surfaces a hung push instead of blaming the forge CLI', as
     pushBranch: async () => ({ code: 1, timedOut: true, stdout: '', stderr: '' }),
   });
   const out = await f.openPullRequest({ repo: 'api', path: '/x', branch: 'b' }, {});
-  assert.match(out.error, /timed out/i);
+  assert.match(String(out.error), /timed out/i);
 });
 
 test('every forge call out to the network is bounded', () => {

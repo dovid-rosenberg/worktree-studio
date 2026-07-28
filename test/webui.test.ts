@@ -16,8 +16,8 @@ import * as webui from '../server/webui.ts';
 const TOKEN = 'a'.repeat(64);
 
 // A repo-root-shaped fixture: client/build and/or public, each with an index.html.
-/** @param {{ client?: string, legacy?: string }} [have] which index.html(s) to lay down */
-function fixture({ client, legacy } = {}) {
+/** @param have which index.html(s) to lay down */
+function fixture({ client, legacy }: { client?: string; legacy?: string } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-webui-'));
   if (client !== undefined) {
     fs.mkdirSync(path.join(root, 'client', 'build', '_app'), { recursive: true });
@@ -34,16 +34,17 @@ function fixture({ client, legacy } = {}) {
 const SHELL = `<!doctype html><html><head><script>window.WTS_TOKEN = "${webui.PLACEHOLDER}";</script></head><body>app</body></html>`;
 
 // Serve `app` for the duration of fn, handing it a (path, init) => Response fetcher.
-async function serving(app, fn) {
+type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
+async function serving<T>(app: express.Express, fn: (get: Fetcher) => Promise<T>): Promise<T> {
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}`;
+  const base = `http://127.0.0.1:${(server.address() as import('net').AddressInfo).port}`;
   try { return await fn((p, init) => fetch(base + p, init)); }
   finally { server.close(); }
 }
 
 // The daemon's own wiring order: static mount, then the API, then the SPA fallback.
-function studio(root, env = {}) {
+function studio(root: string, env: NodeJS.ProcessEnv = {}) {
   const ui = webui.resolve(env, root);
   const app = express();
   webui.mount(app, { ui, token: TOKEN });
@@ -66,7 +67,8 @@ test('resolve() serves the SvelteKit build by default', () => {
 
 test('resolve() refuses to boot when the client has not been built, and says how', () => {
   const root = fixture({ legacy: '<html>old</html>' }); // public/ only
-  assert.throws(() => webui.resolve({}, root), (/** @type {any} */ e) => {
+  assert.throws(() => webui.resolve({}, root), (e: unknown) => {
+    assert.ok(e instanceof Error);
     assert.match(e.message, /has not been built/);
     assert.match(e.message, /npm run build/);
     assert.match(e.message, /WTS_UI=legacy/); // the way out is in the message
@@ -100,7 +102,7 @@ test('/ serves the shell with the token substituted, uncached', async () => {
       const r = await get(p);
       const html = await r.text();
       assert.equal(r.status, 200, p);
-      assert.match(r.headers.get('content-type'), /text\/html/, p);
+      assert.match(String(r.headers.get('content-type')), /text\/html/, p);
       assert.equal(r.headers.get('cache-control'), 'no-store', p);
       assert.ok(html.includes(`window.WTS_TOKEN = "${TOKEN}"`), p);
       assert.ok(!html.includes(webui.PLACEHOLDER), `${p}: no un-substituted placeholder`);
