@@ -9,6 +9,20 @@ const { git, gitFull } = require('./util');
 // Returns both the repos found and the plain container directories the walk passed
 // through — those are exactly the places a *new* repo can show up, which is what
 // the filesystem watcher (server/watch.js) needs to arm itself on.
+// A linked worktree also has a `.git` — a FILE reading `gitdir: …/.git/worktrees/<name>`
+// rather than a directory. It is not a repo of its own; it is already reported by
+// `git worktree list` in the repo it belongs to. The nested layout hides worktrees
+// behind a dot-dir the walk skips anyway, but the sibling/external layouts put them
+// where the walk will find them, and listing one as a separate repo would double it
+// in the UI (and give it a main checkout it doesn't have).
+function isLinkedWorktree(dir) {
+  const dotgit = path.join(dir, '.git');
+  try {
+    if (fs.statSync(dotgit).isDirectory()) return false;
+    return /^gitdir:.*[/\\]worktrees[/\\]/.test(fs.readFileSync(dotgit, 'utf8').trim());
+  } catch { return false; }
+}
+
 function walkTree(baseDirs, depth) {
   const repos = [];
   const dirs = [];
@@ -17,9 +31,10 @@ function walkTree(baseDirs, depth) {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     if (fs.existsSync(path.join(dir, '.git'))) {
+      if (isLinkedWorktree(dir)) return; // not a repo — its main checkout reports it
       const real = fs.realpathSync(dir);
       if (!seen.has(real)) { seen.add(real); repos.push(dir); }
-      return; // don't descend into a repo (its .worktrees handled via git)
+      return; // don't descend into a repo (its worktrees handled via git)
     }
     dirs.push(dir);
     if (d <= 0) return;
@@ -99,4 +114,4 @@ async function scan(baseDirs, depth) {
   return repos;
 }
 
-module.exports = { scan, describeRepo, findRepos, walkTree, defaultBranch, parseWorktrees };
+module.exports = { scan, describeRepo, findRepos, walkTree, defaultBranch, parseWorktrees, isLinkedWorktree };

@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { HOME, expandTilde, readJson, writeJson } = require('./util');
 const security = require('./security');
+const { DEFAULT_COPY_ALWAYS } = require('./worktree');
 
 const CONFIG_DIR = process.env.WT_STUDIO_CONFIG_DIR || path.join(HOME, '.config', 'worktree-studio');
 const CONFIG_FILE = process.env.WT_STUDIO_CONFIG || path.join(CONFIG_DIR, 'config.json');
@@ -25,10 +26,30 @@ function defaults() {
       Zed: { open: '/Applications/Zed.app/Contents/MacOS/cli {path}' },
     },
     defaultEditor: dash.defaultEditor || 'WebStorm',
+    // Where a repo's worktrees live. `nested` is the historical convention.
+    //   nested   <repo>/<dir>/<name>            dir defaults to `.worktrees`
+    //   sibling  <repo>/../<name>
+    //   external <root>/<repo>/<name>           root is required
+    worktrees: { layout: 'nested', dir: '.worktrees', root: '' },
+    // What makes two worktrees in different repos "the same feature" (server/identity.js).
+    //   basename  same directory name (the historical convention)
+    //   branch    same capture group of `branchPattern` applied to the branch name
+    //   manifest  listed together in `groups` below
+    featureIdentity: { strategy: 'basename', branchPattern: '', branchFlags: '' },
     // Native `wt` copy-patterns (files git ignores get carried into new worktrees).
+    // `.env*` covers the individual `.env`/`.env.local` entries kept below for the
+    // benefit of configs that list them explicitly; `.vscode/*.json` is the
+    // editor-agnostic counterpart of the JetBrains run configs in copyAlways.
     copyPatterns: {
-      default: ['.env', '.env.local', '.env.*.local', 'config/*-config.js', 'src/config.js', 'src/config/config.js'],
+      default: [
+        '.env', '.env.local', '.env.*.local', '.env*',
+        'config/*-config.js', 'src/config.js', 'src/config/config.js',
+        '.vscode/*.json',
+      ],
     },
+    // Patterns copied into a new worktree whether or not git ignores them — editor
+    // scratch a checkout will not bring along. Empty the array to turn it off.
+    copyAlways: { default: [...DEFAULT_COPY_ALWAYS] },
     // per-repo dev-server launch config { cmd, ports }
     start: dash.start || {},
     // repos that serve a browsable frontend — get an "Open app ↗" button that
@@ -50,38 +71,70 @@ function defaults() {
     },
     // attention notifications when a session changes state (see public/app.js)
     notify: { waiting: true, sound: true, idle: false },
-    // run 2–3 features at once: each feature gets a slot (0,1,2…); slot n offsets
-    // every dev-server port by n*offsetStep and sets redis__db to n. Slot 0 ==
-    // today's defaults (zero behavior change). accept-blue reads these via nconf's
-    // `__`-nested env override; no backend code change needed.
+    // Run 2–3 features at once: each feature gets a slot (0,1,2…); slot n offsets
+    // every dev-server port by n*offsetStep and sets each slotEnv key to n. Slot 0
+    // == the repo's configured ports, so a single feature is unchanged.
+    // `repos` ships EMPTY — the port map is one organisation's, not a default. See
+    // docs/config.md for a fully worked multi-repo example to copy.
     concurrency: {
       enabled: true,
       offsetStep: 100,
       maxSlots: 3,
-      repos: {
-        'accept-blue': {
-          portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
-          slotEnv: ['redis__db'],
-        },
-        // The FE repos hardcode accept-blue's slot-0 ports in a gitignored, per-worktree
-        // config file. On stack-start Studio shifts ALL of the sibling's port families in
-        // that file to this feature's slot (ab-su references su/merchant/iso, so a single
-        // per-port key is wrong — every referenced accept-blue port moves by slot*step).
-        'merchant-v3': {
-          portEnv: { WTS_FE_PORT: 3030 }, // vite; localhost:1239 (merchant)
-          configPatch: { file: 'src/config.js', siblingRepo: 'accept-blue' },
-        },
-        'ab-iso-fe': {
-          portEnv: { WTS_FE_PORT: 9000 }, // webpack-dev-server; iso 1232 + merchant 1239
-          configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
-        },
-        'ab-su': {
-          portEnv: { WTS_FE_PORT: 8000 }, // vite; su 1231 + merchant 1239 + iso 1232
-          configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
-        },
-      },
+      repos: {},
     },
   };
+}
+
+// One-time migration, and the reason `concurrency.repos` can safely ship empty.
+//
+// Until now this port map lived in defaults(), and defaults() is merged into the
+// on-disk config at load time — so an install whose config.json never wrote a
+// `concurrency` key was silently *running on it*. Emptying the defaults would
+// therefore turn concurrency off under that install's feet: every dev server back
+// on slot-0 ports, and "stop & switch" conflicts back for repos that used to run
+// side by side. So a config that predates the key gets the old block written into
+// it, once, and owns it from then on.
+//
+// A config created from today's defaults() always HAS a `concurrency` key (with an
+// empty `repos`), so a new install never matches this branch and never sees these
+// values. Delete this once no pre-0.2 config remains.
+const LEGACY_CONCURRENCY = () => ({
+  enabled: true,
+  offsetStep: 100,
+  maxSlots: 3,
+  repos: {
+    'accept-blue': {
+      portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
+      slotEnv: ['redis__db'],
+    },
+    // The FE repos hardcode accept-blue's slot-0 ports in a gitignored, per-worktree
+    // config file. On stack-start Studio shifts ALL of the sibling's port families in
+    // that file to this feature's slot (ab-su references su/merchant/iso, so a single
+    // per-port key is wrong — every referenced accept-blue port moves by slot*step).
+    'merchant-v3': {
+      portEnv: { WTS_FE_PORT: 3030 }, // vite; localhost:1239 (merchant)
+      configPatch: { file: 'src/config.js', siblingRepo: 'accept-blue' },
+    },
+    'ab-iso-fe': {
+      portEnv: { WTS_FE_PORT: 9000 }, // webpack-dev-server; iso 1232 + merchant 1239
+      configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
+    },
+    'ab-su': {
+      portEnv: { WTS_FE_PORT: 8000 }, // vite; su 1231 + merchant 1239 + iso 1232
+      configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
+    },
+  },
+});
+
+// Mutates `raw` (the config exactly as it sits on disk, before any default merge)
+// and returns true when something changed and it should be written back. Writing
+// back is what makes the migration one-time: the key is then present forever.
+function migrate(raw) {
+  if (raw && typeof raw === 'object' && !('concurrency' in raw)) {
+    raw.concurrency = LEGACY_CONCURRENCY();
+    return true;
+  }
+  return false;
 }
 
 // Non-fatal sanity check of the concurrency block (this is a local dev tool — warn,
@@ -119,18 +172,29 @@ function load() {
     cfg = defaults();
     writeJson(CONFIG_FILE, cfg);
   } else {
+    // Seed keys that used to be supplied by defaults() BEFORE the merge below, and
+    // persist them, so emptying a default can never silently change behavior.
+    if (migrate(cfg)) writeJson(CONFIG_FILE, cfg);
     // shallow-merge missing top-level keys from defaults (forward-compat)
     const d = defaults();
     for (const k of Object.keys(d)) if (!(k in cfg)) cfg[k] = d[k];
     if (!cfg.web) cfg.web = d.web;
     if (!cfg.web.port) cfg.web.port = d.web.port;
-    // Targeted deep-merge for copyPatterns.default only: the shallow merge above skips
-    // it whenever the on-disk config already has a (possibly stale) copyPatterns key, so
-    // newly-shipped default patterns would never reach existing users. Union the shipped
-    // defaults into the user's default array (de-duped, user's extra patterns kept).
-    // Per-repo overrides under copyPatterns are left untouched.
-    cfg.copyPatterns = cfg.copyPatterns || {};
-    cfg.copyPatterns.default = [...new Set([...(cfg.copyPatterns.default || []), ...d.copyPatterns.default])];
+    // Targeted deep-merge for the `.default` pattern lists only: the shallow merge
+    // above skips them whenever the on-disk config already has a (possibly stale)
+    // copyPatterns/copyAlways key, so newly-shipped default patterns would never
+    // reach existing users. Union the shipped defaults into the user's default array
+    // (de-duped, user's extra patterns kept). Per-repo overrides are left untouched.
+    for (const key of ['copyPatterns', 'copyAlways']) {
+      cfg[key] = cfg[key] || {};
+      cfg[key].default = [...new Set([...(cfg[key].default || []), ...d[key].default])];
+    }
+    // Same reasoning one level down for the two convention blocks: a config written
+    // before `layout`/`strategy` existed must still get their defaults, and a config
+    // that sets only one sub-key must keep the rest.
+    for (const key of ['worktrees', 'featureIdentity']) {
+      cfg[key] = { ...d[key], ...(cfg[key] || {}) };
+    }
   }
   cfg._file = CONFIG_FILE;
   cfg._stateDir = STATE_DIR;
@@ -152,4 +216,4 @@ function save(cfg) {
   writeJson(cfg._file || CONFIG_FILE, out);
 }
 
-module.exports = { load, save, validateConcurrency, CONFIG_FILE, CONFIG_DIR, STATE_DIR };
+module.exports = { load, save, defaults, migrate, validateConcurrency, CONFIG_FILE, CONFIG_DIR, STATE_DIR };

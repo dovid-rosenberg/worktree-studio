@@ -2,11 +2,19 @@
 // Feature/group computation — ported from worktree-dash core.sh (242–274).
 // A "feature" is a named unit owning one-or-more worktrees across repos:
 //   - manual groups: config.groups [{name, members:["repo/branch-or-wtname"]}]
-//   - auto groups:   linked worktree names shared across >= 2 worktrees
-//   - features:      every unique linked worktree name (singles included),
+//   - auto groups:   feature identities shared across >= 2 worktrees
+//   - features:      every unique linked worktree identity (singles included),
 //                    minus names claimed by a manual group
 // Main checkouts (wtname === repo) are never features. Each member is the full
 // worktree object (with running/ports/session/etc) or a {missing,ref} stub.
+//
+// What makes two worktrees "the same feature" is server/identity.js, not this
+// file: grouping and concurrency-slot keying have to answer that question
+// identically, so they share one resolver. Omitting it keeps the historical
+// behavior (group by the worktree's directory name).
+const { createIdentity } = require('./identity');
+
+const DEFAULT_IDENTITY = createIdentity({});
 
 // linked = not the repo's main checkout
 function isLinked(w) { return w.wtname !== w.repo; }
@@ -19,7 +27,8 @@ function resolveRef(worktrees, ref) {
 }
 
 // worktrees: flat array of worktree objects (all repos). manualGroups: config.groups.
-function computeFeatures(worktrees, manualGroups = []) {
+// identity: a server/identity.js resolver; defaults to the `basename` strategy.
+function computeFeatures(worktrees, manualGroups = [], identity = DEFAULT_IDENTITY) {
   const linked = worktrees.filter(isLinked);
 
   const manual = (manualGroups || []).map((g) => ({
@@ -29,11 +38,12 @@ function computeFeatures(worktrees, manualGroups = []) {
   }));
   const manualNames = new Set(manual.map((g) => g.name));
 
-  // group linked worktrees by name
+  // group linked worktrees by feature identity
   const byName = new Map();
   for (const w of linked) {
-    if (!byName.has(w.wtname)) byName.set(w.wtname, []);
-    byName.get(w.wtname).push(w);
+    const key = identity.of(w);
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(w);
   }
 
   const auto = [];

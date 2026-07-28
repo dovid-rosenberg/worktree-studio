@@ -1,11 +1,14 @@
 'use strict';
 // Native replacement for the `wt` script — baked in so the app owns worktree
-// creation end to end. Creates .worktrees/<name> off the repo's default branch
-// and copies in the gitignored bits a plain `git worktree add` drops:
-// WebStorm run configs (.idea/runConfigurations/*.xml) + local config/.env files.
+// creation end to end. Creates the worktree off the repo's default branch at
+// whatever path server/layout.js says (default `<repo>/.worktrees/<name>`) and
+// copies in the bits a plain `git worktree add` drops: editor scratch files
+// (`copyAlways`, e.g. JetBrains run configs) plus the gitignored local config
+// and .env files (`copyPatterns`).
 const fs = require('fs');
 const path = require('path');
 const { git, gitFull, slug } = require('./util');
+const layoutMod = require('./layout');
 
 // Expand a shell-style pattern (e.g. "config/*-config.js", ".env.*.local")
 // relative to base. Supports `*` (any chars within one path segment). Segments
@@ -47,18 +50,45 @@ async function isIgnored(repoPath, rel) {
   return r.code === 0;
 }
 
-async function populate(repoPath, dest, patterns) {
-  const copied = { runConfigs: 0, files: 0 };
-  // run configs — copied unconditionally (they're gitignored by convention)
-  const rcDir = path.join(repoPath, '.idea', 'runConfigurations');
-  if (fs.existsSync(rcDir)) {
-    const destRc = path.join(dest, '.idea', 'runConfigurations');
-    fs.mkdirSync(destRc, { recursive: true });
-    for (const f of fs.readdirSync(rcDir)) {
-      if (!f.endsWith('.xml')) continue;
-      try { fs.copyFileSync(path.join(rcDir, f), path.join(destRc, f)); copied.runConfigs++; } catch { /* */ }
-    }
+// The editor scratch a bare `git worktree add` silently drops. Kept here (and
+// re-exported through config.defaults().copyAlways) so a caller that passes no
+// `copyAlways` — every pre-existing one — still gets the historical behavior.
+// An explicit empty array turns it off.
+const DEFAULT_COPY_ALWAYS = ['.idea/runConfigurations/*.xml'];
+
+// The copy options `create()` wants, read out of a loaded config: a per-repo
+// override under `copyPatterns`/`copyAlways` wins over `.default`. An absent
+// `copyAlways` key (a config written before it existed, or a hand-built test cfg)
+// keeps the historical unconditional run-config copy; an explicit one is obeyed,
+// empty array included.
+function worktreeCopyOpts(cfg, repo) {
+  const pick = (m) => (m && (m[repo] || m.default)) || [];
+  return {
+    copyPatterns: pick(cfg && cfg.copyPatterns),
+    copyAlways: cfg && cfg.copyAlways ? pick(cfg.copyAlways) : DEFAULT_COPY_ALWAYS,
+  };
+}
+
+// Copy one expanded pattern's files from repoPath into dest. Returns the count.
+function copyMatches(repoPath, dest, pattern) {
+  let n = 0;
+  for (const rel of expandPattern(repoPath, pattern)) {
+    const src = path.join(repoPath, rel);
+    const target = path.join(dest, rel);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    try { fs.copyFileSync(src, target); n++; } catch { /* */ }
   }
+  return n;
+}
+
+// `always` are patterns copied whether or not git ignores them — editor scratch
+// (JetBrains run configs by default) that a checkout will not bring along.
+// `patterns` are copied ONLY when git ignores them: a tracked file already
+// arrives with the checkout, and copying the main checkout's copy over it would
+// silently import uncommitted edits.
+async function populate(repoPath, dest, patterns, always = DEFAULT_COPY_ALWAYS) {
+  const copied = { runConfigs: 0, files: 0 };
+  for (const pat of always || []) copied.runConfigs += copyMatches(repoPath, dest, pat);
   // local files — only carry the ones git actually ignores
   for (const pat of patterns || []) {
     for (const rel of expandPattern(repoPath, pat)) {
@@ -91,12 +121,15 @@ async function defaultBase(repoPath) {
 /**
  * Create a worktree. Returns { ok, path, branch, name, base, created, copied, warnings, error }.
  * @param {string} branch  branch name (created off default base if it doesn't exist)
- * @param {string} name    worktree dir name under .worktrees (defaults from branch)
+ * @param {string} name    worktree dir name (defaults from branch)
+ * @param {object} opts    { unique, fetch, copyPatterns, copyAlways, layout }
+ *                         layout: a server/layout.js descriptor; defaults to nested `.worktrees`
  */
 async function create(repoPath, branch, name, opts = {}) {
   const warnings = [];
+  const layout = opts.layout || layoutMod.resolve({});
   let wtName = slug(name || branch.replace(/\//g, '-'));
-  let dest = path.join(repoPath, '.worktrees', wtName);
+  let dest = layoutMod.destFor(layout, repoPath, wtName);
 
   // On a name/branch collision: opts.unique auto-suffixes (foo → foo-2) instead
   // of hard-failing, keeping the worktree name and branch's last segment in sync.
@@ -107,7 +140,7 @@ async function create(repoPath, branch, name, opts = {}) {
     while (fs.existsSync(dest) || (await branchExists(repoPath, branch))) {
       n += 1;
       wtName = `${baseName}-${n}`;
-      dest = path.join(repoPath, '.worktrees', wtName);
+      dest = layoutMod.destFor(layout, repoPath, wtName);
       branch = branch.replace(/[^/]+$/, wtName);
     }
     if (n > 1) warnings.push(`name was taken — using "${wtName}"`);
@@ -116,9 +149,16 @@ async function create(repoPath, branch, name, opts = {}) {
   if (fs.existsSync(dest)) {
     return { ok: false, error: `worktree "${wtName}" already exists in ${path.basename(repoPath)}`, path: dest, name: wtName, branch };
   }
-  // warn if .worktrees isn't ignored (checkouts would show as untracked)
-  const ign = await gitFull(repoPath, ['check-ignore', '-q', '.worktrees']);
-  if (ign.code !== 0) warnings.push('.worktrees/ is not gitignored here; checkouts will show as untracked');
+  // Only a layout that puts worktrees INSIDE the repo needs ignoring; sibling and
+  // external checkouts are outside the working tree and git never sees them.
+  const ignoreRel = layoutMod.ignorePath(layout);
+  if (ignoreRel) {
+    const ign = await gitFull(repoPath, ['check-ignore', '-q', ignoreRel]);
+    if (ign.code !== 0) warnings.push(`${ignoreRel}/ is not gitignored here; checkouts will show as untracked`);
+  }
+  // git worktree add creates the leaf, not the tree above it (sibling/external
+  // layouts point outside the repo, where nothing has made the parent yet).
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
 
   if (opts.fetch !== false) await gitFull(repoPath, ['fetch', '--prune', 'origin']);
 
@@ -134,7 +174,7 @@ async function create(repoPath, branch, name, opts = {}) {
     created = true;
   }
 
-  const copied = await populate(repoPath, dest, opts.copyPatterns);
+  const copied = await populate(repoPath, dest, opts.copyPatterns, opts.copyAlways);
   return { ok: true, path: dest, branch, name: wtName, base, created, copied, warnings };
 }
 
@@ -149,4 +189,7 @@ async function remove(repoPath, worktreePath, opts = {}) {
   return { ok: true, branchDeleted };
 }
 
-module.exports = { create, remove, populate, branchExists, defaultBase };
+module.exports = {
+  create, remove, populate, branchExists, defaultBase,
+  expandPattern, worktreeCopyOpts, DEFAULT_COPY_ALWAYS,
+};

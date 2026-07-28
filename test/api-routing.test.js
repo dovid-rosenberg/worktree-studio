@@ -12,6 +12,11 @@ const assert = require('node:assert');
 const express = require('express');
 const orchestrator = require('../server/orchestrator');
 const { createForge } = require('../server/forge');
+const { createIdentity } = require('../server/identity');
+
+// The real (default) feature-identity resolver — slot keys come from it in
+// production, so the fake derives them the same way rather than hardcoding one.
+const identity = createIdentity({});
 
 const WT = (name) => `/code/api/.worktrees/${name}`;
 
@@ -19,6 +24,8 @@ const WT = (name) => `/code/api/.worktrees/${name}`;
 function harness({ group, flat = [], conflicts = [], allocError = null } = {}) {
   const calls = { stopped: [], started: [], released: [], allocated: [], broadcasts: 0 };
   const servers = {
+    identity,
+    featureFor: (p) => identity.ofPath(p),
     allocSlotFor: (f) => { calls.allocated.push(f); return allocError ? { error: allocError } : { slot: 0 }; },
     releaseSlot: (f) => calls.released.push(f),
     launchOpts: () => ({ env: {}, ports: [] }),

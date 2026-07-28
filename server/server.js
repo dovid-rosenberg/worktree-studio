@@ -11,10 +11,12 @@ const muxSelect = require('./multiplexer');
 const gitMod = require('./git');
 const watchMod = require('./watch');
 const worktree = require('./worktree');
+const { worktreeCopyOpts } = worktree;
 const review = require('./review');
 const sources = require('./sources');
 const { SessionManager } = require('./sessions');
-const { Servers, featureFromPath } = require('./servers');
+const { Servers } = require('./servers');
+const { createIdentity } = require('./identity');
 const { createState } = require('./state');
 const { createBroadcast } = require('./broadcast');
 const { createForge } = require('./forge');
@@ -32,7 +34,10 @@ async function main() {
   }
 
   const manager = new SessionManager(cfg, mux || require('./multiplexer/tmux'));
-  const servers = new Servers(cfg);
+  // One feature-identity resolver for the whole process: state.js groups worktrees
+  // with it and servers.js keys concurrency slots with it, so the two cannot drift.
+  const identity = createIdentity(cfg);
+  const servers = new Servers(cfg, identity);
 
   // ---- repo scan cache ----
   let repos = [];
@@ -41,6 +46,9 @@ async function main() {
     if (scanning) return;
     scanning = true;
     try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
+    // The scan is the only thing that knows each worktree's branch, and the
+    // branch/manifest identity strategies need it to answer from a path alone.
+    identity.reindex(repos);
     scanning = false;
     prunePaths();        // the fresh scan is what says which worktrees still exist
     broadcastTopology(); // the scan IS the topology
@@ -67,7 +75,7 @@ async function main() {
   // The state payload lives in state.js; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
   const { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor } = createState({
-    cfg, manager, servers, mux, repos: () => repos, running: () => runningCache,
+    cfg, manager, servers, mux, identity, repos: () => repos, running: () => runningCache,
   });
 
   // ---- SSE live state ----
@@ -316,15 +324,16 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const toStart = (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo));
-    // Key the slot on the per-worktree feature (its `.worktrees/<name>` basename) — the
-    // one canonical key used everywhere. A session's repos share the basename → one slot.
+    // Key the slot on the per-worktree feature identity (server/identity.js) — the
+    // one canonical key used everywhere. A session's repos resolve to the same
+    // identity → one slot.
     for (const r of toStart) {
-      const alloc = servers.allocSlotFor(featureFromPath(r.worktreePath));
+      const alloc = servers.allocSlotFor(servers.featureFor(r.worktreePath));
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
     const results = [];
     for (const r of toStart) {
-      const feat = featureFromPath(r.worktreePath);
+      const feat = servers.featureFor(r.worktreePath);
       results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, feat))) });
     }
     await refreshRunning();
@@ -336,7 +345,7 @@ async function main() {
     if (!s) return res.status(404).json({ error: 'no such session' });
     const owned = (s.repos || []).filter((x) => x.worktreePath);
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
-    for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath)); // whole stack stopped → free the feature's slot
+    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath)); // whole stack stopped → free the feature's slot
     await refreshRunning();
     broadcastTopology();
     res.json({ ok: true });
@@ -359,7 +368,7 @@ async function main() {
     const owned = s ? (s.repos || []).filter((r) => r.worktreePath) : [];
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
-    for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath));
+    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath));
     if (owned.length) { await refreshRunning(); broadcastTopology(); }
     res.json(out);
   }));
@@ -415,7 +424,8 @@ async function main() {
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     const out = await worktree.create(repoObj.path, branch, name, {
-      copyPatterns: (cfg.copyPatterns && (cfg.copyPatterns[repo] || cfg.copyPatterns.default)) || [],
+      layout: identity.layout,
+      ...worktreeCopyOpts(cfg, repo),
     });
     await rescan();
     res.json(out);
@@ -433,7 +443,7 @@ async function main() {
   // ---- dev servers ----
   api.post('/servers/start', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const feature = featureFromPath(worktreePath);
+    const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature);
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const out = await servers.start(repo, worktreePath, servers.launchOpts(repo, feature));
@@ -446,14 +456,14 @@ async function main() {
     const out = await servers.stop(repo, worktreePath);
     await refreshRunning();
     // only free the feature's slot once no sibling repo of the feature is still running
-    const feature = featureFromPath(worktreePath);
-    if (![...runningCache.keys()].some((p) => featureFromPath(p) === feature)) servers.releaseSlot(feature);
+    const feature = servers.featureFor(worktreePath);
+    if (![...runningCache.keys()].some((p) => servers.featureFor(p) === feature)) servers.releaseSlot(feature);
     broadcastTopology();
     res.json(out);
   }));
   api.post('/servers/restart', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const feature = featureFromPath(worktreePath);
+    const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const out = await servers.restart(repo, worktreePath, servers.launchOpts(repo, feature));

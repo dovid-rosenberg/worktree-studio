@@ -9,17 +9,18 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { run, readJson, writeJson, realpath, slug } = require('./util');
 const { deriveEnv, allocSlot, rewriteAllSiblingPorts } = require('./concurrency');
+const { createIdentity } = require('./identity');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
 
-// Feature identity of a worktree: its `.worktrees/<name>` basename (the name
-// shared across repos). Main checkouts have no `.worktrees` segment → basename.
-function featureFromPath(worktreePath) {
-  const parts = String(worktreePath || '').split(path.sep);
-  const i = parts.lastIndexOf('.worktrees');
-  return (i >= 0 && parts[i + 1]) ? parts[i + 1] : path.basename(worktreePath || '');
-}
+// Feature identity of a worktree, from a path alone. Kept as a free function for
+// the callers that have nothing but a path and no resolver to hand; it answers
+// with the default (`basename` strategy, `.worktrees` layout) convention. A
+// Servers instance uses ITS OWN configured resolver (`this.identity`) instead, so
+// slot keys always match the grouping in server/features.js.
+const DEFAULT_IDENTITY = createIdentity({});
+function featureFromPath(worktreePath) { return DEFAULT_IDENTITY.ofPath(worktreePath); }
 
 // Read a byte range [start, end) from a file as UTF-8 (used for incremental log tails).
 function readRange(file, start, end) {
@@ -31,8 +32,12 @@ function readRange(file, start, end) {
 }
 
 class Servers {
-  constructor(cfg) {
+  // `identity` is the shared server/identity.js resolver (server.js builds one and
+  // hands the same instance to state.js/orchestrator.js). Passing it is what makes
+  // "which feature is this worktree?" one answer instead of two.
+  constructor(cfg, identity) {
     this.cfg = cfg;
+    this.identity = identity || createIdentity(cfg);
     this.selfPort = (cfg.web && cfg.web.port) || 0;
     this.logDir = path.join(cfg._stateDir, 'logs');
     this.lockDir = path.join(cfg._stateDir, 'locks');
@@ -52,6 +57,12 @@ class Servers {
   }
 
   _save() { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
+
+  // The feature a worktree path belongs to, under the configured identity
+  // strategy. Every slot key in the app goes through here or through
+  // `identity.of()` on the equivalent worktree object — the two agree by
+  // construction (server/identity.js).
+  featureFor(worktreePath) { return this.identity.ofPath(worktreePath); }
 
   // ---- concurrency: per-feature slot allocation + derived launch env ----
   _concEnabled() { return !!(this.cfg.concurrency && this.cfg.concurrency.enabled); }
@@ -82,7 +93,7 @@ class Servers {
   reconcileSlots(runningMap) {
     let changed = false;
     for (const feature of [...this.slots.keys()]) {
-      if (![...runningMap.keys()].some((p) => featureFromPath(p) === feature)) {
+      if (![...runningMap.keys()].some((p) => this.featureFor(p) === feature)) {
         this.slots.delete(feature);
         changed = true;
       }
@@ -264,7 +275,7 @@ class Servers {
   // Ports a server in this worktree would be listening on: the feature's
   // slot-derived ports when concurrency-slotted, else the repo's configured ports.
   _portsFor(repo, worktreePath) {
-    const opts = this.launchOpts(repo, featureFromPath(worktreePath));
+    const opts = this.launchOpts(repo, this.featureFor(worktreePath));
     if (opts.ports && opts.ports.length) return opts.ports;
     const sc = this.startCfg(repo);
     return sc ? sc.ports : [];
