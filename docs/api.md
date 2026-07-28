@@ -507,8 +507,10 @@ client stage or unstage one hunk at a time. `server/routes-review.js`.
 | `POST /sessions/:id/hunks/unstage`   | same shape                                                          |
 
 All four resolve the worktree the same way: `?repo=<name>` on the GETs, `repo` in
-the body on the POSTs. A session that owns exactly one repo may omit it; otherwise
-it is required (`400 { error: "repo is required" }`, or `400 unknown repo '<name>'`).
+the body on the POSTs. `repo` may be omitted when exactly one of the session's repos
+**has a worktree** — which is not the same as owning one repo, since a multi-repo
+session whose other repos are not yet promoted also qualifies. Otherwise it is
+required (`400 { error: "repo is required" }`, or `400 unknown repo '<name>'`).
 Unknown session → `404`.
 
 #### `GET /sessions/:id/diff?repo=<name>&sha=<sha>`
@@ -533,7 +535,11 @@ patch and the parsed model:
   ] }
 ```
 
-`parsed` is `null` for a file with no diff text at all. `lines` renders unified;
+The `parsed` object above shows the fields a renderer needs, not every field:
+`header` (the raw `diff --git`/`index`/`---`/`+++` lines, kept verbatim so a subset
+can be re-emitted as a valid patch), `oldMode`/`newMode`/`similarity`, and per-line
+`noNewline`/`noNewlineText`/`bare` are also present. `parsed` is `null` for a file
+with no diff text at all. `lines` renders unified;
 `rows` renders side-by-side and references `lines` **by index**, so neither copy of
 the text exists twice. A `change` row pairs a removal
 with the addition that replaced it; one-sided rows carry `null` on the other side.
@@ -541,7 +547,9 @@ with the addition that replaced it; one-sided rows carry `null` on the other sid
 `sha` defaults to `uncommitted` (the working tree). It is validated before it
 reaches a git argv — anything that is not a hex object name or the literal
 `uncommitted` is `400 { error: "sha must be a hex object name or \"uncommitted\"" }`,
-never a 500. A repeated `?sha=` collapses to its first value.
+never a 500. `sha` and `file` are `String()`-coerced first, so a repeated param
+(`?sha=a&sha=b`, which parses to an array) becomes the comma-joined string `"a,b"`
+and is rejected by that same validation — a `400`, never a `TypeError` 500.
 
 Two shapes cannot be modelled and say so instead of being mis-parsed:
 `parsed.binary` is `true` for a binary file, and `parsed.unsupported: "combined"`
@@ -576,6 +584,12 @@ has. The diff is re-read server-side, so a file that moved between render and ca
 would otherwise stage the *wrong* hunk silently; with `expect` the request is
 refused instead.
 
+Two things about `expect` a caller has to get right, because getting them wrong
+fails **silently** rather than loudly: it is only honoured when it is an **array**
+(a bare string is ignored, guard and all), and it is matched **positionally** —
+`expect[i]` against the hunk named by `hunks[i]` — so a `null`/absent entry skips
+the check for that one hunk.
+
 On success the response carries the freshly re-read `untracked`/`unstaged`/`staged`
 for that file, so a client never needs a follow-up GET, and a `session-state` frame
 is scheduled on the SSE stream (the index moved; the topology half did not).
@@ -587,12 +601,14 @@ matches the repo", which is the caller's to resolve:
 | ----------------------------------------------------------- | -------------------------------------- |
 | `file is required`                                           | no `file`                              |
 | `no <staged\|unstaged> changes for this file`                | nothing on that side                   |
-| `hunks must be indexes into the <side> diff (0…N)`           | out of range / not an integer          |
+| `no hunks in the <side> diff for this file`                  | a diff with no hunks (see below)       |
+| `hunks must be indexes into the <side> diff (0…<last>)`      | out of range, not an integer, **or an empty selection** (no `hunks` and no `hunk`) |
 | `the diff changed since it was loaded — reload and try again`| `expect` mismatch                      |
 | `binary file — stage or unstage the whole file instead`      | binary                                 |
 | `mode-only change — stage or unstage the whole file instead` | permission-only change                 |
 | `combined (merge) diff — hunk staging is not supported`      | `@@@`                                  |
-| git's own message                                            | `git apply --check` refused the patch  |
+| git's own message, else `patch does not apply`               | `git apply --check` refused the patch  |
+| git's own message, else `git apply failed`                   | the apply itself failed                |
 
 Staging is all-or-nothing: the patch is `git apply --check`ed before it is applied,
 because `git apply` is not atomic across files and a half-applied patch leaves the
@@ -824,15 +840,28 @@ Two things to know before reading the shapes:
   from a maintained price table (`server/pricing.js`) and is an **estimate**.
   Responses that carry a cost also carry `costIsEstimate: true` and a `pricing`
   block saying how old the table is.
-- **The index is optional.** Storage is `node:sqlite` (built into Node 22). If it
-  or FTS5 is unavailable the routes degrade to scanning the transcript files
-  directly rather than failing; `backend` always says which answered
-  (`sqlite-fts5` · `sqlite-like` · `file-scan`).
+- **The index is optional, but the fallback is not uniform.** Storage is
+  `node:sqlite` (built into Node 22). `backend` always says which layer answered:
+
+  | `backend` | when | search is |
+  | --- | --- | --- |
+  | `sqlite-fts5` | normal | FTS5 `MATCH`, ranked |
+  | `sqlite-like` | sqlite present, FTS5 missing | `LIKE` over the same table |
+  | `file-scan` | `node:sqlite` itself unavailable | substring scan of the files |
+
+  Note that a missing FTS5 does **not** mean file scanning — it is still sqlite.
+  Only the two search routes and `GET /sessions/:id/transcript/usage` fall back to
+  `file-scan`. **`GET /transcripts/usage` does not**: with no sqlite it reports
+  every session as all-zero with `indexed: false` rather than reading the
+  transcripts. And `POST /transcripts/reindex` simply refuses (`ok: false`).
 
 Indexing is incremental — the byte offset of the last pass is remembered and only
 appended bytes are read — and is triggered by the `Stop` / `SubagentStop` /
-`SessionEnd` hooks. Any route that reports on one session brings that session up
-to date first, so a caller never sees stale numbers because no hook has fired yet.
+`SessionEnd` hooks. A burst of hooks (parallel subagents) coalesces into one
+follow-up pass. The three routes that report on **one** session's search or usage
+refresh that session's index first, so a caller never sees stale numbers because no
+hook has fired yet; `GET /sessions/:id/transcript` does not (it only locates the
+file), and `GET /transcripts/usage` only does so with `?refresh=1`.
 
 A `claudeSessionId` that is not a uuid is refused before it is joined into a path;
 it arrives from a hook payload, and `../../..` would otherwise escape the
@@ -876,11 +905,13 @@ its own when a session's numbers look empty — it says *why*.
   "projectsRoot": "/Users/d/.claude/projects" }
 ```
 
-When `found` is `false` the payload carries `reason` instead of `file`/`cwd`
-(`session has no claudeSessionId yet` · `claudeSessionId is not a uuid` ·
+When `found` is `false` the payload carries `reason` and omits `file`, `cwd` and
+`slug` (`session has no claudeSessionId yet` · `claudeSessionId is not a uuid` ·
 `no projects dir at <path>` · `transcript not found`). `viaScan: true` means the
 file was found by scanning the project dirs rather than at the expected slug — a
-promote whose `/cd` never landed does this. `404` for an unknown session.
+promote whose `/cd` never landed does this; in that case `cwd` is present but
+`null`, because the directory it was found in is not one this session claims.
+`404` for an unknown session.
 
 ### `GET /transcripts/search`
 
@@ -896,6 +927,12 @@ all of `~/.claude/projects`.
 | `order`           | `rank` (default) or `recent`                                      |
 | `limit`           | 1–200, default 30                                                 |
 
+**Not every filter survives every backend**, and a silently ignored filter is worse
+than a rejected one, so: on `file-scan` only `q`, `session` and `limit` are honoured
+(`role`, `since` and `order` are dropped); on `sqlite-like` results are always
+ordered newest-first, so `order=rank` is ignored. Check `backend` before trusting a
+filter.
+
 ```jsonc
 { "ok": true, "backend": "sqlite-fts5", "query": "port already in use",
   "total": 3,
@@ -908,20 +945,30 @@ all of `~/.claude/projects`.
 
 `total` is the length of *this page*, not a corpus count. `snippet` carries FTS5's
 `«` `»` highlight markers on the `sqlite-fts5` backend only. `sidechain` marks a
-subagent's message.
+subagent's message. `ok` is present only on the sqlite backends — the `file-scan`
+and empty-query responses omit it, so branch on `backend`, not on `ok`.
 
-The query is **not** an FTS5 expression: every whitespace-run is quoted as a
-literal phrase and the phrases are ANDed, so `OR`, `NEAR`, `*` and unbalanced
-quotes are searched for rather than executed.
+The query is **not** an FTS5 expression. It is tokenized as `"quoted runs"` plus
+bare whitespace-separated words, each token is re-quoted as a literal phrase, and
+the phrases are ANDed. So `OR`, `NEAR` and `*` are searched for rather than
+executed, and a double-quoted run stays one multi-word phrase. Note that `"`
+characters are **stripped**, not searched for — an unbalanced quote disappears
+rather than matching a literal quote.
 
 A repeated param (`?q=a&q=b`) collapses to its first value rather than erroring.
+`sessionId` is accepted as an alias for `session`.
 
 ### `GET /sessions/:id/transcript/search`
 
 The same search scoped to one session, and the session's index is refreshed
-first. Takes `q`/`query`, `limit`, `order`. Returns the same shape plus a
-top-level `session`, and omits the per-hit `session` meta (the caller already
-knows whose it is). `404` for an unknown session.
+first. Takes `q`/`query`, `limit`, `order` (no `role`/`since`). Returns the same
+shape plus a top-level `session`, and omits the per-hit `session` meta — the caller
+already knows whose it is. `404` for an unknown session.
+
+Two `file-scan` caveats: hits carry no `sessionId` either (they come straight off
+the file), and when the transcript cannot be found the response is
+`{ query, backend, hits: [], total: 0, reason }` with **no** top-level `session`.
+On that backend `limit` clamps to 1–500, not 1–200.
 
 > Prefer the global endpoint with `?session=<id>` when rendering a results list:
 > it carries per-hit session meta, which is what lets a hit from an unknown
@@ -946,8 +993,9 @@ One session's tokens and derived cost.
 
 - `source` is `index` (from sqlite), `transcript` (read directly — no sqlite, or
   not indexed yet) or `none` (no transcript found, with `reason`). The two live
-  sources differ in one field: `index` reports `messages`, while `transcript`
-  reports `assistantMessages` + `userMessages` and adds `file`, `bytes`, `offset`,
+  sources differ in their extra fields: `index` reports `messages`, while
+  `transcript` reports `assistantMessages` + `userMessages`, a `complete` flag
+  (true when every model in the file had a rate), and `file`, `bytes`, `offset`,
   `malformedLines` and `truncatedTail` about the read itself.
 - Cache writes are split by TTL because a 1 h write bills at 2× the input rate and
   a 5 m write at 1.25×. Pricing the lump as 5 m would understate any session using
@@ -994,9 +1042,16 @@ what to use when a transcript was rewritten under the server.
   "status": { … } }
 ```
 
-A per-session `ok: false` carries `reason` (`transcript vanished`,
-`claudeSessionId is not a uuid`, `index unavailable`, …). `upToDate: true` means
-there were no new bytes — the cheap, normal outcome.
+A per-session `ok: false` carries `reason`: `transcript vanished`,
+`claudeSessionId is not a uuid`, `no session id`, or the index's own open error
+(typically `node:sqlite unavailable (<require error>)` rather than the bare
+`index unavailable`). `{ ok: true, skipped: 'in flight' }` means a pass for that
+session was already running — not a failure. `upToDate: true` means there were no
+new bytes, the cheap and normal outcome.
+
+Unlike every other per-session route, naming a session that does not exist is
+**not** a `404`: `{ session: "nope" }` filters to nothing and answers
+`200 { ok: true, results: [] }`.
 
 ---
 
