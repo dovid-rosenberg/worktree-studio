@@ -21,6 +21,7 @@ const { createCiFeed } = require('./ci');
 const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
 const { createTerminalHandler } = require('./term');
+const { createRescan } = require('./rescan');
 const webui = require('./webui');
 const crash = require('./crash');
 const { run, has, shq, A } = require('./util');
@@ -43,15 +44,14 @@ async function main() {
 
   // ---- repo scan cache ----
   let repos = [];
-  let scanning = false;
-  async function rescan() {
-    if (scanning) return;
-    scanning = true;
+  // One scan at a time, and a request that arrives mid-scan is QUEUED rather than
+  // dropped — see server/rescan.js for the caller (POST /api/settings changing
+  // baseDirs) that nothing on the filesystem would ever have re-triggered.
+  const rescan = createRescan(async () => {
     try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
     // The scan is the only thing that knows each worktree's branch, and the
     // branch/manifest identity strategies need it to answer from a path alone.
     identity.reindex(repos);
-    scanning = false;
     prunePaths();        // the fresh scan is what says which worktrees still exist
     broadcastTopology(); // the scan IS the topology
     // A scan is also the server's only notice that git moved. watch.js arms
@@ -61,7 +61,7 @@ async function main() {
     // `gh pr view` would answer, so this is the CI feed's main trigger. Fire and
     // forget: the feed debounces, floors and gates it, and nothing here waits.
     ciFeed.poke({ force: true });
-  }
+  });
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
   // every SSE broadcast (which fires per Claude hook → per tool call).
