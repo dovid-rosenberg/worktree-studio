@@ -35,10 +35,11 @@ async function main() {
     console.log(`[wt-studio] multiplexer: ${mux.name}`);
   }
 
-  const manager = new SessionManager(cfg, mux || require('./multiplexer/tmux'));
   // One feature-identity resolver for the whole process: state.js groups worktrees
-  // with it and servers.js keys concurrency slots with it, so the two cannot drift.
+  // with it, servers.js keys concurrency slots with it and sessions.js records it
+  // on each session, so none of the three can drift.
   const identity = createIdentity(cfg);
+  const manager = new SessionManager(cfg, mux || require('./multiplexer/tmux'), identity);
   const servers = new Servers(cfg, identity);
 
   // ---- repo scan cache ----

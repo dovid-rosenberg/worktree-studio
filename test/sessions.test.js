@@ -20,9 +20,11 @@ function tempRepo(name) {
   return dir;
 }
 
-function manager() {
+// `cfgExtra` lets a test pick a featureIdentity strategy; the manager builds its
+// own resolver from cfg exactly as it does when server.js hands it the shared one.
+function manager(cfgExtra = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-'));
-  const cfg = { _stateDir: stateDir, _file: path.join(stateDir, 'config.json'), web: { port: 0 }, claude: { cmd: 'claude' }, baseDirs: [], copyPatterns: {} };
+  const cfg = { _stateDir: stateDir, _file: path.join(stateDir, 'config.json'), web: { port: 0 }, claude: { cmd: 'claude' }, baseDirs: [], copyPatterns: {}, ...cfgExtra };
   const sent = [];
   const mux = { name: 'stub', async sendText(n, t) { sent.push(t); }, async paneCommand() { return 'node'; }, async ensure() { return {}; }, async kill() {}, async rename() { return false; }, async hasSession() { return false; } };
   const m = new SessionManager(cfg, mux);
@@ -344,4 +346,89 @@ test('adopt sets home to the worktree launch dir (so resume resolves the convers
   assert.ok(s && s.id, 'session adopted');
   assert.equal(s.home, wt, 'home is the worktree (launch/transcript dir), not repoPath');
   fs.rmSync(wt, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// session.feature is the feature IDENTITY, not the worktree name
+//
+// `POST /group/pr { group: session.feature }` (public/app.js) resolves that value
+// against the feature names state.js computes with server/identity.js. Under
+// `basename` the identity and the worktree name coincide, which is why storing the
+// name was latent; under `branch`/`manifest` they differ and the lookup 404s.
+// ---------------------------------------------------------------------------
+
+const { computeFeatures } = require('../server/features');
+const { createIdentity } = require('../server/identity');
+
+// Group `fix/4821-payments` and `feat/4821-ui` both onto the ticket number 4821.
+const BY_TICKET = { featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat|feature)/(\\d+)' } };
+
+test('promote stores the feature identity, and still NAMES the worktree by name', async () => {
+  const m = manager(BY_TICKET);
+  const repo = tempRepo('ident-promote');
+  m.sessions.set('i1', {
+    id: 'i1', repoName: 'api', repoPath: repo, home: repo,
+    worktree: null, worktreePath: null, branch: null, feature: 'placeholder',
+    suggestedBranch: 'fix/4821-payments', suggestedName: 'payments',
+    muxName: 'mux-i1', pendingRepos: [],
+    repos: [{ repo: 'api', repoPath: repo, worktree: null, worktreePath: null, branch: null, primary: true }],
+    state: 'idle', active: true, createdAt: Date.now(),
+  });
+
+  const out = await m.promote('i1');
+  assert.equal(out.ok, true, out.error);
+  const s = m.get('i1');
+
+  // naming is untouched — the directory is still the worktree name
+  assert.equal(s.worktree, 'payments');
+  assert.ok(fs.existsSync(path.join(repo, '.worktrees', 'payments')), 'worktree dir is named after the worktree');
+  // grouping is the identity
+  assert.equal(s.feature, '4821', 'the stored feature is the identity the branch strategy resolves');
+
+  // …and that value is exactly what a /group/* lookup would find.
+  const identity = createIdentity(BY_TICKET);
+  const wt = { repo: 'api', wtname: s.worktree, branch: s.branch, path: s.worktreePath };
+  const { features } = computeFeatures([wt], [], identity);
+  assert.ok(features.some((f) => f.name === s.feature), `no feature named ${s.feature} in ${features.map((f) => f.name).join(', ')}`);
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('adopt stores the identity of the worktree it adopted', async () => {
+  const m = manager(BY_TICKET);
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-ident-adopt-'));
+  const s = await m.adopt({ worktreePath: wt, repoName: 'api', repoPath: '/tmp/api', branch: 'feat/4821-ui', wtname: 'ui-work' });
+  assert.equal(s.worktree, 'ui-work', 'the worktree keeps its own name');
+  assert.equal(s.feature, '4821', 'the session records the identity, not the name');
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('addRepo names the sibling worktree after the worktree, never after the identity', async () => {
+  // The identity here is `4821` — a ticket number, not a directory name. Creating
+  // `<repo>/.worktrees/4821` would be a silent renaming of the user's worktrees.
+  const m = manager(BY_TICKET);
+  const repoB = tempRepo('ident-addrepo');
+  m.sessions.set('i2', {
+    id: 'i2', feature: '4821', worktree: 'payments', branch: 'fix/4821-payments', muxName: 'mux-i2',
+    repos: [{ repo: 'api', repoPath: '/tmp/api', worktree: 'payments', worktreePath: '/tmp/api/.worktrees/payments', primary: true }],
+  });
+  const out = await m.addRepo('i2', { repo: 'fe', repoPath: repoB });
+  assert.equal(out.ok, true, out.error);
+  assert.ok(fs.existsSync(path.join(repoB, '.worktrees', 'payments')), 'sibling worktree keeps the feature\'s worktree name');
+  assert.ok(!fs.existsSync(path.join(repoB, '.worktrees', '4821')), 'the grouping key was not used as a directory name');
+  fs.rmSync(repoB, { recursive: true, force: true });
+});
+
+test('a session persisted before worktree name and identity were told apart still names siblings', async () => {
+  // Back-compat: old sessions.json rows carry `feature` and nothing else naming-ish.
+  const m = manager();
+  const repoB = tempRepo('ident-legacy');
+  m.sessions.set('old', {
+    id: 'old', feature: 'legacy-feat', branch: 'feature/legacy-feat', muxName: 'mux-old',
+    repos: [{ repo: 'api', repoPath: '/tmp/api', primary: true }],
+  });
+  const out = await m.addRepo('old', { repo: 'fe', repoPath: repoB });
+  assert.equal(out.ok, true, out.error);
+  assert.ok(fs.existsSync(path.join(repoB, '.worktrees', 'legacy-feat')), 'falls back to the stored feature exactly as before');
+  fs.rmSync(repoB, { recursive: true, force: true });
 });
