@@ -8,6 +8,8 @@ const path = require('path');
 const { readJson, writeJson, makeId, shortId, realpath, slug, shq, run } = require('./util');
 const status = require('./status');
 const worktree = require('./worktree');
+const layoutMod = require('./layout');
+const { worktreeCopyOpts } = worktree;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -56,6 +58,7 @@ class SessionManager extends EventEmitter {
     super();
     this.cfg = cfg;
     this.mux = mux;
+    this.layout = layoutMod.resolve(cfg); // where the worktrees this manager creates live
     this.file = path.join(cfg._stateDir, 'sessions.json');
     this.sessions = new Map();
     this._adopting = new Set(); // worktreePaths with an adopt in flight (dedup guard)
@@ -180,7 +183,8 @@ class SessionManager extends EventEmitter {
     if ((s.repos || []).some((r) => r.repo === repo)) return { ok: true, already: true, session: s };
     const branch = s.branch || `feature/${s.feature}`;
     const res = await worktree.create(repoPath, branch, s.feature, {
-      copyPatterns: (this.cfg.copyPatterns && (this.cfg.copyPatterns[repo] || this.cfg.copyPatterns.default)) || [],
+      layout: this.layout,
+      ...worktreeCopyOpts(this.cfg, repo),
     });
     if (!res.ok) {
       // the repo already has this feature's worktree → attach it instead of failing
@@ -316,7 +320,8 @@ class SessionManager extends EventEmitter {
     const wtName = name || s.suggestedName;
     const res = await worktree.create(s.repoPath, br, wtName, {
       unique: true, // auto-suffix on collision rather than fail
-      copyPatterns: (this.cfg.copyPatterns && (this.cfg.copyPatterns[s.repoName] || this.cfg.copyPatterns.default)) || [],
+      layout: this.layout,
+      ...worktreeCopyOpts(this.cfg, s.repoName),
     });
     if (!res.ok) return res;
     s.worktree = res.name;

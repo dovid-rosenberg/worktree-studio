@@ -18,7 +18,10 @@ const sources = require('./sources');
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference
 // would go stale the first time either one is rescanned.
-function createState({ cfg, manager, servers, mux, repos, running }) {
+function createState({ cfg, manager, servers, mux, repos, running, identity }) {
+  // The feature-identity resolver is shared with servers.js on purpose: the
+  // grouping below and the concurrency slot key must be the same answer.
+  const ident = identity || servers.identity;
   // Both halves compare worktree paths that reach us from three different sources
   // (the git scan, a session's stored paths, lsof), so every comparison resolves
   // symlinks first. One cache serves both halves; prunePaths() invalidates it.
@@ -54,7 +57,7 @@ function createState({ cfg, manager, servers, mux, repos, running }) {
       }
       reposOut.push({ name: repo.name, repo: repo.name, path: repo.path, defaultBranch: repo.defaultBranch, worktrees: wts });
     }
-    const { features, groups } = computeFeatures(flat, cfg.groups || []);
+    const { features, groups } = computeFeatures(flat, cfg.groups || [], ident);
     // one session per feature: surface the single driving session on the feature,
     // plus its concurrency slot (0,1,2…) when one is allocated — powers the Fleet badge.
     for (const f of [...features, ...groups]) {

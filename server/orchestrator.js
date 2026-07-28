@@ -6,13 +6,13 @@
 // the feature, and start the one session that drives it.
 //
 // Two things every verb here has to get right:
-//   - concurrency slots: a slot is keyed on the member's OWN feature (its
-//     `.worktrees/<name>` basename), allocated before any launch and released once
-//     the whole stack is down, so a leaked slot never blocks the next feature.
+//   - concurrency slots: a slot is keyed on the member's OWN feature identity
+//     (servers.featureFor → server/identity.js, the same resolver features.js
+//     groups with), allocated before any launch and released once the whole stack
+//     is down, so a leaked slot never blocks the next feature.
 //   - conflicts: another worktree of the same repo already running, which has to be
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 const worktree = require('./worktree');
-const { featureFromPath } = require('./servers');
 const { run, shq, A } = require('./util');
 
 // `app` here is the API router — server.js mounts it at both /api and /api/v1.
@@ -34,16 +34,17 @@ function register(app, deps) {
       for (const c of conflicts) await servers.stop(c.repo, c.path);
       await new Promise((r) => setTimeout(r, 1200));
     }
-    // Key each slot on the member's own feature (its `.worktrees/<name>` basename) — the
-    // one canonical key. Members of a real feature share the basename → one slot; a
-    // degenerate mixed-name manual group correctly gets a per-worktree slot each.
+    // Key each slot on the member's own feature identity — the one canonical key.
+    // Members of a real feature resolve to the same identity → one slot; under the
+    // default `basename` strategy a degenerate mixed-name manual group gets a
+    // per-worktree slot each (the `manifest` strategy is what fixes that).
     for (const m of toStart) {
-      const alloc = servers.allocSlotFor(featureFromPath(m.path));
+      const alloc = servers.allocSlotFor(servers.featureFor(m.path));
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
     let started = 0; const failures = [];
     await Promise.all(toStart.map(async (m) => {
-      const feat = featureFromPath(m.path);
+      const feat = servers.featureFor(m.path);
       const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, feat));
       if (r.ok) started++; else failures.push({ repo: m.repo, error: r.error });
     }));
@@ -57,7 +58,7 @@ function register(app, deps) {
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
-    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // whole stack stopped → free the feature's slot
+    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -69,10 +70,10 @@ function register(app, deps) {
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const toRestart = g.members.filter((m) => m.running || m.canStart);
     for (const m of toRestart) {
-      const alloc = servers.allocSlotFor(featureFromPath(m.path)); // reuse the feature's slot across the restart
+      const alloc = servers.allocSlotFor(servers.featureFor(m.path)); // reuse the feature's slot across the restart
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
-    await Promise.all(toRestart.map((m) => servers.restart(m.repo, m.path, servers.launchOpts(m.repo, featureFromPath(m.path)))));
+    await Promise.all(toRestart.map((m) => servers.restart(m.repo, m.path, servers.launchOpts(m.repo, servers.featureFor(m.path)))));
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
@@ -98,7 +99,7 @@ function register(app, deps) {
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.deactivate(m.session.id);
     }
-    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // whole stack stopped → free the feature's slot
+    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
     scheduleBroadcast();
     res.json({ ok: true });
   }));
@@ -117,7 +118,7 @@ function register(app, deps) {
       const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: deleteBranches });
       results.push({ repo: m.repo, ok: rr.ok, error: rr.error });
     }
-    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // feature removed → free its slot
+    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // feature removed → free its slot
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   }));
