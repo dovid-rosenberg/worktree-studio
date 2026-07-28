@@ -80,8 +80,9 @@ function trimLog(file, max = MAX_LOG_BYTES, keep = KEEP_LOG_BYTES) {
   let fd;
   try { fd = fs.openSync(file, 'r+'); } catch { return false; }
   try {
-    const buf = Buffer.alloc(keep);
-    const n = fs.readSync(fd, buf, 0, keep, size - keep);
+    const want = Math.min(keep, size); // a keep larger than the file would read from a negative offset
+    const buf = Buffer.alloc(want);
+    const n = fs.readSync(fd, buf, 0, want, size - want);
     const nl = buf.subarray(0, n).indexOf(0x0a); // resume on a line boundary
     const from = nl >= 0 && nl + 1 < n ? nl + 1 : 0;
     fs.writeSync(fd, buf, from, n - from, 0);
