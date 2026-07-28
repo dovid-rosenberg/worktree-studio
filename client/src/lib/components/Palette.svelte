@@ -11,7 +11,7 @@
   import { world } from '$lib/stores/world.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
   import { showShortcuts } from '$lib/shortcuts.svelte.js';
-  import { activateSession, deactivateSession, promote, startSessionServers } from '$lib/ops.svelte.js';
+  import { activateSession, deactivateSession, promote, runStack } from '$lib/ops.svelte.js';
 
   let query = $state('');
   let hi = $state(0);
@@ -49,7 +49,8 @@
     if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '⌘↵', () => promote(cur));
     if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { ui.goToSession(cur.id); ui.dockView = 'changes'; });
     if (cur) add('◔', 'Session insights', '', () => { ui.goToSession(cur.id); ui.dockView = 'insights'; });
-    if (cur && cur.worktreePath) add('▶', 'Run stack', '⌘R', () => startSessionServers(cur));
+    // Was labelled 'Run stack' while calling startSessionServers — the other verb.
+    if (cur && cur.worktreePath && cur.feature) add('▶', 'Run stack', '⌘R', () => runStack(cur.feature));
     add('◔', 'Toggle Insights', '⌘\\', () => ui.toggleUsage());
     if (cur) {
       if (cur.active === false) add('↻', 'Resume current', '', () => activateSession(cur));
