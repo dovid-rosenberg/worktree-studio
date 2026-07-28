@@ -1,10 +1,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { computeFeatures, resolveRef } from '../server/features.ts';
+import { present } from './helpers.ts';
+import type { FeatureMember, Worktree } from '../server/types.ts';
 
-// helper worktree
-function wt(repo, wtname, branch, extra = {}) {
-  return { repo, wtname, branch, path: `/r/${repo}/.worktrees/${wtname}`, running: false, ...extra };
+// A worktree row, spelling only what computeFeatures() reads: repo/wtname decide
+// whether it is a main checkout, branch feeds the `branch` identity strategy, and
+// `running` is what orders the result. The rest of `Worktree` is irrelevant here, so
+// the fixture is typed by the slice rather than filled with placeholder values.
+type WtFixture = Pick<Worktree, 'repo' | 'wtname' | 'branch' | 'path' | 'running'>;
+function wt(repo: string, wtname: string, branch: string | null, extra: Partial<WtFixture> = {}): Worktree {
+  return { repo, wtname, branch, path: `/r/${repo}/.worktrees/${wtname}`, running: false, ...extra } as Worktree;
+}
+
+/** A member the test placed there itself, so it is a real worktree and not a stub. */
+function real(m: FeatureMember | undefined): Worktree {
+  const x = present(m, 'group member');
+  if (x.missing) throw new Error(`expected a real worktree, got the missing stub ${x.ref}`);
+  return x;
 }
 
 test('auto-groups worktrees sharing a name across repos; singles are features but not groups', () => {
@@ -35,9 +48,9 @@ test('manual group resolves members by wtname OR branch and marks missing', () =
   const { features } = computeFeatures(worktrees, manual);
   const g = features.find((f) => f.name === 'Alpha');
   assert.ok(g && g.auto === false);
-  assert.equal(g.members[0].wtname, 'wt-a');          // by wtname
-  assert.equal(g.members[1].branch, 'feature/alpha'); // by branch
-  assert.equal(g.members[2].missing, true);           // unresolved
+  assert.equal(real(g.members[0]).wtname, 'wt-a');          // by wtname
+  assert.equal(real(g.members[1]).branch, 'feature/alpha'); // by branch
+  assert.equal(present(g.members[2]).missing, true);        // unresolved
 });
 
 test('manual group name suppresses the auto feature of the same name', () => {
@@ -46,7 +59,7 @@ test('manual group name suppresses the auto feature of the same name', () => {
   const { features, groups } = computeFeatures(worktrees, manual);
   // only the manual 'shared' remains, not an auto duplicate
   assert.equal(features.filter((f) => f.name === 'shared').length, 1);
-  assert.equal(features.find((f) => f.name === 'shared').auto, false);
+  assert.equal(present(features.find((f) => f.name === 'shared'), "the 'shared' feature").auto, false);
   assert.equal(groups.filter((g) => g.name === 'shared').length, 1);
 });
 

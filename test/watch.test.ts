@@ -8,11 +8,13 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import * as watch from '../server/watch.ts';
+import type { WatchDeps } from '../server/watch.ts';
+import { expectOk } from './helpers.ts';
 import * as worktree from '../server/worktree.ts';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
 
-async function waitFor(fn, { timeout = 6000, label = 'condition' } = {}) {
+async function waitFor(fn: () => unknown, { timeout = 6000, label = 'condition' } = {}) {
   const until = Date.now() + timeout;
   for (;;) {
     if (await fn()) return;
@@ -26,9 +28,9 @@ function tempBase() {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wts-watch-')));
 }
 
-function makeRepo(dir) {
+function makeRepo(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
-  const g = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
+  const g = (...a: string[]) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
   g('init', '-q', '-b', 'main');
   g('config', 'user.email', 't@t.t');
   g('config', 'user.name', 't');
@@ -57,12 +59,12 @@ const QUIET = {
 // Boots a watcher over `base` with a counting rescan. Returns the handle plus the
 // call log; the initial (awaited) boot scan is zeroed out so tests count only
 // what their own actions caused.
-/**
- * @param {string} base
- * @param {{ intervals?: object, rescan?: Function, [dep: string]: any }} [opts]
- */
-async function boot(base, { intervals = {}, rescan, ...deps } = {}) {
-  const calls = [];
+// Everything watch.start() takes except the config, which boot() supplies itself.
+// Typed off WatchDeps rather than restated, so a new dep is reachable from the tests
+// the moment it exists.
+type BootOpts = Partial<Omit<WatchDeps, 'cfg'>>;
+async function boot(base: string, { intervals = {}, rescan, ...deps }: BootOpts = {}) {
+  const calls: number[] = [];
   const h = await watch.start({
     cfg: { baseDirs: [base], scanDepth: 3 },
     rescan: rescan || (async () => { calls.push(Date.now()); }),
@@ -84,8 +86,7 @@ test('a worktree add collapses git\'s burst of writes into exactly one rescan', 
   const { h, calls } = await boot(base);
   t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
 
-  const out = await worktree.create(repo, 'feature/watched', 'watched', { fetch: false });
-  assert.equal(out.ok, true, out.error);
+  expectOk(await worktree.create(repo, 'feature/watched', 'watched', { fetch: false }), 'create()');
 
   await waitFor(() => calls.length >= 1, { label: 'a rescan after worktree add' });
   await sleep(600); // long enough for a second debounce window to have elapsed
@@ -95,14 +96,12 @@ test('a worktree add collapses git\'s burst of writes into exactly one rescan', 
 test('a worktree remove triggers a rescan', async (t) => {
   const base = tempBase();
   const repo = makeRepo(path.join(base, 'alpha'));
-  const out = await worktree.create(repo, 'feature/gone', 'gone', { fetch: false });
-  assert.equal(out.ok, true, out.error);
+  const out = expectOk(await worktree.create(repo, 'feature/gone', 'gone', { fetch: false }), 'create()');
 
   const { h, calls } = await boot(base);
   t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
 
-  const rm = await worktree.remove(repo, out.path);
-  assert.equal(rm.ok, true, rm.error);
+  expectOk(await worktree.remove(repo, out.path), 'remove()');
   await waitFor(() => calls.length >= 1, { label: 'a rescan after worktree remove' });
   await sleep(600);
   assert.equal(calls.length, 1, `one rescan for one worktree remove, got ${calls.length}`);

@@ -120,12 +120,15 @@ function compileBranchMatcher(pattern?: string | null, flags?: string | null): B
 // left to chance: the leftmost group that matched wins, and any later ones are
 // ignored. `(?:…)` non-capturing groups are invisible here, which is the escape
 // hatch for a pattern that needs grouping without claiming the identity.
-function firstCapture(m: RegExpMatchArray | null): string | null {
+// The parameter is `Array<string | undefined>`, not `RegExpMatchArray`, because
+// lib.d.ts types the latter's elements as `string` and that is not true: a group that
+// did not participate is `undefined` at runtime, which is the case this function
+// exists to skip. A real match array still satisfies this (arrays are covariant), so
+// nothing at a call site changes.
+function firstCapture(m: Array<string | undefined> | null): string | null {
   if (!m) return null;
-  // A group that did not participate is `undefined` at runtime — which is exactly
-  // what this skips, and what the array's element type does not admit.
   for (let i = 1; i < m.length; i++) {
-    const g: string | undefined = m[i];
+    const g = m[i];
     if (g !== undefined && g !== '') return g;
   }
   return null;

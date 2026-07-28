@@ -11,6 +11,7 @@
 // ~/.config/worktree-studio/config.json.
 import { test } from 'node:test';
 import assert from 'node:assert';
+import type { Config, PartialDeep } from '../server/types.ts';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -28,7 +29,7 @@ process.env.WT_STUDIO_STATE = path.join(TMP, 'state');
 const { load, defaults, migrate } = await import('../server/config.ts');
 
 const FILE = process.env.WT_STUDIO_CONFIG;
-const writeConfig = (obj) => fs.writeFileSync(FILE, JSON.stringify(obj, null, 2));
+const writeConfig = (obj: unknown) => fs.writeFileSync(FILE, JSON.stringify(obj, null, 2));
 const readConfig = () => JSON.parse(fs.readFileSync(FILE, 'utf8'));
 
 // The accept.blue block that used to live in defaults() — the exact shape an
@@ -139,11 +140,13 @@ test('the migration preserves every other key the user had written', () => {
 });
 
 test('migrate() is a pure predicate on the raw object', () => {
-  const raw = { baseDirs: [] };
+  // migrate() takes a RAW parsed config.json and mutates it, so the fixture is typed
+  // as what JSON.parse hands back — the whole point is that the key is absent.
+  const raw: PartialDeep<Config> = { baseDirs: [] };
   assert.equal(migrate(raw), true);
   assert.deepEqual(raw.concurrency, OLD_CONCURRENCY);
   assert.equal(migrate(raw), false, 'idempotent — a second call is a no-op');
-  assert.equal(migrate({ concurrency: null }), false, 'an explicit null is still "the key is present"');
+  assert.equal(migrate({ concurrency: null as unknown as undefined }), false, 'an explicit null is still "the key is present"');
   assert.equal(migrate(null), false);
 });
 

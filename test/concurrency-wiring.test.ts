@@ -5,6 +5,9 @@
 // here we exercise how Servers wires them together. No child processes are spawned.
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { expectOk, present } from './helpers.ts';
+import type { ConcurrencyConfig, ConfigPatch } from '../server/types.ts';
+import type { ConfigPatchPlan } from '../server/servers.ts';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -81,8 +84,7 @@ test('allocSlotFor returns an error shape when maxSlots (3) is exhausted', () =>
   s.allocSlotFor('feat-c'); // 2
   const out = s.allocSlotFor('feat-d');
   assert.equal(out.slot, undefined, 'no slot handed out');
-  assert.equal(typeof out.error, 'string');
-  assert.match(out.error, /no free concurrency slot/);
+  assert.match(present(out.error, 'a refusal'), /no free concurrency slot/);
 });
 
 test('releaseSlot frees the slot so a new feature reuses the lowest freed slot', () => {
@@ -146,9 +148,10 @@ test('launchOpts for a repo with a configPatch returns a patch descriptor resolv
   s.allocSlotFor('feat-a'); // 0
   s.allocSlotFor('feat-b'); // 1
   const opts = s.launchOpts('merchant-v3', 'feat-b'); // slot 1
-  assert.equal(opts.patch.file, 'src/config.ts');
-  assert.deepEqual(opts.patch.siblingPortEnv, AB_PORT_ENV, "resolves to accept-blue's portEnv");
-  assert.equal(opts.patch.slot, 1, "patch slot matches the feature's slot");
+  const patch = present(opts.patch, 'a config patch');
+  assert.equal(patch.file, 'src/config.ts');
+  assert.deepEqual(patch.siblingPortEnv, AB_PORT_ENV, "resolves to accept-blue's portEnv");
+  assert.equal(patch.slot, 1, "patch slot matches the feature's slot");
   // its own env is the FE port shifted by its slot
   assert.deepEqual(opts.env, { WTS_FE_PORT: '3130' });
   assert.deepEqual(opts.ports, [3130]);
@@ -158,7 +161,7 @@ test('launchOpts for a repo with a configPatch returns a patch descriptor resolv
 // applyConfigPatch(worktreePath, patch) — real temp worktree dir + config file
 // ---------------------------------------------------------------------------
 
-function worktreeWithConfig(relFile, contents) {
+function worktreeWithConfig(relFile: string, contents: string) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-wt-'));
   const file = path.join(dir, relFile);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -219,7 +222,9 @@ test('applyConfigPatch is a no-op (no throw) when the config file is absent', ()
 test('applyConfigPatch is a no-op when the patch descriptor is missing a file', () => {
   const s = servers();
   assert.doesNotThrow(() => s.applyConfigPatch('/nonexistent', null));
-  assert.doesNotThrow(() => s.applyConfigPatch('/nonexistent', {}));
+  // A descriptor with no `file` is the case under test, so it is cast in deliberately:
+  // a hand-edited config.json can produce one and applyConfigPatch must shrug.
+  assert.doesNotThrow(() => s.applyConfigPatch('/nonexistent', {} as ConfigPatchPlan));
 });
 
 // ---------------------------------------------------------------------------
@@ -238,7 +243,7 @@ test('with concurrency disabled, launchOpts for accept-blue returns empty env so
 // ---------------------------------------------------------------------------
 
 // Build a Servers on a caller-owned stateDir so a second instance can reuse it.
-function serversOn(stateDir, concOverrides = {}) {
+function serversOn(stateDir: string, concOverrides: Partial<ConcurrencyConfig> = {}) {
   return new Servers({ _stateDir: stateDir, web: { port: 0 }, start: {}, concurrency: concurrency(concOverrides) });
 }
 
@@ -344,10 +349,10 @@ test('A4: a second lock on the SAME worktree fails until released', () => {
 // ---------------------------------------------------------------------------
 
 // Capture console.warn calls for the duration of fn.
-function captureWarn(fn) {
+function captureWarn(fn: () => void): string[] {
   const orig = console.warn;
-  const msgs = [];
-  console.warn = (...a) => msgs.push(a.join(' '));
+  const msgs: string[] = [];
+  console.warn = (...a: unknown[]) => msgs.push(a.map(String).join(' '));
   try { fn(); } finally { console.warn = orig; }
   return msgs;
 }
@@ -403,8 +408,8 @@ test('orphan cleanup: stop() drops the tracked entry and releaseSlot frees the f
 test('stop() targets only the worktree\'s known ports (no full discovery scan)', async () => {
   const s = servers();
   s.alive = () => false;
-  const probed = [];
-  s.portPid = async (p) => { probed.push(p); return null; };
+  const probed: number[] = [];
+  s.portPid = async (p: number) => { probed.push(p); return null; };
   // accept-blue at slot 0 → its base port family
   s.allocSlotFor('feat-a');
   await s.stop('accept-blue', '/repo/.worktrees/feat-a');
@@ -470,15 +475,15 @@ test('isSlotted is true only for a configured repo while concurrency is enabled'
 import net from 'net';
 
 // A port nobody is using yet. Bound and released, so start()'s pre-check passes.
-function freePort() {
-  return new Promise((resolve) => {
+function freePort(): Promise<number> {
+  return new Promise<number>((resolve) => {
     const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => { const { port } = /** @type {import('net').AddressInfo} */ (srv.address()); srv.close(() => resolve(port)); });
+    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address() as import('net').AddressInfo; srv.close(() => resolve(port)); });
   });
 }
 
 // A Servers whose 'api' repo starts a server that binds `port` only after `delayMs`.
-function slowStarting(port, delayMs) {
+function slowStarting(port: number, delayMs: number) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-race-'));
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-race-repo-'));
   const wt = path.join(repo, '.worktrees', 'feat-slow');
@@ -516,8 +521,7 @@ test('a slot is not reclaimable while its feature is still starting', { timeout:
     assert.deepEqual(s.allocSlotFor('feat-other'), { slot: 1 }, 'no other feature was given the same slot');
     assert.equal(s.isStarting(feature), true, 'the launch is still in flight');
 
-    const r = await launching;
-    assert.equal(r.ok, true, r.error);
+    expectOk(await launching, 'start()');
     assert.equal(s.isStarting(feature), false, 'the guard lifts when the launch ends');
 
     // The guard is scoped to the launch, not a permanent exemption: once the start
@@ -565,13 +569,16 @@ test('a restart holds the guard across the stop/settle gap, not just the start',
 import { spawn } from 'child_process';
 
 // A live process that is emphatically not a Studio dev server.
-function bystander() {
+// `ChildProcess.pid` is `number | undefined` — undefined only when the spawn itself
+// failed, which for `sleep` means the test cannot run at all. Assert it once here so
+// every use below is a plain number.
+function bystander(): { pid: number } {
   const p = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
   p.unref();
-  return p;
+  return { pid: present(p.pid, 'a spawned pid') };
 }
 
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 // A process that has just been signalled stays visible to kill(pid, 0) until it is
 // reaped, so "did it die?" is only answerable after a beat.
 const settle = () => new Promise((r) => setTimeout(r, 400));
@@ -648,9 +655,8 @@ test('start() records the moment it spawned, so its own pid validates', async ()
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-tracked-start-'));
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-tracked-repo-'));
   const s = new Servers({ _stateDir: stateDir, web: { port: 0 }, start: { api: { cmd: 'exec sleep 20', ports: [] } } });
-  const r = await s.start('api', repo);
-  assert.equal(r.ok, true, r.error);
-  const t = s.tracked[repo];
+  expectOk(await s.start('api', repo), 'start()');
+  const t = present(s.tracked[repo], 'the tracked record');
   assert.ok(t.startedAt, 'the record carries a start stamp');
   assert.equal(await s._trackedPidState(t), 'ours');
   await s.stop('api', repo);

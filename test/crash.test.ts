@@ -13,26 +13,30 @@ import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
 import * as crash from '../server/crash.ts';
+import { present } from './helpers.ts';
+import type { AddressInfo } from 'net';
 import { EventEmitter } from 'events';
 import express from 'express';
 
 // Arm install() against fakes and return what it did.
 function armed() {
-  const handlers = new Map();
-  /** @type {string[]} */ const logs = [];
-  /** @type {number[]} */ const exits = [];
+  const handlers = new Map<string, (e: unknown) => void>();
+  const logs: string[] = [];
+  const exits: number[] = [];
   crash.install({
-    log: (...a) => logs.push(a.map((/** @type {any} */ x) => (x instanceof Error ? `${/** @type {any} */ (x).code || ''} ${x.message}` : String(x))).join(' ')),
-    exit: (c) => exits.push(c),
-    on: (name, fn) => handlers.set(name, fn),
+    log: (...a: unknown[]) => logs.push(a.map((x) => (x instanceof Error ? `${errCode(x)} ${x.message}` : String(x))).join(' ')),
+    exit: (c: number) => exits.push(c),
+    on: (name: string, fn: (e: unknown) => void) => handlers.set(name, fn),
   });
   return { handlers, logs, exits };
 }
 
-// A Node-style error: the `code` is the only thing crash.ts classifies on.
-function err(code, message = 'boom') {
+// A Node-style error: the `code` is the only thing crash.ts classifies on. `code` is
+// not on `Error`, which is exactly why crash.ts reads it defensively.
+function err(code: string, message = 'boom'): Error & { code: string } {
   return Object.assign(new Error(message), { code });
 }
+const errCode = (e: Error): string => String((e as { code?: unknown }).code ?? '');
 
 // ---------------------------------------------------------------------------
 // classification
@@ -50,27 +54,27 @@ test('a dead client connection is the only survivable exception class', () => {
 
 test('an uncaught EADDRINUSE exits non-zero instead of being logged and survived', () => {
   const { handlers, exits } = armed();
-  handlers.get('uncaughtException')(err('EADDRINUSE', 'listen EADDRINUSE'));
+  present(handlers.get('uncaughtException'), 'uncaughtException')(err('EADDRINUSE', 'listen EADDRINUSE'));
   assert.deepEqual(exits, [1], 'a failed bind must be fatal');
 });
 
 test('an uncaught programming error exits non-zero', () => {
   const { handlers, exits, logs } = armed();
-  handlers.get('uncaughtException')(new TypeError('x is not a function'));
+  present(handlers.get('uncaughtException'), 'uncaughtException')(new TypeError('x is not a function'));
   assert.deepEqual(exits, [1]);
   assert.ok(logs.join('\n').includes('fatal uncaughtException'), logs.join('\n'));
 });
 
 test('an unhandled rejection is fatal too — it is the same failure reached through await', () => {
   const { handlers, exits } = armed();
-  handlers.get('unhandledRejection')(new Error('nobody caught me'));
+  present(handlers.get('unhandledRejection'), 'unhandledRejection')(new Error('nobody caught me'));
   assert.deepEqual(exits, [1]);
 });
 
 test('a client that vanished mid-write is survived, not fatal', () => {
   const { handlers, exits, logs } = armed();
-  handlers.get('uncaughtException')(err('EPIPE', 'write EPIPE'));
-  handlers.get('unhandledRejection')(err('ECONNRESET', 'read ECONNRESET'));
+  present(handlers.get('uncaughtException'), 'uncaughtException')(err('EPIPE', 'write EPIPE'));
+  present(handlers.get('unhandledRejection'), 'unhandledRejection')(err('ECONNRESET', 'read ECONNRESET'));
   assert.deepEqual(exits, [], 'one dead SSE/WebSocket socket must not take the daemon down');
   assert.equal(logs.length, 2);
   assert.ok(logs.every((l) => l.includes('continuing')), logs.join('\n'));
@@ -82,16 +86,16 @@ test('a client that vanished mid-write is survived, not fatal', () => {
 
 test('guardListen turns a bind failure into an explained non-zero exit', () => {
   const server = new EventEmitter();
-  /** @type {string[]} */ const logs = []; /** @type {number[]} */ const exits = [];
-  crash.guardListen(server, { host: '127.0.0.1', port: 4300 }, { log: (...a) => logs.push(String(a[0])), exit: (c) => exits.push(c) });
+  const logs: string[] = []; const exits: number[] = [];
+  crash.guardListen(server, { host: '127.0.0.1', port: 4300 }, { log: (...a: unknown[]) => logs.push(String(a[0])), exit: (c: number) => exits.push(c) });
   server.emit('error', err('EADDRINUSE', 'listen EADDRINUSE 127.0.0.1:4300'));
   assert.deepEqual(exits, [1]);
   assert.ok(/port 4300 is already in use/.test(logs.join('\n')), logs.join('\n'));
 });
 
 test('listenErrorMessage names the remedy for each bind failure and ignores the rest', () => {
-  assert.match(crash.listenErrorMessage(err('EADDRINUSE'), { host: '127.0.0.1', port: 4300 }), /already in use/);
-  assert.match(crash.listenErrorMessage(err('EACCES'), { host: '127.0.0.1', port: 80 }), /web\.port/);
+  assert.match(present(crash.listenErrorMessage(err('EADDRINUSE'), { host: '127.0.0.1', port: 4300 })), /already in use/);
+  assert.match(present(crash.listenErrorMessage(err('EACCES'), { host: '127.0.0.1', port: 80 })), /web\.port/);
   assert.equal(crash.listenErrorMessage(err('EPIPE'), { port: 1 }), null);
   assert.equal(crash.listenErrorMessage(null, {}), null);
 });
@@ -107,17 +111,16 @@ test('listenErrorMessage names the remedy for each bind failure and ignores the 
 // wrapper's removal from being a regression.
 
 // Drive the middleware directly with fakes, the way armed() does for install().
-function through(err, { headersSent = false } = {}) {
-  const logs = [];
-  const sent = { status: null, body: null, nexted: undefined };
-  const res = {
+function through(err: unknown, { headersSent = false } = {}) {
+  const logs: string[] = [];
+  const sent: { status: number | null; body: unknown; nexted: unknown } = { status: null, body: null, nexted: undefined };
+  const res: crash.ErrorResponse = {
     headersSent,
-    status(c) { sent.status = c; return this; },
-    json(b) { sent.body = b; return this; },
+    status(c: number) { sent.status = c; return { json(b: unknown) { sent.body = b; return undefined; } }; },
   };
-  const req = { method: 'GET', originalUrl: '/api/v1/state?token=deadbeef' };
-  crash.routeErrors({ log: (...a) => logs.push(a.map(String).join(' ')) })(
-    err, req, res, (e) => { sent.nexted = e; },
+  const req: crash.ErrorRequest = { method: 'GET', originalUrl: '/api/v1/state?token=deadbeef' };
+  crash.routeErrors({ log: (...a: unknown[]) => logs.push(a.map(String).join(' ')) })(
+    err, req, res, (e?: unknown) => { sent.nexted = e; },
   );
   return { ...sent, logs };
 }
@@ -171,7 +174,7 @@ test('a bare async handler that throws is a 500, and the process survives it', a
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   try {
-    const r = await fetch(`http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}/api/boom`);
+    const r = await fetch(`http://127.0.0.1:${(present(server.address()) as AddressInfo).port}/api/boom`);
     assert.equal(r.status, 500);
     assert.deepEqual(await r.json(), { error: 'handler exploded' });
   } finally { server.close(); }
@@ -186,10 +189,13 @@ test('a bare async handler that throws is a 500, and the process survives it', a
 // ---------------------------------------------------------------------------
 
 // Bind an ephemeral port and keep it. The daemon under test then cannot have it.
-function occupy() {
+function occupy(): Promise<{ port: number; close: () => Promise<void> }> {
   return new Promise((resolve) => {
     const s = net.createServer();
-    s.listen(0, '127.0.0.1', () => resolve({ port: /** @type {import('net').AddressInfo} */ (s.address()).port, close: () => new Promise((r) => s.close(r)) }));
+    s.listen(0, '127.0.0.1', () => resolve({
+      port: (s.address() as AddressInfo).port,
+      close: () => new Promise<void>((r) => { s.close(() => r()); }),
+    }));
   });
 }
 
@@ -212,10 +218,10 @@ test('a daemon that cannot bind its port exits non-zero instead of running on he
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
-  child.stdout.on('data', (d) => { out += d; });
-  child.stderr.on('data', (d) => { out += d; });
+  present(child.stdout).on('data', (d) => { out += d; });
+  present(child.stderr).on('data', (d) => { out += d; });
 
-  const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
   // A daemon that swallows the bind failure never exits; don't wait forever for it.
   const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* */ } }, 25000);
   const r = await exited;

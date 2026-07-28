@@ -14,14 +14,58 @@ import { computeFeatures } from './features.ts';
 import type { ComputedFeature } from './features.ts';
 import { createRealpathCache } from './util.ts';
 import * as sources from './sources/index.ts';
-import type { SessionManager } from './sessions.ts';
-import type { Servers, RunningServer } from './servers.ts';
+import type { RunningServer } from './servers.ts';
 import type { Identity } from './identity.ts';
-import type { ScannedRepo } from './git.ts';
 import type {
-  Config, EmbeddedSession, Feature, FeatureMember, PartialDeep, ResolvedFeature,
+  Config, EmbeddedSession, Feature, FeatureMember, PartialDeep, ResolvedFeature, Session,
   SessionServers, SessionStatePayload, StatePayload, TopologyPayload, Worktree,
 } from './types.ts';
+
+// The collaborators are typed by the surface this file touches, not by the concrete
+// classes server.ts hands over — the same rule server/orchestrator.ts and
+// server/routes-review.ts follow, and what lets test/state.test.ts drive the whole
+// payload with four-method fakes instead of booting a manager and an lsof scan.
+
+/** The SessionManager, typed by the two lookups the payload needs. */
+export interface StateManager {
+  all(): Session[];
+  /** Sessions keyed by their worktree path, resolved through `resolve`. */
+  sessionIndex(resolve?: (p: string) => string): Map<string, Session>;
+}
+
+/** Servers, typed by what decorating a worktree and pricing a slot needs. */
+export interface StateServers {
+  /** feature name → concurrency slot. */
+  slots: Map<string, number>;
+  /** Non-null when the repo has a launchable dev-server command. */
+  startCfg(repo: string): unknown;
+  isSlotted(repo: string): boolean;
+  decorate(
+    worktree: Pick<Worktree, 'path' | 'repo'>,
+    running: Map<string, RunningServer>,
+  ): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart'>;
+  /**
+   * The shared feature-identity resolver. Optional: `identity` may be injected
+   * directly instead, and computeFeatures() falls back to the `basename` strategy
+   * when neither is supplied.
+   */
+  identity?: Identity;
+}
+
+/** A repo as the scan cache reports it, narrowed to the fields topology() reads. */
+export interface StateRepo {
+  name: string;
+  path: string;
+  defaultBranch: string;
+  worktrees: Array<{
+    path: string;
+    name: string;
+    branch: string | null;
+    isMain: boolean;
+    detached: boolean;
+    merged: boolean;
+  }>;
+}
 
 // Drop the undefined-valued keys from a dictionary read off a PartialDeep config.
 //
@@ -57,12 +101,12 @@ export interface ConflictCandidate {
 export interface StateDeps {
   /** Only a handful of keys are read, each with a fallback. */
   cfg: PartialDeep<Config>;
-  manager: SessionManager;
-  servers: Servers;
+  manager: StateManager;
+  servers: StateServers;
   /** null when no multiplexer was found — the payload reports 'none'. */
   mux: StateMux | null;
   /** The repo scan cache, re-read per call. */
-  repos: () => ScannedRepo[];
+  repos: () => StateRepo[];
   /** The lsof discovery map, re-read per call. */
   running: () => Map<string, RunningServer>;
   /**

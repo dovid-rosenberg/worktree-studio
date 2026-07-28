@@ -86,7 +86,7 @@ interface Attention {
   active(): boolean;
 }
 
-interface WatchDeps {
+export interface WatchDeps {
   /** loaded config (baseDirs, scanDepth, optional .watch) */
   cfg: { baseDirs?: string[]; scanDepth?: number; watch?: Partial<typeof DEFAULTS> };
   /** re-read repos/worktrees into the state cache */
@@ -105,7 +105,7 @@ interface WatchDeps {
   intervals?: Partial<typeof DEFAULTS>;
 }
 
-interface WatchStats {
+export interface WatchStats {
   scans: number;
   watchers: number;
   repos: number;
@@ -113,7 +113,7 @@ interface WatchStats {
   [job: string]: number;
 }
 
-interface WatchHandle {
+export interface WatchHandle {
   stop(): void;
   poke(): void;
   watched(): string[];

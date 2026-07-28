@@ -68,7 +68,7 @@ async function pool<T>(items: T[], limit: number, fn: (item: T) => unknown): Pro
  * not by the whole object: that IS the dependency, and a test double owes nothing
  * more.
  */
-interface CiForge {
+export interface CiForge {
   ciForRepo: (entry: CiEntry) => Promise<CiRepo>;
   invalidate?: () => void;
 }
@@ -77,12 +77,12 @@ interface CiForge {
  * A session, as the sweep reads it: an id to key the snapshot by, and the repos it
  * may have promoted. `types.ts`'s `Session` satisfies it.
  */
-interface CiSession {
+export interface CiSession {
   id: string;
   repos?: CiEntry[] | null;
 }
 
-interface CiFeedDeps {
+export interface CiFeedDeps {
   forge: CiForge;
   /** () → the current session list (manager.all()) */
   sessions?: () => CiSession[];

@@ -12,6 +12,8 @@
 // Nothing in this file reads or writes ~/.config/worktree-studio.
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { present } from './helpers.ts';
+import type { GroupConfig, Worktree } from '../server/types.ts';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
@@ -25,17 +27,17 @@ import * as worktree from '../server/worktree.ts';
 // ---------------------------------------------------------- the old code ----
 
 // server/servers.ts before this change.
-function oldFeatureFromPath(worktreePath) {
+function oldFeatureFromPath(worktreePath: string): string {
   const parts = String(worktreePath || '').split(path.sep);
   const i = parts.lastIndexOf('.worktrees');
   return (i >= 0 && parts[i + 1]) ? parts[i + 1] : path.basename(worktreePath || '');
 }
 
 // server/features.ts before this change: the grouping key was the bare wtname.
-const oldGroupKey = (w) => w.wtname;
+const oldGroupKey = (w: Worktree) => w.wtname;
 
 // server/worktree.ts before this change.
-const oldDest = (repoPath, wtName) => path.join(repoPath, '.worktrees', wtName);
+const oldDest = (repoPath: string, wtName: string) => path.join(repoPath, '.worktrees', wtName);
 
 // -------------------------------------------------- the owner's config shape --
 
@@ -66,14 +68,16 @@ const OWNER_CONFIG = {
 // A corpus that mirrors the real thing: main checkouts, a feature spanning three
 // repos, singles, an odd name, a deep path, a detached worktree.
 const BASE = '/Users/davidr/Desktop/ab-code';
-const wt = (repo, repoDir, name, branch, extra = {}) => ({
+// A worktree row spelling only what the functions under comparison read; the rest of
+// `Worktree` plays no part in grouping or slotting.
+const wt = (repo: string, repoDir: string, name: string, branch: string | null, extra: Partial<Worktree> = {}) => ({
   repo,
   wtname: name,
   branch,
   path: name === repo ? `${BASE}/${repoDir}/${repo}` : `${BASE}/${repoDir}/${repo}/.worktrees/${name}`,
   running: false,
   ...extra,
-});
+} as Worktree);
 
 const CORPUS = [
   wt('accept-blue', 'ab-be', 'accept-blue', 'develop'),
@@ -109,7 +113,7 @@ test('slot keying is byte-identical to the old featureFromPath() over the whole 
 });
 
 test('slot keying is still identical after the scan index is fed', () => {
-  const repos = [];
+  const repos: Array<{ name: string; worktrees: Array<{ path: string; name: string; branch: string | null }> }> = [];
   for (const w of CORPUS) {
     let r = repos.find((x) => x.name === w.repo);
     if (!r) { r = { name: w.repo, worktrees: [] }; repos.push(r); }
@@ -147,17 +151,21 @@ test('grouping and slot keying give the same answer for every worktree', () => {
 });
 
 test("computeFeatures under the owner's config equals grouping by wtname", () => {
-  const { features, groups } = computeFeatures(CORPUS, OWNER_CONFIG.groups || [], identity);
+  const { features, groups } = computeFeatures(CORPUS, (OWNER_CONFIG as { groups?: GroupConfig[] }).groups || [], identity);
 
   // rebuild what the old code produced, from the old key
-  const expected = new Map();
+  const expected = new Map<string, Worktree[]>();
   for (const w of CORPUS.filter((x) => x.wtname !== x.repo)) {
     if (!expected.has(oldGroupKey(w))) expected.set(oldGroupKey(w), []);
-    expected.get(oldGroupKey(w)).push(w);
+    present(expected.get(oldGroupKey(w))).push(w);
   }
   assert.deepEqual(features.map((f) => f.name).sort(), [...expected.keys()].sort());
   for (const f of features) {
-    assert.deepEqual(f.members.map((m) => m.path).sort(), expected.get(f.name).map((m) => m.path).sort(), f.name);
+    assert.deepEqual(
+      f.members.map((m) => (m.missing ? m.ref : m.path)).sort(),
+      present(expected.get(f.name), `expected members for ${f.name}`).map((m) => m.path).sort(),
+      f.name,
+    );
   }
   // groups are only the multi-member ones
   assert.deepEqual(groups.map((g) => g.name).sort(),

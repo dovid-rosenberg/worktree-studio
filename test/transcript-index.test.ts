@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { expectErr, expectOk, present } from './helpers.ts';
+import type { IndexableSession } from '../server/transcript-index.ts';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -18,22 +20,27 @@ function fixture() {
 
 const CWD = '/Users/d/repo/.worktrees/feat';
 
-function session(over = {}) {
+// The five fields `index()` reads off a session, not a whole `Session` — `IndexableSession`
+// is what the module declares it needs.
+// `title`/`feature` are not read by index() — they ride along because the real thing
+// carries them, which is the point of using a session-shaped fixture at all.
+type IndexFixtureSession = IndexableSession & { title: string; feature: string };
+function session(over: Partial<IndexFixtureSession> = {}): IndexFixtureSession {
   return { id: 's_1', title: 'demo', feature: 'feat', home: CWD, claudeSessionId: 'cccccccc-0000-4000-8000-000000000015', ...over };
 }
 
-function transcriptFile(root, id = 'cccccccc-0000-4000-8000-000000000015') {
+function transcriptFile(root: string, id = 'cccccccc-0000-4000-8000-000000000015') {
   const dir = path.join(root, transcripts.projectSlug(CWD));
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, `${id}.jsonl`);
 }
 
 let n = 0;
-function append(file, records) {
+function append(file: string, records: unknown[]) {
   fs.appendFileSync(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
 }
 
-function usage(over = {}) {
+function usage(over: Record<string, unknown> = {}) {
   return {
     input_tokens: 10, output_tokens: 100,
     cache_creation_input_tokens: 1000, cache_read_input_tokens: 5000,
@@ -43,7 +50,15 @@ function usage(over = {}) {
   };
 }
 
-function asst({ msgId, text, model = 'claude-opus-5', use = usage(), blockType = 'text', ts = '2026-07-27T12:00:00.000Z' }) {
+interface AsstOpts {
+  msgId: string;
+  text: string;
+  model?: string | null;
+  use?: ReturnType<typeof usage>;
+  blockType?: 'text' | 'thinking';
+  ts?: string;
+}
+function asst({ msgId, text, model = 'claude-opus-5', use = usage(), blockType = 'text', ts = '2026-07-27T12:00:00.000Z' }: AsstOpts) {
   const block = blockType === 'thinking' ? { type: 'thinking', thinking: text } : { type: 'text', text };
   return {
     type: 'assistant', uuid: `u${++n}`, sessionId: 'cccccccc-0000-4000-8000-000000000015', timestamp: ts, cwd: CWD, gitBranch: 'feat/x',
@@ -51,7 +66,7 @@ function asst({ msgId, text, model = 'claude-opus-5', use = usage(), blockType =
   };
 }
 
-function user(text, ts = '2026-07-27T11:59:00.000Z') {
+function user(text: string, ts = '2026-07-27T11:59:00.000Z') {
   return { type: 'user', uuid: `u${++n}`, sessionId: 'cccccccc-0000-4000-8000-000000000015', timestamp: ts, cwd: CWD, gitBranch: 'feat/x', message: { role: 'user', content: text } };
 }
 
@@ -72,17 +87,17 @@ test('indexing is incremental: a second pass reads no bytes', async () => {
   const file = transcriptFile(root);
   append(file, [user('first prompt'), asst({ msgId: 'm1', text: 'first answer' })]);
 
-  const p1 = await index.index(session());
+  const p1 = expectOk(await index.index(session()));
   assert.equal(p1.ok, true);
   assert.equal(p1.added, 2);
   assert.equal(p1.offset, fs.statSync(file).size);
 
-  const p2 = await index.index(session());
+  const p2 = expectOk(await index.index(session()));
   assert.equal(p2.added, 0);
   assert.equal(p2.upToDate, true, 'no new bytes → no re-read');
 
   append(file, [asst({ msgId: 'm2', text: 'second answer' })]);
-  const p3 = await index.index(session());
+  const p3 = expectOk(await index.index(session()));
   assert.equal(p3.added, 1, 'only the appended record is read');
   assert.equal(p3.offset, fs.statSync(file).size);
   assert.equal(index.status().messages, 3);
@@ -110,12 +125,12 @@ test('a truncated tail is indexed only once it is complete', async () => {
   const rec = JSON.stringify(asst({ msgId: 'm1', text: 'a complete answer' }));
   fs.writeFileSync(file, `${JSON.stringify(user('go'))}\n${rec.slice(0, 30)}`);
 
-  const p1 = await index.index(session());
+  const p1 = expectOk(await index.index(session()));
   assert.equal(p1.added, 1, 'the half-written assistant line is not indexed');
   assert.equal(p1.truncatedTail, true);
 
   fs.appendFileSync(file, `${rec.slice(30)}\n`);
-  const p2 = await index.index(session());
+  const p2 = expectOk(await index.index(session()));
   assert.equal(p2.added, 1, 'the completed line is picked up on the next pass');
   assert.equal(summarize(index.usageRows('s_1')).output, 100);
   index.close();
@@ -134,7 +149,7 @@ test('a relocated transcript is re-read from the start, not from a stale offset'
   // promote: /cd moves cwd AND the transcript, which carries the whole history over
   const newFile = transcriptFile(root);
   append(newFile, [user('pre-promote'), asst({ msgId: 'm1', text: 'before' }), asst({ msgId: 'm2', text: 'after' })]);
-  const p = await index.index(session({ home: CWD }));
+  const p = expectOk(await index.index(session({ home: CWD })));
   assert.equal(p.file, newFile);
   assert.equal(p.added, 3, 'the moved file is read whole rather than sliced at the old offset');
   assert.equal(summarize(index.usageRows('s_1')).messages, 2, 'but usage still dedupes to two responses');
@@ -149,7 +164,7 @@ test('malformed lines are counted and skipped without stalling the offset', asyn
     '{ broken json',
     JSON.stringify(asst({ msgId: 'm1', text: 'good two' })),
   ].join('\n') + '\n');
-  const p = await index.index(session());
+  const p = expectOk(await index.index(session()));
   assert.equal(p.added, 2);
   assert.equal(p.malformedLines, 1);
   assert.equal(p.offset, fs.statSync(file).size, 'a bad line does not pin the offset');
@@ -209,8 +224,8 @@ test('usage rolls up per model and flags gaps in the price table', async () => {
   const s = summarize(index.usageRows('s_1'));
   assert.equal(s.byModel.length, 2);
   assert.deepEqual(s.unpricedModels, ['claude-unreleased-9']);
-  assert.equal(s.byModel.find((m) => m.model === 'claude-unreleased-9').costUsd, null);
-  assert.ok(s.costUsd > 0);
+  assert.equal(present(s.byModel.find((m) => m.model === 'claude-unreleased-9'), 'the unpriced model row').costUsd, null);
+  assert.ok(present(s.costUsd, 'a cost') > 0);
   index.close();
 });
 
@@ -222,16 +237,16 @@ test('forget drops a closed session from the index', async () => {
   index.forget('s_1');
   assert.equal(index.status().messages, 0);
   assert.equal(index.status().sessions, 0);
-  assert.equal(index.search('bye').total, 0, 'the FTS shadow table is cleaned up too');
+  assert.equal(expectOk(index.search('bye')).total, 0, 'the FTS shadow table is cleaned up too');
   index.close();
 });
 
 test('index reports why it cannot find a transcript', async () => {
   const { index } = fixture();
   assert.equal((await index.index(session({ claudeSessionId: null }))).ok, false);
-  assert.match((await index.index(session({ claudeSessionId: 'cccccccc-0000-4000-8000-000000009999' }))).reason, /not found/);
+  assert.match(expectErr(await index.index(session({ claudeSessionId: 'cccccccc-0000-4000-8000-000000009999' }))).reason, /not found/);
   // Not a uuid → refused before it can be joined into a path at all (see locate()).
-  assert.match((await index.index(session({ claudeSessionId: 'missing' }))).reason, /uuid/);
+  assert.match(expectErr(await index.index(session({ claudeSessionId: 'missing' }))).reason, /uuid/);
   index.close();
 });
 
@@ -245,7 +260,7 @@ test('search returns text, session, role and timestamp', async () => {
     asst({ msgId: 'm2', text: 'something else entirely', ts: '2026-07-27T10:02:00.000Z' }),
   ]);
   await index.index(session());
-  const out = index.search('byte offset');
+  const out = expectOk(index.search('byte offset'));
   assert.equal(out.ok, true);
   assert.equal(out.backend, 'sqlite-fts5');
   assert.equal(out.total, 2);
@@ -265,10 +280,10 @@ test('search filters by session, role and time', async () => {
     asst({ msgId: 'm1', text: 'needle in the answer', ts: '2026-07-27T12:00:00.000Z' }),
   ]);
   await index.index(session());
-  assert.equal(index.search('needle', { role: 'user' }).total, 1);
-  assert.equal(index.search('needle', { sessionId: 's_other' }).total, 0);
-  assert.equal(index.search('needle', { since: Date.parse('2026-07-27T11:00:00.000Z') }).total, 1);
-  assert.equal(index.search('needle', { limit: 1 }).total, 1);
+  assert.equal(expectOk(index.search('needle', { role: 'user' })).total, 1);
+  assert.equal(expectOk(index.search('needle', { sessionId: 's_other' })).total, 0);
+  assert.equal(expectOk(index.search('needle', { since: Date.parse('2026-07-27T11:00:00.000Z') })).total, 1);
+  assert.equal(expectOk(index.search('needle', { limit: 1 })).total, 1);
   index.close();
 });
 
@@ -279,8 +294,8 @@ test('all terms must match — search is an AND, not an OR', async () => {
     asst({ msgId: 'm1', text: 'alpha and beta together' }),
   ]);
   await index.index(session());
-  assert.equal(index.search('alpha').total, 2);
-  assert.equal(index.search('alpha beta').total, 1);
+  assert.equal(expectOk(index.search('alpha')).total, 2);
+  assert.equal(expectOk(index.search('alpha beta')).total, 1);
   index.close();
 });
 
@@ -290,9 +305,9 @@ test('FTS5 operators in user input are searched literally, not executed', async 
   await index.index(session());
   // Each of these is a syntax error if passed raw to MATCH.
   for (const q of ['OR', 'NEAR', 'a"b', '"unbalanced', '*', 'AND OR NOT']) {
-    assert.doesNotThrow(() => index.search(q), `query ${JSON.stringify(q)} must not throw`);
+    assert.doesNotThrow(() => expectOk(index.search(q)), `query ${JSON.stringify(q)} must not throw`);
   }
-  assert.equal(index.search('OR clause').total, 1);
+  assert.equal(expectOk(index.search('OR clause')).total, 1);
   index.close();
 });
 
@@ -300,7 +315,7 @@ test('ftsQuery quotes every term and returns null for an empty query', () => {
   assert.equal(ftsQuery('byte offset'), '"byte" AND "offset"');
   assert.equal(ftsQuery('  '), null);
   assert.equal(ftsQuery('"'), null);
-  assert.ok(!ftsQuery('a"b').includes('a"b'), 'the embedded quote is neutralised');
+  assert.ok(!present(ftsQuery('a"b'), 'a compiled query').includes('a"b'), 'the embedded quote is neutralised');
 });
 
 test('likePattern escapes sql wildcards so they are searched, not matched', () => {

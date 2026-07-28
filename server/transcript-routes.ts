@@ -13,11 +13,23 @@ import { STATE_DIR } from './config.ts';
 import { TranscriptIndex, summarize } from './transcript-index.ts';
 import type { TokenTotals } from './transcripts.ts';
 import type { UsageRow, UsageSummary } from './transcript-index.ts';
-import type { SessionManager } from './sessions.ts';
 import type { Config, PartialDeep, Session, SessionState } from './types.ts';
 
+/**
+ * The SessionManager, typed by the four members these routes reach for — the same
+ * rule server/routes-review.ts and server/orchestrator.ts follow. It is what lets
+ * test/api-routing.test.ts mount the whole route table against a three-method fake.
+ */
+export interface TranscriptManager {
+  get(id: string): Session | null | undefined;
+  all(): Session[];
+  /** Reindex is driven off `hook`; `change` is what forgets a removed session. */
+  on(event: 'hook', fn: (e: { id: string; event: string }) => void): unknown;
+  on(event: 'change', fn: (c: { type?: string; id?: string } | null) => void): unknown;
+}
+
 export interface TranscriptRoutesDeps {
-  manager: SessionManager;
+  manager: TranscriptManager;
   /** Only `_stateDir` is read, and it falls back to config.ts's own STATE_DIR. */
   cfg?: PartialDeep<Config> | null;
 }

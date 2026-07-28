@@ -5,11 +5,13 @@
 // then proves the same patches survive a real `git apply`.
 import { test } from 'node:test';
 import assert from 'node:assert';
+import { present } from './helpers.ts';
+import type { DiffLineType } from '../server/types.ts';
 import { parsePatch, formatFilePatch, alignRows, normalizeSelection, stripPrefix, unquotePath } from '../server/diff.ts';
 
 // Patch fixtures are built line-by-line so trailing whitespace and the "\ No newline"
 // marker are visible and exact.
-const P = (...lines) => `${lines.join('\n')}\n`;
+const P = (...lines: string[]) => `${lines.join('\n')}\n`;
 
 const MODIFIED = P(
   'diff --git a/keep.txt b/keep.txt',
@@ -138,7 +140,7 @@ const MODE_ONLY = P(
   'new mode 100755',
 );
 
-const headersOf = (patch) => patch.split('\n').filter((l) => l.startsWith('@@'));
+const headersOf = (patch: string) => patch.split('\n').filter((l) => l.startsWith('@@'));
 
 // ---------------------------------------------------------------------------
 // Parsing
@@ -323,8 +325,7 @@ test('alignRows leaves a pure deletion with an empty right side', () => {
 
 test('alignRows pairs what it can and spills the rest into one-sided rows', () => {
   // 3 removals against 1 addition → one paired change row, two lone removals.
-  /** @type {Array<{ type: import('../server/types.ts').DiffLineType, text: string }>} */
-  const lines = [
+  const lines: Array<{ type: DiffLineType; text: string }> = [
     { type: 'del', text: 'a' }, { type: 'del', text: 'b' }, { type: 'del', text: 'c' },
     { type: 'add', text: 'A' },
   ];
@@ -338,9 +339,11 @@ test('alignRows pairs what it can and spills the rest into one-sided rows', () =
 test('rows index into lines, so unified and side-by-side render from one payload', () => {
   const [f] = parsePatch(MODIFIED);
   const h = f.hunks[0];
-  const change = h.rows.find((r) => r.type === 'change');
-  assert.equal(h.lines[change.left].text, 'b');
-  assert.equal(h.lines[change.right].text, 'B');
+  // A `change` row is the one kind whose left AND right both index a line — that is
+  // what this test is about, so `present()` states it instead of `?.` hiding a miss.
+  const change = present(h.rows.find((r) => r.type === 'change'), 'a change row');
+  assert.equal(present(h.lines[present(change.left, 'left index')]).text, 'b');
+  assert.equal(present(h.lines[present(change.right, 'right index')]).text, 'B');
 });
 
 // ---------------------------------------------------------------------------
@@ -373,7 +376,7 @@ test('formatFilePatch recomputes every kept hunk against the hunks kept before i
 
 test('formatFilePatch leaves the old side alone when staging (the index is the source)', () => {
   const [f] = parsePatch(THREE_HUNKS);
-  const emitted = headersOf(formatFilePatch(f, [1, 2])).map((h) => h.split(' ')[1]);
+  const emitted = headersOf(formatFilePatch(f, [1, 2])).map((h: string) => h.split(' ')[1]);
   assert.deepEqual(emitted, ['-22,8', '-47,7'], 'pre-image positions are untouched');
 });
 
@@ -394,7 +397,7 @@ test('formatFilePatch keeps a rename’s headers on a hunk subset, so the rename
 test('formatFilePatch carries the "\\ No newline" marker with the line it belongs to', () => {
   const [f] = parsePatch(NO_NEWLINE);
   const patch = formatFilePatch(f, [0]);
-  assert.equal(patch.match(/\\ No newline at end of file/g).length, 2);
+  assert.equal(present(patch.match(/\\ No newline at end of file/g), 'the no-newline markers').length, 2);
 });
 
 test('formatFilePatch with an empty selection emits the header and no hunks', () => {

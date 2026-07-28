@@ -23,13 +23,14 @@ import { makeId, shortId } from '../server/util.ts';
 import { muxNameFor, SessionManager } from '../server/sessions.ts';
 import { loadToken, createGuard, splitHostPort } from '../server/security.ts';
 import * as status from '../server/status.ts';
+import type { AddressInfo } from 'net';
+import { muxStub, present, session } from './helpers.ts';
 
 const TOKEN = 'a'.repeat(64);
 
 // A miniature of server.ts's wiring: same middleware order, same upgrade handler,
 // with the pty replaced by an echo of what the socket was allowed to reach.
-/** @param {{ port?: number }} [opts] */
-function harness({ port } = {}) {
+function harness({ port }: { port?: number } = {}) {
   const cfg = { web: { host: '127.0.0.1', port: port || 0 } };
   const guard = createGuard({ cfg, token: TOKEN });
   const app = express();
@@ -47,7 +48,7 @@ function harness({ port } = {}) {
     ['s_new', { id: 's_new', hookAuth: true }],   // settings file written with a token
     ['s_legacy', { id: 's_legacy' }],             // launched before the token existed
   ]);
-  const hooks = [];
+  const hooks: string[] = [];
   app.post('/hook/:event', (req, res) => {
     const known = sessions.get(String(req.query.wts));
     const deny = guard.denyToken(req);
@@ -58,9 +59,9 @@ function harness({ port } = {}) {
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
-  const attached = []; // session ids that got as far as "spawn a pty"
+  const attached: Array<string | null> = []; // session ids that got as far as "spawn a pty"
   server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url, 'http://localhost');
+    const url = new URL(req.url || '', 'http://localhost');
     if (url.pathname !== '/ws/term') { socket.destroy(); return; }
     const deny = guard.denyBrowser(req) || guard.denyToken(req, url.searchParams.get('token'));
     if (deny) {
@@ -71,7 +72,7 @@ function harness({ port } = {}) {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
   wss.on('connection', (ws, req) => {
-    const id = new URL(req.url, 'http://localhost').searchParams.get('session');
+    const id = new URL(req.url || '', 'http://localhost').searchParams.get('session');
     attached.push(id); // stands in for pty.spawn — reaching here IS the vulnerability
     ws.send(`attached:${id}`);
   });
@@ -80,14 +81,20 @@ function harness({ port } = {}) {
 
 // Run `fn` against a listening harness, with the guard's expected port synced to the
 // ephemeral one the OS handed out (mirrors a real run, where they always agree).
-async function serving(fn) {
+type Harness = ReturnType<typeof harness> & {
+  port: number;
+  origin: string;
+  get: (path: string, init?: RequestInit) => Promise<Response>;
+};
+async function serving<T>(fn: (h: Harness) => Promise<T>): Promise<T> {
   const h = harness();
   h.server.listen(0, '127.0.0.1');
   await new Promise((r) => h.server.once('listening', r));
-  const port = /** @type {import('net').AddressInfo} */ (h.server.address()).port;
+  const port = (present(h.server.address()) as AddressInfo).port;
   h.cfg.web.port = port;
   const origin = `http://127.0.0.1:${port}`;
-  const get = (p, init = {}) => fetch(origin + p, { ...init, headers: { host: `127.0.0.1:${port}`, ...(init.headers || {}) } });
+  const get = (p: string, init: RequestInit = {}) =>
+    fetch(origin + p, { ...init, headers: { host: `127.0.0.1:${port}`, ...(init.headers || {}) } });
   try { return await fn({ ...h, port, origin, get }); }
   finally { h.server.close(); }
 }
@@ -96,8 +103,9 @@ async function serving(fn) {
 // the rebinding cases are driven with a raw client — which is what the attacker is
 // doing anyway. setHost:false means we control the header completely, including
 // omitting it.
-function raw(port, { path: p = '/api/state', headers = {} } = {}) {
-  return new Promise((resolve, reject) => {
+interface RawResult { status?: number; body: unknown }
+function raw(port: number, { path: p = '/api/state', headers = {} }: { path?: string; headers?: Record<string, string> } = {}): Promise<RawResult> {
+  return new Promise<RawResult>((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, path: p, method: 'GET', headers, setHost: false }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
@@ -114,19 +122,18 @@ function raw(port, { path: p = '/api/state', headers = {} } = {}) {
 
 // Open a ws to the harness and resolve with what happened, never throwing: a refused
 // handshake and an accepted one both have to be observable.
-/**
- * @param {number} port
- * @param {{ origin?: string, host?: string, token?: string, session?: string }} [opts]
- */
-function wsProbe(port, { origin, host, token, session = 's_1' } = {}) {
-  return new Promise((resolve) => {
-    const headers = {};
+interface ProbeOpts { origin?: string; host?: string; token?: string; session?: string }
+/** Whether the socket opened, what it said, and — when refused — the handshake status. */
+interface ProbeResult { open: boolean; said?: string | null; status?: number | null }
+function wsProbe(port: number, { origin, host, token, session = 's_1' }: ProbeOpts = {}): Promise<ProbeResult> {
+  return new Promise<ProbeResult>((resolve) => {
+    const headers: Record<string, string> = {};
     if (origin) headers.Origin = origin;
     if (host) headers.Host = host;
     const q = `?session=${encodeURIComponent(session)}${token ? `&token=${token}` : ''}`;
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/term${q}`, { headers });
     let settled = false;
-    const done = (v) => { if (!settled) { settled = true; try { ws.close(); } catch { /* */ } resolve(v); } };
+    const done = (v: ProbeResult) => { if (!settled) { settled = true; try { ws.close(); } catch { /* */ } resolve(v); } };
     ws.on('message', (m) => done({ open: true, said: m.toString('utf8') }));
     ws.on('open', () => setTimeout(() => done({ open: true, said: null }), 200));
     ws.on('unexpected-response', (req, res) => done({ open: false, status: res.statusCode }));
@@ -246,7 +253,7 @@ test('legitimate same-origin traffic works end to end', async () => {
     const page = await get('/', { headers: { origin } });
     assert.equal(page.status, 200);
     const html = await page.text();
-    const token = /window\.WTS_TOKEN = "([^"]+)"/.exec(html)[1];
+    const token = present(present(/window\.WTS_TOKEN = "([^"]+)"/.exec(html), 'the injected token')[1], 'the token capture');
     assert.equal(token, TOKEN);
     // 2. it calls the API with that token, same-origin, under both prefixes
     for (const p of ['/api/state', '/api/v1/state']) {
@@ -271,7 +278,7 @@ test('a non-browser client (no Origin at all) still works with the token', async
 
 test('the hook receiver takes the token, and grandfathers only pre-token sessions', async () => {
   await serving(async ({ origin, hooks }) => {
-    const post = (q, headers = {}) => fetch(`${origin}/hook/Stop?${q}`, {
+    const post = (q: string, headers: Record<string, string> = {}) => fetch(`${origin}/hook/Stop?${q}`, {
       method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}',
     });
     // The URL baked into a settings file carries the token in the query string —
@@ -301,12 +308,13 @@ test('buildSettings bakes the token into every hook URL', () => {
 
 test('a session written through the manager records that its hooks are authed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-hookauth-'));
-  const mgr = new SessionManager({ _stateDir: dir, web: { port: 7788 }, _token: 'tok-123' }, {});
-  const s = { id: 's_x' };
+  const mgr = new SessionManager({ _stateDir: dir, web: { port: 7788 }, _token: 'tok-123' }, muxStub());
+  const s = session({ id: 's_x' });
   mgr._writeHookSettings(s);
   assert.equal(s.hookAuth, true);
-  assert.match(fs.readFileSync(s.settingsFile, 'utf8'), /token=tok-123/);
-  assert.equal(fs.statSync(s.settingsFile).mode & 0o777, 0o600, 'the file holds a secret now');
+  const settingsFile = present(s.settingsFile, 'the generated settings file');
+  assert.match(fs.readFileSync(settingsFile, 'utf8'), /token=tok-123/);
+  assert.equal(fs.statSync(settingsFile).mode & 0o777, 0o600, 'the file holds a secret now');
 });
 
 /* ---------------- the pieces ---------------- */
@@ -335,7 +343,7 @@ test('splitHostPort refuses what it cannot parse rather than guessing', () => {
 });
 
 test('session ids are unguessable UUIDs and old ids keep working', () => {
-  const ids = new Set();
+  const ids = new Set<string>();
   for (let i = 0; i < 500; i++) ids.add(makeId('s_'));
   assert.equal(ids.size, 500, 'no collisions');
   for (const id of ids) assert.match(id, /^s_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -344,7 +352,7 @@ test('session ids are unguessable UUIDs and old ids keep working', () => {
   // already in sessions.json working.
   const legacy = 's_5ii11';
   const m = new Map([[legacy, { id: legacy }]]);
-  assert.equal(m.get(legacy).id, legacy);
+  assert.equal(present(m.get(legacy)).id, legacy);
   // …and it still yields a usable tmux-name suffix.
   assert.equal(shortId('s_81dda83a-346f-4c51-b6e9-81a28e169b42'), '8e169b42');
   assert.ok(shortId(legacy).length > 0);

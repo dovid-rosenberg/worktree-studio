@@ -9,28 +9,33 @@ import os from 'os';
 import path from 'path';
 import express from 'express';
 import { createForge, ghChecks, glChecks, PROVIDERS, pushFailureLine } from '../server/forge.ts';
+import type { Provider, PushResult } from '../server/forge.ts';
+import type { AddressInfo } from 'net';
+import type { Router } from 'express';
+import { body as jsonBody, present } from './helpers.ts';
+import type { JsonBody } from './helpers.ts';
 
 // A worktree path that is deliberately NOT a git repo — used to drive the real
 // `git push` failure path end to end.
 const NOT_A_REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-forge-'));
 
 // A stand-in provider whose view/create are scripted per call.
-/**
- * @param {string} id
- * @param {Partial<import('../server/forge.ts').Provider>} [impl]
- * @returns {import('../server/forge.ts').Provider}
- */
-function provider(id, { view = async () => null, create = async () => ({ ok: false, stderr: '' }) } = {}) {
-  return { id, cli: id, view, create };
+function provider(id: string, { view, create }: Partial<Pick<Provider, 'view' | 'create'>> = {}): Provider {
+  return {
+    id,
+    cli: id,
+    view: view ?? (async () => null),
+    create: create ?? (async () => ({ ok: false, stderr: '' })),
+  };
 }
 
 // openPullRequest pushes before it creates, and a failed push now short-circuits.
 // Tests about the PROVIDER contract inject a push that succeeded, so they exercise
 // the half they are about; the push half has its own tests below (including one
 // that uses the real git).
-const OK_PUSH = async () => ({ code: 0, stdout: '', stderr: '' });
+const OK_PUSH = async (): Promise<PushResult> => ({ code: 0, stdout: '', stderr: '' });
 
-function forge(providers) {
+function forge(providers: Provider[]) {
   return createForge({ providers, isInstalled: () => true, pushBranch: OK_PUSH });
 }
 
@@ -199,7 +204,7 @@ test('with no forge CLI installed at all, that is what the user is told', async 
     pushBranch: OK_PUSH,
   });
   const r = await f.openPullRequest(MEMBER, {});
-  assert.match(r.error, /no forge CLI installed/, 'a CLI that was never there did not "fail"');
+  assert.match(present(r.error, 'an error'), /no forge CLI installed/, 'a CLI that was never there did not "fail"');
 });
 
 test('openPullRequest falls back to a generic error when an installed provider fails mutely', async () => {
@@ -229,7 +234,8 @@ test('the shipped providers are GitHub then GitLab', () => {
 // ---------------------------------------------------------------------------
 
 // Serve a router carrying only the forge's routes, and hand fn a fetcher.
-async function serving(register, fn) {
+type Poster = (path: string, body: unknown) => Promise<Response>;
+async function serving<T>(register: (api: Router) => void, fn: (post: Poster) => Promise<T>): Promise<T> {
   const app = express();
   app.use(express.json());
   const api = express.Router();
@@ -237,7 +243,8 @@ async function serving(register, fn) {
   register(api);
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
-  try { return await fn((p, body) => fetch(`http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })); }
+  const port = (present(server.address()) as AddressInfo).port;
+  try { return await fn((p, body) => fetch(`http://127.0.0.1:${port}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })); }
   finally { server.close(); }
 }
 
@@ -261,7 +268,7 @@ test('opening a PR invalidates the cache and tells the push side to re-look', as
 
   assert.deepEqual(await f.ciForRepo({ repo: 'api', worktreePath: NOT_A_REPO, branch: 'feature/a' }, {}), { repo: 'api', hasPR: false });
   await serving((api) => f.register(api), async (post) => {
-    const r = await (await post('/api/group/pr', { group: 'feat-a' })).json();
+    const r = await jsonBody(await post('/api/group/pr', { group: 'feat-a' }));
     assert.equal(r.ok, true);
   });
   assert.equal(pokes, 1);
@@ -279,7 +286,7 @@ test('a group whose PRs all failed to open changes nothing', async () => {
     onChanged: () => { pokes++; },
   });
   await serving((api) => f.register(api), async (post) => {
-    assert.equal((await (await post('/api/group/pr', { group: 'feat-a' })).json()).ok, false);
+    assert.equal((await jsonBody(await post('/api/group/pr', { group: 'feat-a' }))).ok, false);
   });
   assert.equal(pokes, 0, 'nothing changed, so nothing is refreshed');
 });
@@ -295,7 +302,7 @@ test('a push listener that throws cannot break the PR route', async () => {
   await serving((api) => f.register(api), async (post) => {
     const res = await post('/api/group/pr', { group: 'feat-a' });
     assert.equal(res.status, 200);
-    assert.equal((await res.json()).ok, true);
+    assert.equal((await jsonBody(res)).ok, true);
   });
 });
 
@@ -317,9 +324,9 @@ test('a rejected push stops before any PR is attempted and reports git\'s reason
   });
   const r = await f.openPullRequest(MEMBER, {});
   assert.equal(created, false, 'a branch that is not on the remote cannot have a PR opened against it');
-  assert.match(r.error, /^git push failed: /, r.error);
-  assert.match(r.error, /\[rejected\]/, 'git\'s own complaint, not the progress line');
-  assert.ok(!/github\.com:acme/.test(r.error.replace(/\[rejected\][\s\S]*/, '')), 'the "To <remote>" progress line is not the error');
+  assert.match(present(r.error, 'an error'), /^git push failed: /, String(r.error));
+  assert.match(present(r.error, 'an error'), /\[rejected\]/, 'git\'s own complaint, not the progress line');
+  assert.ok(!/github\.com:acme/.test(present(r.error, 'an error').replace(/\[rejected\][\s\S]*/, '')), 'the "To <remote>" progress line is not the error');
 });
 
 test('a real failing git push surfaces git\'s message instead of a PR-creation symptom', async () => {
@@ -331,7 +338,7 @@ test('a real failing git push surfaces git\'s message instead of a PR-creation s
   });
   const r = await f.openPullRequest(MEMBER, {});
   assert.equal(created, false);
-  assert.match(r.error, /git push failed: fatal: not a git repository/i, r.error);
+  assert.match(present(r.error, 'an error'), /git push failed: fatal: not a git repository/i, String(r.error));
 });
 
 test('POST /group/pr reports a push failure as the failure', async () => {
@@ -342,15 +349,15 @@ test('POST /group/pr reports a push failure as the failure', async () => {
     resolveGroup: async () => ({ group: GROUP }),
   });
   await serving((api) => f.register(api), async (post) => {
-    const r = await (await post('/api/group/pr', { group: 'feat-a' })).json();
+    const r = await jsonBody(await post('/api/group/pr', { group: 'feat-a' }));
     assert.equal(r.ok, false);
-    assert.match(r.results[0].error, /git push failed: fatal: 'origin' does not appear/);
+    assert.match(present(r.results[0].error, 'the member error'), /git push failed: fatal: 'origin' does not appear/);
   });
 });
 
 test('pushFailureLine picks the complaint out of git\'s progress noise', () => {
-  assert.equal(pushFailureLine({ stderr: 'To github.com:a/b.git\nerror: failed to push some refs\n' }), 'error: failed to push some refs');
-  assert.equal(pushFailureLine({ stderr: "fatal: 'origin' does not appear to be a git repository" }), "fatal: 'origin' does not appear to be a git repository");
-  assert.equal(pushFailureLine({ stderr: 'remote: Permission to a/b.git denied' }), 'remote: Permission to a/b.git denied');
+  assert.equal(pushFailureLine({ code: 1, stderr: 'To github.com:a/b.git\nerror: failed to push some refs\n' }), 'error: failed to push some refs');
+  assert.equal(pushFailureLine({ code: 128, stderr: "fatal: 'origin' does not appear to be a git repository" }), "fatal: 'origin' does not appear to be a git repository");
+  assert.equal(pushFailureLine({ code: 1, stderr: 'remote: Permission to a/b.git denied' }), 'remote: Permission to a/b.git denied');
   assert.equal(pushFailureLine({ stderr: '', stdout: '', code: 3 }), 'git push exited 3', 'a mute failure still says something');
 });

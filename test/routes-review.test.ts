@@ -15,34 +15,45 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import * as routes from '../server/routes-review.ts';
+import type { Request, Response, Router } from 'express';
+import type { JsonBody } from './helpers.ts';
+import { present } from './helpers.ts';
 
-function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
+function sh(cwd: string, args: string[]) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 
 // Records mounts and lets a test call one back by method + path.
+type Method = 'get' | 'post';
+type Handler = (req: Request, res: Response) => unknown;
+/** What a handler answered with, as the assertions read it. */
+interface Answer { status: number; body: JsonBody }
+
 function fakeApp() {
-  const mounted = { get: [], post: [] };
-  const handlers = new Map();
-  const record = (method) => (p, fn) => { mounted[method].push(p); handlers.set(`${method} ${p}`, fn); };
+  const mounted: Record<Method, string[]> = { get: [], post: [] };
+  const handlers = new Map<string, Handler>();
+  const record = (method: Method) => (p: string, fn: Handler) => { mounted[method].push(p); handlers.set(`${method} ${p}`, fn); };
   return {
     get: record('get'),
     post: record('post'),
     mounted,
     // Invoke a handler and resolve with { status, body } once it responds.
-    call(method, p, req = {}) {
-      const fn = handlers.get(`${method} ${p}`);
-      assert.ok(fn, `no handler for ${method} ${p}`);
-      return new Promise((resolve) => {
+    call(method: Method, p: string, req: Partial<Request> = {}): Promise<Answer> {
+      const fn = present(handlers.get(`${method} ${p}`), `a handler for ${method} ${p}`);
+      return new Promise<Answer>((resolve) => {
         const res = {
           headersSent: false,
           statusCode: 200,
-          status(code) { this.statusCode = code; return this; },
-          json(body) { this.headersSent = true; resolve({ status: this.statusCode, body }); },
+          status(code: number) { this.statusCode = code; return this; },
+          json(body: JsonBody) { this.headersSent = true; resolve({ status: this.statusCode, body }); },
         };
-        fn({ params: {}, query: {}, body: {}, ...req }, res);
+        fn({ params: {}, query: {}, body: {}, ...req } as Request, res as unknown as Response);
       });
     },
   };
 }
+
+// The module registers onto an express Router; this fake implements the two methods it
+// calls. The cast is that seam — a Router has ~40 more members none of which are reached.
+const asRouter = (a: ReturnType<typeof fakeApp>): Router => a as unknown as Router;
 
 // A session whose single repo points at a throwaway worktree with a two-hunk change.
 function fixture() {
@@ -60,7 +71,7 @@ function fixture() {
   fs.writeFileSync(path.join(dir, 'f.txt'), `${changed.join('\n')}\n`);
   const session = { id: 's1', repos: [{ repo: 'demo', worktreePath: dir }] };
   const deps = {
-    manager: { get: (id) => (id === 's1' ? session : null) },
+    manager: { get: (id: string) => (id === 's1' ? session : null) },
     repos: () => [{ name: 'demo', defaultBranch: 'main' }],
     broadcast: () => { deps.broadcasts += 1; },
     broadcasts: 0,
@@ -71,7 +82,7 @@ function fixture() {
 function registered() {
   const app = fakeApp();
   const { dir, deps } = fixture();
-  routes.register(app, deps);
+  routes.register(asRouter(app), deps);
   return { app, dir, deps };
 }
 
@@ -95,7 +106,9 @@ test('register() spells no prefix — the router it is handed owns /api and /api
 });
 
 test('register() refuses to wire up without a session manager', () => {
-  assert.throws(() => routes.register(fakeApp(), {}), /manager/);
+  // Deliberately wired without a manager — the throw IS the contract, so the cast is
+  // what lets the test hand over the omission a caller could actually make.
+  assert.throws(() => routes.register(asRouter(fakeApp()), {} as Parameters<typeof routes.register>[1]), /manager/);
 });
 
 // ---------------------------------------------------------------------------
@@ -106,9 +119,9 @@ test('GET diff returns the working-tree files with hunks and side-by-side rows',
   const { app, dir } = registered();
   const r = await app.call('get', '/sessions/:id/diff', { params: { id: 's1' }, query: { repo: 'demo' } });
   assert.equal(r.status, 200);
-  const f = r.body.files.find((x) => x.file === 'f.txt');
+  const f = present(r.body.files.find((x: JsonBody) => x.file === 'f.txt'), 'the f.txt row');
   assert.equal(f.parsed.hunks.length, 2);
-  assert.ok(f.parsed.hunks[0].rows.some((row) => row.type === 'change'), 'rows are aligned for side-by-side');
+  assert.ok(f.parsed.hunks[0].rows.some((row: JsonBody) => row.type === 'change'), 'rows are aligned for side-by-side');
   assert.match(f.diff, /^\+L2 CHANGED$/m, 'the raw patch is still there alongside the model');
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -242,7 +255,7 @@ test('GET /sessions/:id/diff still defaults to the working tree and accepts a re
   const sha = sh(dir, ['rev-parse', 'HEAD']).trim();
   const commit = await app.call('get', '/sessions/:id/diff', { params: { id: 's1' }, query: { sha } });
   assert.equal(commit.status, 200);
-  assert.deepEqual(commit.body.files.map((f) => f.file), ['f.txt']);
+  assert.deepEqual(commit.body.files.map((f: JsonBody) => f.file), ['f.txt']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

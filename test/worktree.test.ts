@@ -5,8 +5,9 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import * as worktree from '../server/worktree.ts';
+import { expectErr, expectOk } from './helpers.ts';
 
-function sh(cwd, cmd, args) { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }
+function sh(cwd: string, cmd: string, args: string[]): void { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }
 
 function tempRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-repo-'));
@@ -32,14 +33,14 @@ test('create() makes a worktree and carries gitignored run configs + local files
     fetch: false,
     copyPatterns: ['.env', 'config/*-config.ts'],
   });
-  assert.equal(res.ok, true, res.error);
-  assert.ok(fs.existsSync(res.path), 'worktree dir exists');
-  assert.ok(fs.existsSync(path.join(res.path, '.env')), '.env copied');
-  assert.ok(fs.existsSync(path.join(res.path, 'config', 'dev-config.ts')), 'dev-config.ts copied');
-  assert.ok(fs.existsSync(path.join(res.path, '.idea', 'runConfigurations', 'start.xml')), 'run config copied');
-  assert.equal(res.copied.runConfigs, 1);
-  assert.equal(res.copied.files, 2);
-  assert.equal(res.created, true);
+  const made = expectOk(res, 'create()');
+  assert.ok(fs.existsSync(made.path), 'worktree dir exists');
+  assert.ok(fs.existsSync(path.join(made.path, '.env')), '.env copied');
+  assert.ok(fs.existsSync(path.join(made.path, 'config', 'dev-config.ts')), 'dev-config.ts copied');
+  assert.ok(fs.existsSync(path.join(made.path, '.idea', 'runConfigurations', 'start.xml')), 'run config copied');
+  assert.equal(made.copied.runConfigs, 1);
+  assert.equal(made.copied.files, 2);
+  assert.equal(made.created, true);
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
@@ -47,8 +48,7 @@ test('create() refuses a duplicate worktree name', async () => {
   const repo = tempRepo();
   await worktree.create(repo, 'feature/foo', 'dup', { fetch: false, copyPatterns: [] });
   const again = await worktree.create(repo, 'feature/bar', 'dup', { fetch: false, copyPatterns: [] });
-  assert.equal(again.ok, false);
-  assert.match(again.error, /already exists/);
+  assert.match(expectErr(again, 'a duplicate create()').error, /already exists/);
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
@@ -71,7 +71,7 @@ test('remove() deletes the worktree directory', async () => {
   const res = await worktree.create(repo, 'feature/gone', 'gone', { fetch: false, copyPatterns: [] });
   assert.ok(fs.existsSync(res.path), 'worktree created');
   const out = await worktree.remove(repo, res.path);
-  assert.equal(out.ok, true, out.error);
+  expectOk(out, 'remove()');
   assert.equal(fs.existsSync(res.path), false, 'worktree dir removed');
   fs.rmSync(repo, { recursive: true, force: true });
 });
@@ -81,8 +81,7 @@ test('remove() with { deleteBranch } also deletes the branch', async () => {
   const res = await worktree.create(repo, 'feature/gone2', 'gone2', { fetch: false, copyPatterns: [] });
   assert.equal(await worktree.branchExists(repo, 'feature/gone2'), true, 'branch exists before remove');
   const out = await worktree.remove(repo, res.path, { deleteBranch: true, branch: 'feature/gone2' });
-  assert.equal(out.ok, true, out.error);
-  assert.equal(out.branchDeleted, true, 'branch reported deleted');
+  assert.equal(expectOk(out, 'remove()').branchDeleted, true, 'branch reported deleted');
   assert.equal(await worktree.branchExists(repo, 'feature/gone2'), false, 'branch is gone');
   fs.rmSync(repo, { recursive: true, force: true });
 });

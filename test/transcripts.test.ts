@@ -5,6 +5,21 @@ import os from 'os';
 import path from 'path';
 import * as transcripts from '../server/transcripts.ts';
 import * as pricing from '../server/pricing.ts';
+import type { LocateResult } from '../server/transcripts.ts';
+import type { TranscriptEntry } from '../server/types.ts';
+import { present } from './helpers.ts';
+
+/** A locate() that found the transcript; every caller below asserts on the file it names. */
+function found(loc: LocateResult): Extract<LocateResult, { found: true }> {
+  assert.ok(loc.found, `expected to locate a transcript, got: ${JSON.stringify(loc)}`);
+  return loc;
+}
+
+/** …and its opposite: the failure branch is the one carrying `reason`. */
+function notFound(loc: LocateResult): Extract<LocateResult, { found: false }> {
+  assert.ok(!loc.found, `expected locate() to fail, got: ${JSON.stringify(loc)}`);
+  return loc;
+}
 
 // ---- fixtures ---------------------------------------------------------------
 
@@ -12,7 +27,7 @@ function tempRoot() { return fs.mkdtempSync(path.join(os.tmpdir(), 'wts-transcri
 
 // A transcript file for `cwd`/`id` inside a fake ~/.claude/projects root, so the
 // slug mapping itself is exercised rather than stubbed.
-function writeTranscript(root, cwd, id, lines) {
+function writeTranscript(root: string, cwd: string, id: string, lines: unknown[]) {
   const dir = path.join(root, transcripts.projectSlug(cwd));
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${id}.jsonl`);
@@ -23,7 +38,7 @@ function writeTranscript(root, cwd, id, lines) {
 let uuidN = 0;
 const nextUuid = () => `uuid-${++uuidN}`;
 
-function usage(over = {}) {
+function usage(over: Record<string, unknown> = {}) {
   return {
     input_tokens: 10,
     cache_creation_input_tokens: 1000,
@@ -35,7 +50,15 @@ function usage(over = {}) {
   };
 }
 
-function assistantLine({ msgId, text, model = 'claude-opus-5', use = usage(), ts = '2026-07-27T12:00:00.000Z', blockType = 'text' }) {
+interface AssistantOpts {
+  msgId: string;
+  text: string;
+  model?: string | null;
+  use?: Record<string, unknown>;
+  ts?: string;
+  blockType?: 'text' | 'thinking' | 'tool_use';
+}
+function assistantLine({ msgId, text, model = 'claude-opus-5', use = usage(), ts = '2026-07-27T12:00:00.000Z', blockType = 'text' }: AssistantOpts) {
   const block = blockType === 'thinking' ? { type: 'thinking', thinking: text }
     : blockType === 'tool_use' ? { type: 'tool_use', name: 'Read', input: { file_path: text } }
       : { type: 'text', text };
@@ -46,7 +69,7 @@ function assistantLine({ msgId, text, model = 'claude-opus-5', use = usage(), ts
   };
 }
 
-function userLine({ text, ts = '2026-07-27T11:59:00.000Z' }) {
+function userLine({ text, ts = '2026-07-27T11:59:00.000Z' }: { text: string; ts?: string }) {
   return {
     type: 'user', uuid: nextUuid(), parentUuid: null, sessionId: 'cccccccc-0000-4000-8000-000000000007', timestamp: ts,
     cwd: '/tmp/x', gitBranch: 'feat/x', message: { role: 'user', content: text },
@@ -73,8 +96,8 @@ test('locate finds a transcript under the session home dir', () => {
   const file = writeTranscript(root, cwd, 'cccccccc-0000-4000-8000-000000000007', [userLine({ text: 'hi' })]);
   const loc = transcripts.locate({ home: cwd, claudeSessionId: 'cccccccc-0000-4000-8000-000000000007' }, { root });
   assert.equal(loc.found, true);
-  assert.equal(loc.file, file);
-  assert.equal(loc.cwd, cwd);
+  assert.equal(found(loc).file, file);
+  assert.equal(found(loc).cwd, cwd);
 });
 
 test('locate falls back to scanning project dirs when home is stale', () => {
@@ -84,16 +107,16 @@ test('locate falls back to scanning project dirs when home is stale', () => {
   // `home` still points at the pre-promote checkout — a /cd that never landed.
   const loc = transcripts.locate({ home: '/Users/d/repo', claudeSessionId: 'cccccccc-0000-4000-8000-000000000008' }, { root });
   assert.equal(loc.found, true);
-  assert.equal(loc.file, file);
-  assert.equal(loc.viaScan, true);
+  assert.equal(found(loc).file, file);
+  assert.equal(found(loc).viaScan, true);
 });
 
 test('locate reports why it failed instead of throwing', () => {
   const root = tempRoot();
   assert.equal(transcripts.locate({ home: '/Users/d/repo' }, { root }).found, false);
-  assert.match(transcripts.locate({ home: '/x' }, { root }).reason, /claudeSessionId/);
+  assert.match(notFound(transcripts.locate({ home: '/x' }, { root })).reason, /claudeSessionId/);
   assert.equal(transcripts.locate({ home: '/x', claudeSessionId: 'cccccccc-0000-4000-8000-000000009999' }, { root }).found, false);
-  assert.match(transcripts.locate({ home: '/x', claudeSessionId: 'nope' }, { root }).reason, /uuid/);
+  assert.match(notFound(transcripts.locate({ home: '/x', claudeSessionId: 'nope' }, { root })).reason, /uuid/);
 });
 
 // ---- claudeSessionId is untrusted -------------------------------------------
@@ -114,8 +137,10 @@ test('a claudeSessionId that escapes the transcript root is refused, not resolve
   const escape = path.relative(path.join(root, transcripts.projectSlug(cwd)), outside).replace(/\.jsonl$/, '');
 
   const loc = transcripts.locate({ home: cwd, claudeSessionId: escape }, { root });
-  assert.equal(loc.found, false, `locate() resolved a traversal to ${loc.file}`);
-  assert.match(loc.reason, /uuid/);
+  // The message is evaluated eagerly, so it must not assume the branch the assertion
+  // is about to rule out — `found(loc)` here would throw on the passing case.
+  assert.equal(loc.found, false, `locate() resolved a traversal: ${JSON.stringify(loc)}`);
+  assert.match(notFound(loc).reason, /uuid/);
 
   // The same shape, spelled the obvious way.
   for (const bad of ['../../..', '../../../etc/passwd', 'a/b', '..%2f..', '']) {
@@ -146,8 +171,8 @@ test('scan parses complete lines and skips malformed ones without dying', async 
     '[1,2,3]',
     JSON.stringify(userLine({ text: 'two' })),
   ]);
-  const seen = [];
-  const stats = await transcripts.scan(file, {}, (r) => { seen.push(r.type); });
+  const seen: string[] = [];
+  const stats = await transcripts.scan(file, {}, (r) => { seen.push(String(r.type)); });
   assert.deepEqual(seen, ['user', 'user']);
   // blank lines are not counted as lines at all; `null` and the array are structurally invalid
   assert.equal(stats.parsed, 2);
@@ -165,8 +190,8 @@ test('scan leaves a truncated final line unparsed, and picks it up once complete
   const cut = partialRec.slice(0, 40); // claude is mid-write: no trailing newline, invalid JSON
   fs.writeFileSync(file, `${whole}\n${cut}`);
 
-  const first = [];
-  const s1 = await transcripts.scan(file, {}, (r) => { first.push(r.type); });
+  const first: string[] = [];
+  const s1 = await transcripts.scan(file, {}, (r) => { first.push(String(r.type)); });
   assert.deepEqual(first, ['user'], 'the half-written line must not be parsed');
   assert.equal(s1.truncatedTail, true);
   assert.equal(s1.skipped, 0, 'a truncated tail is not a malformed line');
@@ -174,8 +199,8 @@ test('scan leaves a truncated final line unparsed, and picks it up once complete
 
   // claude finishes the line
   fs.appendFileSync(file, `${partialRec.slice(40)}\n`);
-  const second = [];
-  const s2 = await transcripts.scan(file, { start: s1.offset }, (r) => { second.push(r.type); });
+  const second: string[] = [];
+  const s2 = await transcripts.scan(file, { start: s1.offset }, (r) => { second.push(String(r.type)); });
   assert.deepEqual(second, ['assistant'], 'resuming from the offset yields the now-complete record');
   assert.equal(s2.truncatedTail, false);
 });
@@ -211,37 +236,39 @@ test('scan ignores line types it does not understand', async () => {
     { type: 'some-future-type-we-have-never-seen', payload: {} },
     userLine({ text: 'the only searchable line' }),
   ]);
-  const entries = [];
-  await transcripts.readTranscript(file, {}, (e) => entries.push(e));
+  const entries: TranscriptEntry[] = [];
+  await transcripts.readTranscript(file, {}, (e) => { entries.push(e); });
   assert.equal(entries.length, 1);
-  assert.equal(entries[0].kind, 'user');
+  assert.equal(present(entries[0]).kind, 'user');
 });
 
 // ---- usage normalization ----------------------------------------------------
 
 test('normalizeUsage splits cache writes by TTL', () => {
-  const u = transcripts.normalizeUsage(usage({
+  const u = present(transcripts.normalizeUsage(usage({
     cache_creation_input_tokens: 15897,
     cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 15897 },
-  }));
+  })));
   assert.equal(u.cacheWrite1h, 15897);
   assert.equal(u.cacheWrite5m, 0);
   assert.equal(u.cacheWrite, 15897);
 });
 
 test('normalizeUsage treats an absent breakdown as a 5m write', () => {
-  const raw = usage({ cache_creation_input_tokens: 500 });
+  // The absent-breakdown case is the whole test, so the key is removed rather than
+  // set to undefined — that is the shape an older transcript really has on disk.
+  const raw: Record<string, unknown> = usage({ cache_creation_input_tokens: 500 });
   delete raw.cache_creation;
-  const u = transcripts.normalizeUsage(raw);
+  const u = present(transcripts.normalizeUsage(raw));
   assert.equal(u.cacheWrite5m, 500);
   assert.equal(u.cacheWrite1h, 0);
 });
 
 test('normalizeUsage reconciles a breakdown that disagrees with the total', () => {
-  const u = transcripts.normalizeUsage(usage({
+  const u = present(transcripts.normalizeUsage(usage({
     cache_creation_input_tokens: 1000,
     cache_creation: { ephemeral_5m_input_tokens: 1, ephemeral_1h_input_tokens: 400 },
-  }));
+  })));
   assert.equal(u.cacheWrite1h, 400);
   assert.equal(u.cacheWrite5m, 600, 'the remainder is attributed to the cheaper 5m bucket');
   assert.equal(u.cacheWrite1h + u.cacheWrite5m, 1000);
@@ -250,7 +277,7 @@ test('normalizeUsage reconciles a breakdown that disagrees with the total', () =
 test('normalizeUsage tolerates missing and non-numeric fields', () => {
   assert.equal(transcripts.normalizeUsage(null), null);
   assert.equal(transcripts.normalizeUsage('nope'), null);
-  const u = transcripts.normalizeUsage({ input_tokens: 'x', output_tokens: null });
+  const u = present(transcripts.normalizeUsage({ input_tokens: 'x', output_tokens: null }));
   assert.equal(u.input, 0);
   assert.equal(u.output, 0);
   assert.equal(u.cacheRead, 0);
@@ -291,7 +318,7 @@ test('aggregate sums distinct responses and reports per-model breakdowns', async
   assert.equal(agg.input, 35);
   assert.equal(agg.output, 350);
   assert.equal(agg.byModel.length, 2);
-  const opus = agg.byModel.find((m) => m.model === 'claude-opus-5');
+  const opus = present(agg.byModel.find((m) => m.model === 'claude-opus-5'), 'the opus row');
   assert.equal(opus.messages, 2);
   assert.equal(opus.output, 300);
   assert.equal(agg.costIsEstimate, true);
@@ -311,7 +338,11 @@ test('aggregate records the transcript time span', async () => {
 
 test('aggregate counts a response with no message id exactly once', async () => {
   const root = tempRoot();
-  const line = assistantLine({ msgId: 'm1', text: 'x', use: usage({ output_tokens: 7 }) });
+  // A response carrying neither an id nor a requestId — the dedup key falls back to
+  // the line uuid. Both keys are deleted, not blanked: that is what the file looks like.
+  const line = assistantLine({ msgId: 'm1', text: 'x', use: usage({ output_tokens: 7 }) }) as {
+    message: Record<string, unknown>; requestId?: string;
+  };
   delete line.message.id;
   delete line.requestId;
   const file = writeTranscript(root, '/tmp/i', 'cccccccc-0000-4000-8000-000000000006', [line]);
@@ -368,8 +399,8 @@ test('aggregate surfaces unpriced models instead of silently under-reporting', a
   const agg = await transcripts.aggregate(file);
   assert.deepEqual(agg.unpricedModels, ['claude-unreleased-7']);
   assert.equal(agg.complete, false, 'the total is known to be missing a model');
-  assert.ok(agg.costUsd > 0, 'the models we can price still contribute');
-  assert.equal(agg.byModel.find((m) => m.model === 'claude-unreleased-7').costUsd, null);
+  assert.ok(present(agg.costUsd, 'a cost') > 0, 'the models we can price still contribute');
+  assert.equal(present(agg.byModel.find((m) => m.model === 'claude-unreleased-7'), 'the unpriced row').costUsd, null);
 });
 
 test('<synthetic> lines are unbilled, not unpriced', async () => {

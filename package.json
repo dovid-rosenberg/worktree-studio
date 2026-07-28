@@ -14,7 +14,7 @@
     "start": "node server/server.ts",
     "build": "node bin/build-client.ts",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && node --test test/*.test.js",
+    "test": "npm run typecheck && node --test test/*.test.ts",
     "vendor": "node bin/vendor.ts",
     "fix-pty": "node bin/fix-pty.ts",
     "postinstall": "node bin/fix-pty.ts && node bin/vendor.ts && node bin/build-client.ts"
