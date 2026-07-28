@@ -63,6 +63,10 @@ export function share(part, whole) {
 export function pct(v) {
   if (!Number.isFinite(v)) return '—';
   if (v === 0) return '0%';
+  // A real 982 tokens against a 121M total is 0.0008%, and rounding that to "0.00%"
+  // is the same lie as printing an unpriced model as "$0.00" — it reports a present
+  // thing as an absent one. Say "under a hundredth of a percent" instead.
+  if (v < 0.01) return '<0.01%';
   if (v < 0.1) return `${v.toFixed(2)}%`;
   if (v < 10) return `${v.toFixed(1)}%`;
   return `${Math.round(v)}%`;
