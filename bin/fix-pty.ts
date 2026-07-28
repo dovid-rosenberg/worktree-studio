@@ -15,12 +15,12 @@ try {
       fixed++;
     }
   }
-} catch (e) {
+} catch {
   // node-pty layout may differ across versions; also try the build output.
 }
 try {
   const built = path.join(import.meta.dirname, '..', 'node_modules', 'node-pty', 'build', 'Release', 'spawn-helper');
   if (fs.existsSync(built)) { fs.chmodSync(built, 0o755); fixed++; }
-} catch (e) { /* ignore */ }
+} catch { /* ignore */ }
 
 console.log(`[fix-pty] made ${fixed} spawn-helper binary(ies) executable`);

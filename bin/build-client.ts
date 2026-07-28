@@ -6,10 +6,10 @@
 // which is deliberately five packages. So this installs there if it has to, then builds.
 //
 // Wired into the root `postinstall`, which is the one moment the network is already
-// assumed. `npm start` stays `node server/server.js` — no build step, no install check,
+// assumed. `npm start` stays `node server/server.ts` — no build step, no install check,
 // nothing that can fail offline. The trade is that the build does NOT track edits to
 // client/src: rerun `npm run build` after changing the frontend, or use `cd client &&
-// npm run dev` (which is what that loop is for). server/webui.js refuses to boot with a
+// npm run dev` (which is what that loop is for). server/webui.ts refuses to boot with a
 // missing build and says which command produces it, so a stale-vs-absent build is never
 // silently a blank page.
 import { spawnSync } from 'child_process';
@@ -19,7 +19,7 @@ import path from 'path';
 const client = path.join(import.meta.dirname, '..', 'client');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
-function npmRun(args) {
+function npmRun(args: string[]): void {
   const r = spawnSync(npm, args, { cwd: client, stdio: 'inherit' });
   if (r.error) { console.error(`[build-client] ${r.error.message}`); process.exit(1); }
   if (r.status !== 0) process.exit(r.status || 1);

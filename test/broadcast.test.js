@@ -5,7 +5,7 @@
 // a client that connects late, or reconnects mid-stream.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { createBroadcast } from '../server/broadcast.js';
+import { createBroadcast } from '../server/broadcast.ts';
 
 // A stand-in for the express response: records everything written to it.
 function fakeClient() {

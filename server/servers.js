@@ -6,8 +6,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
-import { run, readJsonState, writeJson, realpath, slug } from './util.js';
-import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.js';
+import { run, readJsonState, writeJson, realpath, slug } from './util.ts';
+import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
 import { createIdentity } from './identity.js';
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };

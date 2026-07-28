@@ -14,11 +14,33 @@
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
 
 const ROOT = path.join(import.meta.dirname, '..');
 const PLACEHOLDER = '__WTS_TOKEN__';
 
-const UIS = {
+interface UiDef {
+  dir: string[];
+  label: string;
+  missing: string;
+}
+
+/** The one UI resolve() picked, with its paths made absolute. */
+export interface ResolvedUi {
+  name: string;
+  label: string;
+  root: string;
+  index: string;
+}
+
+/** The document handler's two inputs, shared by both mounts. */
+interface MountOptions {
+  ui: ResolvedUi;
+  token: string;
+}
+
+// An unknown WTS_UI is a miss, not a UI — hence the `| undefined` on the lookup.
+const UIS: Record<string, UiDef | undefined> = {
   // name → where it lives (relative to the repo root), and what to tell the user when
   // it isn't there.
   client: {
@@ -40,7 +62,7 @@ const NAMES = Object.keys(UIS);
 // rather than letting the daemon boot and answer `/` with a 500 or a blank page —
 // a UI that isn't there is a startup error, not a per-request one.
 // `root` is the repo root; it is a parameter only so tests can point at a fixture tree.
-function resolve(env = process.env, root = ROOT) {
+function resolve(env: NodeJS.ProcessEnv = process.env, root: string = ROOT): ResolvedUi {
   const name = String(env.WTS_UI || 'client').trim().toLowerCase() || 'client';
   const ui = UIS[name];
   if (!ui) throw new Error(`WTS_UI=${name} is not a UI — use one of: ${NAMES.join(', ')}`);
@@ -59,15 +81,15 @@ function resolve(env = process.env, root = ROOT) {
 // load-bearing: add a second mention (a comment is enough) ahead of the real one and
 // the document ships `window.WTS_TOKEN = "__WTS_TOKEN__"` verbatim, which 401s every
 // API call from a page that otherwise looks fine.
-function sendIndex(ui, token, res) {
-  let html;
+function sendIndex(ui: ResolvedUi, token: string, res: Response): Response {
+  let html: string;
   try { html = fs.readFileSync(ui.index, 'utf8'); } catch { return res.status(500).send('index.html is missing'); }
   return res.type('html').set('Cache-Control', 'no-store').send(html.split(PLACEHOLDER).join(token));
 }
 
 // The document + its assets. Mounted before the API routes, like any static mount.
-function mount(app, { ui, token }) {
-  app.get(['/', '/index.html'], (req, res) => sendIndex(ui, token, res));
+function mount(app: Express, { ui, token }: MountOptions): void {
+  app.get(['/', '/index.html'], (req: Request, res: Response) => sendIndex(ui, token, res));
   // index:false so the static middleware can never serve the un-injected index.html.
   app.use(express.static(ui.root, { index: false }));
 }
@@ -85,8 +107,8 @@ function mount(app, { ui, token }) {
 // the wildcard optional and is the exact equivalent of express@4's '*'. mount() claims
 // '/' above, so today the difference is invisible — but a fallback that silently stops
 // covering '/' the moment it is mounted without mount() is a trap, not a saving.
-function mountFallback(app, { ui, token }) {
-  app.get('/{*splat}', (req, res, next) => {
+function mountFallback(app: Express, { ui, token }: MountOptions): void {
+  app.get('/{*splat}', (req: Request, res: Response, next: NextFunction) => {
     if (req.path === '/api' || req.path.startsWith('/api/') || req.path.startsWith('/ws/')) return next();
     return sendIndex(ui, token, res);
   });

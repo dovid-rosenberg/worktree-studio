@@ -11,7 +11,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { run, DEFAULT_TIMEOUT_MS } from '../server/util.js';
+import { run, DEFAULT_TIMEOUT_MS } from '../server/util.ts';
 import { pushBranchToOrigin, pushFailureLine, createForge, TIMEOUTS } from '../server/forge.js';
 import * as worktree from '../server/worktree.js';
 

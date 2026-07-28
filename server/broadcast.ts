@@ -30,38 +30,49 @@
 //
 // `ci` is optional: wired in, it joins the snapshot and gets its own flush flag;
 // omitted, the bus behaves exactly as it did with two events.
-/**
- * @param {object} deps
- * @param {() => import('./types.ts').TopologyPayload} deps.topology
- *        builds the `topology` half on demand
- * @param {() => import('./types.ts').SessionStatePayload} deps.sessionState
- *        builds the `session-state` half on demand
- * @param {() => import('./types.ts').CiPayload} [deps.ci]
- *        builds the `ci` half; omitted, the bus has two events
- * @param {number} [deps.debounceMs]
- */
-function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
-  const clients = new Set();
-  let timer = null;
+
+import type {
+  TopologyPayload, SessionStatePayload, CiPayload, SseEventName, SseEvents,
+} from './types.ts';
+
+/** The half of an SSE response the bus touches. */
+export interface SseClient {
+  write: (chunk: string) => unknown;
+}
+
+export interface BroadcastDeps {
+  /** builds the `topology` half on demand */
+  topology: () => TopologyPayload;
+  /** builds the `session-state` half on demand */
+  sessionState: () => SessionStatePayload;
+  /** builds the `ci` half; omitted, the bus has two events */
+  ci?: () => CiPayload;
+  debounceMs?: number;
+}
+
+/** which slow halves to rebuild */
+export interface BroadcastDirty {
+  topology?: boolean;
+  ci?: boolean;
+}
+
+function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }: BroadcastDeps) {
+  const clients = new Set<SseClient>();
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let topologyPending = false;
   let ciPending = false;
 
-  /**
-   * @template {import('./types.ts').SseEventName} E
-   * @param {E} event
-   * @param {import('./types.ts').SseEvents[E]} data
-   */
-  function frame(event, data) { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
+  function frame<E extends SseEventName>(event: E, data: SseEvents[E]): string { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
   // A dead socket throws here; the request's close handler is what unsubscribes,
   // so one broken client never breaks the fan-out for the others.
-  function write(res, text) { try { res.write(text); } catch { /* */ } }
+  function write(res: SseClient, text: string): void { try { res.write(text); } catch { /* */ } }
 
   // Send the full snapshot, then join the fan-out. Returns the unsubscribe fn.
   /**
-   * @param {{ write: (chunk: string) => any }} res  the SSE response
-   * @returns {() => void} unsubscribe
+   * @param res  the SSE response
+   * @returns unsubscribe
    */
-  function subscribe(res) {
+  function subscribe(res: SseClient): () => void {
     write(res, ':ok\n\n');
     write(res, frame('topology', topology()));
     write(res, frame('session-state', sessionState()));
@@ -78,8 +89,7 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   // a tool call should never trigger a rebuild of every repo's worktree list.
   // `ci: true` is the same deal for the CI half, raised only by server/ci.js when
   // a sweep found something different.
-  /** @param {{ topology?: boolean, ci?: boolean }} [dirty] which slow halves to rebuild */
-  function schedule({ topology: withTopology = false, ci: withCi = false } = {}) {
+  function schedule({ topology: withTopology = false, ci: withCi = false }: BroadcastDirty = {}) {
     if (withTopology) topologyPending = true;
     if (withCi) ciPending = true;
     if (timer) return;
@@ -92,14 +102,14 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   function flush() {
     if (timer) { clearTimeout(timer); timer = null; }
     const withTopology = topologyPending;
-    const withCi = ciPending && !!ci;
+    const ciFeed = ciPending && ci ? ci : null;
     topologyPending = false;
     ciPending = false;
     if (!clients.size) return;
-    const out = [];
+    const out: string[] = [];
     if (withTopology) out.push(frame('topology', topology()));
     out.push(frame('session-state', sessionState()));
-    if (withCi) out.push(frame('ci', ci()));
+    if (ciFeed) out.push(frame('ci', ciFeed()));
     for (const res of clients) for (const f of out) write(res, f);
   }
 

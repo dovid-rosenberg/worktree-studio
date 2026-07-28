@@ -19,10 +19,10 @@ import path from 'path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
-import { makeId, shortId } from '../server/util.js';
+import { makeId, shortId } from '../server/util.ts';
 import { muxNameFor, SessionManager } from '../server/sessions.js';
-import { loadToken, createGuard, splitHostPort } from '../server/security.js';
-import * as status from '../server/status.js';
+import { loadToken, createGuard, splitHostPort } from '../server/security.ts';
+import * as status from '../server/status.ts';
 
 const TOKEN = 'a'.repeat(64);
 

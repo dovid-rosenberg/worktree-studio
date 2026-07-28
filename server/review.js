@@ -3,8 +3,8 @@
 // diffs, and staged commits. All git via arg-arrays through git/gitFull.
 import fs from 'fs';
 import path from 'path';
-import { git, gitFull } from './util.js';
-import { parsePatch } from './diff.js';
+import { git, gitFull } from './util.ts';
+import { parsePatch } from './diff.ts';
 
 // A commit-ish that arrived in a query string is not a positional argument until it
 // has been proved to be one.

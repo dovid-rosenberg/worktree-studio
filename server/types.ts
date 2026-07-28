@@ -607,3 +607,54 @@ export interface UsageTotals {
   malformedLines: number;
   truncatedTail: boolean;
 }
+
+// ---- intake sources (server/sources/*) --------------------------------------
+
+/** One candidate in the picker, as `list()` hands it back. */
+export interface SourceItem {
+  id: string;
+  title: string;
+  subtitle: string;
+}
+
+/** The upstream record a session is opened from, as `seed()` hands it back. */
+export interface SourceSeed {
+  /** The adapter's own `id`. */
+  source: string;
+  /** null for free text, which has no upstream record to point at. */
+  id: string | null;
+  title: string;
+  body: string;
+  /** null when the record has no page of its own. */
+  url: string | null;
+}
+
+/**
+ * The bag `list()` and `seed()` are handed — the union of what the adapters read,
+ * every key optional because the route passes one flat object to all of them and a
+ * key another adapter needs is simply absent.
+ *
+ * `q` is `unknown` rather than a string because it arrives as `req.query.q`, which
+ * express parses to an ARRAY for `?q=a&q=b` and to an object for `?q[x]=y`. An
+ * adapter has to coerce it before it reaches an execFile argv or a URL.
+ */
+export interface SourceParams {
+  repoPath?: string;
+  q?: unknown;
+  id?: string;
+  text?: string;
+  name?: string;
+}
+
+/**
+ * One intake source adapter, as server/sources/index.js drives it: the picker calls
+ * `isEnabled` then `list`, and opening a session calls `seed`.
+ *
+ * The adapters are independent modules whose only tie to each other is this shape,
+ * so it lives here rather than in whichever one was written first.
+ */
+export interface SourceAdapter extends SourceInfo {
+  isEnabled(cfg: PartialDeep<Config>): boolean;
+  list(cfg: PartialDeep<Config>, params: SourceParams): Promise<SourceItem[]>;
+  seed(cfg: PartialDeep<Config>, params: SourceParams): Promise<SourceSeed>;
+}

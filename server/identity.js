@@ -26,7 +26,7 @@
 //             (see the note on MANIFEST below — this is not a second config surface)
 import path from 'path';
 import * as layoutMod from './layout.js';
-import { createRealpathCache } from './util.js';
+import { createRealpathCache } from './util.ts';
 
 const STRATEGIES = ['basename', 'branch', 'manifest'];
 

@@ -14,7 +14,7 @@
 // checkout dir to be gitignored — the other two are outside the working tree and
 // git never sees them.
 import path from 'path';
-import { expandTilde } from './util.js';
+import { expandTilde } from './util.ts';
 
 const MODES = ['nested', 'sibling', 'external'];
 const DEFAULT_DIR = '.worktrees';

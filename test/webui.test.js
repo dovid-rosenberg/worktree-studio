@@ -11,7 +11,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import express from 'express';
-import * as webui from '../server/webui.js';
+import * as webui from '../server/webui.ts';
 
 const TOKEN = 'a'.repeat(64);
 

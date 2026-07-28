@@ -1,29 +1,28 @@
 {
-  // Type-checking only. Node 22 strips TypeScript syntax natively, so nothing
-  // here ever emits — `npm start` stays `node server/server.js`. Keep the
-  // syntax erasable (no enum/namespace/parameter properties/decorators) or the
-  // runtime will refuse to load the file.
+  // Type-checking only. Node 22 runs .ts directly by stripping the types, so nothing
+  // here ever emits and `npm start` stays a bare `node server/server.ts` — no build
+  // step, no dist/. `erasableSyntaxOnly` is what keeps that true: it rejects exactly
+  // the syntax Node cannot strip (enum, namespace, parameter properties, decorators),
+  // so a file that type-checks is a file that runs.
   "compilerOptions": {
-    "target": "ES2023",
-    "lib": ["ES2023"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2023",
+    "lib": ["es2023"],
     "types": ["node"],
 
-    "allowJs": true,
-    "checkJs": true,
+    "strict": true,
     "noEmit": true,
 
-    // Phase 3 turns this on. Until then the goal is "zero errors at the level
-    // the code was written for", not a null-safety audit.
-    "strict": false,
-
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["server/**/*", "test/**/*", "bin/**/*"],
+  // No allowJs: a module still awaiting conversion is invisible to tsc rather than
+  // half-checked. Conversion runs leaves-first, so an imported module is already .ts
+  // by the time its consumer is converted and the gate stays green at every commit.
+  "include": ["server/**/*.ts", "test/**/*.ts", "bin/**/*.ts"],
   "exclude": ["node_modules", "client", "public"]
 }

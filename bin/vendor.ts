@@ -8,7 +8,7 @@ const root = path.join(import.meta.dirname, '..');
 const out = path.join(root, 'public', 'vendor');
 fs.mkdirSync(out, { recursive: true });
 
-const files = [
+const files: Array<[string, string]> = [
   ['@xterm/xterm/lib/xterm.js', 'xterm.js'],
   ['@xterm/xterm/css/xterm.css', 'xterm.css'],
   ['@xterm/addon-fit/lib/addon-fit.js', 'addon-fit.js'],

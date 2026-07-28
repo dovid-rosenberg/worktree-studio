@@ -12,12 +12,12 @@
   },
   "scripts": {
     "start": "node server/server.js",
-    "build": "node bin/build-client.js",
+    "build": "node bin/build-client.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && node --test test/*.test.js",
-    "vendor": "node bin/vendor.js",
-    "fix-pty": "node bin/fix-pty.js",
-    "postinstall": "node bin/fix-pty.js && node bin/vendor.js && node bin/build-client.js"
+    "vendor": "node bin/vendor.ts",
+    "fix-pty": "node bin/fix-pty.ts",
+    "postinstall": "node bin/fix-pty.ts && node bin/vendor.ts && node bin/build-client.ts"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.10.0",

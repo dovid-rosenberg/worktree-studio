@@ -11,14 +11,22 @@
 // reproduces the input patch verbatim. That property is the whole safety net — if a
 // round trip is byte-identical, `git apply` sees exactly what git itself produced.
 
+import type {
+  DiffFile, DiffHunk, DiffHunkHeader, DiffLine, DiffLineType, DiffRow,
+} from './types.ts';
+
 // "\ No newline at end of file" — the message is translatable, the "\ " prefix is not,
 // so match on the prefix and keep the original text for re-serialization.
 const NO_NEWLINE_PREFIX = '\\ ';
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
+// Which hunks of a file to emit; null/undefined means every hunk. Indexes arrive from
+// the wire, so a string index is as ordinary as a number one.
+type HunkSelection = number | string | Array<number | string> | null | undefined;
+
 // Split a patch into lines WITHOUT touching \r — a CRLF file's diff carries the \r
 // inside each payload line and dropping it would corrupt the patch.
-function splitLines(text) {
+function splitLines(text: string | null | undefined): string[] {
   const out = String(text == null ? '' : text).split('\n');
   if (out.length && out[out.length - 1] === '') out.pop();
   return out;
@@ -27,15 +35,15 @@ function splitLines(text) {
 // Undo git's C-style quoting of paths with unusual bytes ("\303\244.txt"). Only used
 // for the display path — header lines are re-emitted verbatim, so whatever quoting git
 // chose is what git apply reads back.
-function unquotePath(p) {
+function unquotePath(p: string): string {
   if (!(p.length > 1 && p[0] === '"' && p[p.length - 1] === '"')) return p;
   const body = p.slice(1, -1);
-  const bytes = [];
+  const bytes: number[] = [];
   for (let i = 0; i < body.length; i++) {
     if (body[i] !== '\\') { bytes.push(body.charCodeAt(i) & 0xff); continue; }
     const c = body[++i];
     if (c >= '0' && c <= '7') { bytes.push(parseInt(body.substr(i, 3), 8) & 0xff); i += 2; continue; }
-    const esc = { n: 10, t: 9, r: 13, f: 12, b: 8, a: 7, v: 11 };
+    const esc: Record<string, number> = { n: 10, t: 9, r: 13, f: 12, b: 8, a: 7, v: 11 };
     bytes.push(c in esc ? esc[c] : c.charCodeAt(0) & 0xff);
   }
   return Buffer.from(bytes).toString('utf8');
@@ -44,7 +52,7 @@ function unquotePath(p) {
 // `--- a/foo` / `+++ w/foo` → `foo`; `/dev/null` → null. The prefix is whatever the
 // user's diff.mnemonicPrefix / --src-prefix produced, so strip the first component
 // rather than assuming `a/` and `b/`.
-function stripPrefix(p) {
+function stripPrefix(p: string | null | undefined): string | null {
   if (!p || p === '/dev/null') return null;
   const unq = unquotePath(p);
   const slash = unq.indexOf('/');
@@ -57,18 +65,16 @@ function stripPrefix(p) {
 // Rows reference `lines` BY INDEX so the same payload renders unified (walk `lines`) or
 // side-by-side (walk `rows`) without duplicating any text.
 /**
- * @param {Array<{ type: import('./types.ts').DiffLineType }>} lines
- *        only the line KINDS matter here — rows carry indexes, never text
- * @returns {import('./types.ts').DiffRow[]}
+ * @param lines only the line KINDS matter here — rows carry indexes, never text
  */
-function alignRows(lines) {
-  const rows = [];
+function alignRows(lines: Array<{ type: DiffLineType }>): DiffRow[] {
+  const rows: DiffRow[] = [];
   let i = 0;
   while (i < lines.length) {
     if (lines[i].type === 'context') { rows.push({ type: 'context', left: i, right: i }); i += 1; continue; }
-    const dels = [];
+    const dels: number[] = [];
     while (i < lines.length && lines[i].type === 'del') dels.push(i++);
-    const adds = [];
+    const adds: number[] = [];
     while (i < lines.length && lines[i].type === 'add') adds.push(i++);
     if (!dels.length && !adds.length) { i += 1; continue; } // unreachable guard: never spin
     for (let k = 0; k < Math.max(dels.length, adds.length); k++) {
@@ -84,21 +90,22 @@ function alignRows(lines) {
 // authoritative), plus any trailing "\ No newline" marker, which belongs to the line
 // before it and carries no line number of its own.
 /**
- * @param {string[]} lines           the whole patch, split
- * @param {number} start             first body line
- * @param {number} end               exclusive bound (next file's block, or EOF)
- * @param {import('./types.ts').DiffHunkHeader} hunk  the header this body belongs to;
- *        its counts are authoritative about how many lines to consume
- * @returns {{ lines: import('./types.ts').DiffLine[], next: number }}
+ * @param lines the whole patch, split
+ * @param start first body line
+ * @param end   exclusive bound (next file's block, or EOF)
+ * @param hunk  the header this body belongs to; its counts are authoritative about
+ *        how many lines to consume
  */
-function parseHunkBody(lines, start, end, hunk) {
-  const out = [];
+function parseHunkBody(
+  lines: string[], start: number, end: number, hunk: DiffHunkHeader,
+): { lines: DiffLine[]; next: number } {
+  const out: DiffLine[] = [];
   let i = start;
   let oldLeft = hunk.oldLines;
   let newLeft = hunk.newLines;
   let oldLine = hunk.oldStart;
   let newLine = hunk.newStart;
-  const attachNoNewline = (text) => {
+  const attachNoNewline = (text: string) => {
     const prev = out[out.length - 1];
     if (prev) { prev.noNewline = true; prev.noNewlineText = text; }
   };
@@ -116,7 +123,7 @@ function parseHunkBody(lines, start, end, hunk) {
     } else if (marker === ' ' || raw === '') {
       // A bare empty line is an empty context line some tools emit without the leading
       // space; remember which form it was so a round trip stays byte-identical.
-      const line = { type: 'context', text: raw === '' ? '' : raw.slice(1), oldLine: oldLine++, newLine: newLine++ };
+      const line: DiffLine = { type: 'context', text: raw === '' ? '' : raw.slice(1), oldLine: oldLine++, newLine: newLine++ };
       if (raw === '') line.bare = true;
       out.push(line);
       oldLeft -= 1;
@@ -131,10 +138,8 @@ function parseHunkBody(lines, start, end, hunk) {
 
 // Parse one `diff --git` block: the raw header lines (kept verbatim for re-emission),
 // what kind of change it is, and its hunks.
-/** @returns {import('./types.ts').DiffFile} */
-function parseFile(lines, start, end) {
-  /** @type {import('./types.ts').DiffFile} */
-  const file = {
+function parseFile(lines: string[], start: number, end: number): DiffFile {
+  const file: DiffFile = {
     path: null, oldPath: null, newPath: null, status: 'modified',
     binary: false, oldMode: null, newMode: null, similarity: null,
     header: [], hunks: [], added: 0, deleted: 0,
@@ -179,9 +184,7 @@ function parseFile(lines, start, end) {
       i += 1;
       continue;
     }
-    /** @type {import('./types.ts').DiffHunk} */
-    /** @type {import('./types.ts').DiffHunkHeader} */
-    const head = {
+    const head: DiffHunkHeader = {
       index: file.hunks.length,
       oldStart: parseInt(m[1], 10),
       oldLines: m[2] === undefined ? 1 : parseInt(m[2], 10),
@@ -191,8 +194,7 @@ function parseFile(lines, start, end) {
       header: lines[i],
     };
     const body = parseHunkBody(lines, i + 1, end, head);
-    /** @type {import('./types.ts').DiffHunk} */
-    const hunk = {
+    const hunk: DiffHunk = {
       ...head,
       lines: body.lines,
       rows: alignRows(body.lines),
@@ -213,12 +215,11 @@ function parseFile(lines, start, end) {
 // parsePatch(text) → [file, …]. Accepts a multi-file `git diff`/`git show` patch; any
 // preamble (commit message, `git show` header) before the first `diff --git` is ignored.
 /**
- * @param {string} text  a `git diff` / `git show` patch, possibly multi-file
- * @returns {import('./types.ts').DiffFile[]}
+ * @param text a `git diff` / `git show` patch, possibly multi-file
  */
-function parsePatch(text) {
+function parsePatch(text: string): DiffFile[] {
   const lines = splitLines(text);
-  const starts = [];
+  const starts: number[] = [];
   for (let i = 0; i < lines.length; i++) if (lines[i].startsWith('diff --git ')) starts.push(i);
   // A bare unified diff (no `diff --git` header) still parses as a single file.
   if (!starts.length) {
@@ -226,7 +227,7 @@ function parsePatch(text) {
     if (first === -1) return [];
     starts.push(first);
   }
-  const out = [];
+  const out: DiffFile[] = [];
   for (let k = 0; k < starts.length; k++) {
     out.push(parseFile(lines, starts[k], k + 1 < starts.length ? starts[k + 1] : lines.length));
   }
@@ -235,14 +236,16 @@ function parsePatch(text) {
 
 // `@@ -a,b +c,d @@section` — git omits the `,count` when the count is 1, and we match
 // that exactly so a full round trip is byte-identical.
-function formatHunkHeader(oldStart, oldLines, newStart, newLines, section) {
-  const at = (start, count) => (count === 1 ? `${start}` : `${start},${count}`);
+function formatHunkHeader(
+  oldStart: number, oldLines: number, newStart: number, newLines: number,
+  section?: string | null,
+): string {
+  const at = (start: number, count: number) => (count === 1 ? `${start}` : `${start},${count}`);
   return `@@ -${at(oldStart, oldLines)} +${at(newStart, newLines)} @@${section || ''}`;
 }
 
-/** @param {import('./types.ts').DiffHunk} hunk @returns {string[]} */
-function hunkBodyLines(hunk) {
-  const out = [];
+function hunkBodyLines(hunk: DiffHunk): string[] {
+  const out: string[] = [];
   for (const l of hunk.lines) {
     const marker = l.type === 'add' ? '+' : l.type === 'del' ? '-' : ' ';
     out.push(l.bare && l.type === 'context' ? '' : marker + l.text);
@@ -252,15 +255,14 @@ function hunkBodyLines(hunk) {
 }
 
 /**
- * @param {number|string|Array<number|string>|null|undefined} selection
- *        null/undefined selects every hunk
- * @param {number} count  how many hunks the file has
- * @returns {number[]} in-range hunk indexes
+ * @param selection null/undefined selects every hunk
+ * @param count how many hunks the file has
+ * @returns in-range hunk indexes
  */
-function normalizeSelection(selection, count) {
+function normalizeSelection(selection: HunkSelection, count: number): number[] {
   if (selection == null) return [...Array(count).keys()];
   const list = Array.isArray(selection) ? selection : [selection];
-  const set = new Set();
+  const set = new Set<number>();
   for (const n of list) {
     const i = typeof n === 'number' ? n : parseInt(n, 10);
     if (Number.isInteger(i) && i >= 0 && i < count) set.add(i);
@@ -282,12 +284,12 @@ function normalizeSelection(selection, count) {
 // The header block (mode changes, rename from/to, index line) is copied verbatim: a
 // subset of a renamed file's hunks still has to carry the rename.
 /**
- * @param {import('./types.ts').DiffFile} file
- * @param {number|string|Array<number|string>|null} [selection] which hunks to emit
- * @param {{ reverse?: boolean }} [opts]
- * @returns {string} a patch `git apply` accepts
+ * @param selection which hunks to emit
+ * @returns a patch `git apply` accepts
  */
-function formatFilePatch(file, selection, opts = {}) {
+function formatFilePatch(
+  file: DiffFile, selection?: HunkSelection, opts: { reverse?: boolean } = {},
+): string {
   const reverse = !!opts.reverse;
   const sel = new Set(normalizeSelection(selection, file.hunks.length));
   const out = [...file.header];

@@ -2,7 +2,7 @@
 // worktrees (branch, head, merged-into-default).
 import fs from 'fs';
 import path from 'path';
-import { git, gitFull } from './util.js';
+import { git, gitFull } from './util.ts';
 
 // Walk baseDirs up to `depth` looking for directories that contain a .git.
 // Returns both the repos found and the plain container directories the walk passed

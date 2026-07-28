@@ -4,8 +4,8 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
-import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } from './util.js';
-import * as status from './status.js';
+import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } from './util.ts';
+import * as status from './status.ts';
 import * as worktree from './worktree.js';
 import * as layoutMod from './layout.js';
 import { createIdentity } from './identity.js';

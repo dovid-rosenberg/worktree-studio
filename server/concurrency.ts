@@ -3,18 +3,18 @@
 // n*offsetStep and sets each per-slot env value (e.g. redis__db) to n. Slot 0 ==
 // today's defaults, so a single feature is byte-for-byte unchanged.
 
+import type { RepoConcurrency } from './types.ts';
+
 // deriveEnv(repoConc, slot, offsetStep) → { env, ports }
 //   portEnv keys become env[KEY] = basePort + slot*offsetStep (and a port);
 //   slotEnv keys become env[KEY] = slot (e.g. redis__db — an index, not a port).
-/**
- * @param {import('./types.ts').RepoConcurrency|null|undefined} repoConc
- * @param {number} slot
- * @param {number} offsetStep
- * @returns {{ env: Record<string,string>, ports: number[] }}
- */
-function deriveEnv(repoConc, slot, offsetStep) {
-  const env = {};
-  const ports = [];
+function deriveEnv(
+  repoConc: RepoConcurrency | null | undefined,
+  slot: number,
+  offsetStep: number,
+): { env: Record<string, string>, ports: number[] } {
+  const env: Record<string, string> = {};
+  const ports: number[] = [];
   const portEnv = (repoConc && repoConc.portEnv) || {};
   const slotEnv = (repoConc && repoConc.slotEnv) || [];
   for (const key of Object.keys(portEnv)) {
@@ -28,12 +28,7 @@ function deriveEnv(repoConc, slot, offsetStep) {
 
 // allocSlot(usedSlots, maxSlots) → lowest integer in [0,maxSlots) not in
 // usedSlots, else null (all slots busy). usedSlots may be a Set or array.
-/**
- * @param {Set<number>|number[]|null|undefined} usedSlots
- * @param {number} maxSlots
- * @returns {number|null}
- */
-function allocSlot(usedSlots, maxSlots) {
+function allocSlot(usedSlots: Set<number> | number[] | null | undefined, maxSlots: number): number | null {
   const used = usedSlots instanceof Set ? usedSlots : new Set(usedSlots || []);
   for (let i = 0; i < maxSlots; i++) if (!used.has(i)) return i;
   return null;
@@ -49,15 +44,13 @@ function allocSlot(usedSlots, maxSlots) {
 //     matches inside `localhost:12390`.
 //   - Idempotent: re-running yields the same result (newPort is itself in the family
 //     and is skipped), so it can also re-target an already-shifted config.
-/**
- * @param {string} text
- * @param {number} basePort
- * @param {number} offsetStep
- * @param {number} maxSlots
- * @param {number} newPort
- * @returns {string}
- */
-function rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) {
+function rewriteSiblingPort(
+  text: string,
+  basePort: number,
+  offsetStep: number,
+  maxSlots: number,
+  newPort: number,
+): string {
   let out = String(text == null ? '' : text);
   for (let k = 0; k < maxSlots; k++) {
     const port = basePort + k * offsetStep;
@@ -78,15 +71,13 @@ function rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) {
 // all of them at +n*offsetStep, so all of those refs must move together.
 //   - Pure, idempotent, port-family-safe (inherits rewriteSiblingPort's `(?![0-9])` guard).
 //   - Slot 0 is a no-op (every base → itself).
-/**
- * @param {string} text
- * @param {Record<string,number>|null|undefined} siblingPortEnv
- * @param {number} offsetStep
- * @param {number} maxSlots
- * @param {number} slot
- * @returns {string}
- */
-function rewriteAllSiblingPorts(text, siblingPortEnv, offsetStep, maxSlots, slot) {
+function rewriteAllSiblingPorts(
+  text: string,
+  siblingPortEnv: Record<string, number> | null | undefined,
+  offsetStep: number,
+  maxSlots: number,
+  slot: number,
+): string {
   let out = String(text == null ? '' : text);
   for (const base of Object.values(siblingPortEnv || {})) {
     out = rewriteSiblingPort(out, base, offsetStep, maxSlots, base + slot * offsetStep);

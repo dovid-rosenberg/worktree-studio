@@ -4,7 +4,7 @@
 // no borders) so the embedded terminal reads native.
 import fs from 'fs';
 import path from 'path';
-import { run } from '../util.js';
+import { run } from '../util.ts';
 import { CONFIG_DIR } from '../config.js';
 
 const SOCK = 'wt-studio';

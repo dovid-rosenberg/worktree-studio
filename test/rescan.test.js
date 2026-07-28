@@ -7,7 +7,7 @@
 // the new implementation.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { createRescan } from '../server/rescan.js';
+import { createRescan } from '../server/rescan.ts';
 
 // server/server.js before this change.
 function oldRescan(scan) {

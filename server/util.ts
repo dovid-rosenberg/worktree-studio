@@ -1,5 +1,6 @@
 // Small shared helpers: shell/git exec, atomic JSON, tilde expansion, ids.
 import { execFile, execFileSync } from 'child_process';
+import type { ExecFileException, ExecFileOptions } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
@@ -7,7 +8,7 @@ import path from 'path';
 
 const HOME = os.homedir();
 
-function expandTilde(p) {
+function expandTilde(p: string): string {
   if (!p) return p;
   if (p === '~') return HOME;
   if (p.startsWith('~/')) return path.join(HOME, p.slice(2));
@@ -26,9 +27,21 @@ function expandTilde(p) {
 // (see server/forge.js and server/worktree.js).
 const DEFAULT_TIMEOUT_MS = 120000;
 
+/** What every shell-out in the app hands back. Non-zero exit is data, not an error. */
+export interface RunResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+  /** Killed by the timeout — the one failure a user can act on, and otherwise indistinguishable. */
+  timedOut: boolean;
+  error: ExecFileException | null;
+}
+
+export type RunOptions = ExecFileOptions & { timeout?: number };
+
 // Promise wrapper around execFile with a generous buffer. Never throws on a
 // non-zero exit — returns { code, stdout, stderr, timedOut } so callers decide.
-function run(cmd, args = [], opts = {}) {
+function run(cmd: string, args: string[] = [], opts: RunOptions = {}): Promise<RunResult> {
   const { timeout = DEFAULT_TIMEOUT_MS, ...rest } = opts;
   return new Promise((resolve) => {
     execFile(cmd, args, { maxBuffer: 32 * 1024 * 1024, timeout, ...rest }, (err, stdout, stderr) => {
@@ -47,16 +60,16 @@ function run(cmd, args = [], opts = {}) {
 }
 
 // git in a given repo; returns trimmed stdout ('' on failure).
-async function git(cwd, args) {
+async function git(cwd: string, args: string[]): Promise<string> {
   const r = await run('git', ['-C', cwd, ...args]);
   return r.code === 0 ? r.stdout.trim() : '';
 }
 
-async function gitFull(cwd, args, opts = {}) {
+async function gitFull(cwd: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
   return run('git', ['-C', cwd, ...args], opts);
 }
 
-function has(cmd) {
+function has(cmd: string): boolean {
   // synchronous best-effort lookup used at startup.
   try {
     execFileSync('command', ['-v', cmd], { shell: '/bin/bash', stdio: 'ignore' });
@@ -66,8 +79,8 @@ function has(cmd) {
   }
 }
 
-function readJson(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+function readJson<T>(file: string, fallback: T): T {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; } catch { return fallback; }
 }
 
 // Read a JSON *state* file, telling "not there yet" apart from "there but corrupt".
@@ -78,22 +91,22 @@ function readJson(file, fallback) {
 // Studio session to a live tmux/claude conversation with it. Unlike config.json
 // these files are not hand-edited (writeJson is atomic), so refusing to boot would
 // be the wrong trade: preserve the bad file, say so, and carry on empty.
-function readJsonState(file, fallback) {
-  let text;
+function readJsonState<T>(file: string, fallback: T): T {
+  let text: string;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return fallback; }
   if (!text.trim()) return fallback;
-  try { return JSON.parse(text); }
+  try { return JSON.parse(text) as T; }
   catch (e) {
     const aside = `${file}.corrupt-${Date.now()}`;
     let kept = false;
     try { fs.renameSync(file, aside); kept = true; } catch { /* */ }
-    console.error(`[wt-studio] ${file} is not valid JSON (${e.message}). `
+    console.error(`[wt-studio] ${file} is not valid JSON (${(e as Error).message}). `
       + `${kept ? `Kept it at ${aside}` : 'Could not move it aside'}; continuing with empty state.`);
     return fallback;
   }
 }
 
-function writeJson(file, obj) {
+function writeJson(file: string, obj: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
@@ -106,12 +119,12 @@ function writeJson(file, obj) {
 // a counter) was both. randomUUID is 122 CSPRNG bits.
 // Ids are only ever compared for equality and used as map keys — nothing validates
 // their shape — so ids minted by the old scheme keep working unchanged.
-function makeId(prefix = '') { return `${prefix}${crypto.randomUUID()}`; }
+function makeId(prefix = ''): string { return `${prefix}${crypto.randomUUID()}`; }
 
 // Short, stable handle derived from an id, for the places that need a *label* rather
 // than a credential — tmux session names, which have to stay inside 60-odd readable
 // characters. Never use this where the full id is the thing being authenticated.
-function shortId(id) { return String(id).replace(/[^0-9a-f]/gi, '').slice(-8) || 'session'; }
+function shortId(id: string): string { return String(id).replace(/[^0-9a-f]/gi, '').slice(-8) || 'session'; }
 
 // Resolve a path through its symlinks, falling back to the path itself when it
 // can't be resolved (doesn't exist yet, permission denied). Worktree paths are
@@ -119,7 +132,7 @@ function shortId(id) { return String(id).replace(/[^0-9a-f]/gi, '').slice(-8) ||
 // paths, and lsof's view of a running process — and any of them may hand us a
 // symlinked spelling (/tmp vs /private/tmp, a symlinked home), so every
 // comparison goes through this first.
-function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
+function realpath(p: string): string { try { return fs.realpathSync(p); } catch { return p; } }
 
 // A memo for realpath(), because resolving a path costs a syscall per path
 // component and the state build resolves the same few dozen worktree paths many
@@ -136,19 +149,22 @@ function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
 // Deliberately NOT usage-based: an entry retained merely because something asked
 // for it recently is exactly the entry that survives a removal.
 function createRealpathCache() {
-  const cache = new Map();
+  const cache = new Map<string, string>();
   let hits = 0, misses = 0;
   return {
-    resolve(p) {
+    resolve(p: string): string {
       if (!p) return p;
-      if (cache.has(p)) { hits++; return cache.get(p); }
+      // `has` first, not `get() ?? miss`: the map never stores a nullish value, so
+      // this is the only form that stays correct if one is ever added.
+      const hit = cache.get(p);
+      if (hit !== undefined) { hits++; return hit; }
       misses++;
-      let r;
+      let r: string;
       try { r = fs.realpathSync(p); } catch { return p; }
       cache.set(p, r);
       return r;
     },
-    retain(livePaths) {
+    retain(livePaths: Iterable<string>): void {
       const keep = livePaths instanceof Set ? livePaths : new Set(livePaths);
       for (const p of cache.keys()) if (!keep.has(p)) cache.delete(p);
     },
@@ -158,7 +174,7 @@ function createRealpathCache() {
 }
 
 // Turn any string into a safe slug usable as branch/worktree/mux-session name.
-function slug(s, max = 48) {
+function slug(s: string | null | undefined, max = 48): string {
   return (s || '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -167,7 +183,7 @@ function slug(s, max = 48) {
 }
 
 // POSIX single-quote a string for safe inclusion in a shell command.
-function shq(s) {
+function shq(s: unknown): string {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 

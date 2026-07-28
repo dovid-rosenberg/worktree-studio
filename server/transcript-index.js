@@ -10,7 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import * as transcripts from './transcripts.js';
-import * as pricing from './pricing.js';
+import * as pricing from './pricing.ts';
 
 // node:sqlite is experimental in Node 22 (it prints an ExperimentalWarning on first
 // load). If it or FTS5 is missing we degrade to the file-scan search in

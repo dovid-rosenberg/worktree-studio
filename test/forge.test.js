@@ -17,8 +17,8 @@ const NOT_A_REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-forge-'));
 // A stand-in provider whose view/create are scripted per call.
 /**
  * @param {string} id
- * @param {Partial<import('../server/forge.ts').Provider>} [impl]
- * @returns {import('../server/forge.ts').Provider}
+ * @param {Partial<import('../server/forge.js').Provider>} [impl]
+ * @returns {import('../server/forge.js').Provider}
  */
 function provider(id, { view = async () => null, create = async () => ({ ok: false, stderr: '' }) } = {}) {
   return { id, cli: id, view, create };

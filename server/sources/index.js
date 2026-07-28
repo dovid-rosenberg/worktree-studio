@@ -2,10 +2,10 @@
 //   { source, id, title, body, url }
 // list(cfg, {repoPath, q}) → [{ id, title, subtitle }]  (for the picker)
 // seed(cfg, {repoPath, id, text }) → seed
-import freetext from './freetext.js';
+import freetext from './freetext.ts';
 import github from './github.js';
 import gitlab from './gitlab.js';
-import asana from './asana.js';
+import asana from './asana.ts';
 
 const ADAPTERS = { freetext, github, gitlab, asana };
 

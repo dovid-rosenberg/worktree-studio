@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'events';
-import { createTerminalHandler } from '../server/term.js';
+import { createTerminalHandler } from '../server/term.ts';
 
 // Just enough of a `ws`: close() emits 'close', exactly as the real one does when
 // the browser goes away.

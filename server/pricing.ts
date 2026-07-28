@@ -16,10 +16,26 @@
 // `unpriced` list so the gap is visible rather than silently wrong.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { Usage } from './types.ts';
+
 const PER_MILLION = 1e6;
 
+/** USD per million tokens for one model. */
+export interface ModelPrice {
+  input: number;
+  output: number;
+}
+
+/**
+ * What a cost lookup answers with. `usd` is a number exactly when `priced` is
+ * true, so a caller that checks the flag never has to re-check for null.
+ */
+export type Cost =
+  | { usd: number; priced: true }
+  | { usd: null; priced: false };
+
 // model id → { input, output } USD per million tokens.
-const PRICES = {
+const PRICES: Record<string, ModelPrice> = {
   'claude-fable-5': { input: 10, output: 50 },
   'claude-mythos-5': { input: 10, output: 50 },
   'claude-opus-5': { input: 5, output: 25 },
@@ -33,7 +49,7 @@ const PRICES = {
 
 // Fast mode is a different SKU on the same model — transcripts record it as
 // `message.usage.speed`, so we can price it exactly instead of assuming standard.
-const FAST_PRICES = {
+const FAST_PRICES: Record<string, ModelPrice> = {
   'claude-opus-5': { input: 10, output: 50 },
   'claude-opus-4-8': { input: 10, output: 50 },
 };
@@ -51,26 +67,30 @@ const UNBILLED = new Set(['<synthetic>']);
 
 // Transcripts sometimes carry a dated snapshot id (`claude-opus-4-5-20251101`)
 // where the price table keys on the alias. Strip the date suffix before lookup.
-function normalizeModel(model) {
+function normalizeModel(model: string | null | undefined): string {
   const m = String(model || '').trim();
   if (!m) return '';
   return m.replace(/-\d{8}$/, '');
 }
 
-function priceFor(model, speed) {
+function priceFor(model: string | null | undefined, speed?: string | null): ModelPrice | null {
   const key = normalizeModel(model);
   if (!key || UNBILLED.has(key)) return null;
   if (speed === 'fast' && FAST_PRICES[key]) return FAST_PRICES[key];
   return PRICES[key] || null;
 }
 
-function isBillable(model) { return !UNBILLED.has(normalizeModel(model)); }
+function isBillable(model: string | null | undefined): boolean { return !UNBILLED.has(normalizeModel(model)); }
 
 // usage: the normalized shape from transcripts.js
 // ({ input, output, cacheWrite5m, cacheWrite1h, cacheRead }).
 // Returns { usd, priced }. `priced:false` means we counted the tokens but have no
 // rate for this model — callers must not treat usd:0 and usd:null alike.
-function costOf(model, usage, opts = {}) {
+function costOf(
+  model: string | null | undefined,
+  usage: Partial<Usage> | null | undefined,
+  opts: { speed?: string | null } = {},
+): Cost {
   const p = priceFor(model, opts.speed || (usage && usage.speed));
   if (!p || !usage) return { usd: null, priced: false };
   const inRate = p.input / PER_MILLION;
@@ -86,7 +106,7 @@ function costOf(model, usage, opts = {}) {
 
 // Round to a sane number of cents-ish digits for transport. Sub-cent precision
 // matters here: a single cheap turn can cost $0.0003.
-function round(usd) {
+function round(usd: number | null | undefined): number | null {
   if (usd === null || usd === undefined || !Number.isFinite(usd)) return null;
   return Math.round(usd * 1e6) / 1e6;
 }

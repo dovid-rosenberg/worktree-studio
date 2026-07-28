@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } from '../server/concurrency.js';
+import { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } from '../server/concurrency.ts';
 
 // accept-blue's real port map + redis__db slot key (mirrors config defaults).
 const AB = {

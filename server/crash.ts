@@ -29,6 +29,7 @@
 // Note what is NOT on the list: EADDRINUSE, EACCES, ENOENT, ENOSPC. Those say
 // the environment is not what the process needs, and continuing means running
 // half-configured.
+import type { NextFunction, Request, Response } from 'express';
 
 // Errors confined to one already-dead socket. `code` is the only reliable
 // discriminator — the message is localized/formatted and the class isn't
@@ -41,39 +42,61 @@ const CONNECTION_ERROR_CODES = new Set([
   'ERR_STREAM_ALREADY_FINISHED',
 ]);
 
-// Is this error confined to a single connection that is already lost?
-function isConnectionError(err) {
-  return !!err && typeof err === 'object' && CONNECTION_ERROR_CODES.has(err.code);
+// What a thrown value might turn out to carry. Nothing guarantees a throw is even
+// an Error — a plain string or an undefined reaches these handlers just the same —
+// so every field is optional and every read of one goes through this.
+interface Thrown {
+  code?: string;
+  status?: number;
+  statusCode?: number;
+  message?: string;
 }
 
-/** Where a listen was attempted, for the message. @typedef {{ host?: string, port?: number|string }} Addr */
+// Is this error confined to a single connection that is already lost?
+function isConnectionError(err: unknown): err is { code: string } {
+  if (!err || typeof err !== 'object') return false;
+  const { code } = err as Thrown;
+  return code !== undefined && CONNECTION_ERROR_CODES.has(code);
+}
+
+/** Where a listen was attempted, for the message. */
+interface Addr {
+  host?: string;
+  port?: number | string;
+}
 
 // A human line explaining a fatal listen failure, or null if `err` isn't one.
 // EADDRINUSE is the case worth spelling out: it is nearly always a second daemon
 // being started against a port the first one already owns, and the generic
 // stack trace buries that.
-/** @param {*} err @param {Addr} [addr] */
-function listenErrorMessage(err, { host, port } = {}) {
+function listenErrorMessage(err: unknown, { host, port }: Addr = {}): string | null {
   if (!err || typeof err !== 'object') return null;
+  const { code } = err as Thrown;
   const at = `${host || '?'}:${port || '?'}`;
-  if (err.code === 'EADDRINUSE') return `port ${port} is already in use — something is already listening on ${at} (another Studio daemon?). Refusing to run without an HTTP server.`;
-  if (err.code === 'EACCES') return `not allowed to bind ${at} — ports below 1024 need privileges. Pick another port in config.json (web.port).`;
-  if (err.code === 'EADDRNOTAVAIL') return `cannot bind ${at} — that address does not exist on this machine.`;
+  if (code === 'EADDRINUSE') return `port ${port} is already in use — something is already listening on ${at} (another Studio daemon?). Refusing to run without an HTTP server.`;
+  if (code === 'EACCES') return `not allowed to bind ${at} — ports below 1024 need privileges. Pick another port in config.json (web.port).`;
+  if (code === 'EADDRNOTAVAIL') return `cannot bind ${at} — that address does not exist on this machine.`;
   return null;
+}
+
+interface Io {
+  log?: (...args: unknown[]) => void;
+  exit?: (code: number) => void;
+}
+
+interface InstallIo extends Io {
+  on?: (event: string, listener: (err: unknown) => void) => unknown;
 }
 
 /**
  * Install the policy. `log`/`exit`/`on` are injectable so the classification can
  * be driven in a test without arming real process handlers or killing the runner.
- * @param {object} [io]
- * @param {(...args: any[]) => void} [io.log]
- * @param {(code: number) => void} [io.exit]
- * @param {(event: string, listener: (err: any) => void) => any} [io.on]
- * @returns {{ handleException(err: any): boolean }} handleException reports whether the
- *          error was survived (true) or fatal (false), for tests.
+ *
+ * `handleException` reports whether the error was survived (true) or fatal
+ * (false), for tests.
  */
-function install({ log = console.error, exit = process.exit, on = process.on.bind(process) } = {}) {
-  function handle(kind, err) {
+function install({ log = console.error, exit = process.exit, on = process.on.bind(process) }: InstallIo = {}): { handleException(err: unknown): boolean } {
+  function handle(kind: string, err: unknown): boolean {
     if (isConnectionError(err)) {
       // One connection died under a write. Say so at a level nobody greps for a
       // stack trace in, and carry on serving everyone else.
@@ -92,18 +115,19 @@ function install({ log = console.error, exit = process.exit, on = process.on.bin
   return { handleException: (err) => handle('uncaughtException', err) };
 }
 
+/** an http.Server, typed by the one thing this touches */
+interface ListenErrorSource {
+  on(event: 'error', listener: (err: unknown) => void): unknown;
+}
+
 /**
  * Make a listen failure fatal at its source. An 'error' event on an http.Server
  * with no listener is re-thrown as an uncaughtException, which is how EADDRINUSE
  * ever reached the blanket handler in the first place; handling it here is what
  * turns it into a sentence the user can act on.
- * @param {{ on: (event: string, listener: (err: any) => void) => any }} server
- *        an http.Server, typed by the one thing this touches
- * @param {Addr} [addr]
- * @param {{ log?: Function, exit?: Function }} [io]
  */
-function guardListen(server, { host, port } = {}, { log = console.error, exit = process.exit } = {}) {
-  server.on('error', (err) => {
+function guardListen(server: ListenErrorSource, { host, port }: Addr = {}, { log = console.error, exit = process.exit }: Io = {}): void {
+  server.on('error', (err: unknown) => {
     const why = listenErrorMessage(err, { host, port });
     if (why) log(`[wt-studio] ${why}`);
     else log('[wt-studio] fatal http server error', err);
@@ -126,10 +150,10 @@ function guardListen(server, { host, port } = {}, { log = console.error, exit = 
  * Mount it LAST — after every route including the SPA fallback — or the layers
  * registered after it are outside the net.
  */
-function routeErrors({ log = console.error } = {}) {
+function routeErrors({ log = console.error }: Pick<Io, 'log'> = {}) {
   // Four arity, or express registers this as an ordinary middleware and never
   // hands it an error.
-  return (err, req, res, next) => {
+  return (err: unknown, req: Request, res: Response, next: NextFunction) => {
     // Headers already out (an SSE stream, a half-written document): there is no
     // status left to set, and appending JSON to a body in flight corrupts it. Hand
     // it to express's default handler, which destroys the socket instead.
@@ -141,8 +165,9 @@ function routeErrors({ log = console.error } = {}) {
     // A body parser refusing a malformed or oversized body sets its own status, and
     // a 400/413 is something the caller can act on — unlike the 500 that an escaped
     // throw is. Only an error naming no status is an unhandled exception.
-    const status = Number(err && (err.status || err.statusCode));
-    res.status(status >= 400 && status <= 599 ? status : 500).json({ error: err && err.message });
+    const e = err as Thrown | null | undefined;
+    const status = Number(e && (e.status || e.statusCode));
+    res.status(status >= 400 && status <= 599 ? status : 500).json({ error: e && e.message });
   };
 }
 

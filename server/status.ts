@@ -3,11 +3,35 @@
 // session state (working / waiting / idle / stopped). No global settings touched.
 import fs from 'fs';
 import path from 'path';
+import type { SessionState } from './types.ts';
 
 const REPORT = path.join(import.meta.dirname, '..', 'hooks', 'report.sh');
 
+/** A hook's POSTed body. Only these keys are read; the rest of the event rides along. */
+interface HookPayload {
+  tool_name?: string;
+  toolName?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+/** What one lifecycle event says about the session. */
+interface EventState {
+  state: SessionState;
+  activity: string;
+}
+
+/** One entry of a Claude Code settings file's `hooks` block. */
+interface HookMatcher {
+  hooks: Array<{ type: string; command: string; timeout: number }>;
+}
+
+interface HookSettings {
+  hooks: Record<string, HookMatcher[]>;
+}
+
 // event → { state, activity? }
-function mapEvent(event, payload) {
+function mapEvent(event: string, payload?: HookPayload | null): EventState | null {
   const tool = payload && (payload.tool_name || payload.toolName);
   switch (event) {
     case 'SessionStart': return { state: 'idle', activity: 'session started' };
@@ -26,9 +50,9 @@ function mapEvent(event, payload) {
 // The boot token rides in the query string because that URL is all the hook script
 // gets — it cannot be handed a header. The file now holds a secret, so it and its
 // directory are written 0600/0700; only the session's own claude process reads it.
-function buildSettings(studioId, port, token) {
+function buildSettings(studioId: string, port: number, token?: string): HookSettings {
   const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd'];
-  const hooks = {};
+  const hooks: Record<string, HookMatcher[]> = {};
   const auth = token ? `&token=${encodeURIComponent(token)}` : '';
   for (const ev of events) {
     const url = `http://127.0.0.1:${port}/hook/${ev}?wts=${encodeURIComponent(studioId)}${auth}`;
@@ -37,7 +61,7 @@ function buildSettings(studioId, port, token) {
   return { hooks };
 }
 
-function settingsFile(stateDir, studioId, port, token) {
+function settingsFile(stateDir: string, studioId: string, port: number, token?: string): string {
   const dir = path.join(stateDir, 'hooks');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const f = path.join(dir, `${studioId}.settings.json`);
@@ -49,3 +73,4 @@ function settingsFile(stateDir, studioId, port, token) {
 }
 
 export { mapEvent, buildSettings, settingsFile };
+export type { HookPayload, EventState, HookSettings };

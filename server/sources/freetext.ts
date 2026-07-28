@@ -1,5 +1,7 @@
 // The zero-dependency origin: type a description, optionally give it a short name.
-export default {
+import type { SourceAdapter } from '../types.ts';
+
+const adapter: SourceAdapter = {
   id: 'freetext',
   label: 'Free text',
   needsRepo: false,
@@ -14,3 +16,5 @@ export default {
     return { source: 'freetext', id: null, title, body, url: null };
   },
 };
+
+export default adapter;

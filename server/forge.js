@@ -20,7 +20,7 @@
  * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<PrView|null>} view
  * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<{ ok: boolean, url?: string, stderr?: string }>} create
  */
-import { run, has } from './util.js';
+import { run, has } from './util.ts';
 
 /** @type {NodeJS.ProcessEnv} */
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };

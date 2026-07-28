@@ -7,7 +7,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import * as pricing from './pricing.js';
+import * as pricing from './pricing.ts';
 
 const NL = 0x0a;
 const CR = 0x0d;

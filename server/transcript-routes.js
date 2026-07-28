@@ -7,7 +7,7 @@
 // below is reachable under both prefixes without this module naming either of them.
 import path from 'path';
 import * as transcripts from './transcripts.js';
-import * as pricing from './pricing.js';
+import * as pricing from './pricing.ts';
 import { STATE_DIR } from './config.js';
 import { TranscriptIndex, summarize } from './transcript-index.js';
 

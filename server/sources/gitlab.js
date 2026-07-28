@@ -1,6 +1,6 @@
 // GitLab issues. Prefers the `glab` CLI when installed; otherwise falls back to
 // the REST API using a configured token + project path.
-import { run, has } from '../util.js';
+import { run, has } from '../util.ts';
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 

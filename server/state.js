@@ -11,7 +11,7 @@
 // them for the callers that want the whole world at once: GET /state, SwiftBar,
 // Alfred, resolveGroup.
 import { computeFeatures } from './features.js';
-import { createRealpathCache } from './util.js';
+import { createRealpathCache } from './util.ts';
 import * as sources from './sources/index.js';
 
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof

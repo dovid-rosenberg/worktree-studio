@@ -10,8 +10,8 @@
 // index as the pre-image makes the partially-staged case just work, and is exactly
 // what `git add -p` / `git reset -p` do.
 import { spawn } from 'child_process';
-import { git, gitFull } from './util.js';
-import { parsePatch, formatFilePatch } from './diff.js';
+import { git, gitFull } from './util.ts';
+import { parsePatch, formatFilePatch } from './diff.ts';
 
 // Canonical diff flags: force `a/`+`b/` prefixes and plain output so neither the user's
 // global git config (diff.mnemonicPrefix gives `c/`+`w/`, diff.noprefix gives none) nor

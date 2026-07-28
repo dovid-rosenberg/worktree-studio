@@ -26,8 +26,29 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import type { IncomingHttpHeaders } from 'http';
+import type { NextFunction, Request, Response } from 'express';
+import type { Config, PartialDeep } from './types.ts';
 
 const TOKEN_FILE = 'token';
+
+// What a check is allowed to look at. The same functions run against an express
+// Request and against the bare IncomingMessage of a WebSocket upgrade, which has
+// no `originalUrl` and no parsed `query` — so the parameter names the surface
+// both share rather than either concrete type.
+interface GuardedRequest {
+  headers: IncomingHttpHeaders;
+  method?: string;
+  url?: string;
+  originalUrl?: string;
+  query?: Record<string, unknown>;
+}
+
+// null to allow, this to deny — see the note on createGuard.
+interface Denial {
+  status: number;
+  error: string;
+}
 
 // Hostnames that unambiguously mean "this machine, over loopback". A rebinding
 // attack cannot produce any of these in the Host header: the browser sends the name
@@ -39,7 +60,7 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]', '0:0:0:0:0:0
 // token into its hook URLs, and those files belong to processes that outlive a
 // studio restart. A fresh token each boot would silently mute a live session's
 // status reporting.
-function loadToken(stateDir) {
+function loadToken(stateDir: string): string {
   const file = path.join(stateDir, TOKEN_FILE);
   try {
     const existing = fs.readFileSync(file, 'utf8').trim();
@@ -61,7 +82,7 @@ function loadToken(stateDir) {
 
 // Split a Host/authority into { host, port }. Returns null for anything malformed —
 // callers treat that as a denial, so a header we cannot parse is never trusted.
-function splitHostPort(value) {
+function splitHostPort(value: string | undefined | null): { host: string; port: string } | null {
   const v = String(value || '').trim();
   if (!v) return null;
   if (v.startsWith('[')) { // bracketed IPv6: [::1]:7788
@@ -79,7 +100,7 @@ function splitHostPort(value) {
   return { host: v.slice(0, i).toLowerCase(), port: v.slice(i + 1) };
 }
 
-function timingSafeEqual(a, b) {
+function timingSafeEqual(a: string, b: string): boolean {
   const x = Buffer.from(String(a || ''), 'utf8');
   const y = Buffer.from(String(b || ''), 'utf8');
   if (x.length === 0 || x.length !== y.length) return false;
@@ -89,7 +110,7 @@ function timingSafeEqual(a, b) {
 // Every check returns null to allow and { status, error } to deny, so callers read
 // as `const deny = guard.x(req); if (deny) …` in both express and the raw upgrade
 // handler (which has no res to hand to a middleware).
-function createGuard({ cfg, token }) {
+function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }) {
   // Read the bind config lazily: cfg.web.port is rewritten to the real port when the
   // configured one is 0 (ephemeral), which happens after the guard is built.
   const bindHost = () => String((cfg.web && cfg.web.host) || '127.0.0.1').toLowerCase();
@@ -99,10 +120,11 @@ function createGuard({ cfg, token }) {
   // bare 401/403 — so log one line for the human. Deduplicated per reason for a
   // minute, because a page in a retry loop would otherwise flood the console. Never
   // logs the presented token.
-  const loggedAt = new Map();
-  function deny(status, error, req) {
+  const loggedAt = new Map<string, number>();
+  function deny(status: number, error: string, req: GuardedRequest): Denial {
     const now = Date.now();
-    if (!(loggedAt.get(error) > now - 60000)) {
+    const last = loggedAt.get(error);
+    if (last === undefined || last <= now - 60000) {
       loggedAt.set(error, now);
       const h = (req.headers && req.headers.host) || '-';
       const o = (req.headers && req.headers.origin) || '-';
@@ -114,12 +136,12 @@ function createGuard({ cfg, token }) {
     return { status, error };
   }
 
-  function hostAllowed(host) {
+  function hostAllowed(host: string): boolean {
     // A non-loopback bind host is an explicit choice by the user (they edited
     // config.web.host); keep that address reachable rather than locking them out.
     return LOOPBACK.has(host) || host === bindHost();
   }
-  function portAllowed(port) {
+  function portAllowed(port: string): boolean {
     const want = bindPort();
     if (!want) return true; // ephemeral/unknown bind port — the hostname is the check
     return port === want || (port === '' && (want === '80' || want === '443'));
@@ -127,7 +149,7 @@ function createGuard({ cfg, token }) {
 
   // The Host header the client *asked* for. Rejecting anything that is not a
   // loopback name is what defeats DNS rebinding.
-  function denyHost(req) {
+  function denyHost(req: GuardedRequest): Denial | null {
     const parsed = splitHostPort(req.headers && req.headers.host);
     if (!parsed || !hostAllowed(parsed.host) || !portAllowed(parsed.port)) return deny(403, 'forbidden host', req);
     return null;
@@ -140,10 +162,10 @@ function createGuard({ cfg, token }) {
   // Note `Origin: null` is refused rather than treated as absent: it is what a
   // sandboxed iframe or a data: document sends, i.e. an opaque origin the attacker
   // chose. Nothing legitimate here produces one.
-  function denyOrigin(req) {
+  function denyOrigin(req: GuardedRequest): Denial | null {
     const raw = req.headers && req.headers.origin;
     if (!raw) return null;
-    let u;
+    let u: URL;
     try { u = new URL(raw); } catch { return deny(403, 'forbidden origin', req); }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return deny(403, 'forbidden origin', req);
     const host = u.hostname.toLowerCase();
@@ -152,12 +174,12 @@ function createGuard({ cfg, token }) {
     return null;
   }
 
-  function denyBrowser(req) { return denyHost(req) || denyOrigin(req); }
+  function denyBrowser(req: GuardedRequest): Denial | null { return denyHost(req) || denyOrigin(req); }
 
   // The token may arrive as a header (the web UI's fetches, the CLI, SwiftBar,
   // Alfred) or as a query param — EventSource and WebSocket cannot set headers, and
   // neither can the hook URL baked into a session's settings file.
-  function presented(req, queryToken) {
+  function presented(req: GuardedRequest, queryToken?: string | null): string {
     const h = req.headers && req.headers['x-wts-token'];
     if (h) return String(h);
     const auth = (req.headers && req.headers.authorization) || '';
@@ -168,18 +190,18 @@ function createGuard({ cfg, token }) {
     return '';
   }
 
-  function denyToken(req, queryToken) {
+  function denyToken(req: GuardedRequest, queryToken?: string | null): Denial | null {
     return timingSafeEqual(presented(req, queryToken), token) ? null : deny(401, 'missing or invalid token', req);
   }
 
   // Express middleware. `browser` guards everything (including the static assets and
   // the token-bearing index.html); `authed` adds the token and goes on the API router.
-  const browser = (req, res, next) => {
+  const browser = (req: Request, res: Response, next: NextFunction) => {
     const deny = denyBrowser(req);
     if (deny) return res.status(deny.status).json({ error: deny.error });
     return next();
   };
-  const authed = (req, res, next) => {
+  const authed = (req: Request, res: Response, next: NextFunction) => {
     const deny = denyToken(req);
     if (deny) return res.status(deny.status).json({ error: deny.error });
     return next();

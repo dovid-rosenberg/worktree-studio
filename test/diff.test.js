@@ -5,7 +5,7 @@
 // then proves the same patches survive a real `git apply`.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parsePatch, formatFilePatch, alignRows, normalizeSelection, stripPrefix, unquotePath } from '../server/diff.js';
+import { parsePatch, formatFilePatch, alignRows, normalizeSelection, stripPrefix, unquotePath } from '../server/diff.ts';
 
 // Patch fixtures are built line-by-line so trailing whitespace and the "\ No newline"
 // marker are visible and exact.
