@@ -34,8 +34,19 @@ Notable, because they're easy to lose track of:
 
 ## Resuming the ESM/TypeScript migration
 
-Branch `chore/esm-typescript`, worktree `.worktrees/esm-ts`, 5 commits, **55 of 71 server
-modules converted**. The branch tip does **not** typecheck — that's expected mid-migration.
+Branch `chore/esm-typescript`, worktree `.worktrees/esm-ts`, 6 commits, **63 of 71 server
+modules converted** — only 8 `.js` files left. The branch tip does **not** typecheck; that's
+expected mid-migration.
+
+Two real bugs strict mode already caught in `orchestrator`, both preserved in `c17587f`:
+`/group/session` dereferenced an unknown-repo lookup unguarded (`TypeError` → 500 leaking an
+internal message, while the loop three lines below already guarded the identical lookup), and
+`/group/delete` read the `WorktreeRemoveResult` union unnarrowed.
+
+One gap flagged but not fixed: `types.ts` declares `Config.editors` as
+`Record<string, { open: string }>`, but `openGroup` is a real shipped key — read in
+`orchestrator`, written by `server.js`, documented in `docs/api.md`, exercised in
+`test/no-regression.test.js`. Wants `{ open: string; openGroup?: string }`.
 
 ```
 cd .worktrees/esm-ts
