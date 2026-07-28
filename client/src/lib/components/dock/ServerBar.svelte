@@ -3,11 +3,12 @@
    * The bar under the dock: the whole shared workspace (every repo this session owns),
    * its dev-server ports, the frontend "Open ↗" buttons, run/stop, and the PR/CI pills.
    *
-   * CI is polled lazily per promoted session and refreshed every ~30 s while that
-   * session stays selected. app.js had to re-inject the pills by hand after every SSE
-   * tick because updateDock() rewrote the bar's innerHTML; here they are just state.
+   * CI is PUSHED, not polled: the daemon owns when to look (server/ci.js debounces,
+   * gates on a live subscriber, and only emits when the snapshot changed) and sends a
+   * `ci` frame on the same stream as everything else. app.js had to re-inject the pills
+   * by hand after every tick because updateDock() rewrote the bar's innerHTML; here
+   * they are just derived state.
    */
-  import { api } from '$lib/api.js';
   import { activatable } from '$lib/actions/activatable.js';
   import { world, webAppsFor, openApp } from '$lib/stores/world.svelte.js';
   import { ui } from '$lib/stores/ui.svelte.js';
@@ -15,8 +16,6 @@
 
   let { session } = $props();
 
-  // Stable across frames (see the note in Dock.svelte): the CI poll below must key off
-  // the session's identity, not off the object the store replaces on every frame.
   const sessionId = $derived(session.id);
   const promoted = $derived(!!session.worktreePath);
   const reps = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
@@ -25,33 +24,15 @@
   const configured = $derived(reps.some((/** @type {any} */ r) => r.canStart));
   const webApps = $derived(webAppsFor(reps));
 
-  let ci = $state(/** @type {{ sessionId: string, repos: any[] }|null} */ (null));
+  // Keyed by session id, so the pills follow the selection with no effect and no timer:
+  // a session the feed knows nothing about yet simply has none, and a merged or closed
+  // PR disappears when the next frame drops it.
   const ciRepos = $derived(
-    ci && ci.sessionId === session.id ? ci.repos.filter((/** @type {any} */ r) => r && r.hasPR) : [],
+    ((world.ci || {})[sessionId] || []).filter((/** @type {any} */ r) => r && r.hasPR),
   );
 
   let busyStart = $state(false);
   let busyStop = $state(false);
-
-  // A self-scheduling timeout (not setInterval) so a slow `gh` call can never let two
-  // polls overlap. The effect's cleanup is what stops it when the selection moves on.
-  $effect(() => {
-    const id = sessionId;
-    if (!promoted) { ci = null; return; }
-    let alive = true;
-    /** @type {ReturnType<typeof setTimeout>|undefined} */
-    let timer;
-    const tick = async () => {
-      try {
-        const res = await api('GET', `/api/sessions/${id}/ci`);
-        if (!alive) return;
-        ci = { sessionId: id, repos: (res && res.repos) || [] };
-      } catch { /* no gh/glab, no PR, offline — leave the bar as it is */ }
-      if (alive) timer = setTimeout(tick, 30000);
-    };
-    tick();
-    return () => { alive = false; clearTimeout(timer); };
-  });
 
   /** One repo's check summary, in the compact form the bar has room for. */
   function checks(/** @type {any} */ r) {

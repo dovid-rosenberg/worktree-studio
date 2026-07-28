@@ -1,13 +1,16 @@
 /*
  * The SSE-backed state layer.
  *
- * `GET /api/events` carries TWO named events, each a full replacement of one half of
+ * `GET /api/events` carries THREE named events, each a full replacement of one half of
  * the state payload (docs/api.md):
  *
  *   topology       repos, worktrees, features, groups, sources, config — rebuilt on a
  *                  git rescan or a real mutation, so it arrives rarely.
  *   session-state  { sessions, servers } — re-sent on every Claude hook, i.e. every
  *                  tool call, which is why it is the small half.
+ *   ci             { ci } — sessionId → the PR/MR + checks summary per repo. Its own
+ *                  event because it moves on the order of minutes: riding along with
+ *                  the hook half would re-send an unchanged payload thousands of times.
  *
  * One of each is written before the client joins the fan-out, so both a first load and
  * the EventSource's own reconnect start from a complete snapshot.
@@ -53,6 +56,7 @@ const EMPTY = {
   editors: /** @type {string[]} */ ([]),
   runConfigs: /** @type {Record<string, any>} */ ({}),
   config: /** @type {Record<string, any>} */ ({}),
+  ci: /** @type {Record<string, any[]>} */ ({}),
 };
 
 /**
@@ -101,13 +105,15 @@ class World {
   topology = $state.raw(/** @type {any} */ ({}));
   /** Last `session-state` frame, exactly as received. */
   sessionHalf = $state.raw(/** @type {any} */ ({}));
+  /** Last `ci` frame, exactly as received. */
+  ciHalf = $state.raw(/** @type {any} */ ({}));
   /** True once the first frame of either kind has landed. */
   connected = $state(false);
   /** Set when the stream has errored and not yet re-delivered a frame. */
   streamError = $state('');
 
   /** The stitched view. Recomputed from the two pristine halves on every frame. */
-  view = $derived(stitchSessions({ ...EMPTY, ...this.topology, ...this.sessionHalf }));
+  view = $derived(stitchSessions({ ...EMPTY, ...this.topology, ...this.sessionHalf, ...this.ciHalf }));
 
   get mux() { return this.view.mux; }
   get repos() { return this.view.repos; }
@@ -117,6 +123,8 @@ class World {
   get features() { return this.view.features; }
   get groups() { return this.view.groups; }
   get webRepos() { return this.view.webRepos; }
+  /** sessionId → the repos array `GET /sessions/:id/ci` would answer with. */
+  get ci() { return this.view.ci; }
 
   /** @param {string} id */
   session(id) { return this.sessions.find((/** @type {any} */ s) => s.id === id) || null; }
@@ -136,13 +144,15 @@ export function connectStream(hooks = {}) {
   // EventSource cannot set headers, so the boot token rides in the query string.
   const ev = new EventSource(`/api/events${tokenQuery('?')}`);
 
-  /** @param {boolean} isSessionHalf */
-  const apply = (isSessionHalf) => (/** @type {MessageEvent} */ e) => {
+  /** @param {'topology'|'sessions'|'ci'} half */
+  const apply = (half) => (/** @type {MessageEvent} */ e) => {
     let frame;
     try { frame = JSON.parse(e.data); } catch { return; }
-    if (isSessionHalf) {
+    if (half === 'sessions') {
       hooks.onSessionFrame?.(frame); // diff BEFORE swapping in
       world.sessionHalf = frame;
+    } else if (half === 'ci') {
+      world.ciHalf = frame;
     } else {
       world.topology = frame;
     }
@@ -150,8 +160,11 @@ export function connectStream(hooks = {}) {
     world.streamError = '';
   };
 
-  ev.addEventListener('topology', apply(false));
-  ev.addEventListener('session-state', apply(true));
+  ev.addEventListener('topology', apply('topology'));
+  ev.addEventListener('session-state', apply('sessions'));
+  // The daemon pushes CI (server/ci.js decides when to look and only emits a frame when
+  // the snapshot changed). Dropping this event is what forced the serverbar to poll.
+  ev.addEventListener('ci', apply('ci'));
   // The browser reconnects on its own and the server re-snapshots, so this is only a
   // surface for the UI to say "stale" while that is happening.
   ev.onerror = () => { world.streamError = 'stream interrupted — reconnecting'; };

@@ -5,14 +5,24 @@
 //
 // Every call takes an AbortSignal. Search fires on keystroke, so the previous request
 // must be cancellable or a slow query can land after a fast one and overwrite it.
+//
+// Same-origin does NOT mean unauthenticated: every /api route is behind the boot token
+// (server/security.js). The token comes from $lib/api.js — the one module that knows it
+// may still be an un-substituted placeholder and that dev gets it from Vite — rather
+// than being resolved a second time here.
+
+import { TOKEN } from '$lib/api.js';
 
 const V1 = '/api/v1';
+
+/** @param {Record<string,string>} extra */
+const headers = (extra) => (TOKEN ? { ...extra, 'x-wts-token': TOKEN } : extra);
 
 /** @param {string} url @param {AbortSignal} [signal] @returns {Promise<any>} */
 async function get(url, signal) {
   let res;
   try {
-    res = await fetch(url, { signal, headers: { accept: 'application/json' } });
+    res = await fetch(url, { signal, headers: headers({ accept: 'application/json' }) });
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') throw e;
     // The daemon being down is the common case here, and `TypeError: Failed to fetch`
@@ -34,7 +44,7 @@ async function post(url, body, signal) {
   const res = await fetch(url, {
     method: 'POST',
     signal,
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    headers: headers({ 'content-type': 'application/json', accept: 'application/json' }),
     body: JSON.stringify(body || {}),
   });
   const text = await res.text();
