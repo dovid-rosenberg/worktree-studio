@@ -91,8 +91,12 @@ function register(app, deps) {
     const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
     const paths = g.members.map((m) => m.path);
-    if (ed.openGroup) { await run('bash', ['-lc', ed.openGroup.replace('{paths}', paths.map(shq).join(' '))]); }
-    else { for (const p of paths) await run('bash', ['-lc', ed.open.replace('{path}', shq(p))]); }
+    // split/join, never replace(): the shell-quoted path is the REPLACEMENT string, and
+    // `$&`, `` $` ``, `$'` and `$$` in a replacement string are expanded by the engine
+    // AFTER shq() has done its quoting — so a worktree path containing `$&` would open
+    // some other path entirely, quoting notwithstanding. split/join is literal.
+    if (ed.openGroup) { await run('bash', ['-lc', ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]); }
+    else { for (const p of paths) await run('bash', ['-lc', ed.open.split('{path}').join(shq(p))]); }
     res.json({ ok: true });
   }));
 

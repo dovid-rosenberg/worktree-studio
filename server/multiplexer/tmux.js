@@ -4,12 +4,15 @@
 // client. Runs on a dedicated socket with a chrome-free config (no status bar,
 // no borders) so the embedded terminal reads native.
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { run } = require('../util');
+const { CONFIG_DIR } = require('../config');
 
 const SOCK = 'wt-studio';
-const CONF = path.join(os.homedir(), '.config', 'worktree-studio', 'tmux.conf');
+// CONFIG_DIR, not a second hand-rolled ~/.config/worktree-studio: that spelling
+// ignored WT_STUDIO_CONFIG_DIR, so setting the env var moved config.json and left
+// tmux.conf behind in the default location.
+const CONF = path.join(CONFIG_DIR, 'tmux.conf');
 (function ensureConf() {
   try {
     fs.mkdirSync(path.dirname(CONF), { recursive: true });

@@ -1,22 +1,15 @@
 'use strict';
 // Routes for the structured diff model and hunk-level staging. Self-contained on
-// purpose: server.js wires this in with a single `register(app, deps)` call, so the
+// purpose: server.js wires this in with a single `register(api, deps)` call, so the
 // route table can grow here without touching it again.
 //
-// Every route is mounted twice — under /api (what the current client calls) and under
-// /api/v1 (the versioned path new clients should use). Same handler, same behaviour;
-// the pair exists so the unversioned path can be retired later without a flag day.
+// `api` is the ONE router server.js mounts at both /api (what the current client
+// calls) and /api/v1 (the versioned path new clients should use). Registering onto it
+// is what makes every route below answer identically under both prefixes — the module
+// never spells a prefix, so it cannot register a route under one and miss the other.
 const review = require('./review');
 const hunks = require('./hunks');
-
-const PREFIXES = ['/api', '/api/v1'];
-
-// Same async wrapper server.js uses: a rejected handler becomes a 500 instead of an
-// unhandled rejection (Express 4 doesn't await handlers).
-const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
-  console.error('[wt-studio]', e);
-  if (!res.headersSent) res.status(500).json({ error: e.message });
-});
+const { A } = require('./util');
 
 // Resolve :id + ?repo (or body.repo) to the worktree the operation runs in. Returns
 // { entry } or { status, error } so each handler bails the same way.
@@ -38,10 +31,10 @@ function selection(body) {
   return [];
 }
 
-// register(app, deps) — deps: { manager, repos, broadcast? }. `repos` may be the scan
+// register(api, deps) — deps: { manager, repos, broadcast? }. `repos` may be the scan
 // cache array or a getter for it; server.js rebuilds that array on every rescan, so it
 // passes a getter and this module never holds a stale reference.
-function register(app, deps) {
+function register(api, deps) {
   const { repos } = deps || {};
   if (!deps || !deps.manager) throw new Error('routes-review: deps.manager is required');
   const broadcast = deps.broadcast || (() => {});
@@ -50,8 +43,8 @@ function register(app, deps) {
     const hit = list.find((r) => r.name === name);
     return hit && hit.defaultBranch;
   };
-  const get = (p, fn) => PREFIXES.forEach((pre) => app.get(pre + p, wrap(fn)));
-  const post = (p, fn) => PREFIXES.forEach((pre) => app.post(pre + p, wrap(fn)));
+  const get = (p, fn) => api.get(p, A(fn));
+  const post = (p, fn) => api.post(p, A(fn));
 
   // The structured per-file diff for one commit, or for the working tree when
   // sha=uncommitted (the default). Each file carries the raw patch AND the parsed
@@ -59,7 +52,10 @@ function register(app, deps) {
   get('/sessions/:id/diff', async (req, res) => {
     const r = resolveWorktree(deps, req, req.query.repo);
     if (r.error) return res.status(r.status).json({ error: r.error });
-    const sha = req.query.sha || 'uncommitted';
+    // `?sha=a&sha=b` parses to an ARRAY, and an array reaching isValidSha/execFile is
+    // a TypeError — a 500 leaking an internal message where a 400 belongs. Coerce
+    // first, exactly like `?file=` below.
+    const sha = String(req.query.sha ?? '') || 'uncommitted';
     // Reject at the boundary, so a `sha` that is really a git option never reaches
     // an argv (see review.js). A bad request is a 400, not a 500.
     if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
@@ -98,4 +94,4 @@ function register(app, deps) {
   post('/sessions/:id/hunks/unstage', applyRoute('unstage'));
 }
 
-module.exports = { register, PREFIXES, selection, resolveWorktree };
+module.exports = { register, selection, resolveWorktree };

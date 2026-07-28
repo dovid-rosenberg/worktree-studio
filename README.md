@@ -50,7 +50,8 @@ The app has one engine (this server) and two focused surfaces you toggle between
 
 ## Requirements
 
-- macOS, Node ≥ 18, `git`, and **tmux** (`brew install tmux`).
+- macOS, Node ≥ 22, `git`, and **tmux** (`brew install tmux`).
+  (22 is a hard floor, not a preference: the transcript index is built on `node:sqlite`.)
 - `claude` (Claude Code) on PATH. Optional: `gh`, `glab` for issue sources.
 
 ## Run
@@ -83,9 +84,19 @@ npm start` serves it instead. Exactly one of the two owns `/`.
 | — | *(not config)* the API token lives at `~/.local/state/worktree-studio/token`, mode 0600. Every request needs it; see `docs/api.md`. |
 | `claude.cmd` | command used to launch a session (default `claude`) |
 | `copyPatterns` | gitignored files carried into new worktrees (per-repo or `default`) |
+| `copyAlways` | files copied in **whether or not git ignores them** (JetBrains run configs by default) |
+| `worktrees` | where a repo's worktrees live: `{ layout: nested\|sibling\|external, dir, root }` |
+| `featureIdentity` | what makes two worktrees the same feature: `{ strategy: basename\|branch\|manifest, branchPattern, branchFlags }` |
+| `groups` | manual feature groups: `[{ name, members: ["repo/branch-or-wtname"] }]` |
+| `concurrency` | run 2–3 features at once: `{ enabled, offsetStep, maxSlots, repos }` |
 | `start.<repo>` | `{ cmd, ports }` dev-server launch config |
 | `sources.gitlab` | `{ enabled, host, token, project }` (or install `glab`) |
 | `sources.asana` | `{ enabled, token, workspace }` |
+
+`worktrees`, `featureIdentity`, `copyPatterns`/`copyAlways` and `concurrency` are
+conventions rather than settings — each changes behaviour across the whole app, and
+a wrong choice fails in ways that are not obvious from the key name.
+**`docs/config.md`** documents all four properly, with worked examples.
 
 ## Layout
 
@@ -99,6 +110,11 @@ server/
   sessions.js          session lifecycle: create / promote / popout / restore
   status.js            hook-settings generator + event→state machine
   servers.js           dev-server start/stop/status
+  identity.js          which worktrees are "the same feature"
+  broadcast.js         the SSE fan-out (topology · session-state · ci)
+  review.js hunks.js diff.js   commits, structured diffs, hunk-level staging
+  transcripts.js transcript-index.js   transcript reader + sqlite search/telemetry
+  pricing.js           the maintained price table every dollar figure derives from
   sources/             freetext · github · gitlab · asana adapters
   webui.js             which frontend is served, and the boot-token injector
 client/                the served UI (SvelteKit → client/build); see client/README.md
@@ -110,3 +126,10 @@ public/                the previous UI, unserved unless WTS_UI=legacy
 ```sh
 npm test               # worktree logic, branch derivation, hook state machine, parsing
 ```
+
+## Docs
+
+- **`MANUAL.md`** — what the app does, screen by screen.
+- **`docs/api.md`** — the HTTP + SSE + WebSocket contract, derived from `server/`.
+- **`docs/config.md`** — worktree layout, feature identity, copy patterns, concurrency.
+- **`client/README.md`** — the SvelteKit UI: stores, the event stream, the panels.

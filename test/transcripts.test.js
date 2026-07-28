@@ -41,7 +41,7 @@ function assistantLine({ msgId, text, model = 'claude-opus-5', use = usage(), ts
     : blockType === 'tool_use' ? { type: 'tool_use', name: 'Read', input: { file_path: text } }
       : { type: 'text', text };
   return {
-    type: 'assistant', uuid: nextUuid(), parentUuid: null, sessionId: 'cs-1', timestamp: ts,
+    type: 'assistant', uuid: nextUuid(), parentUuid: null, sessionId: 'cccccccc-0000-4000-8000-000000000007', timestamp: ts,
     cwd: '/tmp/x', gitBranch: 'feat/x', requestId: `req-${msgId}`,
     message: { id: msgId, role: 'assistant', model, content: [block], usage: use },
   };
@@ -49,7 +49,7 @@ function assistantLine({ msgId, text, model = 'claude-opus-5', use = usage(), ts
 
 function userLine({ text, ts = '2026-07-27T11:59:00.000Z' }) {
   return {
-    type: 'user', uuid: nextUuid(), parentUuid: null, sessionId: 'cs-1', timestamp: ts,
+    type: 'user', uuid: nextUuid(), parentUuid: null, sessionId: 'cccccccc-0000-4000-8000-000000000007', timestamp: ts,
     cwd: '/tmp/x', gitBranch: 'feat/x', message: { role: 'user', content: text },
   };
 }
@@ -71,8 +71,8 @@ test('projectSlug replaces every non-alphanumeric byte with a dash', () => {
 test('locate finds a transcript under the session home dir', () => {
   const root = tempRoot();
   const cwd = '/Users/d/repo/.worktrees/feat';
-  const file = writeTranscript(root, cwd, 'cs-1', [userLine({ text: 'hi' })]);
-  const loc = transcripts.locate({ home: cwd, claudeSessionId: 'cs-1' }, { root });
+  const file = writeTranscript(root, cwd, 'cccccccc-0000-4000-8000-000000000007', [userLine({ text: 'hi' })]);
+  const loc = transcripts.locate({ home: cwd, claudeSessionId: 'cccccccc-0000-4000-8000-000000000007' }, { root });
   assert.equal(loc.found, true);
   assert.equal(loc.file, file);
   assert.equal(loc.cwd, cwd);
@@ -81,9 +81,9 @@ test('locate finds a transcript under the session home dir', () => {
 test('locate falls back to scanning project dirs when home is stale', () => {
   const root = tempRoot();
   const real = '/Users/d/repo/.worktrees/feat';
-  const file = writeTranscript(root, real, 'cs-9', [userLine({ text: 'hi' })]);
+  const file = writeTranscript(root, real, 'cccccccc-0000-4000-8000-000000000008', [userLine({ text: 'hi' })]);
   // `home` still points at the pre-promote checkout — a /cd that never landed.
-  const loc = transcripts.locate({ home: '/Users/d/repo', claudeSessionId: 'cs-9' }, { root });
+  const loc = transcripts.locate({ home: '/Users/d/repo', claudeSessionId: 'cccccccc-0000-4000-8000-000000000008' }, { root });
   assert.equal(loc.found, true);
   assert.equal(loc.file, file);
   assert.equal(loc.viaScan, true);
@@ -93,14 +93,52 @@ test('locate reports why it failed instead of throwing', () => {
   const root = tempRoot();
   assert.equal(transcripts.locate({ home: '/Users/d/repo' }, { root }).found, false);
   assert.match(transcripts.locate({ home: '/x' }, { root }).reason, /claudeSessionId/);
-  assert.equal(transcripts.locate({ home: '/x', claudeSessionId: 'nope' }, { root }).found, false);
+  assert.equal(transcripts.locate({ home: '/x', claudeSessionId: 'cccccccc-0000-4000-8000-000000009999' }, { root }).found, false);
+  assert.match(transcripts.locate({ home: '/x', claudeSessionId: 'nope' }, { root }).reason, /uuid/);
+});
+
+// ---- claudeSessionId is untrusted -------------------------------------------
+//
+// The id arrives verbatim in a SessionStart hook payload (`session_id`) and is then
+// joined into a path under ~/.claude/projects. Nothing validated it, so `../../..`
+// walked straight out of the transcript root and locate() would hand the reader — and
+// the indexer — any .jsonl on the machine.
+
+test('a claudeSessionId that escapes the transcript root is refused, not resolved', () => {
+  const root = tempRoot();
+  const cwd = '/Users/d/repo';
+  fs.mkdirSync(path.join(root, transcripts.projectSlug(cwd)), { recursive: true });
+
+  // A real file one level ABOVE the projects root — what a traversal would reach.
+  const outside = path.join(path.dirname(root), `wts-outside-${process.pid}.jsonl`);
+  fs.writeFileSync(outside, '{"type":"user","uuid":"u1","message":{"role":"user","content":"secret"}}\n');
+  const escape = path.relative(path.join(root, transcripts.projectSlug(cwd)), outside).replace(/\.jsonl$/, '');
+
+  const loc = transcripts.locate({ home: cwd, claudeSessionId: escape }, { root });
+  assert.equal(loc.found, false, `locate() resolved a traversal to ${loc.file}`);
+  assert.match(loc.reason, /uuid/);
+
+  // The same shape, spelled the obvious way.
+  for (const bad of ['../../..', '../../../etc/passwd', 'a/b', '..%2f..', '']) {
+    assert.equal(transcripts.locate({ home: cwd, claudeSessionId: bad }, { root }).found, false, `accepted ${JSON.stringify(bad)}`);
+  }
+  fs.rmSync(outside, { force: true });
+});
+
+test('isSessionId accepts a real uuid and nothing else', () => {
+  assert.equal(transcripts.isSessionId('3f2a1b4c-5d6e-4f70-8901-a2b3c4d5e6f7'), true);
+  assert.equal(transcripts.isSessionId('3F2A1B4C-5D6E-4F70-8901-A2B3C4D5E6F7'), true, 'case-insensitive');
+  assert.equal(transcripts.isSessionId('3f2a1b4c-5d6e-4f70-8901-a2b3c4d5e6f'), false, 'too short');
+  assert.equal(transcripts.isSessionId('3f2a1b4c-5d6e-4f70-8901-a2b3c4d5e6f7/x'), false);
+  assert.equal(transcripts.isSessionId(null), false);
+  assert.equal(transcripts.isSessionId(123), false);
 });
 
 // ---- streaming / malformed input --------------------------------------------
 
 test('scan parses complete lines and skips malformed ones without dying', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/a', 'cs-2', [
+  const file = writeTranscript(root, '/tmp/a', 'cccccccc-0000-4000-8000-000000000009', [
     JSON.stringify(userLine({ text: 'one' })),
     '{ not json at all',
     '',
@@ -145,7 +183,7 @@ test('scan leaves a truncated final line unparsed, and picks it up once complete
 
 test('scan restarts from zero when the file shrank under us', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/c', 'cs-4', [userLine({ text: 'only' })]);
+  const file = writeTranscript(root, '/tmp/c', 'cccccccc-0000-4000-8000-000000000011', [userLine({ text: 'only' })]);
   const stats = await transcripts.scan(file, { start: 999999 }, () => {});
   assert.equal(stats.parsed, 1);
   assert.equal(stats.offset, stats.size);
@@ -153,7 +191,7 @@ test('scan restarts from zero when the file shrank under us', async () => {
 
 test('scan tracks byte offsets correctly across multi-byte UTF-8', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/d', 'cs-5', [
+  const file = writeTranscript(root, '/tmp/d', 'cccccccc-0000-4000-8000-000000000014', [
     userLine({ text: 'héllo → 世界 🌍' }),
     userLine({ text: 'second' }),
   ]);
@@ -164,8 +202,8 @@ test('scan tracks byte offsets correctly across multi-byte UTF-8', async () => {
 
 test('scan ignores line types it does not understand', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/e', 'cs-6', [
-    { type: 'mode', mode: 'normal', sessionId: 'cs-6' },
+  const file = writeTranscript(root, '/tmp/e', 'cccccccc-0000-4000-8000-000000000012', [
+    { type: 'mode', mode: 'normal', sessionId: 'cccccccc-0000-4000-8000-000000000012' },
     { type: 'permission-mode', permissionMode: 'acceptEdits' },
     { type: 'last-prompt', leafUuid: 'x' },
     { type: 'ai-title', title: 't' },
@@ -227,7 +265,7 @@ test('aggregate dedupes the repeated usage Claude Code writes per content block'
   // each repeating the identical usage. This is the real format — summing lines
   // would report 4x the tokens actually billed.
   const use = usage({ input_tokens: 2, output_tokens: 1017, cache_creation_input_tokens: 0, cache_read_input_tokens: 20576, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } });
-  const file = writeTranscript(root, '/tmp/f', 'cs-7', [
+  const file = writeTranscript(root, '/tmp/f', 'cccccccc-0000-4000-8000-000000000010', [
     assistantLine({ msgId: 'msg_A', text: 'thinking...', use, blockType: 'thinking' }),
     assistantLine({ msgId: 'msg_A', text: 'here is the answer', use, blockType: 'text' }),
     assistantLine({ msgId: 'msg_A', text: '/a.js', use, blockType: 'tool_use' }),
@@ -242,7 +280,7 @@ test('aggregate dedupes the repeated usage Claude Code writes per content block'
 
 test('aggregate sums distinct responses and reports per-model breakdowns', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/g', 'cs-8', [
+  const file = writeTranscript(root, '/tmp/g', 'cccccccc-0000-4000-8000-000000000013', [
     userLine({ text: 'do the thing' }),
     assistantLine({ msgId: 'm1', text: 'a', use: usage({ input_tokens: 10, output_tokens: 100 }) }),
     assistantLine({ msgId: 'm2', text: 'b', use: usage({ input_tokens: 20, output_tokens: 200 }) }),
@@ -263,7 +301,7 @@ test('aggregate sums distinct responses and reports per-model breakdowns', async
 
 test('aggregate records the transcript time span', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/h', 'cs-10', [
+  const file = writeTranscript(root, '/tmp/h', 'cccccccc-0000-4000-8000-000000000001', [
     userLine({ text: 'first', ts: '2026-07-27T10:00:00.000Z' }),
     assistantLine({ msgId: 'm1', text: 'last', ts: '2026-07-27T10:05:00.000Z' }),
   ]);
@@ -277,7 +315,7 @@ test('aggregate counts a response with no message id exactly once', async () => 
   const line = assistantLine({ msgId: 'm1', text: 'x', use: usage({ output_tokens: 7 }) });
   delete line.message.id;
   delete line.requestId;
-  const file = writeTranscript(root, '/tmp/i', 'cs-11', [line]);
+  const file = writeTranscript(root, '/tmp/i', 'cccccccc-0000-4000-8000-000000000006', [line]);
   const agg = await transcripts.aggregate(file);
   assert.equal(agg.assistantMessages, 1, 'falls back to the line uuid rather than dropping the record');
   assert.equal(agg.output, 7);
@@ -324,7 +362,7 @@ test('an unknown model yields a null cost, never a guessed one', () => {
 
 test('aggregate surfaces unpriced models instead of silently under-reporting', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/j', 'cs-12', [
+  const file = writeTranscript(root, '/tmp/j', 'cccccccc-0000-4000-8000-000000000003', [
     assistantLine({ msgId: 'm1', text: 'a', use: usage({ output_tokens: 100 }) }),
     assistantLine({ msgId: 'm2', text: 'b', model: 'claude-unreleased-7', use: usage({ output_tokens: 100 }) }),
   ]);
@@ -338,7 +376,7 @@ test('aggregate surfaces unpriced models instead of silently under-reporting', a
 test('<synthetic> lines are unbilled, not unpriced', async () => {
   const root = tempRoot();
   const zero = usage({ input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } });
-  const file = writeTranscript(root, '/tmp/k', 'cs-13', [
+  const file = writeTranscript(root, '/tmp/k', 'cccccccc-0000-4000-8000-000000000005', [
     assistantLine({ msgId: 'm1', text: 'interrupted', model: '<synthetic>', use: zero }),
   ]);
   const agg = await transcripts.aggregate(file);
@@ -350,7 +388,7 @@ test('<synthetic> lines are unbilled, not unpriced', async () => {
 
 test('search returns role, timestamp and a snippet around the match', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/l', 'cs-14', [
+  const file = writeTranscript(root, '/tmp/l', 'cccccccc-0000-4000-8000-000000000004', [
     userLine({ text: 'please fix the byte offset bug in the tailer' }),
     assistantLine({ msgId: 'm1', text: 'I will look at the byte offset logic now' }),
     assistantLine({ msgId: 'm2', text: 'unrelated content' }),
@@ -365,7 +403,7 @@ test('search returns role, timestamp and a snippet around the match', async () =
 
 test('search honours its limit and searches tool traffic too', async () => {
   const root = tempRoot();
-  const file = writeTranscript(root, '/tmp/m', 'cs-15', [
+  const file = writeTranscript(root, '/tmp/m', 'cccccccc-0000-4000-8000-000000000002', [
     assistantLine({ msgId: 'm1', text: '/srv/needle.js', blockType: 'tool_use' }),
     assistantLine({ msgId: 'm2', text: 'needle needle', blockType: 'thinking' }),
     assistantLine({ msgId: 'm3', text: 'needle again' }),

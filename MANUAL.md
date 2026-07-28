@@ -332,10 +332,12 @@ one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred a
 
 **State & events**
 - `GET /api/state` — full snapshot (repos, worktrees, sessions, features, servers, webRepos).
-- `GET /api/events` — Server-Sent Events stream (live updates). Two named events:
-  `topology` (repos/worktrees/features, sent when the shape changes) and
-  `session-state` (`{sessions, servers}`, sent on every Claude hook). One of each
-  on connect = a full snapshot. See `docs/api.md`.
+- `GET /api/events` — Server-Sent Events stream (live updates). Three named events:
+  `topology` (repos/worktrees/features, sent when the shape changes),
+  `session-state` (`{sessions, servers}`, sent on every Claude hook) and
+  `ci` (`{ci}` — each session's PR/MR + checks, sent only when that snapshot
+  actually differs, on the order of minutes). One of each on connect = a full
+  snapshot. Each is a full replacement of its half, never a delta. See `docs/api.md`.
 - `GET /api/settings` · `POST /api/settings` — read/write config.
 - `GET /api/sources` · `GET /api/sources/:source/items` — intake sources & their items.
 

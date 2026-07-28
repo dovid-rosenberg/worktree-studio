@@ -158,10 +158,20 @@ function shq(s) {
 
 // Wrap async route handlers so a rejected promise becomes a 500 instead of an
 // unhandled rejection (Express 4 doesn't await handlers). Lives here so every
-// route module wraps its handlers the same way.
-const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
-  console.error('[wt-studio]', e);
+// route module wraps its handlers the same way — this is THE wrapper; a route
+// module that wants its own copy is how the three of them drifted apart before.
+//
+// `tag` names the module in the error log ('transcripts' → `[wt-studio] transcripts`)
+// for the modules that want to be identifiable in a log full of route failures. It is
+// a parameter rather than a second wrapper so the 500-instead-of-crash behaviour can
+// only ever be defined once.
+const A = (fn, tag) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
+  console.error(tag ? `[wt-studio] ${tag}` : '[wt-studio]', e);
   if (!res.headersSent) res.status(500).json({ error: e.message });
 });
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A };
+// Bind a tag once for a module that logs under its own name:
+// `const A = taggedA('transcripts')` then `A(handler)` reads exactly like the plain one.
+const taggedA = (tag) => (fn) => A(fn, tag);
+
+module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A, taggedA };

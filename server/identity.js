@@ -27,7 +27,7 @@
 //             (see the note on MANIFEST below — this is not a second config surface)
 const path = require('path');
 const layoutMod = require('./layout');
-const { realpath } = require('./util');
+const { createRealpathCache } = require('./util');
 
 const STRATEGIES = ['basename', 'branch', 'manifest'];
 
@@ -128,7 +128,14 @@ function createIdentity(cfg = {}) {
   // path → { repo, wtname, branch }, fed from the repo scan. Only built for the
   // strategies that need more than the path itself, so the default costs nothing.
   const index = new Map();
-  const realpaths = new Map(); // raw path → realpath, memoized across reindexes
+  // The shared memo (util.js), not a local Map. Its rules are exactly the ones this
+  // index needs and the hand-rolled version got wrong: a FAILED resolution is never
+  // cached, and entries are retained against the caller's live path list.
+  // Caching the fallback was a real bug — a worktree indexed before its symlink
+  // resolved kept the unresolved spelling for the life of the process, so the
+  // lsof-resolved path never matched and its dev server stopped being attributed to
+  // the feature. See the regression tests in test/identity.test.js.
+  const realpaths = createRealpathCache();
   const needsIndex = strategy !== 'basename';
 
   // The layout's name for a worktree: its own `wtname` when the caller has one
@@ -160,7 +167,7 @@ function createIdentity(cfg = {}) {
   function ofPath(p) {
     if (!p) return '';
     if (needsIndex) {
-      const hit = index.get(p) || index.get(realpath(p));
+      const hit = index.get(p) || index.get(realpaths.resolve(p));
       if (hit) return of(hit);
     }
     return layoutMod.nameFromPath(layout, p);
@@ -181,12 +188,11 @@ function createIdentity(cfg = {}) {
         live.add(w.path);
         // lsof hands us a resolved path while the scan hands us the spelling on
         // disk, so index both or a symlinked checkout never matches.
-        let rp = realpaths.get(w.path);
-        if (rp === undefined) { rp = realpath(w.path); realpaths.set(w.path, rp); }
+        const rp = realpaths.resolve(w.path);
         if (rp !== w.path) index.set(rp, entry);
       }
     }
-    for (const k of realpaths.keys()) if (!live.has(k)) realpaths.delete(k);
+    realpaths.retain(live);
   }
 
   return { strategy, layout, of, ofPath, nameOf, reindex, warning };

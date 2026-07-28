@@ -10,6 +10,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const express = require('express');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const orchestrator = require('../server/orchestrator');
 const { createForge } = require('../server/forge');
 const { createIdentity } = require('../server/identity');
@@ -206,4 +209,198 @@ test('the needsConfirm answer stays ok:true — the server is asking, not failin
     assert.equal(body.needsConfirm, true);
     assert.equal(body.ok, true, 'clients branch on needsConfirm before ok');
   });
+});
+
+// ---------------------------------------------------------------------------
+// The other two route modules ride the same router
+// ---------------------------------------------------------------------------
+//
+// routes-review and transcript-routes used to mount themselves — one by looping a
+// PREFIXES array against the raw app, one by app.use()-ing its own sub-router at each
+// prefix. Both now register onto the router server.js mounts twice, which is the only
+// one of the three idioms that is automatically correct. These tests are the proof
+// that the equivalence survived the change, end to end through express.
+
+// A manager with no sessions: every route below answers its own 404, which is exactly
+// what makes it observable that the route EXISTS under both prefixes.
+function routeModules() {
+  const app = express();
+  app.use(express.json());
+  const api = express.Router();
+  app.use('/api', api);
+  app.use('/api/v1', api);
+  const manager = { get: () => null, all: () => [], on: () => {} };
+  require('../server/routes-review').register(api, { manager, repos: () => [] });
+  // A throwaway state dir, so the real ~/.local/state index is never opened.
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-routing-'));
+  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+  return { app, index, cleanup: () => { index.close(); fs.rmSync(stateDir, { recursive: true, force: true }); } };
+}
+
+test('the review routes answer identically under /api and /api/v1', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      for (const route of ['/sessions/nope/diff', '/sessions/nope/hunks']) {
+        const { status, body } = await bothPrefixes(get, route);
+        assert.equal(status, 404, `${route} is the module's 404, not express's`);
+        assert.deepEqual(body, { error: 'no such session' });
+      }
+      for (const route of ['/sessions/nope/hunks/stage', '/sessions/nope/hunks/unstage']) {
+        const { status } = await bothPrefixes(get, route, post({ file: 'f.txt' }));
+        assert.equal(status, 404);
+      }
+    });
+  } finally { cleanup(); }
+});
+
+test('the transcript routes answer identically under /api and /api/v1', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      for (const route of ['/sessions/nope/transcript', '/sessions/nope/transcript/search', '/sessions/nope/transcript/usage']) {
+        const { status, body } = await bothPrefixes(get, route);
+        assert.equal(status, 404);
+        assert.deepEqual(body, { error: 'no such session' });
+      }
+      for (const route of ['/transcripts/status', '/transcripts/usage', '/transcripts/search']) {
+        const { status } = await bothPrefixes(get, route);
+        assert.equal(status, 200, `${route} is registered under both prefixes`);
+      }
+      const { status } = await bothPrefixes(get, '/transcripts/reindex', post({}));
+      assert.equal(status, 200);
+    });
+  } finally { cleanup(); }
+});
+
+// ---------------------------------------------------------------------------
+// The cache-billing multipliers are PUBLISHED, not re-typed by the client
+// ---------------------------------------------------------------------------
+//
+// server/pricing.js exported CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ, nothing
+// imported them, and no endpoint published them — so the insights UI hardcoded a copy.
+// Change one and the API's dollars move while the client's "billed weight" chart keeps
+// the old ratios, and the same screen answers "where did the money go" two ways.
+//
+// These tests fail if the numbers stop coming from pricing.js, which is the only way
+// the duplication can come back.
+
+test('/transcripts/status publishes the cache multipliers straight from pricing.js', async () => {
+  const pricing = require('../server/pricing');
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      const { status, body } = await bothPrefixes(get, '/transcripts/status');
+      assert.equal(status, 200);
+      assert.deepEqual(body.pricing.cacheMultipliers, {
+        input: 1, // stated, not implied, so a client can consume the map wholesale
+        cacheWrite5m: pricing.CACHE_WRITE_5M,
+        cacheWrite1h: pricing.CACHE_WRITE_1H,
+        cacheRead: pricing.CACHE_READ,
+      });
+      assert.equal(body.pricing.verifiedAt, pricing.PRICING_VERIFIED);
+    });
+  } finally { cleanup(); }
+});
+
+test('every cost-bearing response carries the same pricing block', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      const status = (await bothPrefixes(get, '/transcripts/status')).body.pricing;
+      const fleet = (await bothPrefixes(get, '/transcripts/usage')).body.pricing;
+      assert.deepEqual(fleet, status, 'the fleet rollup must not quote different multipliers');
+    });
+  } finally { cleanup(); }
+});
+
+// ---------------------------------------------------------------------------
+// Repeated query params are a malformed request, not a 500
+// ---------------------------------------------------------------------------
+//
+// `?q=a&q=b` parses to an ARRAY. An array reaching a sqlite bind or an execFile argv
+// is a TypeError, which the async wrapper turns into a 500 carrying an internal
+// message — for a request that is simply malformed. Every one of these used to do that.
+
+test('repeated transcript query params are collapsed, not passed through as arrays', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      const cases = [
+        '/transcripts/search?q=alpha&q=beta',
+        '/transcripts/search?q=alpha&role=user&role=assistant',
+        '/transcripts/search?q=alpha&session=x&session=y',
+        '/transcripts/search?q=alpha&order=rank&order=recent',
+        '/transcripts/search?q=alpha&limit=5&limit=9',
+        '/transcripts/search?q=alpha&since=1&since=2',
+      ];
+      for (const route of cases) {
+        const { status } = await bothPrefixes(get, route);
+        assert.equal(status, 200, `${route} answered ${status} — an array reached the query layer`);
+      }
+    });
+  } finally { cleanup(); }
+});
+
+// ---------------------------------------------------------------------------
+// The reindex queue coalesces
+// ---------------------------------------------------------------------------
+//
+// Stop / SubagentStop / SessionEnd all enqueue a reindex, and a session running
+// parallel subagents fires a burst of them. The queue was an array, so a burst of N
+// hooks did N index passes over the same file — and indexing is incremental and
+// idempotent, so every pass after the first was pure re-stat work. A Set of session
+// ids is the right shape: whatever arrives while a pass is in flight collapses into
+// the single follow-up pass that pass is owed.
+
+test('a burst of Stop hooks collapses into one follow-up index pass', async () => {
+  const { EventEmitter } = require('node:events');
+  const manager = new EventEmitter();
+  const session = { id: 's1' };
+  manager.get = (id) => (id === 's1' ? session : null);
+  manager.all = () => [];
+
+  const app = express();
+  const api = express.Router();
+  app.use('/api', api);
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
+  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+
+  const calls = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  index.index = async (s) => { calls.push(s.id); await gate; return { ok: true }; };
+
+  // Three hooks with no await between them: the first starts a pass, the other two
+  // land while it is in flight.
+  for (const event of ['Stop', 'SubagentStop', 'SessionEnd']) manager.emit('hook', { id: 's1', event });
+  assert.equal(calls.length, 1, 'the first hook starts a pass; the rest must not each start their own');
+
+  release();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(calls.length, 2, 'the two queued hooks collapse into ONE follow-up pass, not two');
+  index.close();
+  fs.rmSync(stateDir, { recursive: true, force: true });
+});
+
+test('a hook for an event that is not a reindex trigger enqueues nothing', async () => {
+  const { EventEmitter } = require('node:events');
+  const manager = new EventEmitter();
+  manager.get = () => ({ id: 's1' });
+  manager.all = () => [];
+  const app = express();
+  const api = express.Router();
+  app.use('/api', api);
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
+  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+
+  const calls = [];
+  index.index = async (s) => { calls.push(s.id); return { ok: true }; };
+  for (const event of ['PreToolUse', 'Notification', 'SessionStart']) manager.emit('hook', { id: 's1', event });
+  assert.deepEqual(calls, [], 'every tool call must not re-stat the transcript');
+
+  index.close();
+  fs.rmSync(stateDir, { recursive: true, force: true });
 });

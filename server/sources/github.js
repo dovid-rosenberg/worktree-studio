@@ -14,7 +14,11 @@ module.exports = {
   async list(cfg, { repoPath, q }) {
     if (!repoPath) return [];
     const args = ['issue', 'list', '--json', 'number,title,url,labels', '--limit', '30'];
-    if (q) { args.push('--search', q); }
+    // `q` reaches an execFile argv, and it comes from `req.query.q` — which express
+    // parses to an ARRAY for `?q=a&q=b`. execFile rejects a non-string arg with a
+    // TypeError, i.e. a 500 leaking an internal message for what is just a malformed
+    // request. Coerce; `--search` wants one string either way.
+    if (q) { args.push('--search', String(q)); }
     const r = await run('gh', args, { cwd: repoPath, env: ENV });
     if (r.code !== 0) throw new Error(r.stderr.trim() || 'gh issue list failed');
     const items = JSON.parse(r.stdout || '[]');

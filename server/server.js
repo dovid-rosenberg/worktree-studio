@@ -23,7 +23,7 @@ const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
 const webui = require('./webui');
 const crash = require('./crash');
-const { run, has, shq, A } = require('./util');
+const { run, has, shq, slug, A } = require('./util');
 
 async function main() {
   const cfg = configMod.load();
@@ -142,9 +142,8 @@ async function main() {
   // Every API route needs the boot token. The Origin/Host gate above only constrains
   // browsers; this is what stops any other local process — or a browser request that
   // carries no Origin at all — from driving the studio. It goes on the /api PREFIX
-  // rather than on the router below, so it also covers the routers other modules
-  // mount there themselves (transcript-routes); /api/v1 is nested under /api, so one
-  // line covers both prefixes.
+  // rather than on the router below, so it covers everything served under it however
+  // it got there; /api/v1 is nested under /api, so one line covers both prefixes.
   app.use('/api', guard.authed);
 
   // Every route below is registered once on this router and served at BOTH
@@ -453,7 +452,10 @@ async function main() {
     if (!branch && !name) return res.status(400).json({ error: 'branch or name is required' });
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
-    const out = await worktree.create(repoObj.path, branch, name, {
+    // `name` alone is a documented request (the guard above accepts it), but an absent
+    // branch reached `git worktree add -b undefined` and created a branch literally
+    // named "undefined". Name-only means "branch after the name".
+    const out = await worktree.create(repoObj.path, branch || slug(name), name, {
       layout: identity.layout,
       ...worktreeCopyOpts(cfg, repo),
     });
@@ -532,13 +534,15 @@ async function main() {
     const { path: p, editor } = req.body || {};
     const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
-    const cmd = ed.open.replace('{path}', shq(p));
+    // split/join, not replace(): `$&`/`` $` ``/`$'`/`$$` in a REPLACEMENT string expand
+    // after shq() quoted the path, so such a path would open the wrong file.
+    const cmd = ed.open.split('{path}').join(shq(p));
     await run('bash', ['-lc', cmd]);
     res.json({ ok: true });
   }));
 
-  require('./transcript-routes').register(app, { manager, cfg });
-  require('./routes-review').register(app, { manager, repos: () => repos, broadcast: scheduleBroadcast });
+  require('./transcript-routes').register(api, { manager, cfg });
+  require('./routes-review').register(api, { manager, repos: () => repos, broadcast: scheduleBroadcast });
 
   // ---- Claude Code hook receiver ----
   // Not under /api: the URL is baked into every session's generated settings file.

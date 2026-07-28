@@ -14,7 +14,7 @@
    * @type {{
    *   usage?: import('./types.js').Usage|null,
    *   sessionId?: string|null,
-   *   pricing?: { verifiedAt: string, note: string }|null,
+   *   pricing?: import('./types.js').PricingBlock|null,
    *   title?: string|null,
    *   estimateLine?: boolean,
    * }}

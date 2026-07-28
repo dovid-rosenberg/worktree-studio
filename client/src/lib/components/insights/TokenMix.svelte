@@ -23,8 +23,9 @@
   import './viz.css';
   import {
     compactTokens, exactTokens, pct, share, usd,
-    volumeByClass, weightByClass, writeMultiplier, BILLING_MULTIPLIER,
+    volumeByClass, weightByClass, writeMultiplier,
   } from './format.js';
+  import { billingMultipliers } from './pricing.svelte.js';
 
   /** @type {{ usage: import('./types.js').Usage|null, dense?: boolean }} */
   let { usage = null, dense = false } = $props();
@@ -41,7 +42,7 @@
   // never be derived from position, rank or a loop index.
   const rows = $derived([
     {
-      key: 'input', label: 'Input', slot: 's1', mult: BILLING_MULTIPLIER.input,
+      key: 'input', label: 'Input', slot: 's1', mult: billingMultipliers.input,
       tokens: vol.input, weight: wt.input,
       volShare: share(vol.input, volTotal), wtShare: share(wt.input, wtTotal),
     },
@@ -51,7 +52,7 @@
       volShare: share(vol.cacheWrite, volTotal), wtShare: share(wt.cacheWrite, wtTotal),
     },
     {
-      key: 'cacheRead', label: 'Cache read', slot: 's3', mult: BILLING_MULTIPLIER.cacheRead,
+      key: 'cacheRead', label: 'Cache read', slot: 's3', mult: billingMultipliers.cacheRead,
       tokens: vol.cacheRead, weight: wt.cacheRead,
       volShare: share(vol.cacheRead, volTotal), wtShare: share(wt.cacheRead, wtTotal),
     },

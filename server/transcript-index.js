@@ -182,13 +182,19 @@ class TranscriptIndex {
     const insUsage = this.db.prepare(
       'INSERT OR IGNORE INTO usage (session_id, msg_id, ts_ms, model, speed, input, output, cache_write_5m, cache_write_1h, cache_read, web_search, web_fetch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
-    const pending = [];
-    const stats = await transcripts.readTranscript(file, { start }, (e) => { pending.push(e); });
-
+    // Insert inside the reader's callback rather than collecting every entry first.
+    // Incrementally that made no difference — a Stop hook appends one turn — but a full
+    // reindex reads the whole file, and a 22MB transcript's worth of normalized entries
+    // (each carrying up to 12KB of text) was being held in memory all at once for no
+    // reason. Streaming straight into the statement keeps it flat.
+    //
+    // The transaction opens BEFORE the read so every insert lands inside it, which is
+    // what makes the offset in `files` and the rows it accounts for commit together.
     let added = 0;
+    let stats;
     this.db.exec('BEGIN');
     try {
-      for (const e of pending) {
+      stats = await transcripts.readTranscript(file, { start }, (e) => {
         if (e.uuid && e.text) {
           insMsg.run(id, e.uuid, e.role, e.ts, e.tsMs, e.model, e.gitBranch, e.sidechain ? 1 : 0, e.text);
           added++;
@@ -200,7 +206,7 @@ class TranscriptIndex {
               e.usage.cacheWrite5m, e.usage.cacheWrite1h, e.usage.cacheRead, e.usage.webSearch, e.usage.webFetch);
           }
         }
-      }
+      });
       this.db.prepare(
         `INSERT INTO files (session_id, path, claude_session_id, offset, size, entries, indexed_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)

@@ -12,8 +12,19 @@
 // than being resolved a second time here.
 
 import { TOKEN } from '$lib/api.js';
+import { adoptPricing } from './pricing.svelte.js';
 
 const V1 = '/api/v1';
+
+// Every cost-bearing response carries a `pricing` block, and that block is where the
+// cache-billing multipliers come from (pricing.svelte.js explains why the client must
+// not keep its own copy). Adopting it HERE rather than at each call site means a new
+// endpoint cannot forget to — there is no call site to remember it at.
+/** @param {any} json @returns {any} */
+function adopt(json) {
+  if (json && typeof json === 'object' && json.pricing) adoptPricing(json.pricing);
+  return json;
+}
 
 /** @param {Record<string,string>} extra */
 const headers = (extra) => (TOKEN ? { ...extra, 'x-wts-token': TOKEN } : extra);
@@ -36,7 +47,7 @@ async function get(url, signal) {
   // A 200 that isn't JSON means something other than the daemon answered — the SPA
   // fallback serving index.html for a mistyped path is the way this actually happens.
   if (json === null) throw new Error('The daemon returned a non-JSON response.');
-  return json;
+  return adopt(json);
 }
 
 /** @param {string} url @param {any} body @param {AbortSignal} [signal] @returns {Promise<any>} */
@@ -51,7 +62,7 @@ async function post(url, body, signal) {
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch { /* handled below */ }
   if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
-  return json;
+  return adopt(json);
 }
 
 /** @param {Record<string, string|number|null|undefined>} params */
