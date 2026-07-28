@@ -9,6 +9,7 @@ const pty = require('node-pty');
 const configMod = require('./config');
 const muxSelect = require('./multiplexer');
 const gitMod = require('./git');
+const watchMod = require('./watch');
 const worktree = require('./worktree');
 const review = require('./review');
 const sources = require('./sources');
@@ -78,6 +79,11 @@ async function main() {
   const bus = createBroadcast({ topology, sessionState });
   const scheduleBroadcast = () => bus.schedule();
   const broadcastTopology = () => bus.schedule({ topology: true });
+
+  // Paces the watcher's sweeps. Only the browser subscribes to /api/events — SwiftBar
+  // polls /api/state every 10s and Alfred once per keystroke — so a recent poll has to
+  // count as "someone is looking" too, or the menubar's server dots go minutes stale.
+  const attention = watchMod.attention({ streams: () => bus.clients.size });
   manager.on('change', scheduleBroadcast);
 
   // ---- express ----
@@ -122,7 +128,9 @@ async function main() {
   app.use('/api', api);
   app.use('/api/v1', api);
 
-  api.get('/state', A(async (req, res) => res.json(await buildState())));
+  // attention.seen(): SwiftBar and Alfred poll this route instead of subscribing to
+  // /api/events, so a poll is what tells the watcher someone is still looking.
+  api.get('/state', A(async (req, res) => { attention.seen(); res.json(await buildState()); }));
 
   api.get('/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -566,12 +574,7 @@ async function main() {
   // ---- boot ----
   process.on('unhandledRejection', (e) => console.error('[wt-studio] unhandledRejection', e));
   process.on('uncaughtException', (e) => console.error('[wt-studio] uncaughtException', e));
-  await rescan();
-  setInterval(rescan, 15000);
-  await refreshRunning();
-  setInterval(refreshRunning, 3000);
-  // Flip sessions whose tmux session died out-of-band to stopped (one has-session each).
-  setInterval(() => manager.reconcile().catch(() => {}), 4000);
+  await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 

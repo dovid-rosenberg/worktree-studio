@@ -6,8 +6,12 @@ const path = require('path');
 const { git, gitFull } = require('./util');
 
 // Walk baseDirs up to `depth` looking for directories that contain a .git.
-function findRepos(baseDirs, depth) {
+// Returns both the repos found and the plain container directories the walk passed
+// through — those are exactly the places a *new* repo can show up, which is what
+// the filesystem watcher (server/watch.js) needs to arm itself on.
+function walkTree(baseDirs, depth) {
   const repos = [];
+  const dirs = [];
   const seen = new Set();
   function walk(dir, d) {
     let entries;
@@ -17,6 +21,7 @@ function findRepos(baseDirs, depth) {
       if (!seen.has(real)) { seen.add(real); repos.push(dir); }
       return; // don't descend into a repo (its .worktrees handled via git)
     }
+    dirs.push(dir);
     if (d <= 0) return;
     for (const e of entries) {
       if (!e.isDirectory()) continue;
@@ -25,7 +30,11 @@ function findRepos(baseDirs, depth) {
     }
   }
   for (const base of baseDirs) walk(base, depth);
-  return repos;
+  return { repos, dirs };
+}
+
+function findRepos(baseDirs, depth) {
+  return walkTree(baseDirs, depth).repos;
 }
 
 function parseWorktrees(porcelain) {
@@ -90,4 +99,4 @@ async function scan(baseDirs, depth) {
   return repos;
 }
 
-module.exports = { scan, describeRepo, findRepos, defaultBranch, parseWorktrees };
+module.exports = { scan, describeRepo, findRepos, walkTree, defaultBranch, parseWorktrees };
