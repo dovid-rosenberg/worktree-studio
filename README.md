@@ -57,9 +57,19 @@ The app has one engine (this server) and two focused surfaces you toggle between
 
 ```sh
 cd ~/worktree-studio
-npm install          # builds node-pty, fixes its spawn-helper perms, vendors xterm
+npm install          # node-pty + spawn-helper perms, vendors xterm, BUILDS THE FRONTEND
 npm start            # → http://127.0.0.1:7788
 ```
+
+The UI is the SvelteKit app in `client/`, built to static files that the daemon serves
+itself — there is no second server and no second port. `npm install` builds it (that is
+the one moment the network is already assumed); `npm start` only starts the daemon, so it
+stays fast and works offline. **After changing anything in `client/src`, rerun
+`npm run build`** — or use `cd client && npm run dev`, which is what that loop is for.
+If the build is missing the daemon refuses to start and says so.
+
+`public/` is the previous UI. It is still in the tree and still works: `WTS_UI=legacy
+npm start` serves it instead. Exactly one of the two owns `/`.
 
 ## Configuration
 
@@ -90,7 +100,9 @@ server/
   status.js            hook-settings generator + event→state machine
   servers.js           dev-server start/stop/status
   sources/             freetext · github · gitlab · asana adapters
-public/                UI (rail, session dock w/ xterm tabs, intake modal)
+  webui.js             which frontend is served, and the boot-token injector
+client/                the served UI (SvelteKit → client/build); see client/README.md
+public/                the previous UI, unserved unless WTS_UI=legacy
 ```
 
 ## Tests

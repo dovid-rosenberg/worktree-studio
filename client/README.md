@@ -4,7 +4,8 @@ The port of `public/` to SvelteKit. Built with `adapter-static` in SPA mode: the
 is plain files, and **the Express daemon in `server/` remains the only server**. There is
 no Node adapter, no second process, no second port in production.
 
-`public/` is untouched and still works. Both UIs can run side by side for the whole port.
+This is now the UI the daemon serves. `public/` is untouched and still works, but it is
+unserved unless you start with `WTS_UI=legacy` — see "Serving the build from the daemon".
 
 ## Layout
 
@@ -145,64 +146,45 @@ The dev proxy also rewrites `Host` and `Origin` to the daemon's own address. Wit
 that, `server/security.js` refuses every dev request with `403 forbidden host` — the
 allowlist is keyed to the daemon's bind port, and the dev server is on another one.
 
-## Serving the build from the daemon
+## Serving the build from the daemon — done
 
-**Do not make this change from this branch** — `server/server.js` is being restructured
-elsewhere. This is the change to apply at cutover.
+This is the UI the daemon serves. `server/webui.js` owns all of it:
 
-The daemon already does the right thing structurally: it serves `/` through a handler
-that injects the boot token, and mounts the static directory with `index: false` so the
-un-injected `index.html` can never be served by the static middleware.
+- `resolve()` picks **one** root — `client/build`, or `public/` when `WTS_UI=legacy` —
+  and proves its `index.html` exists. Missing, the daemon refuses to boot and names the
+  command that produces it, rather than answering `/` with a blank page.
+- `mount()` registers the injecting handler for `/` and `/index.html` plus
+  `express.static(root, { index: false })`, so the un-injected document can never leave
+  by the static path.
+- `mountFallback()` is registered **after every route** in `server.js`. The client has
+  real routes (`/review`, `/search`, `/usage`) and a deep link or a reload on one is the
+  document the tab boots from, so it goes through the same injector rather than
+  `sendFile`. It skips `/api` and `/ws` so an unknown API path stays a 404 for SwiftBar,
+  Alfred and the CLI instead of becoming 200 text/html. `express@4` is what the repo
+  pins, so `'*'` is the right pattern; Express 5 would need `'/*splat'`.
 
-```js
-// server/server.js, today
-const INDEX = path.join(__dirname, '..', 'public', 'index.html');
-app.get(['/', '/index.html'], (req, res) => {
-  let html;
-  try { html = fs.readFileSync(INDEX, 'utf8'); } catch { return res.status(500).send('index.html is missing'); }
-  return res.type('html').set('Cache-Control', 'no-store').send(html.replace('__WTS_TOKEN__', cfg._token));
-});
-app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
-```
+The injector replaces **every** occurrence of the placeholder, not just the first. The
+placeholder appears exactly once in `app.html` and a test pins that, but a single
+`String.replace` made that comment load-bearing: one extra mention ahead of the real one
+(a comment is enough) and the document ships `window.WTS_TOKEN = "__WTS_TOKEN__"`, which
+401s every call from a page that otherwise looks fine. No token is ever written into
+`build/` — Vite only defines one for `serve`.
 
-**Two paths change, nothing else:**
+**The build has to exist before the daemon starts.** `npm install` builds it
+(`postinstall` → `bin/build-client.js`, which installs `client/`'s toolchain first if it
+has to); `npm start` is still a bare `node server/server.js`, with no build step and no
+network. The build does not track edits to `client/src`: rerun `npm run build` from the
+repo root, or use `npm run dev` here.
 
-```js
-const INDEX = path.join(__dirname, '..', 'client', 'build', 'index.html');
-…
-app.use(express.static(path.join(__dirname, '..', 'client', 'build'), { index: false }));
-```
+Running both UIs **at once** is still not a thing: `/` is answered by one handler, so
+whichever root `resolve()` picked is the UI you get. `WTS_UI=legacy` swaps it; it does
+not add a second. (Serving them side by side would need a prefix mount, its own injecting
+handler and a matching `paths.base` in `svelte.config.js`, or the assets resolve to
+`/_app/...` and 404.)
 
-`client/build/index.html` carries the same `__WTS_TOKEN__` placeholder that
-`public/index.html` does, exactly once, so the existing `String.replace` and its
-`Cache-Control: no-store` keep working verbatim. The token is never written to disk in
-`build/` — Vite only injects one for `serve`.
-
-Two things worth knowing before you flip it:
-
-1. **Running both UIs at once.** Keeping the existing `public` static line *and* adding
-   the client line does not do what it looks like: `/` is answered by the handler above,
-   so whichever `INDEX` it points at is the UI you get. To serve them simultaneously,
-   mount the new client under a prefix, give that prefix its own injecting handler, and
-   set a matching `paths.base` in `svelte.config.js` — otherwise its assets resolve to
-   `/_app/...` and 404. Until then, use `npm run dev` for the new UI.
-
-2. **A second client route needs an SPA fallback**, and that fallback must inject the
-   token too — a deep link that lands on the fallback is the document the tab boots
-   from. Add this *after* every `/api` route so it cannot shadow them, reusing the same
-   handler rather than `sendFile`:
-
-   ```js
-   app.get('*', (req, res) => res.type('html').set('Cache-Control', 'no-store')
-     .send(fs.readFileSync(INDEX, 'utf8').replace('__WTS_TOKEN__', cfg._token)));
-   ```
-
-   `express@4` is what the repo pins, so the `'*'` pattern is correct; Express 5 would
-   need `'/*splat'`.
-
-The `/ws/term` WebSocket server attaches to the same `http.Server` and is unaffected —
-`new WebSocketServer({ server, path: '/ws/term' })` intercepts the upgrade before Express
-sees it, so static serving and the terminal socket cannot collide.
+The `/ws/term` WebSocket is unaffected: `server.on('upgrade')` runs before Express sees
+the request, so static serving and the terminal socket cannot collide. Verified against
+the served build — a deep link, a reload, and a terminal that round-trips input.
 
 ## Terminal.svelte
 

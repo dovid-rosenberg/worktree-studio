@@ -454,8 +454,11 @@ Kill the old server first: `lsof -ti :7788 | xargs kill`, then `npm start`. (mac
   (diff/commit), `server/features.js` (grouping), `server/config.js` (config + defaults),
   `server/concurrency.js` (slot math + config patching), `server/multiplexer/tmux.js`
   (the tmux driver behind a small interface — the seam for a future ConPTY/Windows driver).
-- **Frontend** — vanilla JS (`public/app.js`) + xterm.js (vendored), no build step. State
-  arrives via SSE; terminals over WebSocket.
+- **Frontend** — SvelteKit (`client/`), built by `adapter-static` to `client/build` and
+  served by the daemon itself (`server/webui.js`); `npm install` builds it, `npm start`
+  does not. State arrives via SSE; terminals over WebSocket. The previous vanilla-JS UI
+  (`public/app.js` + vendored xterm, no build step) is still in the tree — start with
+  `WTS_UI=legacy` to serve it instead. Only one of the two owns `/`.
 - **Multiplexer** — tmux only, socket `-L wt-studio`, sessions `wts-<name>-<id>`; grouped
   sessions (`-popout`, `-split`) give independent panes.
 - **Tests** — `node --test test/*.test.js`.
