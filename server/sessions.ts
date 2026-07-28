@@ -56,6 +56,9 @@ export interface MuxTab {
  * a driver gets checked against.
  */
 export interface SessionMux {
+  /** The driver's own name ('tmux') — not called here, but every driver and every
+   *  double carries it, and the topology payload reports it. */
+  name: string;
   /** Create the multiplexer session if it isn't already there, and launch `cmd` in it. */
   ensure(name: string, opts?: MuxLaunchOptions): Promise<MuxEnsureResult>;
   hasSession(name: string): Promise<boolean>;

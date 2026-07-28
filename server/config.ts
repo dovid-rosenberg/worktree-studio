@@ -274,15 +274,15 @@ function load(): Config {
     // reach existing users. Union the shipped defaults into the user's default array
     // (de-duped, user's extra patterns kept). Per-repo overrides are left untouched.
     for (const key of ['copyPatterns', 'copyAlways'] as const) {
-      const lists = cfg[key] || {};
-      lists.default = [...new Set([...(lists.default || []), ...d[key].default])];
-      cfg[key] = lists;
+      cfg[key] = cfg[key] || {};
+      cfg[key].default = [...new Set([...(cfg[key].default || []), ...d[key].default])];
     }
     // Same reasoning one level down for the two convention blocks: a config written
     // before `layout`/`strategy` existed must still get their defaults, and a config
     // that sets only one sub-key must keep the rest.
-    cfg.worktrees = { ...d.worktrees, ...(cfg.worktrees || {}) };
-    cfg.featureIdentity = { ...d.featureIdentity, ...(cfg.featureIdentity || {}) };
+    for (const key of ['worktrees', 'featureIdentity'] as const) {
+      cfg[key] = { ...d[key], ...(cfg[key] || {}) };
+    }
   }
   cfg._file = CONFIG_FILE;
   cfg._stateDir = STATE_DIR;
