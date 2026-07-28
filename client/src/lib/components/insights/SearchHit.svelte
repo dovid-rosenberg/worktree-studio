@@ -8,6 +8,16 @@
   import { segments } from './snippet.js';
   import { ago, stamp, shortModel } from './format.js';
 
+  /**
+   * @type {{
+   *   hit: import('./types.js').Hit,
+   *   terms?: string[],
+   *   showSession?: boolean,
+   *   selected?: boolean,
+   *   onopen?: (hit: import('./types.js').Hit) => void,
+   *   onscope?: ((sessionId: string) => void)|null,
+   * }}
+   */
   let {
     hit,
     terms = [],

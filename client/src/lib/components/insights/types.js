@@ -93,14 +93,17 @@
  * }} FeatureUsage
  */
 
+/** @typedef {Tokens & { costUsd: number|null, unpricedModels: string[] }} Totals */
+
 /**
- * @typedef {Object} FleetUsage
- * @property {Usage[]} sessions
- * @property {FeatureUsage[]} features
- * @property {Tokens & { costUsd: number|null, unpricedModels: string[] }} totals
- * @property {boolean} costIsEstimate
- * @property {{ verifiedAt: string, note: string }} [pricing]
- * @property {string} [backend]
+ * @typedef {{
+ *   sessions: Usage[],
+ *   features: FeatureUsage[],
+ *   totals: Totals,
+ *   costIsEstimate: boolean,
+ *   pricing?: { verifiedAt: string, note: string },
+ *   backend?: string,
+ * }} FleetUsage
  */
 
 /**

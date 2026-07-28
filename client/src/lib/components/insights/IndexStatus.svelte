@@ -7,6 +7,15 @@
   // what an empty result MEANS, so none of them may be silent.
   import { exactTokens } from './format.js';
 
+  /**
+   * @type {{
+   *   status?: import('./types.js').TranscriptStatus|null,
+   *   busy?: boolean,
+   *   error?: string|null,
+   *   onreindex?: ((opts: { session?: string|null, full?: boolean }) => void)|null,
+   *   compact?: boolean,
+   * }}
+   */
   let {
     status = null,
     busy = false,
