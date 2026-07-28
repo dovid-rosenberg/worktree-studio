@@ -455,3 +455,99 @@ test('isSlotted is true only for a configured repo while concurrency is enabled'
   assert.equal(s.isSlotted('some-other-repo'), false, 'repo with no concurrency config');
   assert.equal(servers({ enabled: false }).isSlotted('accept-blue'), false, 'concurrency disabled');
 });
+
+// ---------------------------------------------------------------------------
+// The slot-reclaim race: a launch that outlasts one sweep
+//
+// start() polls up to ~8 s for ports to bind; server.js sweeps reconcileSlots()
+// every ~3 s. A feature that is slow to come up is, to a sweep, indistinguishable
+// from a dead one — so its slot used to be reclaimed mid-launch and handed to
+// another feature, which then bound the very ports the first one was about to.
+//
+// These drive the real thing: a real child process that binds its port late, a
+// real sweep inside that window.
+// ---------------------------------------------------------------------------
+
+const net = require('net');
+
+// A port nobody is using yet. Bound and released, so start()'s pre-check passes.
+function freePort() {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
+  });
+}
+
+// A Servers whose 'api' repo starts a server that binds `port` only after `delayMs`.
+function slowStarting(port, delayMs) {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-race-'));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-race-repo-'));
+  const wt = path.join(repo, '.worktrees', 'feat-slow');
+  fs.mkdirSync(wt, { recursive: true });
+  const cmd = `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+    `setTimeout(() => require('http').createServer((q, s) => s.end()).listen(${port}, '127.0.0.1'), ${delayMs})`,
+  )}`;
+  const cfg = {
+    _stateDir: stateDir,
+    web: { port: 0 },
+    start: { api: { cmd, ports: [port] } },
+    concurrency: { enabled: true, offsetStep: 100, maxSlots: 3, repos: { api: { portEnv: { API_PORT: port } } } },
+  };
+  return { s: new Servers(cfg), wt, repo, stateDir };
+}
+
+test('a slot is not reclaimable while its feature is still starting', { timeout: 60000 }, async () => {
+  const port = await freePort();
+  const { s, wt, repo } = slowStarting(port, 1800);
+  const feature = s.featureFor(wt);
+  assert.equal(feature, 'feat-slow');
+  assert.deepEqual(s.allocSlotFor(feature), { slot: 0 });
+
+  const launching = s.start('api', wt, { ports: [port] });
+  try {
+    // Land a sweep squarely inside the window where the child is up but its port
+    // is not — exactly what the periodic refresh does every ~3 s.
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(await s.portPid(port), null, 'the child is up but has not bound its port yet');
+    s.reconcileSlots(new Map()); // lsof found nothing listening anywhere
+
+    assert.equal(s.slots.has(feature), true, 'the slot survived a sweep taken mid-launch');
+    assert.equal(s.slots.get(feature), 0);
+    // and the consequence that made this a port collision: the slot was handed out again
+    assert.deepEqual(s.allocSlotFor('feat-other'), { slot: 1 }, 'no other feature was given the same slot');
+    assert.equal(s.isStarting(feature), true, 'the launch is still in flight');
+
+    const r = await launching;
+    assert.equal(r.ok, true, r.error);
+    assert.equal(s.isStarting(feature), false, 'the guard lifts when the launch ends');
+
+    // The guard is scoped to the launch, not a permanent exemption: once the start
+    // is over, a feature with nothing listening is still reclaimed.
+    s.reconcileSlots(new Map());
+    assert.equal(s.slots.has(feature), false, 'a finished-but-dead feature is still self-healed away');
+  } finally {
+    await launching.catch(() => {});
+    await s.stop('api', wt);
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('a restart holds the guard across the stop/settle gap, not just the start', async () => {
+  // restart() stops, waits 800 ms, then starts — a window with nothing listening by
+  // design. The guard has to span all of it or the slot it means to reuse is gone.
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-race-restart-'));
+  const s = new Servers({ _stateDir: stateDir, web: { port: 0 }, start: {}, concurrency: concurrency() });
+  const wt = '/repo/.worktrees/feat-r';
+  s.allocSlotFor(s.featureFor(wt));
+
+  const restarting = s.restart('api', wt); // no start config for 'api' → start() returns an error
+  await new Promise((r) => setTimeout(r, 300)); // inside the 800 ms settle
+  s.reconcileSlots(new Map());
+  assert.equal(s.slots.has('feat-r'), true, 'the slot survived a sweep during the restart gap');
+  assert.equal(s.isStarting('feat-r'), true, 'and the restart is still in flight');
+
+  await restarting;
+  assert.equal(s.isStarting('feat-r'), false);
+  s.reconcileSlots(new Map());
+  assert.equal(s.slots.has('feat-r'), false, 'and is released once the restart is over and nothing came up');
+});

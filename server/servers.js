@@ -54,6 +54,16 @@ class Servers {
     // pid (string) → { cwd, top } — a process's cwd/git-toplevel never change, so we
     // resolve each listening pid once and reuse it across discoverRunning scans.
     this._pidInfoCache = new Map();
+    // feature → number of launches currently in flight. start() polls up to ~8 s for
+    // ports to bind, and the periodic sweep runs every ~3 s, so a feature that is
+    // slow to come up looks exactly like a dead one to reconcileSlots() — "nothing
+    // is listening" is the normal state DURING a launch. Without this, its slot gets
+    // reclaimed mid-launch and handed to the next feature, which then binds the same
+    // ports. Counted rather than a flag because a multi-repo feature launches all of
+    // its members concurrently, each entering and leaving independently.
+    // Deliberately in-memory: a launch cannot outlive the process that is polling it,
+    // so persisting this could only ever resurrect a guard for a start that is over.
+    this._starting = new Map();
   }
 
   _save() { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
@@ -86,13 +96,35 @@ class Servers {
 
   releaseSlot(feature) { if (feature && this.slots.delete(feature)) this._save(); }
 
+  // Mark a feature as having a launch in flight, so its slot is not reclaimable
+  // while its ports are still coming up. Always paired in a finally.
+  _beginStart(feature) {
+    if (!feature) return;
+    this._starting.set(feature, (this._starting.get(feature) || 0) + 1);
+  }
+
+  _endStart(feature) {
+    if (!feature) return;
+    const left = (this._starting.get(feature) || 0) - 1;
+    if (left > 0) this._starting.set(feature, left);
+    else this._starting.delete(feature);
+  }
+
+  // Is a launch for this feature in flight right now?
+  isStarting(feature) { return this._starting.has(feature); }
+
   // Self-heal the slot map against reality: drop any slot whose feature has no
   // running worktree in `runningMap` (Map(realpath → {pid,ports}) from discoverRunning).
   // Called on the periodic refresh so leaked/stale slots are released and a
   // restart-with-running-servers keeps only the slots that are actually live.
+  //
+  // "Reality" here is what is LISTENING, and a feature that is still starting is
+  // legitimately not listening yet — see `_starting`. Reclaiming its slot would
+  // hand the ports it is about to bind to somebody else.
   reconcileSlots(runningMap) {
     let changed = false;
     for (const feature of [...this.slots.keys()]) {
+      if (this._starting.has(feature)) continue; // launch in flight — not yet up ≠ gone
       if (![...runningMap.keys()].some((p) => this.featureFor(p) === feature)) {
         this.slots.delete(feature);
         changed = true;
@@ -247,6 +279,11 @@ class Servers {
     const ports = opts.ports && opts.ports.length ? opts.ports : sc.ports;
     const lock = this._lock(worktreePath);
     if (!lock) return { ok: false, error: `another launch for '${repo}' at ${worktreePath} is in progress` };
+    // From here until the ports are up (or we give up waiting), this feature's slot
+    // must survive a reconcile sweep — the ports it was allocated for are exactly
+    // the ones not bound yet.
+    const feature = this.featureFor(worktreePath);
+    this._beginStart(feature);
     try {
       for (const p of ports) {
         const pid = await this.portPid(p);
@@ -269,7 +306,7 @@ class Servers {
         if (allUp) break;
       }
       return { ok: true, pid: child.pid, log };
-    } finally { this._unlock(lock); }
+    } finally { this._endStart(feature); this._unlock(lock); }
   }
 
   // Ports a server in this worktree would be listening on: the feature's
@@ -299,9 +336,17 @@ class Servers {
   }
 
   async restart(repo, worktreePath, opts = {}) {
-    await this.stop(repo, worktreePath);
-    await new Promise((r) => setTimeout(r, 800));
-    return this.start(repo, worktreePath, opts);
+    // A restart is a window with nothing listening by design — the stop, the 800 ms
+    // settle, and then start()'s own poll. The guard has to span the whole thing or
+    // a sweep landing in the gap reclaims the slot the restart intends to reuse.
+    // The nested _beginStart inside start() is why the counter is a count.
+    const feature = this.featureFor(worktreePath);
+    this._beginStart(feature);
+    try {
+      await this.stop(repo, worktreePath);
+      await new Promise((r) => setTimeout(r, 800));
+      return await this.start(repo, worktreePath, opts);
+    } finally { this._endStart(feature); }
   }
 
   // Incremental log tail, guarded to tracked log files only.
