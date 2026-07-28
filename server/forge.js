@@ -14,9 +14,19 @@ const { run, has, A } = require('./util');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
-// gh/glab lookups are cached per worktreePath+branch for ~20s so UI polling doesn't
-// hammer the CLIs. Value: { at, data } where data is the per-repo result.
+// gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
+// on the client any more (server/ci.js pushes instead), but the cache still bounds
+// what a burst of triggers plus an on-demand GET /sessions/:id/ci can cost, and it
+// is what makes the two paths share one answer. Value: { at, data }.
 const CI_TTL = 20000;
+
+// A lookup is a network round-trip through somebody else's CLI, and both of them
+// can hang — on a dead VPN, an expired credential helper prompting for input, a
+// forge that stopped answering. execFile's `timeout` KILLS the child, which is the
+// only thing that actually reclaims the process; a promise-level race would leave
+// it wedged forever. A killed lookup exits non-zero and is read as "no PR", which
+// is exactly how every other failure already degrades.
+const VIEW_TIMEOUT_MS = 20000;
 
 // Tally a GitHub statusCheckRollup (mixed CheckRun / StatusContext nodes) into
 // { passed, running, failed, total }. Neutral/skipped count toward total only.
@@ -47,7 +57,7 @@ const github = {
   id: 'github',
   cli: 'gh',
   async view(branch, cwd, env) {
-    const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], { cwd, env });
+    const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], { cwd, env, timeout: VIEW_TIMEOUT_MS });
     if (r.code !== 0 || !r.stdout.trim()) return null;
     const j = JSON.parse(r.stdout);
     return { hasPR: true, provider: 'github', number: j.number, url: j.url, state: j.state, checks: ghChecks(j.statusCheckRollup) };
@@ -64,7 +74,7 @@ const gitlab = {
   id: 'gitlab',
   cli: 'glab',
   async view(branch, cwd, env) {
-    const r = await run('glab', ['mr', 'view', branch, '-F', 'json'], { cwd, env });
+    const r = await run('glab', ['mr', 'view', branch, '-F', 'json'], { cwd, env, timeout: VIEW_TIMEOUT_MS });
     if (r.code !== 0 || !r.stdout.trim()) return null;
     const j = JSON.parse(r.stdout);
     const pipe = j.pipeline || j.head_pipeline || {};
@@ -83,13 +93,21 @@ const PROVIDERS = [github, gitlab];
 // `providers` / `isInstalled` are injectable so tests can drive the provider contract
 // on a machine without gh or glab. CLI presence is probed once, at startup, exactly
 // as before — a `has()` per request would shell out on every poll.
-function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli) } = {}) {
+// `onChanged` is how the push side (server/ci.js) hears that *this* module just did
+// something that changes a branch's PR state — opening one. Everything else that can
+// (a commit, a push, a branch switch) is observed by the git watcher instead.
+function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), onChanged = () => {} } = {}) {
   const installed = providers.filter(isInstalled);
   const ciCache = new Map();
 
+  // Drop every cached answer. Called when something is known to have changed the
+  // truth (a new commit, a push, a PR just opened) — without it a refresh triggered
+  // inside the TTL would re-serve the very answer it was triggered to replace.
+  function invalidate() { ciCache.clear(); }
+
   // Look up a single repo's PR/MR + checks (GitHub first, then GitLab). Never
   // throws — returns { repo, hasPR:false } on any miss/failure. Cached per key.
-  async function ciForRepo(entry, env) {
+  async function ciForRepo(entry, env = ENV) {
     const { repo, worktreePath, branch } = entry;
     if (!worktreePath || !branch) return { repo, hasPR: false };
     const key = `${worktreePath}\n${branch}`;
@@ -146,11 +164,15 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
       if (!g) return res.status(404).json({ error: 'no such feature' });
       const results = [];
       for (const m of g.members) results.push(await openPullRequest(m, ENV));
+      // A branch that had no PR a second ago now has one, and its cached "hasPR:
+      // false" says otherwise. Drop it and tell the push side to re-look, so the
+      // pill appears without waiting out the TTL.
+      if (results.some((r) => r.url)) { invalidate(); try { onChanged(); } catch { /* the feed must never break the route */ } }
       res.json({ ok: results.some((r) => r.url), results });
     }));
   }
 
-  return { register, ciForRepo, openPullRequest, installed };
+  return { register, ciForRepo, openPullRequest, invalidate, installed };
 }
 
 module.exports = { createForge, PROVIDERS, github, gitlab, ghChecks, glChecks };

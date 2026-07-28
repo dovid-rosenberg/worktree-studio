@@ -18,6 +18,7 @@ const { Servers, featureFromPath } = require('./servers');
 const { createState } = require('./state');
 const { createBroadcast } = require('./broadcast');
 const { createForge } = require('./forge');
+const { createCiFeed } = require('./ci');
 const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
 const { run, has, shq, A } = require('./util');
@@ -44,6 +45,13 @@ async function main() {
     scanning = false;
     prunePaths();        // the fresh scan is what says which worktrees still exist
     broadcastTopology(); // the scan IS the topology
+    // A scan is also the server's only notice that git moved. watch.js arms
+    // fs.watch on `.git/refs` (recursive), so a commit writes refs/heads/<branch>,
+    // a push writes refs/remotes/origin/<branch>, and a branch switch writes HEAD —
+    // each lands here. Those are precisely the three local events that change what
+    // `gh pr view` would answer, so this is the CI feed's main trigger. Fire and
+    // forget: the feed debounces, floors and gates it, and nothing here waits.
+    ciFeed.poke({ force: true });
   }
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
@@ -76,7 +84,19 @@ async function main() {
   // Claude hook gets. broadcastTopology() adds the slow half and is called by the
   // handful of things that can actually change the repo → worktree shape (a git
   // rescan, a worktree/session mutation, dev-server discovery, a config save).
-  const bus = createBroadcast({ topology, sessionState });
+  // ---- PR/MR + CI status (serverbar pill) ----
+  // Pushed, not polled. Three objects that each only reach the next one at call
+  // time: the forge does the lookups and tells the feed when it opened a PR, the
+  // feed owns the snapshot and decides when to look, the bus carries the result.
+  const forge = createForge({ manager, resolveGroup, onChanged: () => ciFeed.poke({ force: true }) });
+  const ciFeed = createCiFeed({
+    forge,
+    sessions: () => manager.all(),
+    streams: () => bus.clients.size, // an SSE subscriber is the only thing a `ci` frame can reach
+    onChange: () => bus.schedule({ ci: true }),
+  });
+
+  const bus = createBroadcast({ topology, sessionState, ci: ciFeed.snapshot });
   const scheduleBroadcast = () => bus.schedule();
   const broadcastTopology = () => bus.schedule({ topology: true });
 
@@ -139,6 +159,10 @@ async function main() {
     // before this client joins the fan-out, so it can never miss the snapshot or
     // see an event that predates it.
     const unsubscribe = bus.subscribe(res);
+    // Someone started looking. While nobody was, the CI feed deliberately did
+    // nothing at all, so its snapshot may be stale or empty — this is what makes an
+    // opened dashboard fill in within a second rather than at the next safety net.
+    ciFeed.poke();
     const hb = setInterval(() => { try { res.write(':hb\n\n'); } catch { /* */ } }, 25000);
     req.on('close', () => { clearInterval(hb); unsubscribe(); });
   });
@@ -404,7 +428,10 @@ async function main() {
     if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     if (!message || !message.trim()) return res.status(400).json({ error: 'message is required' });
     const out = await review.commit(entry.worktreePath, message, { amend, paths });
-    if (out.ok) broadcastTopology();
+    // A commit made through the UI writes refs/heads/<branch>, so the watcher would
+    // find it anyway — but it can take a debounce plus a scan to get here, and we
+    // already know. Poke directly rather than wait to be told what we just did.
+    if (out.ok) { broadcastTopology(); ciFeed.poke({ force: true }); }
     res.json(out);
   }));
 
@@ -471,8 +498,9 @@ async function main() {
     cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast: broadcastTopology, rescan,
   });
 
-  // ---- PR/MR + CI status (serverbar pill) ----
-  createForge({ manager, resolveGroup }).register(api);
+  // GET /sessions/:id/ci (still an on-demand answer for SwiftBar/Alfred and any
+  // external caller) + POST /group/pr. Created above, next to the feed it feeds.
+  forge.register(api);
 
   // Start a session in an existing worktree (Fleet: "Start session here")
   api.post('/worktrees/adopt', A(async (req, res) => {

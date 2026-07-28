@@ -115,26 +115,56 @@ The whole world in one document. Returns the **state payload** (below).
 
 ### `GET /events`
 
-`text/event-stream`, carrying the state payload split into two **named event
-types** — the payload's two halves have very different change rates, and a
-client that re-renders the world on every Claude tool call pays for the
-difference:
+`text/event-stream`, carrying the live state split into three **named event
+types** — the three halves have very different change rates, and a client that
+re-renders the world on every Claude tool call pays for the difference:
 
 | Event           | `data:` shape                            | Sent when                                                                                             |
 | --------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `topology`      | every top-level field except `sessions`/`servers` | The repo→worktree shape or the client's chrome changed: a git rescan (~15 s), a worktree/session mutation, dev-server discovery finding something new, a config save. |
 | `session-state` | `{ sessions, servers }`                  | Every state change of any session — i.e. every Claude Code hook, so every tool call. Also rides along with every `topology` frame. |
+| `ci`            | `{ ci: { "<sessionId>": [...] } }`       | The PR/CI snapshot changed. Never rides along with anything — see below.                               |
 
-Both events are **full replacements of their half**, never per-item deltas. A
-client applies a frame with `state = { ...state, ...frame }`; that is
+All three events are **full replacements of their half**, never per-item
+deltas. A client applies a frame with `state = { ...state, ...frame }`; that is
 idempotent, order-independent, and communicates removals for free (a closed
 session is simply absent from `sessions`).
 
-On connect the server writes one `topology` and one `session-state` frame
-before the client joins the fan-out, so the pair is always a **complete
+On connect the server writes one `topology`, one `session-state` and one `ci`
+frame before the client joins the fan-out, so the set is always a **complete
 snapshot** and a client can never receive an event that predates its snapshot.
 A browser's `EventSource` reconnects on its own; a reconnect is just a new
 subscriber, so it re-snapshots and converges rather than drifting.
+
+#### The `ci` event
+
+`data` is `{ ci: { "<sessionId>": [ … ] } }`, where each value is exactly the
+`repos` array of `GET /sessions/:id/ci`. Sessions with no promoted repo are
+absent. `ci` is **stream-only** — it is not part of `GET /state`, which stays a
+synchronous build; a non-streaming client asks `GET /sessions/:id/ci` instead.
+
+It is a separate event rather than part of `session-state` because the two move
+on incomparable timescales: `session-state` is re-sent on every tool call, CI
+status changes over minutes. Folding it in would re-serialize an unchanged
+payload thousands of times an hour and would put a slow, hang-prone `gh`/`glab`
+lookup on the path of the hottest broadcast in the server.
+
+The server decides when to refresh (`server/ci.js`), and **only while at least
+one SSE client is subscribed** — with nobody streaming, no forge CLI is spawned
+at all. A refresh is triggered by:
+
+- a git rescan, which is how a **commit**, a **push** and a **branch switch**
+  reach the server (`server/watch.js` watches `.git/refs` and `HEAD`);
+- `POST /sessions/:id/commit`;
+- `POST /group/pr` opening a PR/MR (which also drops the cached "no PR");
+- a client subscribing to `/events`;
+- a slow safety net (~90 s), for the changes that happen on the forge's side
+  and produce no local signal at all — a queued check going green.
+
+Triggers are debounced and floored at 20 s, forge's own cache TTL, so no
+worktree+branch pair is ever looked up more often than the previous
+client-polling model already allowed. A frame goes out only when the snapshot
+actually differs.
 
 Frames are coalesced with an 80 ms debounce. `:hb` comments every 25 s keep the
 connection alive.
@@ -152,7 +182,8 @@ connection alive.
 The single document returned by `GET /state`. Built in `server/state.js` from
 two halves — a *topology* half (`mux` …`groups`) and a *session-state* half
 (`sessions`, `servers`) — which `GET /events` streams separately, at their own
-rates, as the two named events above.
+rates, as the first two named events above. (The stream's third event, `ci`, is
+not part of this document: it is built asynchronously and is stream-only.)
 
 ### Top level
 
@@ -472,11 +503,17 @@ branch.
   status onto the same shape, so `total` is at most 1 there.
 - Never partially fails: a repo whose lookup errors comes back `{ repo, hasPR:
   false }`.
-- Results are cached ~20 s per worktree+branch, so polling is cheap. With
+- Results are cached ~20 s per worktree+branch, shared with the push feed. With
   neither CLI installed the route answers immediately with `hasPR: false` for
-  every repo.
+  every repo. Each lookup carries a 20 s timeout, so a hung CLI is killed rather
+  than left to hang the request.
 
 `404` for an unknown session.
+
+> This route is the **on-demand** answer, for SwiftBar, Alfred and anything else
+> that does not hold a stream open. Streaming clients should not poll it — the
+> same data is pushed as the `ci` SSE event, refreshed by the server on the
+> events that change it.
 
 ---
 

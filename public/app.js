@@ -8,7 +8,7 @@ const WebLinksCtor = (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon
 
 // The shape render() can rely on before (and between) SSE frames. Each frame
 // carries one half of the payload, so this is also the base both halves merge onto.
-const EMPTY_STATE = { mux: '…', repos: [], sessions: [], servers: {}, sources: [], features: [], groups: [] };
+const EMPTY_STATE = { mux: '…', repos: [], sessions: [], servers: {}, sources: [], features: [], groups: [], ci: {} };
 let state = { ...EMPTY_STATE };
 let selectedId = null;
 let renderedDockId = null;
@@ -61,10 +61,10 @@ let logsPollT = null;               // self-scheduling poll timer
 const logsOffset = new Map();       // worktreePath → next byte offset to fetch from
 const logsPartial = new Map();      // worktreePath → trailing partial (incomplete) line
 
-// PR/CI status (serverbar pill) — lazily fetched per promoted session, refreshed
-// on a self-scheduling timer while that session stays selected.
-let ciPollT = null;
-let ciData = null;                  // { sessionId, repos:[…] } — last CI response for the selected session
+// PR/CI status (serverbar pill) is PUSHED, not fetched: it arrives as the `ci`
+// SSE event and lives in `state.ci` (sessionId → repos[]). There is no timer and
+// no request here any more — the server refreshes it, and only while a stream is
+// open, so a closed tab costs nothing.
 
 const $ = (sel) => document.querySelector(sel);
 const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -196,35 +196,41 @@ async function uiPrompt(message, value = '', opts = {}) {
 }
 
 /* ---------------- SSE ---------------- */
-// The stream carries two named event types, each a FULL REPLACEMENT of its half
+// The stream carries three named event types, each a FULL REPLACEMENT of its half
 // of the state payload (docs/api.md):
 //   topology       repos, worktrees, features/groups, config — rebuilt on a git
 //                  rescan or a real mutation, so it arrives rarely.
 //   session-state  { sessions, servers } — re-sent on every Claude hook, i.e.
 //                  every tool call, which is why it's the small half.
+//   ci             { ci } — sessionId → PR/MR + checks. Its own event because it
+//                  changes on a completely different timescale from the hook half:
+//                  the server sends it only when the answer actually differs.
 // The server sends one of each on connect, so both a first load and the
 // EventSource's own automatic reconnect start from a complete snapshot instead of
 // drifting on whatever was missed.
 function connectSSE() {
   // EventSource cannot set headers, so the boot token rides in the query string.
   const ev = new EventSource(`/api/events${tokenQuery('?')}`);
-  // Each half is kept VERBATIM as it arrived, and `state` is derived from the two
+  // Each half is kept VERBATIM as it arrived, and `state` is derived from the three
   // on every frame. Deriving (rather than patching `state` in place) is what makes
   // stitching safe: it always runs against the session ids the server actually
   // embedded, so an event order of topology-then-sessions can't erase a link that
   // the next frame would have resolved.
   let lastTopology = {};
   let lastSessions = {};
-  const apply = (isSessionHalf) => (e) => {
+  let lastCi = {};
+  const apply = (half) => (e) => {
     let frame;
     try { frame = JSON.parse(e.data); } catch { return; }
-    if (isSessionHalf) { detectAttention(frame); lastSessions = frame; } // diff BEFORE swapping in
+    if (half === 'sessions') { detectAttention(frame); lastSessions = frame; } // diff BEFORE swapping in
+    else if (half === 'ci') lastCi = frame;
     else lastTopology = frame;
-    state = stitchSessions({ ...EMPTY_STATE, ...lastTopology, ...lastSessions });
+    state = stitchSessions({ ...EMPTY_STATE, ...lastTopology, ...lastSessions, ...lastCi });
     render();
   };
-  ev.addEventListener('topology', apply(false));
-  ev.addEventListener('session-state', apply(true));
+  ev.addEventListener('topology', apply('topology'));
+  ev.addEventListener('session-state', apply('sessions'));
+  ev.addEventListener('ci', apply('ci'));
   ev.onerror = () => { /* browser auto-reconnects */ };
 }
 
@@ -452,7 +458,7 @@ function selectSession(id) { selectedId = id; render(); }
 function renderDock() {
   const dock = $('#dock');
   const s = state.sessions.find((x) => x.id === selectedId);
-  if (!s) { destroyTerminal(); stopLogsPoll(); stopCiPoll(); renderedDockId = null; dock.innerHTML = ''; dock.appendChild(emptyState()); return; }
+  if (!s) { destroyTerminal(); stopLogsPoll(); renderedDockId = null; dock.innerHTML = ''; dock.appendChild(emptyState()); return; }
   if (renderedDockId !== s.id) { rebuildDock(s); renderedDockId = s.id; }
   else updateDock(s);
 }
@@ -469,8 +475,6 @@ function emptyState() {
 function rebuildDock(s) {
   destroyTerminal();
   stopLogsPoll();
-  stopCiPoll();
-  ciData = null;
   // reset the client-side dock view whenever the selected session changes
   dockView = 'term'; activeTab = 0;
   // split persists per session: restore it if this session was left split
@@ -489,7 +493,7 @@ function rebuildDock(s) {
   updateDock(s);
   openTerminal(s);
   // eager-load so the ✎ Changes badge shows a count before the tab is opened
-  if (s.worktreePath) { refreshCommits(s, {}); startCiPoll(s); }
+  if (s.worktreePath) refreshCommits(s, {});
 }
 
 function updateDock(s) {
@@ -571,25 +575,6 @@ function updateDock(s) {
 }
 
 /* ---------------- PR / CI status pill ---------------- */
-function stopCiPoll() { if (ciPollT) { clearTimeout(ciPollT); ciPollT = null; } }
-
-// Lazily fetch PR/CI status for a promoted session, then refresh every ~30s while
-// it stays selected. Never blocks the serverbar render; degrades to nothing on error.
-function startCiPoll(s) {
-  stopCiPoll();
-  if (!s.worktreePath) return;
-  const tick = async () => {
-    if (selectedId !== s.id) { stopCiPoll(); return; }
-    try {
-      const res = await api('GET', `/api/sessions/${s.id}/ci`);
-      if (selectedId !== s.id) { stopCiPoll(); return; }
-      ciData = { sessionId: s.id, repos: (res && res.repos) || [] };
-      injectCiPills(s);
-    } catch { /* no gh/glab, no PR, network error — leave the bar as-is */ }
-    if (selectedId === s.id) ciPollT = setTimeout(tick, 30000); else stopCiPoll();
-  };
-  tick();
-}
 
 // Build one clickable .cistat pill for a repo that has a PR/MR.
 function ciPill(r) {
@@ -608,15 +593,18 @@ function ciPill(r) {
   return el;
 }
 
-// Render cached CI pills into the serverbar (before the spacer, else appended).
-// No-op unless the cached data belongs to the currently shown session.
+// Render this session's pushed CI status into the serverbar (before the spacer,
+// else appended). Called from updateDock, i.e. on every frame — a `ci` frame
+// re-renders the pills, and a session the server knows nothing about yet simply
+// has none. Removing first is what makes a merged/closed PR's pill disappear.
 function injectCiPills(s) {
   const bar = $('#serverBar');
   if (!bar) return;
   bar.querySelectorAll('.cistat').forEach((el) => el.remove());
-  if (!ciData || ciData.sessionId !== s.id) return;
+  const repos = (state.ci || {})[s.id];
+  if (!repos) return;
   const spacer = bar.querySelector('.spacer');
-  for (const r of ciData.repos) {
+  for (const r of repos) {
     if (!r || !r.hasPR) continue;
     const pill = ciPill(r);
     if (spacer) bar.insertBefore(pill, spacer); else bar.appendChild(pill);

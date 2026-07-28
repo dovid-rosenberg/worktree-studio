@@ -160,9 +160,13 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
   entry (with amend), Commit & PR.
 
 ### PR / CI
-- **PR/CI pill** per promoted session: polls `gh pr checks` / `glab ci status`, shows
-  passed/running/failed and links to the PR/MR. Briefly cached; degrades gracefully when
-  no PR exists or the CLI is missing.
+- **PR/CI pill** per promoted session: `gh` / `glab` reports passed/running/failed and
+  links to the PR/MR. **Pushed, not polled** — it arrives on the `ci` SSE event, which
+  the server refreshes when a commit, a push or a branch switch lands, when a PR is
+  opened, and on a slow safety net, and *only* while a browser stream is open: with no
+  dashboard attached, neither CLI is ever spawned. Briefly cached and shared with
+  `GET /api/sessions/:id/ci`, the on-demand answer SwiftBar/Alfred still use. Degrades
+  gracefully when no PR exists or the CLI is missing.
 - **Open PR / MR** and **Create PR** (`/api/group/pr`) across the feature’s repos.
 
 ### Notifications
