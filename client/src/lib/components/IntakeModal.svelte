@@ -31,12 +31,12 @@
   let starting = $state(false);
   let textarea = $state<HTMLTextAreaElement|null>(null);
 
-  const enabled = $derived(new Set(world.sources.map((s: any) => s.id)));
+  const enabled = $derived(new Set(world.sources.map((s) => s.id)));
   const isFree = $derived(source === 'freetext');
-  const otherRepos = $derived(world.repos.filter((r: any) => r.name !== repo));
+  const otherRepos = $derived(world.repos.filter((r) => r.name !== repo));
   const note = $derived(isFree
     ? 'Boots a real Claude Code session in the repo (CLAUDE.md loaded). The name is optional; the branch is chosen when you promote.'
-    : `Seeds the session from ${source}. ${world.sources.find((s: any) => s.id === source && s.needsRepo) ? 'Uses the selected repo.' : ''}`);
+    : `Seeds the session from ${source}. ${world.sources.find((s) => s.id === source && s.needsRepo) ? 'Uses the selected repo.' : ''}`);
 
   // Default the repo once the topology has arrived, and focus the prompt on open.
   $effect(() => {
@@ -47,7 +47,7 @@
   });
 
   /** @param {string} id */
-  function pickSource(id: any) {
+  function pickSource(id: string) {
     source = id;
     issues = [];
     issueId = null;
@@ -66,7 +66,7 @@
   }
 
   /** @param {string} n */
-  function toggleExtra(n: any) {
+  function toggleExtra(n: string) {
     const next = new Set(extra);
     if (next.has(n)) next.delete(n); else next.add(n);
     extra = next;

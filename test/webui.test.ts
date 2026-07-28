@@ -15,18 +15,13 @@ import * as webui from '../server/webui.ts';
 
 const TOKEN = 'a'.repeat(64);
 
-// A repo-root-shaped fixture: client/build and/or public, each with an index.html.
-/** @param have which index.html(s) to lay down */
-function fixture({ client, legacy }: { client?: string; legacy?: string } = {}) {
+// A repo-root-shaped fixture: client/build with an index.html.
+function fixture({ client }: { client?: string } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-webui-'));
   if (client !== undefined) {
     fs.mkdirSync(path.join(root, 'client', 'build', '_app'), { recursive: true });
     fs.writeFileSync(path.join(root, 'client', 'build', 'index.html'), client);
     fs.writeFileSync(path.join(root, 'client', 'build', '_app', 'app.js'), 'export const x = 1;\n');
-  }
-  if (legacy !== undefined) {
-    fs.mkdirSync(path.join(root, 'public'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'public', 'index.html'), legacy);
   }
   return root;
 }
@@ -44,8 +39,8 @@ async function serving<T>(app: express.Express, fn: (get: Fetcher) => Promise<T>
 }
 
 // The daemon's own wiring order: static mount, then the API, then the SPA fallback.
-function studio(root: string, env: NodeJS.ProcessEnv = {}) {
-  const ui = webui.resolve(env, root);
+function studio(root: string) {
+  const ui = webui.resolve(root);
   const app = express();
   webui.mount(app, { ui, token: TOKEN });
   const api = express.Router();
@@ -58,45 +53,27 @@ function studio(root: string, env: NodeJS.ProcessEnv = {}) {
 
 // ---------------------------------------------------------------- resolve ----
 
-test('resolve() serves the SvelteKit build by default', () => {
-  const root = fixture({ client: SHELL, legacy: '<html>old</html>' });
-  const ui = webui.resolve({}, root);
-  assert.equal(ui.name, 'client');
+test('resolve() serves the SvelteKit build', () => {
+  const root = fixture({ client: SHELL });
+  const ui = webui.resolve(root);
   assert.equal(ui.index, path.join(root, 'client', 'build', 'index.html'));
+  assert.equal(ui.root, path.join(root, 'client', 'build'));
 });
 
 test('resolve() refuses to boot when the client has not been built, and says how', () => {
-  const root = fixture({ legacy: '<html>old</html>' }); // public/ only
-  assert.throws(() => webui.resolve({}, root), (e: unknown) => {
+  const root = fixture(); // nothing laid down
+  assert.throws(() => webui.resolve(root), (e: unknown) => {
     assert.ok(e instanceof Error);
     assert.match(e.message, /has not been built/);
     assert.match(e.message, /npm run build/);
-    assert.match(e.message, /WTS_UI=legacy/); // the way out is in the message
     return true;
   });
-});
-
-test('resolve() rejects an unknown WTS_UI by name and lists the real ones', () => {
-  const root = fixture({ client: SHELL, legacy: '<html>old</html>' });
-  assert.throws(() => webui.resolve({ WTS_UI: 'svelte' }, root), /not a UI.*client.*legacy/s);
-});
-
-test('WTS_UI=legacy is the escape hatch back to public/', () => {
-  const root = fixture({ client: SHELL, legacy: '<html>old</html>' });
-  const ui = webui.resolve({ WTS_UI: 'LEGACY ' }, root); // case/whitespace tolerant
-  assert.equal(ui.name, 'legacy');
-  assert.equal(ui.root, path.join(root, 'public'));
-});
-
-test('the legacy UI reports its own missing index rather than the client’s', () => {
-  const root = fixture({ client: SHELL });
-  assert.throws(() => webui.resolve({ WTS_UI: 'legacy' }, root), /public\/index\.html is missing/);
 });
 
 // ------------------------------------------------------------------ mount ----
 
 test('/ serves the shell with the token substituted, uncached', async () => {
-  const { app } = studio(fixture({ client: SHELL, legacy: '<html>old</html>' }));
+  const { app } = studio(fixture({ client: SHELL }));
   await serving(app, async (get) => {
     for (const p of ['/', '/index.html']) {
       const r = await get(p);
@@ -107,16 +84,6 @@ test('/ serves the shell with the token substituted, uncached', async () => {
       assert.ok(html.includes(`window.WTS_TOKEN = "${TOKEN}"`), p);
       assert.ok(!html.includes(webui.PLACEHOLDER), `${p}: no un-substituted placeholder`);
     }
-  });
-});
-
-test('only one UI owns / — the escape hatch swaps it, it does not add a second', async () => {
-  const root = fixture({ client: SHELL, legacy: '<html>old</html>' });
-  await serving(studio(root).app, async (get) => {
-    assert.ok((await (await get('/')).text()).includes('app'));
-  });
-  await serving(studio(root, { WTS_UI: 'legacy' }).app, async (get) => {
-    assert.equal(await (await get('/')).text(), '<html>old</html>');
   });
 });
 

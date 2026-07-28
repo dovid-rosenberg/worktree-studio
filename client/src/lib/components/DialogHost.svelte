@@ -21,7 +21,7 @@
   $effect(() => {
     const id = entry?.id;
     if (id == null) return;
-    values = fields.map((f: any) => (f.type === 'checkbox' ? !!f.value : (f.value ?? '')));
+    values = fields.map((f) => (f.type === 'checkbox' ? !!f.value : (f.value ?? '')));
     // Focus the first field, else the confirm button — the same target app.js chose.
     // The nodes only exist after this render, so defer by a microtask.
     queueMicrotask(() => {
@@ -41,11 +41,11 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e: any) {
+  function onKeydown(e: KeyboardEvent) {
     if (!entry) return;
     if (e.key === 'Escape') { e.stopPropagation(); cancel(); return; }
     if (e.key !== 'Enter') return;
-    if (fields.some((f: any) => f.type === 'select')) return;
+    if (fields.some((f) => f.type === 'select')) return;
     if (e.target instanceof HTMLTextAreaElement) return;
     e.preventDefault();
     submit();

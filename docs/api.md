@@ -181,7 +181,7 @@ connection alive.
 > `repos[].worktrees[].session` and in `features`/`groups`, those copies are
 > only as fresh as the last `topology` frame. A client that renders them should
 > re-project the live `sessions` onto them after each frame, keyed by session id
-> (`public/app.js`'s `stitchSessions()`; the SvelteKit client does the same in
+> (the SvelteKit client's `stitchSessions()`, in
 > `client/src/lib/stores/world.svelte.js`).
 
 ---

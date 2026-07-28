@@ -27,13 +27,13 @@
   /** The feature a selected SESSION belongs to, so stack verbs work from either side. */
   const sessionFeature = $derived(
     session && session.feature
-      ? (ui.visibleFeatures.find((f: any) => f.name === session.feature) || null)
+      ? (ui.visibleFeatures.find((f) => f.name === session.feature) || null)
       : null,
   );
   const target = $derived(feature || sessionFeature);
   const ms = $derived(target ? liveMembers(target) : []);
-  const anyRunning = $derived(ms.some((m: any) => m.running));
-  const anyStartable = $derived(ms.some((m: any) => m.canStart && !m.running));
+  const anyRunning = $derived(ms.some((m) => m.running));
+  const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
   const webApps = $derived(webAppsFor(ms));
   const isPending = $derived(!!target && pending.has(target.name));
 
@@ -46,7 +46,7 @@
 
   let busy = $state(false);
   /** @param {() => Promise<any>} fn */
-  async function guard(fn: any) {
+  async function guard(fn: () => Promise<unknown>) {
     busy = true;
     try { await fn(); } finally { busy = false; }
   }

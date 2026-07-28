@@ -21,8 +21,12 @@ const V1 = '/api/v1';
 // cache-billing multipliers come from (pricing.svelte.js explains why the client must
 // not keep its own copy). Adopting it HERE rather than at each call site means a new
 // endpoint cannot forget to — there is no call site to remember it at.
-function adopt(json: any): any {
-  if (json && typeof json === 'object' && json.pricing) adoptPricing(json.pricing);
+// Generic pass-through: every endpoint answers a different shape, and this only ever
+// reads `.pricing` off it. Returning T rather than any keeps each caller's declared
+// return type intact instead of laundering it back to any on the way out.
+function adopt<T>(json: T): T {
+  const p = (json as { pricing?: unknown } | null)?.pricing;
+  if (p) adoptPricing(p as Parameters<typeof adoptPricing>[0]);
   return json;
 }
 

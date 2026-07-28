@@ -179,7 +179,7 @@ async function main() {
   // injected into the one document we hand it. That is safe precisely because of the
   // gate above: a cross-origin page cannot read this response body, and a rebinding
   // page is refused before there is a body to read. See webui.ts for which UI this is
-  // and what WTS_UI does; its SPA fallback is mounted after every route below.
+  // which UI this is; its SPA fallback is mounted after every route below.
   // A UI that isn't on disk is a boot failure, not a 404 the user has to reverse-
   // engineer: say what is missing and how to get it, and stop.
   let ui: webui.ResolvedUi;

@@ -74,7 +74,7 @@
   // relief the light-mode palette WARN requires.
   const MIN_SEG = 3;
   /** @param {number} v @param {number} total */
-  const segStyle = (v: any, total: any) => (v > 0 ? `flex: 1 1 ${share(v, total)}%; min-width: ${MIN_SEG}px;` : 'display:none;');
+  const segStyle = (v: number, total: number) => (v > 0 ? `flex: 1 1 ${share(v, total)}%; min-width: ${MIN_SEG}px;` : 'display:none;');
 </script>
 
 {#if !volTotal}

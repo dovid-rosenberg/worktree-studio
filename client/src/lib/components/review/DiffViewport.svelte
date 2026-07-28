@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Item } from './model';
   /*
    * The windowed diff surface: one scroll container for the whole detail view — every
    * file header, group label, hunk header and diff row of every file in the selected
@@ -101,7 +102,7 @@
   }
 
   /** Publish a bar's scrollLeft to the column it drives. @param {'l'|'r'} which */
-  function onBarScroll(which: any) {
+  function onBarScroll(which: 'l' | 'r') {
     const bar = which === 'l' ? barL : barR;
     if (!bar) return;
     const max = bar.scrollWidth - bar.clientWidth;
@@ -117,7 +118,7 @@
    * only reading of "scroll this sideways" that respects two independent columns.
    * @param {WheelEvent} e
    */
-  function onWheel(e: any) {
+  function onWheel(e: WheelEvent) {
     if (!split || !scroller) return;
     const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
     if (!dx) return;
@@ -141,7 +142,7 @@
    * and then scrolling is enough — the item is guaranteed to be rendered on the next tick.
    * @param {number} i
    */
-  function reveal(i: any) {
+  function reveal(i: number) {
     if (!scroller || i < 0 || i >= items.length) return;
     const top = model.offsets[i];
     const bottom = top + H[items[i].k];
@@ -158,7 +159,7 @@
    * @param {number} dir
    * @param {(it:import('./model.js').Item) => boolean} pred
    */
-  function move(dir: any, pred: any) {
+  function move(dir: number, pred: (it: Item) => boolean) {
     for (let i = cursor + dir; i >= 0 && i < items.length; i += dir) {
       if (pred(items[i])) { cursor = i; reveal(i); return true; }
     }
@@ -176,7 +177,7 @@
    * file-level staging the panel also exposes as a button, driven from the keyboard.
    * @param {'stage'|'unstage'} op
    */
-  function applyAtCursor(op: any) {
+  function applyAtCursor(op: 'stage' | 'unstage') {
     const it = items[cursor];
     if (!it || !stageable) return;
     const side = op === 'stage' ? 'unstaged' : 'staged';
@@ -193,7 +194,7 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e: any) {
+  function onKeydown(e: KeyboardEvent) {
     // A real control inside a rendered row owns its own keys; only the panel-wide
     // shortcuts that cannot collide with typing are honoured from there.
     const inControl = e.target !== scroller;
@@ -218,10 +219,10 @@
       case 'PageUp': jump(-Math.floor(viewH / H.row)); break;
       case 'Home': cursor = 0; reveal(0); break;
       case 'End': cursor = items.length - 1; reveal(cursor); break;
-      case 'n': move(1, (it: any) => it.k === 'hunk'); break;
-      case 'p': move(-1, (it: any) => it.k === 'hunk'); break;
-      case ']': move(1, (it: any) => it.k === 'file'); break;
-      case '[': move(-1, (it: any) => it.k === 'file'); break;
+      case 'n': move(1, (it) => it.k === 'hunk'); break;
+      case 'p': move(-1, (it) => it.k === 'hunk'); break;
+      case ']': move(1, (it) => it.k === 'file'); break;
+      case '[': move(-1, (it) => it.k === 'file'); break;
       case 's': applyAtCursor('stage'); break;
       case 'u': applyAtCursor('unstage'); break;
       case 'f': case '/': openJump(); break;
@@ -238,7 +239,7 @@
   }
 
   /** @param {number} n */
-  function jump(n: any) {
+  function jump(n: number) {
     const dir = n < 0 ? -1 : 1;
     for (let i = 0; i < Math.abs(n); i++) if (!move(dir, navigable)) break;
   }
@@ -314,14 +315,14 @@
     if (scroller) scroller.focus({ preventScroll: true });
   }
   /** @param {number} i */
-  function jumpTo(i: any) {
+  function jumpTo(i: number) {
     cursor = i;
     closeJump();
     reveal(i);
   }
 
   /** @param {KeyboardEvent} e */
-  function onJumpKeydown(e: any) {
+  function onJumpKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') { closeJump(); }
     else if (e.key === 'ArrowDown') { jumpAt = Math.min(jumpAt + 1, jumpHits.length - 1); }
     else if (e.key === 'ArrowUp') { jumpAt = Math.max(jumpAt - 1, 0); }
@@ -351,7 +352,7 @@
   });
 
   /** @param {import('./model.js').Item} it */
-  const rowCls = (it: any) => (it.k === 'row' ? it.type : '');
+  const rowCls = (it: Item) => (it.k === 'row' ? it.type : '');
 </script>
 
 <div class="viewport-shell">

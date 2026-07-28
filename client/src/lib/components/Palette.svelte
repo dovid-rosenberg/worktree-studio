@@ -25,8 +25,8 @@
 
   const sessionRows = $derived(
     world.sessions
-      .filter((s: any) => !q || `${s.title} ${s.repoName} ${s.state}`.toLowerCase().includes(q))
-      .map((s: any) => {
+      .filter((s) => !q || `${s.title} ${s.repoName} ${s.state}`.toLowerCase().includes(q))
+      .map((s) => {
         const i = railIdx.get(s.id);
         return {
           key: `s:${s.id}`,
@@ -42,7 +42,7 @@
   const commandRows = $derived((() => {
     const cur = ui.selected;
         const cmds: {key:string, glyph:string, title:string, sub:string, run:()=>void}[] = [];
-    const add = (/** @type {string} */ glyph: any, /** @type {string} */ title: any, /** @type {string} */ sub: any, /** @type {()=>void} */ run: any) =>
+    const add = (glyph: string, title: string, sub: string, run: () => void) =>
       cmds.push({ key: `c:${title}`, glyph, title, sub, run });
 
     add('＋', 'New session', '⌘N', () => overlays.openIntake());
@@ -77,14 +77,14 @@
   });
 
   /** @param {number} d */
-  function move(d: any) {
+  function move(d: number) {
     if (!rows.length) return;
     hi = (hi + d + rows.length) % rows.length;
     listEl?.querySelectorAll<HTMLElement>('.pcmd')[hi]?.scrollIntoView({ block: 'nearest' });
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e: any) {
+  function onKeydown(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
     else if (e.key === 'Enter') { e.preventDefault(); rows[hi]?.run(); }

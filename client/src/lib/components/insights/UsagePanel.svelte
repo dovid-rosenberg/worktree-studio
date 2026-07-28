@@ -73,25 +73,25 @@
   const sessions = $derived.by(() => data?.sessions ?? []);
   const features = $derived.by(() => data?.features ?? []);
   const totals = $derived.by(() => data?.totals ?? null);
-  const selected = $derived.by(() => sessions.find((s: any) => s.session?.id === picked) ?? null);
+  const selected = $derived.by(() => sessions.find((s) => s.session?.id === picked) ?? null);
 
-  const indexedCount = $derived.by(() => sessions.filter((s: any) => s.indexed !== false).length);
+  const indexedCount = $derived.by(() => sessions.filter((s) => s.indexed !== false).length);
 
   const featureRows = $derived.by(() =>
-    features.map((f: any) => ({
+    features.map((f) => ({
       key: f.feature,
       label: f.feature,
       sub: `${f.sessions} session${f.sessions === 1 ? '' : 's'}`,
       costUsd: f.costUsd,
       usage: f,
       // A feature is "not indexed" only when nothing under it is.
-      indexed: sessions.some((s: any) => (s.session?.feature || s.session?.id) === f.feature && s.indexed !== false),
+      indexed: sessions.some((s) => (s.session?.feature || s.session?.id) === f.feature && s.indexed !== false),
       unpriced: f.unpricedModels,
     })),
   );
 
   const sessionRows = $derived.by(() =>
-    sessions.map((s: any) => ({
+    sessions.map((s) => ({
       key: s.session?.id ?? '',
       label: s.session?.title ?? s.session?.id ?? '—',
       sub: [s.session?.repo, s.session?.branch].filter(Boolean).join(' · '),
@@ -103,13 +103,13 @@
   );
 
   /** @param {string} key */
-  function selectRow(key: any) {
+  function selectRow(key: string) {
     if (group === 'session') {
       picked = key;
     } else {
       // A feature row selects the costliest session under it — the detail pane only
       // knows how to render a session, and that is the one worth looking at.
-      const under = sessions.filter((s: any) => (s.session?.feature || s.session?.id) === key);
+      const under = sessions.filter((s) => (s.session?.feature || s.session?.id) === key);
       picked = under[0]?.session?.id ?? picked;
     }
     if (picked) onselect(picked);
@@ -173,7 +173,7 @@
       <IndexStatus
         {status}
         {busy}
-        onreindex={async (/** @type {{ session?: string|null, full?: boolean }} */ o: any) => {
+        onreindex={async (o: { session?: string | null; full?: boolean }) => {
           busy = true;
           try { await reindex(o); } finally { await load(); }
         }}

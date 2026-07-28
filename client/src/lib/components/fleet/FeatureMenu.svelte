@@ -46,7 +46,7 @@
 
     // Deferred by a tick so the click that opened the menu doesn't immediately close it.
     /** @param {MouseEvent} e */
-    const onDocClick = (e: any) => {
+    const onDocClick = (e: MouseEvent) => {
       if (menu && e.target instanceof Node && menu.contains(e.target)) return;
       onclose?.();
     };
@@ -55,14 +55,14 @@
   });
 
   /** @param {{run?:()=>void}} item */
-  function activate(item: any) {
+  function activate(item: MenuItem) {
     onclose?.();
     anchor?.focus?.();
     item.run?.();
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e: any) {
+  function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();

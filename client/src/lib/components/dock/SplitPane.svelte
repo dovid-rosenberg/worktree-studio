@@ -32,7 +32,7 @@
    * if it does not exist yet, so this runs before the socket attaches.
    * @param {string} id
    */
-  async function fetchTabs(id: any) {
+  async function fetchTabs(id: string) {
     try {
       const r = await api('GET', `/api/sessions/${id}/split/tabs`);
       tabs = r.tabs || [];
@@ -45,7 +45,7 @@
   $effect(() => { fetchTabs(sessionId); });
 
   /** @param {number} i */
-  async function select(i: any) {
+  async function select(i: number) {
     activeIndex = i;
     try {
       await api('POST', `/api/sessions/${sessionId}/split/select-tab`, { index: i });
@@ -66,7 +66,7 @@
   }
 
   /** @param {number} i */
-  async function close(i: any) {
+  async function close(i: number) {
     try {
       await api('POST', `/api/sessions/${sessionId}/split/close-tab`, { index: i });
       await fetchTabs(sessionId);

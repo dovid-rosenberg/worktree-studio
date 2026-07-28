@@ -22,7 +22,7 @@
   } = $props();
 
   /** @param {MouseEvent} e */
-  function onBackdrop(e: any) {
+  function onBackdrop(e: MouseEvent) {
     // Only a click on the backdrop itself — not one that bubbled out of the panel.
     if (e.target === e.currentTarget) onclose?.();
   }

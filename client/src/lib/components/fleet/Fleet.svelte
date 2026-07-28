@@ -11,39 +11,25 @@
   import FeatureRow from '$lib/components/fleet/FeatureRow.svelte';
   import ServerRow from '$lib/components/fleet/ServerRow.svelte';
   import MainServerRow from '$lib/components/fleet/MainServerRow.svelte';
-  import { world } from '$lib/stores/world.svelte.js';
+  import { liveMembers, ui } from '$lib/stores/ui.svelte.js';
 
-  /** Active = a live agent or a running dev server. @param {any} f */
-  const featActive = (f: any) => f.members.some(
-    (m: any) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped')),
-  );
-
-  const feats = $derived(
-    world.features.slice().sort(
-      (/** @type {any} */ a, /** @type {any} */ b) => (Number(featActive(b)) - Number(featActive(a))) || a.name.localeCompare(b.name),
-    ),
-  );
-
-  // Unpromoted sessions — surfaced here so Fleet is the one place you watch work.
-  // Ended/deactivated ones linger as stopped, sorted after the live ones.
-  const agents = $derived(
-    world.sessions.filter((s: any) => !s.worktreePath).slice().sort(
-      (/** @type {any} */ a, /** @type {any} */ b) =>
-        (Number(a.state === 'stopped') - Number(b.state === 'stopped')) || (a.title || '').localeCompare(b.title || ''),
-    ),
-  );
-
-  const serverFeats = $derived(feats.filter((f: any) => f.members.some((m: any) => m && m.running)));
-
-  // Running frontends served from a repo's MAIN checkout — not a worktree, so not a
-  // feature. Common when the backend runs in a worktree and the frontend is served from
-  // its main checkout; surfacing them is what makes every running FE openable.
-  const mainWebRunning = $derived((() => {
-    const webSet = new Set(world.webRepos || []);
-    return world.repos.flatMap((r: any) => r.worktrees || []).filter(
-      (w: any) => w.isMain && webSet.has(w.repo) && w.running && (w.ports || []).length,
-    );
-  })());
+  /*
+   * Every list here comes from the ui store rather than being recomputed.
+   *
+   * This component used to carry its own featActive/sort/filter/main-server logic, a
+   * verbatim copy of the store's. That was the source the rail was ported FROM, so the
+   * two were the same code in two places — and the store's copy is the one the rail,
+   * the top bar and ⌘1–9 already read. A second definition of "active" is exactly how
+   * the two surfaces drift into disagreeing about which features are running.
+   *
+   * The store's lists are repo-filtered, and Overview takes them as-is: the filter is
+   * one control with one meaning, and it sits in the rail right beside this pane. Half
+   * a filter — the rail narrowed, the overview not — is the confusing option.
+   */
+  const feats = $derived(ui.visibleFeatures);
+  const agents = $derived(ui.visibleAgents);
+  const serverFeats = $derived(feats.filter((f) => liveMembers(f).some((m) => m.running)));
+  const mainWebRunning = $derived(ui.visibleMainServers);
 
   const nothing = $derived(!feats.length && !agents.length && !mainWebRunning.length);
 </script>

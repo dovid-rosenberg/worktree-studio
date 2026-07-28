@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Feature } from '../../../../../server/types';
+  import type { Feature, Worktree } from '../../../../../server/types';
   /*
    * One FEATURE in the rail — the unit the rail is keyed on.
    *
@@ -16,16 +16,16 @@
   let { feature }: { feature: Feature } = $props();
 
   const ms = $derived(liveMembers(feature));
-  const anyRunning = $derived(ms.some((m: any) => m.running));
+  const anyRunning = $derived(ms.some((m) => m.running));
   const sess = $derived(feature.session); // one session per feature
-  const anyMerged = $derived(ms.some((m: any) => m.merged));
+  const anyMerged = $derived(ms.some((m) => m.merged));
 
   const selected = $derived(
     sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name,
   );
 
   /** @param {any} m */
-  const memberState = (m: any) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
+  const memberState = (m: Worktree) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
 </script>
 
 <div class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
