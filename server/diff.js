@@ -57,6 +57,11 @@ function stripPrefix(p) {
 // versions sit on the same row, and let the leftovers fall through as one-sided rows.
 // Rows reference `lines` BY INDEX so the same payload renders unified (walk `lines`) or
 // side-by-side (walk `rows`) without duplicating any text.
+/**
+ * @param {Array<{ type: import('./types').DiffLineType }>} lines
+ *        only the line KINDS matter here — rows carry indexes, never text
+ * @returns {import('./types').DiffRow[]}
+ */
 function alignRows(lines) {
   const rows = [];
   let i = 0;
@@ -79,6 +84,14 @@ function alignRows(lines) {
 // One hunk body: consume exactly the lines the header promises (counts are
 // authoritative), plus any trailing "\ No newline" marker, which belongs to the line
 // before it and carries no line number of its own.
+/**
+ * @param {string[]} lines           the whole patch, split
+ * @param {number} start             first body line
+ * @param {number} end               exclusive bound (next file's block, or EOF)
+ * @param {import('./types').DiffHunkHeader} hunk  the header this body belongs to;
+ *        its counts are authoritative about how many lines to consume
+ * @returns {{ lines: import('./types').DiffLine[], next: number }}
+ */
 function parseHunkBody(lines, start, end, hunk) {
   const out = [];
   let i = start;
@@ -119,7 +132,9 @@ function parseHunkBody(lines, start, end, hunk) {
 
 // Parse one `diff --git` block: the raw header lines (kept verbatim for re-emission),
 // what kind of change it is, and its hunks.
+/** @returns {import('./types').DiffFile} */
 function parseFile(lines, start, end) {
+  /** @type {import('./types').DiffFile} */
   const file = {
     path: null, oldPath: null, newPath: null, status: 'modified',
     binary: false, oldMode: null, newMode: null, similarity: null,
@@ -165,7 +180,9 @@ function parseFile(lines, start, end) {
       i += 1;
       continue;
     }
-    const hunk = {
+    /** @type {import('./types').DiffHunk} */
+    /** @type {import('./types').DiffHunkHeader} */
+    const head = {
       index: file.hunks.length,
       oldStart: parseInt(m[1], 10),
       oldLines: m[2] === undefined ? 1 : parseInt(m[2], 10),
@@ -174,11 +191,15 @@ function parseFile(lines, start, end) {
       section: m[5] || '',
       header: lines[i],
     };
-    const body = parseHunkBody(lines, i + 1, end, hunk);
-    hunk.lines = body.lines;
-    hunk.rows = alignRows(body.lines);
-    hunk.added = body.lines.filter((l) => l.type === 'add').length;
-    hunk.deleted = body.lines.filter((l) => l.type === 'del').length;
+    const body = parseHunkBody(lines, i + 1, end, head);
+    /** @type {import('./types').DiffHunk} */
+    const hunk = {
+      ...head,
+      lines: body.lines,
+      rows: alignRows(body.lines),
+      added: body.lines.filter((l) => l.type === 'add').length,
+      deleted: body.lines.filter((l) => l.type === 'del').length,
+    };
     file.added += hunk.added;
     file.deleted += hunk.deleted;
     file.hunks.push(hunk);
@@ -192,6 +213,10 @@ function parseFile(lines, start, end) {
 
 // parsePatch(text) → [file, …]. Accepts a multi-file `git diff`/`git show` patch; any
 // preamble (commit message, `git show` header) before the first `diff --git` is ignored.
+/**
+ * @param {string} text  a `git diff` / `git show` patch, possibly multi-file
+ * @returns {import('./types').DiffFile[]}
+ */
 function parsePatch(text) {
   const lines = splitLines(text);
   const starts = [];
@@ -216,6 +241,7 @@ function formatHunkHeader(oldStart, oldLines, newStart, newLines, section) {
   return `@@ -${at(oldStart, oldLines)} +${at(newStart, newLines)} @@${section || ''}`;
 }
 
+/** @param {import('./types').DiffHunk} hunk @returns {string[]} */
 function hunkBodyLines(hunk) {
   const out = [];
   for (const l of hunk.lines) {
@@ -226,6 +252,12 @@ function hunkBodyLines(hunk) {
   return out;
 }
 
+/**
+ * @param {number|string|Array<number|string>|null|undefined} selection
+ *        null/undefined selects every hunk
+ * @param {number} count  how many hunks the file has
+ * @returns {number[]} in-range hunk indexes
+ */
 function normalizeSelection(selection, count) {
   if (selection == null) return [...Array(count).keys()];
   const list = Array.isArray(selection) ? selection : [selection];
@@ -250,6 +282,12 @@ function normalizeSelection(selection, count) {
 //   is HEAD→index, so the "+" side IS the index) → keep it and shift the old side.
 // The header block (mode changes, rename from/to, index line) is copied verbatim: a
 // subset of a renamed file's hunks still has to carry the rename.
+/**
+ * @param {import('./types').DiffFile} file
+ * @param {number|string|Array<number|string>|null} [selection] which hunks to emit
+ * @param {{ reverse?: boolean }} [opts]
+ * @returns {string} a patch `git apply` accepts
+ */
 function formatFilePatch(file, selection, opts = {}) {
   const reverse = !!opts.reverse;
   const sel = new Set(normalizeSelection(selection, file.hunks.length));

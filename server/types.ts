@@ -27,6 +27,19 @@ export type IsoTimestamp = string;
 
 // ---- config -----------------------------------------------------------------
 
+/**
+ * Every key optional, all the way down, with arrays left alone.
+ *
+ * This is what a config looks like to a consumer that reads a handful of keys and
+ * falls back on each — most of the server, and every test that hand-rolls a cfg.
+ * `Partial<Config>` is not enough: it stops at the top level, so a `{ web: { port } }`
+ * would still be required to carry `web.host`.
+ */
+export type PartialDeep<T> =
+  T extends (infer _U)[] ? T
+    : T extends object ? { [K in keyof T]?: PartialDeep<T[K]> }
+      : T;
+
 /** Where a repo's worktrees live on disk (server/layout.js). */
 export interface WorktreeLayout {
   layout: 'nested' | 'sibling' | 'external';
@@ -103,6 +116,8 @@ export interface Config {
   concurrency: ConcurrencyConfig;
   _file?: string;
   _stateDir?: string;
+  /** The boot token, when one was minted. Never written back to config.json. */
+  _token?: string;
 }
 
 // ---- sessions ---------------------------------------------------------------
@@ -159,6 +174,16 @@ export interface Session {
   promotedAt: number | null;
   /** Present only on sessions opened over a worktree that already existed. */
   adopted?: boolean;
+  /** The generated `--settings` file claude was launched with. */
+  settingsFile?: string;
+  /**
+   * The session's hook settings were written WITH a token, so its hook posts are
+   * authenticated. Sessions launched before the token existed lack it and are
+   * grandfathered in by the hook route.
+   */
+  hookAuth?: boolean;
+  /** Epoch ms of the last hook event. Absent until the first one arrives. */
+  lastEventAt?: number;
 }
 
 /**
@@ -199,6 +224,8 @@ export interface Worktree {
   canStart: boolean;
   /** Always null on a main checkout — only linked worktrees carry sessions. */
   session: EmbeddedSession | null;
+  /** Never set. Present so `member.missing` discriminates FeatureMember. */
+  missing?: false;
 }
 
 /**
@@ -239,6 +266,14 @@ export interface Feature {
   session: EmbeddedSession | null;
   /** The concurrency slot (0,1,2…), present only while one is allocated. */
   slot?: number;
+}
+
+/**
+ * A feature as `resolveGroup()` answers it: members naming a worktree that is not
+ * on disk have been dropped, so every remaining member is a real worktree row.
+ */
+export interface ResolvedFeature extends Omit<Feature, 'members'> {
+  members: Worktree[];
 }
 
 /** The chrome a client renders from, alongside the topology it decorates. */
@@ -387,7 +422,11 @@ export interface DiffRow {
   right: number | null;
 }
 
-export interface DiffHunk {
+/**
+ * A hunk's `@@` line, parsed. Separate from DiffHunk because the counts here are
+ * what tell the body parser how many lines to consume — the body cannot exist yet.
+ */
+export interface DiffHunkHeader {
   /** Position in the file's `hunks` — this is the index hunk staging selects on. */
   index: number;
   oldStart: number;
@@ -398,6 +437,9 @@ export interface DiffHunk {
   section: string;
   /** The `@@` header verbatim — the token a stale-selection guard compares on. */
   header: string;
+}
+
+export interface DiffHunk extends DiffHunkHeader {
   lines: DiffLine[];
   rows: DiffRow[];
   added: number;

@@ -29,6 +29,11 @@ function parse(text) {
 // trimmed session copy topology() embeds in every worktree row and feature, built
 // from the sessions as they are AT BUILD TIME. That embedding is the reason a
 // client has to re-project: between two topology frames those copies age.
+//
+// The halves are deliberate MINIATURES — the fields these tests exercise and no
+// others — so the builders are declared loosely on purpose. The full payload shape
+// is state.js's contract (server/types.ts), and state.test.js is what holds it.
+/** @returns {{ w: any, topology: () => any, sessionState: () => any, buildState: () => any }} */
 function world() {
   /** @type {{ worktrees: any[], sessions: any[], servers: any }} */
   const w = {

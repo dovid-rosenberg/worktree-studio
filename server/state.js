@@ -20,7 +20,9 @@ const sources = require('./sources');
 // would go stale the first time either one is rescanned.
 /**
  * @param {object} deps
- * @param {any} deps.cfg
+ * @param {import('./types').PartialDeep<import('./types').Config>} deps.cfg
+ *                                      only a handful of keys are read, each with
+ *                                      a fallback
  * @param {any} deps.manager
  * @param {any} deps.servers
  * @param {any} deps.mux
@@ -44,6 +46,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
 
   // Repos, their worktrees (decorated with server + session), the features/groups
   // those worktrees roll up into, and the config a client renders its chrome from.
+  /** @returns {import('./types').TopologyPayload} */
   function topology() {
     const active = running();
     // One pass over the sessions, then a map lookup per worktree — not a scan of
@@ -93,6 +96,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
 
   // The sessions plus, per session, the dev-server state of every repo it owns
   // (its shared workspace) — the half that changes on every Claude hook.
+  /** @returns {import('./types').SessionStatePayload} */
   function sessionState() {
     const active = running();
     const sessions = manager.all();
@@ -114,6 +118,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
 
   // Superset of worktree-dash's contract. Async because every caller awaits it and
   // the halves may need to do I/O later.
+  /** @returns {Promise<import('./types').StatePayload>} */
   async function buildState() {
     return { ...topology(), ...sessionState() };
   }
@@ -131,18 +136,36 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
     paths.retain(live);
   }
 
+  // A member that is really on disk. A manual group can name a worktree that has
+  // since been removed, and those arrive as { missing, ref } stubs.
+  /**
+   * @param {import('./types').FeatureMember} m
+   * @returns {m is import('./types').Worktree}
+   */
+  function present(m) { return !!m && !m.missing; }
+
   // Resolve a feature/group by name from current state; drop missing members.
+  /**
+   * @param {string} name
+   * @returns {Promise<{ group: import('./types').ResolvedFeature|null, flat: import('./types').Worktree[] }>}
+   */
   async function resolveGroup(name) {
     const st = await buildState();
     const g = (st.features || []).find((x) => x.name === name) || (st.groups || []).find((x) => x.name === name);
     if (!g) return { group: null, flat: [] };
     const flat = st.repos.flatMap((r) => r.worktrees);
-    return { group: { ...g, members: g.members.filter((m) => m && !m.missing) }, flat };
+    return { group: { ...g, members: g.members.filter(present) }, flat };
   }
 
   // running worktrees in the same repo at a different path (must stop to switch) —
   // but a concurrency-slotted repo runs on its own offset ports per feature, so
   // running it in another worktree is NOT a conflict (no stop & switch needed).
+  /**
+   * @template {Pick<import('./types').Worktree, 'repo'|'path'|'running'>} W
+   * @param {Pick<import('./types').Worktree, 'repo'|'path'>} member
+   * @param {W[]} flat  every worktree in every repo
+   * @returns {W[]}
+   */
   function conflictsFor(member, flat) {
     if (servers.isSlotted(member.repo)) return [];
     return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);

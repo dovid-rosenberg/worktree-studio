@@ -60,6 +60,11 @@ class SessionManager extends EventEmitter {
   // IDENTITY it belongs to, and that has to be the same answer features.js groups
   // by — otherwise `POST /group/pr { group: session.feature }` looks up a feature
   // that doesn't exist under any strategy but `basename`.
+  /**
+   * @param {import('./types').PartialDeep<import('./types').Config>} cfg
+   * @param {any} mux           the multiplexer adapter (server/multiplexer)
+   * @param {any} [identity]    a server/identity.js resolver; built from cfg if omitted
+   */
   constructor(cfg, mux, identity) {
     super();
     this.cfg = cfg;
@@ -75,7 +80,9 @@ class SessionManager extends EventEmitter {
     for (const s of readJsonState(this.file, []) || []) this.sessions.set(s.id, s);
   }
 
+  /** Every session, newest first. @returns {import('./types').Session[]} */
   all() { return [...this.sessions.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); }
+  /** @param {string} id @returns {import('./types').Session|undefined} */
   get(id) { return this.sessions.get(id); }
   _save() { writeJson(this.file, this.all()); }
   _touch(id) { this._save(); this.emit('change', { type: 'session', id }); }
@@ -99,6 +106,10 @@ class SessionManager extends EventEmitter {
   // `resolve` is injectable so a caller that rebuilds this index several times a
   // second (the SSE broadcast) can memoize resolution across builds; the default
   // resolves uncached, which is what a one-off lookup wants.
+  /**
+   * @param {(p: string) => string} [resolve]
+   * @returns {Map<string, import('./types').Session>} worktree path → session
+   */
   sessionIndex(resolve = realpath) {
     const index = new Map();
     for (const s of this.sessions.values()) {
@@ -116,6 +127,7 @@ class SessionManager extends EventEmitter {
   // The session (if any) whose promoted/adopted worktree is this path — used to
   // surface agent state on a Fleet worktree row. For a single lookup; anything
   // resolving many paths at once should build one sessionIndex() and reuse it.
+  /** @param {string} worktreePath @returns {import('./types').Session|null} */
   sessionForWorktree(worktreePath) {
     if (!worktreePath) return null;
     return this.sessionIndex().get(realpath(worktreePath)) || null;
@@ -125,6 +137,10 @@ class SessionManager extends EventEmitter {
   // match a name in state.js's features/groups list. Delegated to the one resolver
   // so a session and the Fleet rail can never disagree about which feature a
   // worktree is part of.
+  /**
+   * @param {{ repo: string, wtname?: string, branch?: string, path?: string }} w
+   * @returns {string} the feature identity, under the configured strategy
+   */
   featureOf({ repo, wtname, branch, path: p }) {
     return this.identity.of({ repo, wtname, branch, path: p });
   }
@@ -135,6 +151,7 @@ class SessionManager extends EventEmitter {
   // (`123`, a manual group name), not a directory name. The session's own worktree
   // name is the authority; `s.feature` remains the last fallback so sessions
   // persisted before the two were told apart keep naming siblings exactly as before.
+  /** @param {import('./types').Session} s */
   worktreeNameFor(s) {
     const primary = (s.repos || []).find((r) => r.primary);
     return s.worktree || (primary && primary.worktree) || s.suggestedName || s.feature;
@@ -244,6 +261,11 @@ class SessionManager extends EventEmitter {
     return { ok: true };
   }
 
+  /**
+   * @param {{ seed: any, repoPath: string, repoName: string,
+   *           additionalRepos?: Array<{ repo: string, repoPath: string }> }} args
+   * @returns {Promise<import('./types').Session>}
+   */
   async create({ seed, repoPath, repoName, additionalRepos }) {
     const id = makeId('s_');
     const title = seed.title || 'New session';
@@ -297,6 +319,8 @@ class SessionManager extends EventEmitter {
    * session here"). `seed` is optional: without one the worktree name is the title.
    * @param {{ worktreePath: string, repoName: string, repoPath: string,
    *           branch?: string, wtname?: string, seed?: any }} args
+   * @returns {Promise<import('./types').Session|null>} null while an adopt of the
+   *          same worktree is already in flight
    */
   async adopt({ worktreePath, repoName, repoPath, branch, wtname, seed }) {
     // dedup: never open two sessions for the same worktree, even on concurrent calls
@@ -446,6 +470,11 @@ class SessionManager extends EventEmitter {
   }
 
   // Apply a Claude Code hook event to a session's live state.
+  /**
+   * @param {string} id
+   * @param {string} event    the Claude Code hook name (SessionStart, Stop, …)
+   * @param {any} [payload]
+   */
   applyHook(id, event, payload) {
     const s = this.get(id);
     if (!s) return;
