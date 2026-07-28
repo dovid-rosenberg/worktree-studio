@@ -88,6 +88,14 @@
     <FleetInsights />
   {:else if feature}
     <FeaturePane {feature} />
+  {:else if ui.selectionPending}
+    <!-- Selected, but the frame carrying it has not landed. Saying "no session" here
+         is what made starting an agent look like a no-op. -->
+    <div class="empty">
+      <div class="empty-glyph">⎇</div>
+      <h2>Starting the session…</h2>
+      <p>Waiting for the daemon to report it. This is usually instant.</p>
+    </div>
   {:else if !session}
     <div class="empty">
       <div class="empty-glyph">⎇</div>

@@ -1,39 +1,38 @@
 <script lang="ts">
   /*
-   * The rail: repo filter, four sections, count footer.
+   * The rail: repo filter, one flat list, count footer.
    *
-   * The sections are Fleet's, in Fleet's order, because this is where Fleet's content
-   * went. Read stores/ui.svelte.js for why the rail is keyed on features and what had to
-   * come across with the rows (ordering and filter semantics, both silent if dropped).
+   * ONE ROW PER THING. This used to be four sections — Servers running, Servers · no
+   * worktree, Agents · no worktree, Worktrees — and a feature with a dev server up
+   * appeared in two of them. The justification (fleet/ServerRow: "when servers are
+   * running, this is the section you watch, so the browse buttons belong here too")
+   * expired when every action moved to the ActionBar: the duplicate carried no buttons,
+   * so it was the same readout drawn twice.
    *
-   * The Servers-running section deliberately REPEATS features that also appear under
-   * Worktrees. ServerRow.svelte states the reason outright: "when servers are running,
-   * this is the section you watch, so the browse buttons belong here too rather than only
-   * further down the page." It reads like duplication to tidy away. It is not.
+   * NO BUCKETS. "Running" conflates two unrelated facts — dev servers up, and agent
+   * state — so a section keyed on it would file a *waiting* agent, the one row that
+   * actually wants the user, among worktrees untouched for a month. Instead every row
+   * sorts on `active` and a single divider marks where the quiet ones start.
    *
-   * Everything below is keyed — features by name, cards by session id — so a
-   * `session-state` frame mutates text nodes and class lists and touches nothing else.
-   * The scroll position of `.rail-list` and the focus ring on a card both survive, which
-   * they could not when app.js rebuilt this list from scratch on every tick.
+   * That also retires four `position:sticky; top:0` headers sharing one scroller, which
+   * collided as you scrolled past them.
+   *
+   * Keyed by `row.key` so a `session-state` frame mutates text nodes and class lists and
+   * touches nothing else: scroll position and the focus ring on a card both survive.
    */
   import FeatureCard from '$lib/components/rail/FeatureCard.svelte';
   import MainServerCard from '$lib/components/rail/MainServerCard.svelte';
   import SessionCard from '$lib/components/rail/SessionCard.svelte';
   import { ui } from '$lib/stores/ui.svelte.js';
-  import { world } from '$lib/stores/world.svelte.js';
 
-  const feats = $derived(ui.visibleFeatures);
-  const servers = $derived(ui.serverFeatures);
-  const agents = $derived(ui.visibleAgents);
-  const mains = $derived(ui.visibleMainServers);
-
-  const sessionless = $derived(feats.filter((f) => !f.session).length);
-  const empty = $derived(!feats.length && !agents.length && !mains.length);
+  const rows = $derived(ui.railRows);
+  const dividerAt = $derived(ui.dividerAt);
+  const quiet = $derived(dividerAt < 0 ? 0 : rows.length - dividerAt);
 </script>
 
 <aside class="rail">
   <div class="rail-head">
-    <span id="rail-label">Features</span>
+    <span id="rail-label">Work</span>
     <!-- Matches on any MEMBER repo: filtering to one repo must not split a BE+FE feature. -->
     <select class="mini-select" bind:value={ui.repoFilter} title="Filter by repo" aria-label="Filter by repo">
       <option value="">all repos</option>
@@ -41,49 +40,46 @@
     </select>
   </div>
 
-  <p class="sortnote">active first, then A–Z</p>
-
   <div class="rail-list" role="list" aria-labelledby="rail-label">
-    {#if empty}
+    {#if !rows.length}
       <div class="rail-empty">
-        No worktrees or agents yet. Click “+ New session”, or create a worktree by promoting one.
+        Nothing here yet. Click “+ New session”, or create a worktree by promoting one.
       </div>
     {/if}
 
-    {#if servers.length}
-      <div class="sectionrow">⇅ Servers running · {servers.length}</div>
-      {#each servers as f (f.name)}<FeatureCard feature={f} />{/each}
-    {/if}
-
-    {#if mains.length}
-      <div class="sectionrow">⇅ Servers · no worktree · {mains.length}</div>
-      {#each mains as w (w.path)}<MainServerCard worktree={w} />{/each}
-    {/if}
-
-    {#if agents.length}
-      <div class="sectionrow">✦ Agents · no worktree · {agents.length}</div>
-      {#each agents as s (s.id)}<SessionCard session={s} />{/each}
-    {/if}
-
-    {#if feats.length}
-      <div class="sectionrow">⎇ Worktrees · {feats.length}</div>
-      {#each feats as f (f.name)}<FeatureCard feature={f} />{/each}
-    {/if}
+    {#each rows as row, i (row.key)}
+      {#if i === dividerAt}
+        <div class="divider"><span>idle · {quiet}</span></div>
+      {/if}
+      {#if row.kind === 'feature'}
+        <FeatureCard feature={row.feature} />
+      {:else if row.kind === 'agent'}
+        <SessionCard session={row.session} />
+      {:else}
+        <MainServerCard worktree={row.worktree} />
+      {/if}
+    {/each}
   </div>
 
+  <!-- Counts what is drawn. It used to say "N feature(s)" while the list also held
+       agents and main-checkout servers, so the number never matched the rows. -->
   <div class="rail-foot">
-    {feats.length} feature(s) · {world.sessions.length} session(s){sessionless ? ` · ${sessionless} without an agent` : ''}
+    {rows.length} row(s){quiet ? ` · ${quiet} idle` : ''}
   </div>
 </aside>
 
 <style>
   .rail { border-right:1px solid var(--border); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
   .rail-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 14px; font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); }
-  .sortnote { margin:0; padding:5px 14px; font-family:var(--mono); font-size:9.5px; color:var(--faint); border-bottom:1px solid var(--border); }
   /* overflow-x:hidden is load-bearing: a long branch name must truncate inside its card,
      never widen the rail into a horizontal scrollbar. */
   .rail-list { flex:1; overflow-y:auto; overflow-x:hidden; padding:8px 0; display:flex; flex-direction:column; }
   .rail-foot { padding:10px 14px; border-top:1px solid var(--border); font-family:var(--mono); font-size:10.5px; color:var(--faint); }
   .rail-empty { padding:14px; font-family:var(--mono); font-size:10.5px; color:var(--faint); }
-  .sectionrow { font-family:var(--mono); font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--brand); background:var(--elevated); padding:6px 14px; border-top:1px solid var(--border); border-bottom:1px solid var(--border); font-weight:700; position:sticky; top:0; z-index:2; margin-bottom:6px; }
+
+  /* A hairline, not a header: it separates, it does not label a category. Deliberately
+     not sticky — the four sticky headers it replaces used to pile up on each other. */
+  .divider { display:flex; align-items:center; gap:9px; margin:6px 12px 8px; }
+  .divider::after { content:''; flex:1; height:1px; background:var(--border); }
+  .divider span { font-family:var(--mono); font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
 </style>
