@@ -8,6 +8,17 @@ watched at a glance), not by area.
 
 ---
 
+## Done since this was written (2026-07-28)
+
+- **`startFeatureSession` selection bug** — wrote `selectedId` without clearing
+  `selectedFeatureName`, so starting an agent from a sessionless feature left the
+  feature table on screen. Fixed.
+- **⌘1–9 selected the wrong card** — `railOrder` was agents-then-features while the
+  rail draws servers, mains, agents, features. Rebuilt from the rendered sections.
+- **Terminal follows the theme** (#11 below) — both palettes were dark.
+
+---
+
 ## P0 — the rail lies about what is happening
 
 ### 1. One row per thing
@@ -19,30 +30,62 @@ running-servers section; sort running features to the top of one list.
 ### 2. Rename the bottom section, and widen what it holds
 "Worktrees" names the implementation, not the thing. It should be **everything not
 running** — including sessions that have no worktree yet, which today sit in a separate
-`✦ Agents · no worktree` section. Two sections total: what is running, and what is not.
+`✦ Agents · no worktree` section.
 
-### 3. Three status indicators, none legible
-A card can show a state dot, an `agent · <state>` pill, a `servers · <state>` pill, a
-slot badge and a merged badge. Nothing says which is which.
+> **The review pushed back on the label, not the instinct.** "Running" is two orthogonal
+> things here — dev servers up, and agent state — and `featureActive` already conflates
+> them. A bucket called "not running" puts a **waiting agent that needs your answer** in
+> with a stale worktree from last month. Counter-proposal: **one flat list, no sections**,
+> sorted active-first, with a single hairline divider (`idle · 4`) where the active run
+> ends. Sessionless agents and main-checkout servers become cards in that list with a
+> type glyph, not their own headers. Same "everything else at the bottom", without a
+> taxonomy that buries the one row that wants you.
+>
+> Side effect it also fixes: four `.sectionrow`s all set `position:sticky; top:0` in one
+> scroller, so they collide while scrolling.
+
+### 3. Status indicators — it is six, not three
+A card can show: a state dot, an `agent · <state>` pill **with its own dot** encoding the
+same value eight pixels away, a `⇅ servers` pill, a per-member dot per repo, a `✓ merged`
+badge, a slot badge, and a green left border. At 7 cards that is ~42 glyphs to scan to
+find one waiting agent. Nothing says which is which.
+
+Review's recommendation, which I'd adopt: **one dot = agent state, one green left edge =
+servers up, nothing else by default.** Plus a legend in the `?` sheet.
 - Render a pill only when its state is **non-default** (`v3-plan` §1.3): absence means
   stopped/idle, so `agent · waiting` stops competing with six neighbours.
 - Give the survivors distinguishable form, not just colour.
 
-### 4. Buttons exist in two places
+### 4. Buttons exist in two places — with one carve-out
 `DockHead` (top) and `ActionBar` (bottom) both carry Delete, Deactivate, Open in editor,
 ＋repo, Rename. **All of it moves to the bottom.** DockHead keeps identity only —
-title, branch, state — or goes away entirely.
+title, branch, state.
+
+> **Carve-out from the review, which I agree with:** do NOT move `TabStrip`'s controls
+> down. `＋`, `⊟ Split` and Changes/Logs/Insights are *view switchers*, not actions on the
+> selection. The learnable law is **top switches what you are looking at, bottom does
+> something to it** — "everything at the bottom" would put tab switching 900px from the
+> tabs.
 
 ---
 
 ## P1 — things that are the wrong shape
 
-### 5. Delete the Overview view
+### 5. Delete the Overview view — confirmed redundant
 `Fleet.svelte` mounted as a dock pane. Once the rail is fixed (1–3) it shows the same
 information in a second place, which is the problem it was meant to solve. Removing it
-also retires `ui.dockView === 'overview'`, the `⌘\` toggle and the TopBar button.
+also retires `ui.dockView === 'overview'`, the `⌘\` toggle, the TopBar button, and the
+six `fleet/*` components — a parallel component tree that will otherwise drift from the
+rail cards. **Check `fleet/FeatureMenu` for verbs the ActionBar lacks before deleting.**
 
-### 6. Insights becomes a pure info view
+### 6. Insights becomes a pure info view — and it already loses history
+
+> **The review found the data bug behind this.** `server/transcript-routes.ts` builds the
+> usage response by iterating `manager.all()` — *live* sessions — and looks up index rows
+> per live session. `transcript-index.ts` never deletes rows. So a deleted session's cost
+> data is on disk and unreachable: exactly the "insights on past work" you asked for.
+> Fix is cheap — iterate the index as the outer loop and render sessions with no live
+> counterpart as archived rows.
 - It must not link back into selecting a session (`FleetInsights` currently wires
   `onselect` → `ui.goToSession`).
 - Opening it should **deselect everything** — it is about the fleet, not the selection.
@@ -57,11 +100,14 @@ also retires `ui.dockView === 'overview'`, the `⌘\` toggle and the TopBar butt
   split is a separate tmux session with its own windows. Decide: fold them into one
   strip (visually one thing, two owners) or make the separation deliberate and labelled.
 
-### 8. `FeaturePane` — replace, don't keep
-It shows a repo/branch/port table where the terminal would be, for a feature with no
-session. The ActionBar already carries every action it offers. Candidates for that
-space: recent commits on the branch, the diff vs base, or the last transcript for that
-feature — something you cannot get from the bottom bar.
+### 8. `FeaturePane` — cut half of it, keep the other half
+Its `.cta` button row is a 1:1 duplicate of ActionBar's feature branch — delete that.
+The **table is not duplicated**: it is the only place branch, ports, merge state and
+per-repo server state appear together, which is the thing to check on a BE+FE feature.
+Keep the table, kill the buttons, and give the reclaimed space to what is actually
+missing: recent commits + uncommitted count per member repo (the `/api/sessions/:id/commits`
+machinery already exists), so a sessionless worktree can answer "what is in here, and is
+it merged?" without starting an agent.
 
 ---
 
@@ -70,7 +116,7 @@ feature — something you cannot get from the bottom bar.
 ### 9. Drop `mux: tmux` from the TopBar
 tmux is the only driver. It was a badge when zellij was still a possibility.
 
-### 10. `reattached` is jargon, and stale
+### 10. `reattached` is jargon, and stale — set `activity = ''` instead
 Set once in `sessions.ts` `restore()` when a tmux session outlived a daemon restart —
 "I reconnected instead of relaunching". It then never updates until the next hook, so it
 sits on every card forever. Either drop boot-time activity strings entirely, or word it
@@ -104,6 +150,16 @@ it is repeatable. **Highest-value engineering gap in the repo.** Start with
 ### 15. End-to-end coverage is server-only (`v3-plan` §2.2–2.5)
 Two e2e tests, no property tests where they are obviously right (hunk math, feature
 identity), no smoke suite, chaos testing only ad hoc.
+
+### 15a. Unmentioned, from the review
+- **Rail header lies**: titled `Features`, but the list holds agents and main-checkout
+  servers; the footer counts `feats.length` "feature(s)" while excluding them. Retitle to
+  `Work`, count what is drawn.
+- **`TabStrip` writes `ui.dockView` directly** rather than `setDockView`, bypassing the
+  persistence logic. Harmless today, a trap later.
+- **The two-field selection model should collapse** into one tagged value
+  (`{ kind: 'session' | 'feature', id }`). The `startFeatureSession` bug fixed above was
+  this model failing exactly where its own comment promised it would not.
 
 ### 16. Deferred, from `v3-plan` §3
 - `/group/pr` loops members serially; a wedged member delays its siblings.
