@@ -20,43 +20,79 @@ import * as pricing from '../server/pricing.ts';
 import { EventEmitter } from 'node:events';
 import * as routesReview from '../server/routes-review.ts';
 import * as transcriptRoutes from '../server/transcript-routes.ts';
+import type { TranscriptManager } from '../server/transcript-routes.ts';
+import type { AddressInfo } from 'net';
+import type { Session } from '../server/types.ts';
+import { body as jsonBody, present, session as makeSession } from './helpers.ts';
+import type { JsonBody } from './helpers.ts';
 
 // server.ts mounts this last, after every route. The route modules used to carry their
 // own async wrapper, so a harness that omitted it still got JSON out of a throwing
 // handler; now the error policy belongs to the app, and a miniature that leaves it out
 // is testing a wiring the daemon does not have. Silent, because the deliberately
 // minimal fakes below make some routes throw on purpose.
-const mountErrors = (app) => app.use(crash.routeErrors({ log: () => {} }));
+const mountErrors = (app: express.Express) => app.use(crash.routeErrors({ log: () => {} }));
 
 // The real (default) feature-identity resolver — slot keys come from it in
 // production, so the fake derives them the same way rather than hardcoding one.
 const identity = createIdentity({});
 
-const WT = (name) => `/code/api/.worktrees/${name}`;
+const WT = (name: string) => `/code/api/.worktrees/${name}`;
 
 // Records what the orchestrator asked of the collaborators it was handed.
-/**
- * @param {{ group?: any, flat?: any[], conflicts?: any[],
- *           allocError?: any, startError?: any }} [opts]
- */
-function harness({ group, flat = [], conflicts = [], allocError = null, startError = null } = {}) {
-  const calls = { stopped: [], started: [], released: [], allocated: [], broadcasts: 0 };
+// A feature member as these routes read it — the same slice orchestrator.ts's own
+// `Member` names. Spelled here rather than imported because that type is internal to
+// the module under test, and a fixture that had to match it exactly would defeat the
+// point of the module declaring a narrow one.
+interface Member {
+  repo: string;
+  path: string;
+  branch?: string | null;
+  wtname?: string;
+  running?: boolean;
+  canStart?: boolean;
+  session?: { id: string } | null;
+}
+interface HarnessOpts {
+  group?: { name: string; members: Member[] };
+  flat?: Member[];
+  conflicts?: Member[];
+  allocError?: string | null;
+  startError?: string | null;
+}
+function harness({ group, flat = [], conflicts = [], allocError = null, startError = null }: HarnessOpts = {}) {
+  const calls = {
+    stopped: [] as Array<[string, string]>,
+    started: [] as Array<[string, string]>,
+    released: [] as string[],
+    allocated: [] as string[],
+    broadcasts: 0,
+  };
   const servers = {
     identity,
-    featureFor: (p) => identity.ofPath(p),
-    allocSlotFor: (f) => { calls.allocated.push(f); return allocError ? { error: allocError } : { slot: 0 }; },
-    releaseSlot: (f) => calls.released.push(f),
+    featureFor: (p: string) => identity.ofPath(p),
+    allocSlotFor: (f: string) => { calls.allocated.push(f); return allocError ? { error: allocError } : { slot: 0 }; },
+    releaseSlot: (f: string) => calls.released.push(f),
     launchOpts: () => ({ env: {}, ports: [] }),
-    stop: async (repo, p) => { calls.stopped.push([repo, p]); return { ok: true }; },
-    start: async (repo, p) => { calls.started.push([repo, p]); return startError ? { ok: false, error: startError } : { ok: true }; },
-    restart: async (repo, p) => { calls.started.push([repo, p]); return { ok: true }; },
+    stop: async (repo: string, p: string) => { calls.stopped.push([repo, p]); return { ok: true }; },
+    start: async (repo: string, p: string) => { calls.started.push([repo, p]); return startError ? { ok: false, error: startError } : { ok: true }; },
+    restart: async (repo: string, p: string) => { calls.started.push([repo, p]); return { ok: true }; },
   };
   const deps = {
     cfg: { editors: {}, defaultEditor: '' },
     servers,
-    manager: { get: () => null, deactivate: async () => ({ ok: true }), close: async () => ({ ok: true }), sessionForWorktree: () => null },
+    // Only what the routes under test call; adopt/attachRepo are exercised elsewhere,
+    // and a route that reached for one here would be a wiring bug worth failing on.
+    manager: {
+      get: () => null,
+      deactivate: async () => ({ ok: true }),
+      close: async () => ({ ok: true }),
+      sessionForWorktree: () => null,
+      adopt: async () => null,
+      attachRepo: async () => ({ ok: true }),
+    },
     repos: () => [{ name: 'api', path: '/code/api' }],
-    resolveGroup: async (name) => (group && name === group.name ? { group, flat } : { group: null, flat: [] }),
+    resolveGroup: async (name: string) => (group && name === group.name ? { group, flat } : { group: null, flat: [] }),
     conflictsFor: () => conflicts,
     refreshRunning: async () => {},
     scheduleBroadcast: () => { calls.broadcasts++; },
@@ -69,27 +105,36 @@ function harness({ group, flat = [], conflicts = [], allocError = null, startErr
   app.use('/api', api);
   app.use('/api/v1', api);
   orchestrator.register(api, deps);
-  createForge({ manager: deps.manager, resolveGroup: deps.resolveGroup, providers: [] }).register(api);
+  // The forge reads a narrower slice than the orchestrator does: a session's repos,
+  // and a group whose members each carry a branch.
+  createForge({
+    manager: { get: () => undefined },
+    resolveGroup: async (name: string) => (group && name === group.name
+      ? { group: { members: group.members.map((m) => ({ repo: m.repo, path: m.path, branch: m.branch ?? null })) } }
+      : { group: null }),
+    providers: [],
+  }).register(api);
   mountErrors(app);
   return { app, calls };
 }
 
 // Serve `app` for the duration of fn, handing it a (path, init) => Response fetcher.
-async function serving(app, fn) {
+type Fetcher = (path: string, init?: RequestInit) => Promise<Response>;
+async function serving<T>(app: express.Express, fn: (get: Fetcher) => Promise<T>): Promise<T> {
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}`;
+  const base = `http://127.0.0.1:${(present(server.address()) as AddressInfo).port}`;
   try { return await fn((p, init) => fetch(base + p, init)); }
   finally { server.close(); }
 }
 
-const post = (body) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const post = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 // Call the same route under both prefixes and assert the answers match.
-async function bothPrefixes(get, route, init) {
+async function bothPrefixes(get: Fetcher, route: string, init?: RequestInit): Promise<{ status: number; body: JsonBody }> {
   const un = await get(`/api${route}`, init);
   const v1 = await get(`/api/v1${route}`, init);
-  const [a, b] = [await un.json(), await v1.json()];
+  const [a, b] = [await jsonBody(un), await jsonBody(v1)];
   assert.equal(un.status, v1.status, `${route}: same status under both prefixes`);
   assert.deepEqual(a, b, `${route}: same body under both prefixes`);
   return { status: un.status, body: a };
@@ -156,7 +201,7 @@ test('group/start asks for confirmation before stopping a conflicting worktree',
   const { app, calls } = harness({ group: FEATURE, conflicts: [conflict] });
   await serving(app, async (get) => {
     const r = await get('/api/v1/group/start', post({ group: 'feat-a' }));
-    const body = await r.json();
+    const body = await jsonBody(r);
     assert.equal(body.needsConfirm, true);
     assert.deepEqual(body.conflicts, [conflict]);
     assert.equal(body.willStart.length, 1);
@@ -191,7 +236,7 @@ const STARTABLE = {
 test('group/start reports ok:false when every member failed to start', async () => {
   const { app } = harness({ group: STARTABLE, startError: 'port 3030 already in use (pid 991)' });
   await serving(app, async (get) => {
-    const body = await (await get('/api/v1/group/start', post({ group: 'feat-b' }))).json();
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-b' })));
     assert.equal(body.started, 0);
     assert.equal(body.total, 2);
     assert.equal(body.failures.length, 2);
@@ -203,7 +248,7 @@ test('group/start reports ok:false for a partial start too', async () => {
   // FEATURE has one member already running, so exactly one is attempted — and it fails.
   const { app } = harness({ group: FEATURE, startError: 'no start config for repo \'fe\'' });
   await serving(app, async (get) => {
-    const body = await (await get('/api/v1/group/start', post({ group: 'feat-a' }))).json();
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-a' })));
     assert.deepEqual(body, { ok: false, started: 0, total: 1, failures: [{ repo: 'fe', error: "no start config for repo 'fe'" }] });
   });
 });
@@ -212,7 +257,7 @@ test('group/start with nothing to start is a no-op, not a failure', async () => 
   const allRunning = { name: 'feat-c', members: [{ repo: 'api', path: WT('feat-c'), running: true, canStart: true }] };
   const { app } = harness({ group: allRunning });
   await serving(app, async (get) => {
-    const body = await (await get('/api/v1/group/start', post({ group: 'feat-c' }))).json();
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-c' })));
     assert.deepEqual(body, { ok: true, started: 0, total: 0, failures: [] });
   });
 });
@@ -221,7 +266,7 @@ test('the needsConfirm answer stays ok:true — the server is asking, not failin
   const conflict = { repo: 'fe', path: '/code/fe/.worktrees/other', running: true };
   const { app } = harness({ group: FEATURE, conflicts: [conflict] });
   await serving(app, async (get) => {
-    const body = await (await get('/api/v1/group/start', post({ group: 'feat-a' }))).json();
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-a' })));
     assert.equal(body.needsConfirm, true);
     assert.equal(body.ok, true, 'clients branch on needsConfirm before ok');
   });
@@ -245,7 +290,7 @@ function routeModules() {
   const api = express.Router();
   app.use('/api', api);
   app.use('/api/v1', api);
-  const manager = { get: () => null, all: () => [], on: () => {} };
+  const manager: TranscriptManager = { get: () => null, all: () => [], on: () => undefined };
   routesReview.register(api, { manager, repos: () => [] });
   // A throwaway state dir, so the real ~/.local/state index is never opened.
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-routing-'));
@@ -370,9 +415,9 @@ test('repeated transcript query params are collapsed, not passed through as arra
 // the single follow-up pass that pass is owed.
 
 test('a burst of Stop hooks collapses into one follow-up index pass', async () => {
-  const manager = /** @type {any} */ (new EventEmitter());
-  const session = { id: 's1' };
-  manager.get = (id) => (id === 's1' ? session : null);
+  const manager = new EventEmitter() as EventEmitter & TranscriptManager;
+  const s1 = makeSession({ id: 's1' });
+  manager.get = (id: string) => (id === 's1' ? s1 : null);
   manager.all = () => [];
 
   const app = express();
@@ -381,10 +426,10 @@ test('a burst of Stop hooks collapses into one follow-up index pass', async () =
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
   const { index } = transcriptRoutes.register(api, { manager, cfg: { _stateDir: stateDir } });
 
-  const calls = [];
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  index.index = /** @type {any} */ (async (/** @type {any} */ s) => { calls.push(s.id); await gate; return { ok: true }; });
+  const calls: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  index.index = async (s: { id?: string | null }) => { calls.push(String(s.id)); await gate; return { ok: true }; };
 
   // Three hooks with no await between them: the first starts a pass, the other two
   // land while it is in flight.
@@ -401,8 +446,8 @@ test('a burst of Stop hooks collapses into one follow-up index pass', async () =
 });
 
 test('a hook for an event that is not a reindex trigger enqueues nothing', async () => {
-  const manager = /** @type {any} */ (new EventEmitter());
-  manager.get = () => ({ id: 's1' });
+  const manager = new EventEmitter() as EventEmitter & TranscriptManager;
+  manager.get = () => makeSession({ id: 's1' });
   manager.all = () => [];
   const app = express();
   const api = express.Router();
@@ -410,8 +455,8 @@ test('a hook for an event that is not a reindex trigger enqueues nothing', async
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
   const { index } = transcriptRoutes.register(api, { manager, cfg: { _stateDir: stateDir } });
 
-  const calls = [];
-  index.index = /** @type {any} */ (async (/** @type {any} */ s) => { calls.push(s.id); return { ok: true }; });
+  const calls: string[] = [];
+  index.index = async (s: { id?: string | null }) => { calls.push(String(s.id)); return { ok: true }; };
   for (const event of ['PreToolUse', 'Notification', 'SessionStart']) manager.emit('hook', { id: 's1', event });
   assert.deepEqual(calls, [], 'every tool call must not re-stat the transcript');
 

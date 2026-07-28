@@ -43,6 +43,20 @@ export function present<T>(v: T | null | undefined, what = 'value'): T {
   return v;
 }
 
+/**
+ * A parsed HTTP JSON body.
+ *
+ * `any` deliberately, and it is the only `any` in the suite: a response body has no
+ * compile-time shape — `Response.json()` is typed `unknown` for exactly that reason —
+ * and every use is an assertion ABOUT its runtime value. Narrowing each read would
+ * add noise to the assertion without adding a check, since the assertion is the check.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type JsonBody = any;
+
+/** `res.json()` as a body the assertions can read. */
+export async function body(res: Response): Promise<JsonBody> { return res.json(); }
+
 // ---- fixtures ---------------------------------------------------------------
 
 /**
