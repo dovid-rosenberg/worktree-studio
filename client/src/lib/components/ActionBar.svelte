@@ -11,14 +11,21 @@
    *
    * It handles both selection kinds, because both need the same verbs. A feature with no
    * agent simply has fewer of them.
+   *
+   * ONE VERB FOR STARTING DEV SERVERS. This used to show `Run servers` / `Stop servers`
+   * beside `Run stack` / `Stop stack` for a promoted session. They target the SAME
+   * worktrees — a session's repos are its feature's members — so the pair read as two
+   * different capabilities and were one. The stack verbs win because they do strictly
+   * more: `/group/start` detects a port conflict with another feature and offers to stop
+   * and switch, where the session route just 409s. The per-session controls still live in
+   * the dock's ServerBar, next to the ports they affect.
    */
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
     deleteFeature, openEditor, openGroup, pending, prFeature, promote, renameSession,
-    restartStack, runStack, startFeatureSession, startSessionServers, stopSessionServers,
-    stopStack,
+    restartStack, runStack, startFeatureSession, stopStack,
   } from '$lib/ops.svelte.js';
 
   const session = $derived(ui.selected);
@@ -88,8 +95,6 @@
                arrow function, since `session` could be reassigned before it runs. -->
           {@const wt = session.worktreePath}
           <button class="btn sm" onclick={() => openEditor(wt)}>Open in editor</button>
-          <button class="btn sm" onclick={() => startSessionServers(session)}>Run servers</button>
-          <button class="btn sm ghost" onclick={() => stopSessionServers(session)}>Stop servers</button>
         {:else}
           <button class="btn sm primary" disabled={busy} onclick={() => guard(() => promote(session))}>⤴ Promote to worktree</button>
         {/if}

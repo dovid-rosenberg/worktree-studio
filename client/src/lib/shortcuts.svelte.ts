@@ -16,7 +16,7 @@ import { ui } from '$lib/stores/ui.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
-import { promote, startSessionServers } from '$lib/ops.svelte.js';
+import { promote, runStack } from '$lib/ops.svelte.js';
 
 const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
@@ -25,7 +25,7 @@ const ROWS: [string, string][] = [
   ['⌘1–9', 'Jump to the Nth rail row'],
   ['⌘↵', 'Promote current to worktree'],
   ['⌘D', 'Review changes'],
-  ['⌘R', 'Run dev servers'],
+  ['⌘R', 'Run stack'],
   ['?', 'This help'],
 ];
 
@@ -69,5 +69,7 @@ export function handleShortcut(e: KeyboardEvent): void {
     if (s && s.worktreePath) { e.preventDefault(); ui.goToSession(s.id); ui.dockView = 'changes'; }
     return;
   }
-  if (e.key === 'r' || e.key === 'R') { if (s && s.worktreePath) { e.preventDefault(); startSessionServers(s); } }
+  // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the
+  // session-addressed op, which is the same worktrees without the conflict handling.
+  if (e.key === 'r' || e.key === 'R') { if (s && s.worktreePath && s.feature) { e.preventDefault(); runStack(s.feature); } }
 }
