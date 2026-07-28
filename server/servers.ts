@@ -493,14 +493,39 @@ class Servers {
     return out;
   }
 
+  /**
+   * Whether this worktree is missing the dependencies its start command needs.
+   *
+   * A worktree created by `git worktree add` has the repo's files and none of its
+   * node_modules — the directory is gitignored, so it does not come across. The start
+   * command then dies the instant it is invoked, and for a multi-repo feature that means
+   * one half comes up and the other does not: the stack looks half-broken for a reason
+   * nothing on screen mentions.
+   *
+   * Deliberately narrow: only a package.json without node_modules. It is not a general
+   * "will this run" oracle — no such thing exists — it is the one predictable
+   * consequence of how worktrees are made.
+   */
+  depsMissing(worktreePath: string): boolean {
+    try {
+      if (!fs.existsSync(path.join(worktreePath, 'package.json'))) return false;
+      return !fs.existsSync(path.join(worktreePath, 'node_modules'));
+    } catch { return false; }
+  }
+
   // Attach running/pid/ports/canStart to a worktree object using a discovered map.
-  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart'> {
+  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing'> {
     const hit = running.get(realpath(worktree.path));
+    const deps = this.depsMissing(worktree.path);
     return {
       running: !!hit,
       pid: hit ? hit.pid : null,
       ports: hit ? hit.ports : [],
-      canStart: !!this.startCfg(worktree.repo),
+      // `canStart` used to mean "a start command is configured", so it stayed true for a
+      // worktree that could not possibly start. Every caller reads it as "starting this
+      // will work" — /group/start filters `toStart` on it — so it now means that.
+      canStart: !!this.startCfg(worktree.repo) && !deps,
+      depsMissing: deps,
     };
   }
 

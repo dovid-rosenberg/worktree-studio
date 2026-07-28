@@ -334,6 +334,8 @@ export interface Worktree {
   session: EmbeddedSession | null;
   /** Never set. Present so `member.missing` discriminates FeatureMember. */
   missing?: false;
+  /** package.json present, node_modules absent — the start command cannot succeed. */
+  depsMissing?: boolean;
 }
 
 /**

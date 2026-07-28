@@ -127,3 +127,40 @@ test('start() trims a log the previous run left oversized', async () => {
   assert.ok(fs.statSync(log).size < LOG_LIMITS.MAX_LOG_BYTES, 'the relaunch did not inherit it');
   fs.rmSync(wt, { recursive: true, force: true });
 });
+
+// ---- deps-aware canStart ----------------------------------------------------
+//
+// `canStart` used to mean "a start command is configured", which stayed true for a
+// worktree that could not possibly start: `git worktree add` does not bring
+// node_modules across, so the start command dies the moment it is invoked. For a
+// multi-repo feature that meant one half came up and the other did not, with nothing
+// on screen saying why. It now means "starting this will work".
+
+test('depsMissing is true only for a package.json with no node_modules', () => {
+  const s = servers();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-deps-'));
+
+  // no package.json at all — not a node project, so not our problem to flag
+  assert.equal(s.depsMissing(dir), false);
+
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+  assert.equal(s.depsMissing(dir), true, 'package.json without node_modules');
+
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+  assert.equal(s.depsMissing(dir), false, 'once installed it is startable again');
+});
+
+test('canStart is false when the deps a start command needs are absent', () => {
+  const s = servers({ start: { demo: { cmd: 'npm run dev', ports: [4321] } } });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-deps2-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+
+  const bare = s.decorate({ path: dir, repo: 'demo' }, new Map());
+  assert.equal(bare.depsMissing, true);
+  assert.equal(bare.canStart, false, 'a configured command is not enough to be startable');
+
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+  const ready = s.decorate({ path: dir, repo: 'demo' }, new Map());
+  assert.equal(ready.depsMissing, false);
+  assert.equal(ready.canStart, true);
+});
