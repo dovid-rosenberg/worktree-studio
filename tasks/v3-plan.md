@@ -1,7 +1,7 @@
 # Worktree Studio — queued work
 
-Everything below is **after** the ESM/TypeScript migration (`chore/esm-typescript`) merges.
-Both tracks touch `client/`, so running them concurrently would fight the migration.
+The ESM/TypeScript migration is **merged** (`717b19d`) — everything below is now unblocked.
+Both tracks touch `client/`, which is why they waited.
 
 ---
 
@@ -74,6 +74,19 @@ hunk subset back through `git apply --check`; `no-regression.test.js` reimplemen
 functions verbatim and asserts equality over a corpus. The bias toward integration over
 unit is **correct** for a process orchestrator. The gaps are elsewhere.
 
+### 2.0 The server tests are `.js` and therefore unchecked
+
+32 files, ~8,400 lines, all ESM and all green — but outside `tsconfig.json`'s `include`,
+so `strict` never looks at them. The config already anticipates `test/**/*.ts`.
+
+This matters more than it sounds: the tests are full of hand-rolled doubles standing in
+for `SessionMux`, `Servers`, `SessionManager`. Under `strict` a double that no longer
+matches the interface it stands for is a compile error — which is exactly how the
+`ensureSplit` / `attachSpawn` gap in `SessionMux` would have been caught years earlier
+than it was. Right now nothing checks that a double still resembles the real thing.
+
+Deliberately kept out of the migration commit so a green suite stayed green.
+
 ### 2.1 Client tests — zero, and the SvelteKit UI now ships
 
 41 components, no `vitest`, no `testing-library`, no `playwright`. `svelte-check` is type
@@ -122,6 +135,8 @@ test uses a state dir where saving fails. Extend to: tmux killed out from under 
 
 - **`/group/pr` loops members serially.** Timeouts bound it, but a wedged member still
   delays its siblings. Parallelising changes behaviour (gh rate limits, interleaved output).
+  A *detached* member no longer takes the rest of the feature down with it — that was a
+  real TypeError-out-of-the-route bug, fixed during the migration.
 - **`pruneTracked()` runs at boot only**, not on the 3s refresh. A dev server that dies on
   its own leaves a record for the daemon's lifetime — harmless now that `stop()` validates
   before killing.

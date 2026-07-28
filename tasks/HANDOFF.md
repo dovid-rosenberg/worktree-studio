@@ -1,4 +1,4 @@
-# Handoff — paused 2026-07-28
+# Handoff — updated 2026-07-28 (migration merged)
 
 `main` is clean, green, and running. Everything below is optional forward work.
 
@@ -6,10 +6,10 @@
 
 | | |
 |---|---|
-| `main` | `4f11b8b`, working tree clean, **542 tests passing**, `npm run typecheck` exits 0 |
+| `main` | `717b19d`, working tree clean, **542 tests passing**, `npm run typecheck` exits 0 |
 | Your daemon | pid on `:7788`, serving the **SvelteKit** UI, 3 sessions / 12 repos / 4 dev servers |
-| Pushed? | **No.** `main` is ~110 commits ahead of `origin/main`. Nothing was ever pushed. |
-| Rollback | `git reset --hard 6dd6b58` returns you to where this started |
+| Pushed? | **No.** `main` is ~130 commits ahead of `origin/main`. Nothing was ever pushed. |
+| Rollback | `git reset --hard 3030597` undoes the migration merge; `6dd6b58` returns you to where all this started |
 
 `public/` (the old vanilla UI) is still in the repo and still works: `WTS_UI=legacy npm start`.
 Don't delete it until you've used the new UI in anger.
@@ -17,14 +17,14 @@ Don't delete it until you've used the new UI in anger.
 ## What shipped
 
 Twelve v2 workstreams, then: 10 known bugs, a hardening sweep (5 critical / 20 important),
-the SvelteKit cutover, resource leaks, duplication consolidation, Express 5, and TypeScript
-Phases 0–1. Details in `tasks/v2-plan.md`.
+the SvelteKit cutover, resource leaks, duplication consolidation, Express 5, and the full
+ESM/TypeScript migration. Details in `tasks/v2-plan.md`.
 
 Notable, because they're easy to lose track of:
 
 - **Auth is on.** Every `/api` request needs the boot token from `<stateDir>/token`, and
   requests pass an `Origin`/`Host` allowlist. The browser gets the token injected into
-  `index.html`. SwiftBar, Alfred and `bin/wt-studio.js` read the token file.
+  `index.html`. SwiftBar, Alfred and `bin/wt-studio.ts` read the token file.
 - **`unhandledRejection` is now fatal** (Node's default). If the daemon ever exits
   unexpectedly, that's the first suspect. tmux sessions survive; a restart restores.
 - **A missing `client/build` is a fatal boot error**, by design. `npm run build` fixes it;
@@ -32,88 +32,97 @@ Notable, because they're easy to lose track of:
 - **The SSE stream is three named events** — `topology`, `session-state`, `ci`. A client
   must keep both halves verbatim and *derive* state, not patch one object in place.
 
-## Resuming the ESM/TypeScript migration
+## The ESM/TypeScript migration — DONE
 
-Branch `chore/esm-typescript`, worktree `.worktrees/esm-ts`, **63 of 71 server modules
-converted**.
+Merged into `main` as `717b19d`. **71 of 71 server modules are `.ts`**, there is no
+`require(` left under `server/` or `bin/`, and `npm start` is a bare
+`node server/server.ts` with no build step.
 
-**Status, precisely — I got this wrong twice, so read it carefully:**
+- `npx tsc --noEmit` → **0 errors**
+- `npm test` → **542 pass / 0 fail** (all 542 *ran*; the branch sat at 299/542 only
+  because whole test files failed to **load**)
 
-- `npx tsc --noEmit` → **0 errors project-wide**. The branch *does* typecheck.
-- `npm test` → **299 pass / 16 fail**, and only 299 of 542 tests even *ran*.
+Verified beyond the suite: booted `node server/server.ts` against a throwaway
+config/state dir — tmux detected, SvelteKit UI served, `/api` 401s without the boot token
+and 200s with it, and all three SSE event types (`topology`, `session-state`, `ci`) arrive
+on `/api/v1/events`.
 
-Typecheck passing does not mean done. Two things are broken at runtime:
+### What was left, and what it turned out to be
 
-1. **Five modules are still `.js`** — `server.js`, `state.js`, `transcript-routes.js`,
-   `multiplexer/index.js`, `multiplexer/tmux.js`. Under `"type": "module"` those are ESM
-   while still using `require`/`module.exports`.
-2. **Import specifiers were deliberately left alone.** Many files still
-   `import './config.js'` / `'./features.js'`, which no longer exist. That is what makes
-   whole test files fail to load, which is why only 299 tests ran.
+Exactly as scoped: convert five modules (`server`, `state`, `transcript-routes`,
+`multiplexer/index`, `multiplexer/tmux`) and rewrite the stale `./config.js` /
+`./features.js` / `../server/sessions.js` specifiers. Those specifiers were the whole
+reason 243 tests never ran — nothing was wrong with the code they pointed at.
 
-Finishing = convert those five modules + rewrite the stale specifiers.
+### Bugs the type checker surfaced
 
-Two real bugs strict mode already caught in `orchestrator`, both preserved in `c17587f`:
-`/group/session` dereferenced an unknown-repo lookup unguarded (`TypeError` → 500 leaking an
-internal message, while the loop three lines below already guarded the identical lookup), and
-`/group/delete` read the `WorktreeRemoveResult` union unnarrowed.
+Five from strict mode. Three were already caught (`c17587f`, `1383a94`):
 
-A third bug, in `servers.startCfg()` (`1383a94`): a `start` entry of the object form with
-`ports` but no `cmd` produced `{ cmd: undefined, ports: [...] }`, which is **truthy** — so
-`decorate()` advertised `canStart: true` for a repo that cannot start, and `start()` reached
-`spawn('bash', ['-lc', undefined])`, throwing a `TypeError` out of an async route handler
-(500) instead of returning `{ ok: false, error }`. `POST /settings` drops cmd-less rows, but
-a hand-edited `config.json` can carry one.
+1. `orchestrator` `/group/session` dereferenced an unknown-repo lookup unguarded.
+2. `orchestrator` `/group/delete` read the `WorktreeRemoveResult` union unnarrowed.
+3. `servers.startCfg()` returned `{ cmd: undefined, ports }` — **truthy** — so
+   `decorate()` advertised `canStart: true` and `start()` reached
+   `spawn('bash', ['-lc', undefined])`.
 
-### `types.ts` gaps flagged but deliberately not fixed
+Two more in the final pass:
 
-- `Config.editors` is `Record<string, { open: string }>`, but **`openGroup` is a real shipped
-  key** — read in `orchestrator`, written by `server.js`, documented in `docs/api.md`,
-  exercised in `test/no-regression.test.js`. Wants `{ open: string; openGroup?: string }`.
-- `StartConfig` **does not model the string form**, though `servers.ts` supports
-  `start[repo] = "npm run dev"` (worktree-dash compat; `config.js` copies `dash.start`
-  verbatim). Wants `string | { cmd?: string; ports?: number[] }`. Its
-  `[key: string]: unknown` index signature is also worth dropping — it survives `PartialDeep`
-  and makes every consumer's access `unknown`-adjacent.
+4. **`forge` `/group/pr` pushed a null branch into a git argv.** A *detached* worktree is
+   a real member of a resolved feature and carries `branch: null`; execFile rejects a
+   non-string argv entry with a TypeError, and because `/group/pr` loops members serially,
+   that 500 took every later member of the feature with it.
+5. **`server` `/commits` and `/commit-detail` passed an undefined `defaultBranch`** into
+   `review.commits()`, reaching `git merge-base HEAD undefined`, for any repo absent from
+   the scan cache. Now goes through `defaultBranchOf()` — the `|| 'main'` fallback
+   `routes-review.ts` already used.
+
+Two contract holes closed on the way: express query params (`?repo=`, `?sha=`,
+`?worktreePath=`, the `/ws/term` upgrade URL) were read without collapsing
+`string | array | object`; and `manager.mux` was `Partial<SessionMux>` with a `!` at all 16
+call sites while `SessionMux` declared **neither** `ensureSplit` nor `attachSpawn` — the two
+members `server.ts`'s `/split/*` routes and `term.ts` actually reach through it, so a driver
+missing them typechecked.
+
+### `types.ts` gaps — both now fixed
+
+- `Config.editors` was `Record<string, { open: string }>` while **`openGroup` is a shipped
+  key** (read by `orchestrator`, written by `POST /settings`, documented in `docs/api.md`).
+  Now a named `EditorConfig`.
+- `StartConfig` did not model the bare-string form (`start[repo] = "npm run dev"`,
+  worktree-dash compat, which `servers.startCfg()` has always handled), and its
+  `[key: string]: unknown` index signature survived `PartialDeep`, making every consumer's
+  access `unknown`-adjacent. Now `string | { cmd?; ports? }` with no index signature.
 - ~~`Config._stateDir` optional → required removes the `!` in `servers.ts`.~~ **Wrong — I
   was mistaken.** `PartialDeep<T>` is `{ [K in keyof T]?: … }`, so it re-optionalizes *every*
   key regardless of what `Config` declares, and every consumer takes `PartialDeep<Config>`.
-  The seam is `PartialDeep`, not the `?`. (`_token` and `_stateDir` were made required anyway
-  in `0f9470b` — `load()` is the only producer and always stamps both — but that does **not**
-  remove the assertions in modules taking a partial config.)
+  The seam is `PartialDeep`, not the `?`.
 
-### Note: late work may still arrive
+### Still open: the test files are `.js`
 
-The migration agent had spawned child agents. Several finished **after** it was stopped and
-their work was committed here in `c17587f` and `1383a94`. If more land, they'll appear as
-uncommitted changes in this worktree — check with `git -C .worktrees/esm-ts status` before
-resuming, and commit anything found rather than assuming the tree is where you left it.
+The 32 files under `test/` are ESM and they exercise the typed modules, but they sit
+**outside `tsconfig.json`'s `include`**, so they are not themselves type-checked — even
+though that config already anticipates `test/**/*.ts`. ~8,400 lines. Converting them puts
+the test doubles under `strict`, which is where a contract drift would actually be caught.
+Deliberately not bundled into a green-suite migration; it is its own piece of work.
 
-```
-cd .worktrees/esm-ts
-npm install && npm rebuild node-pty && node bin/fix-pty.js && node bin/vendor.js && node bin/build-client.js
-npm run typecheck        # will be red; that IS the remaining work
-```
-
-Verified facts this rests on — don't re-derive them:
+### Facts the setup rests on — don't re-derive them
 
 - Node 22.21 runs `.ts` **natively, no flag, no build step**, under `"type": "module"`.
-  `npm start` stays `node server/server.ts`.
+  `npm start` is `node server/server.ts`, and `bin` points at `bin/wt-studio.ts`.
 - `erasableSyntaxOnly: true` makes tsc reject anything Node can't strip (`enum`,
   `namespace` → **TS1294**). Keep it on; it's the guardrail.
 - **`.ts` cannot work under CommonJS.** Extensionless `require('./util')` won't resolve
   `util.ts` (`require.extensions` is `['.js','.json','.node']`), and a `.ts` using
-  `module.exports` runs but tsc won't export it (`TS2459`). That's why this is an ESM
-  migration, not a rename.
-- Remaining hazards are enumerated: 7 `__dirname` → `import.meta.dirname`; the only
-  load-bearing lazy require is `bin/wt-studio.js` booting the daemon in an `else` branch,
-  which needs `await import()`.
+  `module.exports` runs but tsc won't export it (`TS2459`). That is why this had to be an
+  ESM migration rather than a rename.
+- `bin/wt-studio.ts` boots the daemon with `await import('../server/server.ts')` in an
+  `else` branch — a **dynamic** import on purpose. A static one at the top would run
+  `main()` for `wt-studio add-repo` too.
 
-`strict: true` is on from the start, so this absorbs the old Phase 3. Branch
-`chore/typescript-strict` (`e2ea065`, worktree `.worktrees/ts-strict`) holds an earlier
-agent's null-safety fixes for 7 modules — reusable reference, deliberately unmerged.
+Branch `chore/typescript-strict` (`e2ea065`, worktree `.worktrees/ts-strict`) holds an
+earlier agent's null-safety fixes for 7 modules. `strict: true` was on from the start of
+the migration, so those fixes are now redundant — the worktree can be removed.
 
-## Queued after that
+## Queued next
 
 `tasks/v3-plan.md` — the UI/UX pass and the test-coverage gaps.
 
@@ -127,12 +136,14 @@ Headline of each:
 
 - Stopped the migration agent and committed its in-flight work (nothing lost).
 - Killed two leftover agent daemons; only yours on `:7788` runs.
-- Removed the 7 worktrees whose branches are merged. Two remain, both holding unmerged work.
+- Removed the 7 worktrees whose branches are merged. `.worktrees/esm-ts` is now merged too
+  and can go; `.worktrees/ts-strict` holds the superseded null-safety branch.
 - Live state backed up at `~/.local/state/worktree-studio.backup-213013`.
 
 ## Known open items
 
 See `tasks/v3-plan.md` §3. The two worth remembering: `/group/pr` still loops members
-serially, and there were two unexplained single-run test failures during the build-out —
+serially (a detached member no longer takes its siblings down with it, but a wedged one
+still delays them), and there were two unexplained single-run test failures during the build-out —
 neither reproducible across 8 and 17 subsequent clean runs, both alongside concurrent
 daemon teardown. Logged as unexplained, not dismissed.
