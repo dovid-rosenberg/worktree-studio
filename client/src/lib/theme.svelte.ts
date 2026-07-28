@@ -44,7 +44,7 @@ export function setTheme(next: ThemeName): void {
 // tokens in app.css move, move these with them.
 const TERM_THEMES: Record<ThemeName, TermPalette> = {
   dark: { background: '#0c0f14', foreground: '#cdd4de', cursor: '#e0733f' },
-  light: { background: '#12151b', foreground: '#cdd4de', cursor: '#d05f30' },
+  light: { background: '#fbfaf7', foreground: '#1f232b', cursor: '#d05f30' },
 };
 
 /**

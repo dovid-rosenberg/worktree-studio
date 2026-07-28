@@ -195,7 +195,12 @@ export function startFeatureSession(f: Feature) {
     try {
       const r = await api('POST', '/api/group/session', { group: f.name });
       if (r.session) {
-        ui.selectedId = r.session.id;
+        // ui.select(), not a bare selectedId write: the store keeps exactly one of
+        // selectedId / selectedFeatureName non-null, and Dock tests the feature first.
+        // Assigning the id directly left the feature selection standing, so starting an
+        // agent from a sessionless feature kept FeaturePane on screen while the
+        // ActionBar — which tests the session first — switched to session verbs.
+        ui.select(r.session.id);
         toast(r.existed ? 'Session already open — “Go to session ▸”' : `Session started for ${f.name} — “Go to session ▸”`);
       }
     } catch (e) { toast(errMessage(e), true); }

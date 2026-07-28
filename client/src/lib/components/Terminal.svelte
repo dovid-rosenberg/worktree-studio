@@ -266,8 +266,9 @@
 <div class="term-wrap" bind:this={host} data-session={sessionId} data-pane={pane ?? 'main'}></div>
 
 <style>
-  /* Dark in both themes via --term-bg: a light-on-white terminal reads as a different
-     application sitting inside this one. */
+  /* Follows the theme via --term-bg. That token and TERM_THEMES in theme.svelte.ts
+     must stay in step: xterm cannot read a CSS custom property, so the palette is
+     declared twice — here for the padding around the canvas, there for the canvas. */
   .term-wrap { flex:1; min-height:0; min-width:0; background:var(--term-bg); padding:8px 10px; }
   .term-wrap :global(.xterm) { height:100%; }
 </style>
