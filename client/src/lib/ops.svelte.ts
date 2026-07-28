@@ -69,26 +69,46 @@ export async function addRepoToSession(s: Session) {
   } catch (e) { toast(errMessage(e), true); }
 }
 
-export async function addTab(s: Session) {
-  const title = await uiPrompt('New tab name:', 'shell');
-  if (title === null) return;
+/*
+ * Tabs are addressed by the multiplexer's window id, never by position: tmux runs with
+ * `renumber-windows on`, so closing one window renumbers the rest and any index held
+ * across that close names a different window.
+ */
+
+/**
+ * Opening a shell should not cost a modal. It lands as "shell" and the strip renames
+ * in place (double-click / F2), which is how every terminal does it.
+ */
+export async function addTab(s: Session, title = 'shell') {
   try {
-    await api('POST', `/api/sessions/${s.id}/tabs`, { title: title || 'shell' });
-    toast(`Tab “${title || 'shell'}” added`);
+    await api('POST', `/api/sessions/${s.id}/tabs`, { title });
   } catch (e) { toast(errMessage(e), true); }
 }
 
-export async function selectTab(s: Session, i: number) {
+export async function selectTab(s: Session, tab: string) {
   ui.dockView = 'term';
-  ui.activeTab = i;
-  try { await api('POST', `/api/sessions/${s.id}/select-tab`, { index: i }); }
+  ui.activeTabId = tab;
+  try { await api('POST', `/api/sessions/${s.id}/select-tab`, { tab }); }
   catch (e) { toast(errMessage(e), true); }
 }
 
-export async function closeTab(s: Session, i: number) {
+export async function renameTab(s: Session, tab: string, title: string) {
+  try { await api('POST', `/api/sessions/${s.id}/rename-tab`, { tab, title }); }
+  catch (e) { toast(errMessage(e), true); }
+}
+
+/**
+ * Closing the ACTIVE tab has to move the selection, or the strip highlights nothing
+ * while a pane is still on screen. Pick the neighbour the way editors do: the one to
+ * the right, falling back to the left when the last tab goes.
+ */
+export async function closeTab(s: Session, tab: string) {
+  const tabs = s.tabs || [];
+  const i = tabs.findIndex((t) => t.id === tab);
+  const next = i >= 0 ? (tabs[i + 1] || tabs[i - 1]) : null;
   try {
-    await api('POST', `/api/sessions/${s.id}/close-tab`, { index: i });
-    toast('Tab closed');
+    await api('POST', `/api/sessions/${s.id}/close-tab`, { tab });
+    if (ui.activeTabId === tab && next) await selectTab(s, next.id);
   } catch (e) { toast(errMessage(e), true); }
 }
 

@@ -36,6 +36,8 @@ export interface TmuxNewTabOptions {
 export interface TmuxNewTabResult {
   ok: boolean;
   error?: string;
+  /** The created window's index, as tmux assigned it. */
+  id?: string;
 }
 
 /** One tmux window, as `listTabs()` reports it. */
@@ -66,6 +68,7 @@ export interface TmuxDriver {
   paneCommand(name: string, target?: string): Promise<string>;
   selectTab(name: string, id: string | number): Promise<boolean>;
   closeTab(name: string, id: string | number): Promise<boolean>;
+  renameTab(name: string, id: string | number, title: string): Promise<boolean>;
   rename(oldName: string, newName: string): Promise<boolean>;
   kill(name: string): Promise<boolean>;
 }
@@ -179,20 +182,31 @@ const tmux: TmuxDriver = {
     await T(['set-option', '-t', `${name}-split`, 'remain-on-exit', 'off']);
   },
 
+  // `-P -F #{window_id}` returns tmux's STABLE window id (@7), not its index.
+  //
+  // The distinction is the whole bug this addresses: `renumber-windows on` means an
+  // index is a POSITION, reassigned whenever any earlier window closes. Keying a tab on
+  // it makes the stored title follow the slot rather than the terminal, so closing the
+  // middle of [claude, api, web] relabels web as "api". A window_id never changes for
+  // the life of the window, and tmux accepts it as a -t target everywhere.
   async newTab(name, { title, cwd, cmd } = {}) {
-    const r = await T(['new-window', '-t', name, '-n', title || 'shell', '-c', cwd || HOME]);
+    const r = await T(['new-window', '-P', '-F', '#{window_id}', '-t', name, '-n', title || 'shell', '-c', cwd || HOME]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() };
     // new-window selects the new window → send the command to the session's active window
     if (cmd) await T(['send-keys', '-t', name, '--', launchKeys(`${name}-tab`, cmd), 'Enter']);
-    return { ok: true };
+    return { ok: true, id: r.stdout.trim() || undefined };
+  },
+
+  async renameTab(name, id, title) {
+    return (await T(['rename-window', '-t', `${name}:${id}`, title])).code === 0;
   },
 
   async listTabs(name) {
-    const r = await T(['list-windows', '-t', name, '-F', '#{window_index}\t#{window_name}\t#{window_active}']);
+    const r = await T(['list-windows', '-t', name, '-F', '#{window_id}\t#{window_name}\t#{window_active}']);
     if (r.code !== 0) return [];
     return r.stdout.trim().split('\n').filter(Boolean).map((l) => {
-      const [index, wname, active] = l.split('\t');
-      return { id: index, title: wname, active: active === '1' };
+      const [wid, wname, active] = l.split('\t');
+      return { id: wid, title: wname, active: active === '1' };
     });
   },
 

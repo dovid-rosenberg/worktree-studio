@@ -118,8 +118,13 @@ class UI {
   dockView = $state<DockView>(savedDock());
   /** Rail width in px — dragged by the splitter, persisted, clamped to [MIN, MAX]. */
   railWidth = $state(savedRailWidth());
-  /** Active multiplexer window index within the primary session. */
-  activeTab = $state(0);
+  /**
+   * The selected multiplexer window's ID within the primary session — not its position.
+   * tmux renumbers windows when one closes, so an index held across a close selects a
+   * different terminal than the one the strip is highlighting. Empty string means
+   * "whatever the session's first tab is", resolved at render.
+   */
+  activeTabId = $state('');
   /**
    * Session ids whose split pane is engaged. A Set (not a boolean) because the split
    * persists per session across selection changes, exactly as app.js's splitSessions did.
@@ -224,7 +229,7 @@ class UI {
     this.selectedFeatureName = null;
     // Per-session dock state resets with the selection, as it did in rebuildDock().
     this.dockView = 'term';
-    this.activeTab = 0;
+    this.activeTabId = '';
   }
 
   /**
@@ -236,7 +241,7 @@ class UI {
     this.selectedFeatureName = f ? f.name : null;
     this.selectedId = null;
     this.dockView = 'term';
-    this.activeTab = 0;
+    this.activeTabId = '';
   }
 
   goToSession(id: string): void {

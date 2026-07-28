@@ -127,6 +127,7 @@ export function muxStub(over: Partial<SessionMux> = {}): SessionMux {
     async listTabs() { return []; },
     async selectTab() { return true; },
     async closeTab() { return true; },
+    async renameTab() { return true; },
     async ensureSplit() { return undefined; },
     attachSpawn(name: string) { return { file: 'true', args: [name] }; },
     ...over,

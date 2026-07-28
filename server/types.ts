@@ -233,6 +233,12 @@ export interface SessionRepo {
 
 /** A multiplexer window. */
 export interface SessionTab {
+  /**
+   * The multiplexer's window id. Tabs are addressed by THIS, never by array position:
+   * tmux runs with `renumber-windows on`, so closing one window shifts every later
+   * index, and a position recorded before the close names a different window after it.
+   */
+  id: string;
   title: string;
 }
 
