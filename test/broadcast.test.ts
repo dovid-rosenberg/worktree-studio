@@ -6,22 +6,40 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { createBroadcast } from '../server/broadcast.ts';
+import type { BroadcastDeps } from '../server/broadcast.ts';
+import { present } from './helpers.ts';
+
+// The halves below are deliberate MINIATURES — the fields these tests exercise and no
+// others — so they are typed as such rather than as the full `TopologyPayload` /
+// `SessionStatePayload`. `asDeps()` is the one place that says so: the bus serializes
+// whatever it is handed and never reads a field, and the real payload shape is
+// state.ts's contract, held by test/state.test.ts.
+type Mini = Record<string, unknown>;
+interface MiniWorld {
+  topology: () => Mini;
+  sessionState: () => Mini;
+  ci?: () => Mini;
+}
+const asDeps = (w: MiniWorld): BroadcastDeps => w as unknown as BroadcastDeps;
+
+/** One parsed SSE frame. */
+interface Frame { event: string; data: Mini }
 
 // A stand-in for the express response: records everything written to it.
 function fakeClient() {
-  const chunks = [];
-  return { chunks, write: (s) => chunks.push(s), frames: () => parse(chunks.join('')) };
+  const chunks: string[] = [];
+  return { chunks, write: (s: string) => chunks.push(s), frames: () => parse(chunks.join('')) };
 }
 
 // Parse an SSE byte stream into [{ event, data }], ignoring `:` comments.
-function parse(text) {
-  return text.split('\n\n').filter(Boolean).map((block) => {
+function parse(text: string): Frame[] {
+  return text.split('\n\n').filter(Boolean).flatMap((block): Frame[] => {
     const lines = block.split('\n').filter((l) => l && !l.startsWith(':'));
-    if (!lines.length) return null;
+    if (!lines.length) return [];
     const event = (lines.find((l) => l.startsWith('event: ')) || '').slice(7);
     const data = (lines.find((l) => l.startsWith('data: ')) || '').slice(6);
-    return { event, data: JSON.parse(data) };
-  }).filter(Boolean);
+    return [{ event, data: JSON.parse(data) }];
+  });
 }
 
 // A mutable world producing the same two halves state.ts does — including the
@@ -32,24 +50,22 @@ function parse(text) {
 // The halves are deliberate MINIATURES — the fields these tests exercise and no
 // others — so the builders are declared loosely on purpose. The full payload shape
 // is state.ts's contract (server/types.ts), and state.test.js is what holds it.
-/** @returns {{ w: any, topology: () => any, sessionState: () => any, buildState: () => any }} */
 function world() {
-  /** @type {{ worktrees: any[], sessions: any[], servers: any }} */
-  const w = {
+  const w: { worktrees: Mini[]; sessions: Mini[]; servers: Mini } = {
     worktrees: [{ wtname: 'feat-a', path: '/w/a', sessionId: 's_1' }],
     sessions: [{ id: 's_1', state: 'idle', activity: 'starting…', muxName: 'm1', title: 'A' }],
     servers: { s_1: { repos: [{ repo: 'api', worktreePath: '/w/a', running: false, ports: [] }] } },
   };
-  const trim = (id) => {
+  const trim = (id: unknown): Mini | null => {
     const s = w.sessions.find((x) => x.id === id);
     return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName } : null;
   };
-  const topology = () => {
+  const topology = (): Mini => {
     const wts = w.worktrees.map((x) => ({ wtname: x.wtname, path: x.path, session: trim(x.sessionId) }));
     const features = wts.map((x) => ({ name: x.wtname, members: [x], session: x.session }));
     return { mux: 'tmux', runningTotal: 0, repos: [{ name: 'api', worktrees: wts }], features, groups: [] };
   };
-  const sessionState = () => ({ sessions: w.sessions, servers: w.servers });
+  const sessionState = (): Mini => ({ sessions: w.sessions, servers: w.servers });
   // What GET /state returns right now — the yardstick every client must match.
   const buildState = () => JSON.parse(JSON.stringify({ ...topology(), ...sessionState() }));
   return { w, topology, sessionState, buildState };
@@ -59,28 +75,30 @@ function world() {
 // verbatim, derive the state from the latest of both, and re-project the live
 // sessions onto the trimmed copies the topology embeds (stitchSessions()).
 function refClient() {
-  /** @type {any} */ let topo = {};
-  /** @type {any} */ let sess = {};
-  /** @type {any} */ let state = {};
+  // A client's own bookkeeping: it holds each half verbatim and derives from both, so
+  // these are the raw frame bodies, not a typed payload.
+  let topo: any = {};
+  let sess: any = {};
+  let state: any = {};
   return {
     get state() { return state; },
-    apply(frame) {
+    apply(frame: Frame) {
       if (frame.event === 'session-state') sess = frame.data; else topo = frame.data;
       const next = { ...topo, ...sess };
-      const byId = new Map((next.sessions || []).map((s) => [s.id, s]));
-      const fresh = (e) => {
+      const byId = new Map<unknown, any>((next.sessions || []).map((s: any) => [s.id, s]));
+      const fresh = (e: any) => {
         if (!e) return null;
         const s = byId.get(e.id);
         return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName } : null;
       };
-      const feat = (list) => (list || []).map((f) => ({
+      const feat = (list: any[]) => (list || []).map((f: any) => ({
         ...f,
         session: fresh(f.session),
-        members: (f.members || []).map((m) => (m && !m.missing ? { ...m, session: fresh(m.session) } : m)),
+        members: (f.members || []).map((m: any) => (m && !m.missing ? { ...m, session: fresh(m.session) } : m)),
       }));
       state = {
         ...next,
-        repos: (next.repos || []).map((r) => ({ ...r, worktrees: (r.worktrees || []).map((w) => ({ ...w, session: fresh(w.session) })) })),
+        repos: (next.repos || []).map((r: any) => ({ ...r, worktrees: (r.worktrees || []).map((w: any) => ({ ...w, session: fresh(w.session) })) })),
         features: feat(next.features),
         groups: feat(next.groups),
       };
@@ -90,21 +108,21 @@ function refClient() {
 
 test('a subscriber gets a full snapshot — one frame of each half — before it joins the fan-out', () => {
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   bus.subscribe(c);
   const frames = c.frames();
   assert.deepEqual(frames.map((f) => f.event), ['topology', 'session-state']);
-  assert.deepEqual({ ...frames[0].data, ...frames[1].data }, world().buildState(),
+  assert.deepEqual({ ...present(frames[0]).data, ...present(frames[1]).data }, world().buildState(),
     'the pair is exactly the payload GET /state returns');
-  assert.deepEqual(Object.keys(frames[1].data), ['sessions', 'servers'],
+  assert.deepEqual(Object.keys(present(frames[1]).data), ['sessions', 'servers'],
     'the hot half is only the sessions and their servers');
   assert.equal(bus.clients.size, 1);
 });
 
 test('hook traffic sends the session half only', () => {
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
@@ -116,7 +134,7 @@ test('hook traffic sends the session half only', () => {
 
 test('a topology-flagged broadcast sends both halves', () => {
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
@@ -128,7 +146,7 @@ test('a topology-flagged broadcast sends both halves', () => {
 test('a burst is coalesced into one flush, 80 ms later by default', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
@@ -142,7 +160,7 @@ test('a burst is coalesced into one flush, 80 ms later by default', (t) => {
 test('a topology flag raised anywhere in the window survives the coalescing', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
@@ -160,7 +178,7 @@ test('a topology flag raised anywhere in the window survives the coalescing', (t
 
 test('a closed session disappears — a replacement reports removals for free', () => {
   const { w, topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   const client = refClient();
   bus.subscribe(c);
@@ -179,7 +197,7 @@ test('a closed session disappears — a replacement reports removals for free', 
 
 test('a session-state frame refreshes the agent state embedded in the topology', () => {
   const { w, topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   const client = refClient();
   bus.subscribe(c);
@@ -197,7 +215,7 @@ test('a session-state frame refreshes the agent state embedded in the topology',
 
 test('connect snapshot + subsequent events converge on exactly a full rebuild', () => {
   const { w, topology, sessionState, buildState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const early = fakeClient();
   const client = refClient();
   bus.subscribe(early);
@@ -233,7 +251,7 @@ test('connect snapshot + subsequent events converge on exactly a full rebuild', 
 
 test('a reconnecting client re-snapshots instead of drifting on what it missed', () => {
   const { w, topology, sessionState, buildState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c1 = fakeClient();
   const client = refClient();
   const unsubscribe = bus.subscribe(c1);
@@ -254,7 +272,7 @@ test('a reconnecting client re-snapshots instead of drifting on what it missed',
 
 test('a client that went away does not break the fan-out for the others', () => {
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const dead = { write() { throw new Error('EPIPE'); } };
   const live = fakeClient();
   bus.subscribe(dead);
@@ -268,7 +286,7 @@ test('a client that went away does not break the fan-out for the others', () => 
 test('with nobody listening, a flush builds nothing', () => {
   let builds = 0;
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology: () => { builds++; return topology(); }, sessionState });
+  const bus = createBroadcast(asDeps({ topology: () => { builds++; return topology(); }, sessionState }));
   bus.schedule({ topology: true });
   bus.flush();
   assert.equal(builds, 0);
@@ -282,18 +300,18 @@ const CI = () => ({ ci: { s_1: [{ repo: 'api', hasPR: true, provider: 'github', 
 
 test('a subscriber gets the CI half in its snapshot too', () => {
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState, ci: CI });
+  const bus = createBroadcast(asDeps({ topology, sessionState, ci: CI }));
   const c = fakeClient();
   bus.subscribe(c);
   const frames = c.frames();
   assert.deepEqual(frames.map((f) => f.event), ['topology', 'session-state', 'ci']);
-  assert.deepEqual(frames[2].data, CI());
+  assert.deepEqual(present(frames[2]).data, CI());
 });
 
 test('hook traffic never re-sends the CI half', () => {
   let builds = 0;
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState, ci: () => { builds++; return CI(); } });
+  const bus = createBroadcast(asDeps({ topology, sessionState, ci: () => { builds++; return CI(); } }));
   const c = fakeClient();
   bus.subscribe(c);
   const afterSnapshot = builds;
@@ -309,7 +327,7 @@ test('hook traffic never re-sends the CI half', () => {
 
 test('a ci-flagged broadcast sends the CI half, and the flag is consumed', () => {
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState, ci: CI });
+  const bus = createBroadcast(asDeps({ topology, sessionState, ci: CI }));
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
@@ -325,7 +343,7 @@ test('a ci-flagged broadcast sends the CI half, and the flag is consumed', () =>
 test('a ci flag raised inside a debounce window survives the coalescing', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState, ci: CI });
+  const bus = createBroadcast(asDeps({ topology, sessionState, ci: CI }));
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
@@ -338,7 +356,7 @@ test('a ci flag raised inside a debounce window survives the coalescing', (t) =>
 
 test('a bus wired without a CI half behaves exactly as it did with two events', () => {
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState });
+  const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   bus.subscribe(c);
   assert.deepEqual(c.frames().map((f) => f.event), ['topology', 'session-state']);
@@ -351,7 +369,7 @@ test('a bus wired without a CI half behaves exactly as it did with two events', 
 test('the CI half is read at write time, so a subscriber and a flush cannot disagree', () => {
   let snapshot = { ci: {} };
   const { topology, sessionState } = world();
-  const bus = createBroadcast({ topology, sessionState, ci: () => snapshot });
+  const bus = createBroadcast(asDeps({ topology, sessionState, ci: () => snapshot }));
   const early = fakeClient();
   bus.subscribe(early);
   assert.deepEqual(early.frames()[2].data, { ci: {} }, 'nothing known yet');
@@ -362,6 +380,6 @@ test('the CI half is read at write time, so a subscriber and a flush cannot disa
   bus.flush();
   const late = fakeClient();
   bus.subscribe(late);
-  assert.deepEqual(early.frames().find((f) => f.event === 'ci').data, snapshot);
-  assert.deepEqual(late.frames().find((f) => f.event === 'ci').data, snapshot, 'late joiner === streamed client');
+  assert.deepEqual(present(early.frames().find((f) => f.event === 'ci'), 'a ci frame').data, snapshot);
+  assert.deepEqual(present(late.frames().find((f) => f.event === 'ci'), 'a ci frame').data, snapshot, 'late joiner === streamed client');
 });

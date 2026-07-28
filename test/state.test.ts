@@ -5,15 +5,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { createState } from '../server/state.ts';
+import type { StateDeps, StateManager, StateRepo, StateServers } from '../server/state.ts';
+import type { RunningServer } from '../server/servers.ts';
+import type { Config, PartialDeep, Session, Worktree } from '../server/types.ts';
+import { muxStub, present, session, sessionRepo } from './helpers.ts';
 
 // A Servers stand-in: `running` is a Map(path → {pid,ports}) keyed by real path,
 // which for these fixtures is the path itself.
-function fakeServers({ startable = [], slotted = [], slots = new Map() } = {}) {
+interface FakeServersOpts {
+  startable?: string[];
+  slotted?: string[];
+  slots?: Map<string, number>;
+}
+function fakeServers({ startable = [], slotted = [], slots = new Map<string, number>() }: FakeServersOpts = {}): StateServers {
   return {
     slots,
-    startCfg: (repo) => (startable.includes(repo) ? { cmd: 'x', ports: [] } : null),
-    isSlotted: (repo) => slotted.includes(repo),
-    decorate({ path, repo }, running) {
+    startCfg: (repo: string) => (startable.includes(repo) ? { cmd: 'x', ports: [] } : null),
+    isSlotted: (repo: string) => slotted.includes(repo),
+    decorate({ path, repo }: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>) {
       const hit = running.get(path);
       return { running: !!hit, pid: hit ? hit.pid : null, ports: hit ? hit.ports : [], canStart: startable.includes(repo) };
     },
@@ -22,15 +31,16 @@ function fakeServers({ startable = [], slotted = [], slots = new Map() } = {}) {
 
 // The real manager hands topology() one Map(resolvedPath → session); these
 // fixtures use paths that resolve to themselves.
-function fakeManager(sessions = [], byWorktree = {}) {
+function fakeManager(sessions: Session[] = [], byWorktree: Record<string, Session> = {}): StateManager {
   return {
     all: () => sessions,
-    sessionIndex: (resolve = (p) => p) => new Map(Object.entries(byWorktree).map(([p, s]) => [resolve(p), s])),
+    sessionIndex: (resolve: (p: string) => string = (p) => p) =>
+      new Map(Object.entries(byWorktree).map(([p, s]): [string, Session] => [resolve(p), s])),
   };
 }
 
 // One repo with its main checkout plus two linked worktrees of the same feature name.
-function repoFixture() {
+function repoFixture(): StateRepo[] {
   return [{
     name: 'api', path: '/code/api', defaultBranch: 'develop',
     worktrees: [
@@ -41,15 +51,23 @@ function repoFixture() {
   }];
 }
 
-function build(over = {}) {
-  const cfg = {
+interface BuildOver {
+  cfg?: PartialDeep<Config>;
+  repos?: StateRepo[];
+  running?: Map<string, RunningServer>;
+  manager?: StateManager;
+  servers?: StateServers;
+  mux?: StateDeps['mux'];
+}
+function build(over: BuildOver = {}) {
+  const cfg: PartialDeep<Config> = {
     baseDirs: ['/code'], web: { port: 7788 }, _file: '/cfg.json',
     editors: { Zed: { open: 'z {path}' } }, defaultEditor: 'Zed',
     webRepos: ['api'], runConfigs: {}, groups: [],
     ...(over.cfg || {}),
   };
   let repos = over.repos || repoFixture();
-  let running = over.running || new Map();
+  let running: Map<string, RunningServer> = over.running || new Map();
   const state = createState({
     cfg,
     manager: over.manager || fakeManager(),
@@ -58,7 +76,7 @@ function build(over = {}) {
     repos: () => repos,
     running: () => running,
   });
-  return { state, cfg, setRepos: (r) => { repos = r; }, setRunning: (m) => { running = m; } };
+  return { state, cfg, setRepos: (r: StateRepo[]) => { repos = r; }, setRunning: (m: Map<string, RunningServer>) => { running = m; } };
 }
 
 test('buildState is exactly topology + sessionState, in that key order', async () => {
@@ -76,7 +94,7 @@ test('the payload carries the fields SwiftBar and Alfred read', async () => {
   assert.equal(st.mux, 'tmux');
   assert.equal(st.runningTotal, 1, 'SwiftBar renders the menubar count from runningTotal');
   assert.deepEqual(st.config, { port: 7788, configFile: '/cfg.json' });
-  const wt = st.repos[0].worktrees.find((w) => w.wtname === 'feat-a');
+  const wt = present(present(st.repos[0]).worktrees.find((w) => w.wtname === 'feat-a'), 'the feat-a row');
   // Alfred's filter reads exactly these per-worktree keys.
   assert.equal(wt.repo, 'api');
   assert.equal(wt.branch, 'feature/a');
@@ -91,55 +109,56 @@ test('the payload carries the fields SwiftBar and Alfred read', async () => {
 });
 
 test('a worktree carries a trimmed view of its session; main checkouts never do', async () => {
-  const sess = { id: 's_1', state: 'waiting', activity: 'waiting for you', muxName: 'wts-a', secret: 'not exposed' };
+  // `secret` is the point: an extra field on the session must not reach the embedded copy.
+  const sess = { ...session({ id: 's_1', state: 'waiting', activity: 'waiting for you', muxName: 'wts-a' }), secret: 'not exposed' };
   const { state } = build({
     manager: fakeManager([sess], { '/code/api/.worktrees/feat-a': sess, '/code/api': sess }),
   });
   const st = await state.buildState();
   const wts = st.repos[0].worktrees;
-  assert.deepEqual(wts.find((w) => w.wtname === 'feat-a').session,
+  assert.deepEqual(present(wts.find((w) => w.wtname === 'feat-a'), 'the feat-a row').session,
     { id: 's_1', state: 'waiting', activity: 'waiting for you', muxName: 'wts-a' });
-  assert.equal(wts.find((w) => w.isMain).session, null, 'the main checkout is never session-decorated');
+  assert.equal(present(wts.find((w) => w.isMain), 'the main checkout').session, null, 'the main checkout is never session-decorated');
 });
 
 test('a feature surfaces its driving session and its concurrency slot', async () => {
-  const sess = { id: 's_1', state: 'working', activity: 'thinking…', muxName: 'wts-a' };
+  const sess = session({ id: 's_1', state: 'working', activity: 'thinking…', muxName: 'wts-a' });
   const { state } = build({
     manager: fakeManager([sess], { '/code/api/.worktrees/feat-a': sess }),
     servers: fakeServers({ slots: new Map([['feat-a', 2]]) }),
   });
   const st = await state.buildState();
-  const a = st.features.find((f) => f.name === 'feat-a');
-  const b = st.features.find((f) => f.name === 'feat-b');
-  assert.equal(a.session.id, 's_1');
+  const a = present(st.features.find((f) => f.name === 'feat-a'), 'feature feat-a');
+  const b = present(st.features.find((f) => f.name === 'feat-b'), 'feature feat-b');
+  assert.equal(present(a.session, "feat-a's session").id, 's_1');
   assert.equal(a.slot, 2, 'the allocated slot powers the Fleet badge');
   assert.equal(b.session, null);
   assert.equal('slot' in b, false, 'no slot key when the feature has none allocated');
 });
 
 test('sessionState reports every repo a session owns, with its live server state', async () => {
-  const sessions = [{
+  const sessions = [session({
     id: 's_1', repoName: 'api', worktreePath: '/code/api/.worktrees/feat-a',
     repos: [
-      { repo: 'api', worktreePath: '/code/api/.worktrees/feat-a' },
-      { repo: 'fe', worktreePath: '/code/fe/.worktrees/feat-a' },
-      { repo: 'unpromoted', worktreePath: null },
+      sessionRepo({ repo: 'api', worktreePath: '/code/api/.worktrees/feat-a' }),
+      sessionRepo({ repo: 'fe', worktreePath: '/code/fe/.worktrees/feat-a' }),
+      sessionRepo({ repo: 'unpromoted', worktreePath: null }),
     ],
-  }];
+  })];
   const { state } = build({
     manager: fakeManager(sessions),
     servers: fakeServers({ startable: ['api'] }),
     running: new Map([['/code/api/.worktrees/feat-a', { pid: 7, ports: [1233] }]]),
   });
   const st = await state.buildState();
-  assert.deepEqual(st.servers.s_1.repos, [
+  assert.deepEqual(present(st.servers.s_1, "s_1's server state").repos, [
     { repo: 'api', worktreePath: '/code/api/.worktrees/feat-a', running: true, ports: [1233], canStart: true },
     { repo: 'fe', worktreePath: '/code/fe/.worktrees/feat-a', running: false, ports: [], canStart: false },
   ], 'repos without a worktree are not part of the shared workspace view');
 });
 
 test('a session with no owned repos at all is left out of the servers map', async () => {
-  const { state } = build({ manager: fakeManager([{ id: 's_1', repos: [], worktreePath: null }]) });
+  const { state } = build({ manager: fakeManager([session({ id: 's_1', repos: [], worktreePath: null })]) });
   const st = await state.buildState();
   assert.deepEqual(st.servers, {});
 });
@@ -158,8 +177,9 @@ test('resolveGroup finds a feature, drops missing members and returns every work
     cfg: { groups: [{ name: 'Manual', members: ['api/feat-a', 'ghost/nope'] }] },
   });
   const { group, flat } = await state.resolveGroup('Manual');
-  assert.equal(group.members.length, 1, 'the unresolvable member is dropped');
-  assert.equal(group.members[0].wtname, 'feat-a');
+  const g = present(group, "the 'Manual' group");
+  assert.equal(g.members.length, 1, 'the unresolvable member is dropped');
+  assert.equal(present(g.members[0]).wtname, 'feat-a');
   assert.equal(flat.length, 3, 'flat is every worktree of every repo, main checkout included');
 });
 
@@ -205,31 +225,33 @@ import { Servers } from '../server/servers.ts';
 
 // Count realpathSync calls made while fn runs (util.ts resolves through this same
 // module object, so swapping the property is enough).
-function countRealpaths(fn) {
+function countRealpaths(fn: () => void): number {
   const real = fs.realpathSync;
   let n = 0;
   // Only the callable half is replaced; `.native` is carried over so the property
-  // still satisfies everything else that may reach for it while fn runs.
-  fs.realpathSync = /** @type {typeof fs.realpathSync} */ (Object.assign(
-    (/** @type {any} */ p, /** @type {any[]} */ ...rest) => { n++; return real(p, ...rest); },
+  // still satisfies everything else that may reach for it while fn runs. The cast is
+  // the seam: `realpathSync` is an overloaded function object, and a counting wrapper
+  // cannot reproduce every overload — the tests only ever take the string one.
+  fs.realpathSync = Object.assign(
+    (p: fs.PathLike) => { n++; return real(p); },
     { native: real.native },
-  ));
+  ) as typeof fs.realpathSync;
   try { fn(); } finally { fs.realpathSync = real; }
   return n;
 }
 
-function realManager(sessions = []) {
+function realManager(sessions: Session[] = []) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-'));
-  const m = new SessionManager({ _stateDir: stateDir, web: { port: 0 }, claude: {} }, { name: 'stub' });
+  const m = new SessionManager({ _stateDir: stateDir, web: { port: 0 }, claude: {} }, muxStub());
   for (const s of sessions) m.sessions.set(s.id, s);
   return m;
 }
 
 // A repo whose linked worktrees are symlinks to real dirs, so resolution has to
 // do actual work and a cached answer is observably different from a fresh one.
-function onDisk(n) {
+function onDisk(n: number): { root: string; targets: string[]; links: string[]; repos: StateRepo[] } {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wts-paths-')));
-  const targets = [], links = [];
+  const targets: string[] = []; const links: string[] = [];
   for (let i = 0; i < n; i++) {
     const t = path.join(root, `target-${i}`); fs.mkdirSync(t); targets.push(t);
     const l = path.join(root, `wt-${i}`); fs.symlinkSync(t, l); links.push(l);
@@ -239,14 +261,14 @@ function onDisk(n) {
   return { root, targets, links, repos: [{ name: 'api', path: root, defaultBranch: 'main', worktrees }] };
 }
 
-const sessionIdAt = (st, wtname) => {
-  const w = st.repos[0].worktrees.find((x) => x.wtname === wtname);
+const sessionIdAt = (st: { repos: Array<{ worktrees: Worktree[] }> }, wtname: string) => {
+  const w = present(st.repos[0], 'the first repo').worktrees.find((x) => x.wtname === wtname);
   return w && w.session ? w.session.id : null;
 };
 
 test('every worktree path is resolved once, then served from cache on later builds', () => {
   const disk = onDisk(4);
-  const sessions = disk.targets.map((t, i) => ({ id: `s_${i}`, worktreePath: t, repos: [{ repo: 'api', worktreePath: t }] }));
+  const sessions = disk.targets.map((t, i) => session({ id: `s_${i}`, worktreePath: t, repos: [sessionRepo({ repo: 'api', worktreePath: t })] }));
   const { state } = build({ repos: disk.repos, manager: realManager(sessions) });
 
   const cold = countRealpaths(() => state.topology());
@@ -265,7 +287,7 @@ test('every worktree path is resolved once, then served from cache on later buil
 
 test('sessionState shares the cache — a hook-driven build makes no syscalls', () => {
   const disk = onDisk(2);
-  const sessions = disk.targets.map((t, i) => ({ id: `s_${i}`, worktreePath: t, repos: [{ repo: 'api', worktreePath: t }] }));
+  const sessions = disk.targets.map((t, i) => session({ id: `s_${i}`, worktreePath: t, repos: [sessionRepo({ repo: 'api', worktreePath: t })] }));
   const { state } = build({ repos: disk.repos, manager: realManager(sessions) });
   state.topology();
   assert.equal(countRealpaths(() => { for (let i = 0; i < 20; i++) state.sessionState(); }), 0,
@@ -284,7 +306,7 @@ test('prunePaths invalidates a worktree that was removed and recreated pointing 
   const withFeat = [{ name: 'api', path: root, defaultBranch: 'main', worktrees: [mainRow, featRow] }];
   const withoutFeat = [{ name: 'api', path: root, defaultBranch: 'main', worktrees: [mainRow] }];
 
-  const manager = realManager([{ id: 's_1', worktreePath: before, repos: [{ repo: 'api', worktreePath: before }] }]);
+  const manager = realManager([session({ id: 's_1', worktreePath: before, repos: [sessionRepo({ repo: 'api', worktreePath: before })] })]);
   let repos = withFeat;
   const deps = { cfg: { baseDirs: [root], web: { port: 0 }, groups: [] }, manager, servers: fakeServers(), mux: { name: 'tmux' }, repos: () => repos, running: () => new Map() };
   const pruned = createState(deps);
@@ -302,7 +324,7 @@ test('prunePaths invalidates a worktree that was removed and recreated pointing 
 
   // …and a NEW worktree of the same name is created, resolving somewhere else
   fs.symlinkSync(after, link);
-  manager.sessions.set('s_2', { id: 's_2', worktreePath: after, repos: [{ repo: 'api', worktreePath: after }] });
+  manager.sessions.set('s_2', session({ id: 's_2', worktreePath: after, repos: [sessionRepo({ repo: 'api', worktreePath: after })] }));
   repos = withFeat;
 
   assert.equal(sessionIdAt(pruned.topology(), 'feat'), 's_2', 'resolved fresh, not through the dead entry');
@@ -313,7 +335,7 @@ test('prunePaths invalidates a worktree that was removed and recreated pointing 
 
 test('prunePaths keeps the entries the scan and the sessions still name', () => {
   const disk = onDisk(2);
-  const sessions = disk.targets.map((t, i) => ({ id: `s_${i}`, worktreePath: t, repos: [{ repo: 'api', worktreePath: t }] }));
+  const sessions = disk.targets.map((t, i) => session({ id: `s_${i}`, worktreePath: t, repos: [sessionRepo({ repo: 'api', worktreePath: t })] }));
   const { state } = build({ repos: disk.repos, manager: realManager(sessions) });
   state.topology();
   state.prunePaths();
@@ -331,7 +353,7 @@ test('a corrupt sessions.json is kept aside instead of being replaced by an empt
   const original = '[{"id":"s_1","claudeSessionId":"claude-abc"'; // truncated mid-write
   fs.writeFileSync(file, original);
 
-  const m = new SessionManager({ _stateDir: stateDir, web: { port: 0 }, claude: {} }, { name: 'stub' });
+  const m = new SessionManager({ _stateDir: stateDir, web: { port: 0 }, claude: {} }, muxStub());
   assert.equal(m.all().length, 0, 'boots empty rather than throwing');
 
   assert.ok(!fs.existsSync(file), 'the unreadable file was moved out of the way, not left to be overwritten');
