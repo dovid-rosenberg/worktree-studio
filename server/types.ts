@@ -75,12 +75,37 @@ export interface RunConfig {
   source?: string;
 }
 
+/**
+ * Re-point a gitignored FE config file at a sibling repo's slot-shifted ports.
+ *
+ * The FE has no env var for the backend it talks to — the URL is baked into a
+ * checked-out file — so the only way to move it is to rewrite the file itself.
+ */
+export interface ConfigPatch {
+  /** Repo-relative path of the file to rewrite. */
+  file: string;
+  /** The repo whose `portEnv` supplies the port families to shift. */
+  siblingRepo: string;
+}
+
+/**
+ * One repo's concurrency mapping: which env vars carry ports, and which carry
+ * the slot index itself.
+ */
+export interface RepoConcurrency {
+  /** ENV_VAR → base port. Slot n sets it to `base + n*offsetStep`. */
+  portEnv?: Record<string, number>;
+  /** ENV_VARs set to the slot INDEX, not a port (e.g. a Redis DB number). */
+  slotEnv?: string[];
+  configPatch?: ConfigPatch;
+}
+
 export interface ConcurrencyConfig {
   enabled: boolean;
   offsetStep: number;
   maxSlots: number;
   /** Ships EMPTY — the port map is one organisation's, not a default. */
-  repos: Record<string, unknown>;
+  repos: Record<string, RepoConcurrency>;
 }
 
 /**
