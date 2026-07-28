@@ -16,6 +16,11 @@ const { createForge, ghChecks, glChecks, PROVIDERS } = require('../server/forge'
 const NOT_A_REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-forge-'));
 
 // A stand-in provider whose view/create are scripted per call.
+/**
+ * @param {string} id
+ * @param {Partial<import('../server/forge').Provider>} [impl]
+ * @returns {import('../server/forge').Provider}
+ */
 function provider(id, { view = async () => null, create = async () => ({ ok: false, stderr: '' }) } = {}) {
   return { id, cli: id, view, create };
 }
@@ -233,7 +238,7 @@ async function serving(register, fn) {
   register(api);
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
-  try { return await fn((p, body) => fetch(`http://127.0.0.1:${server.address().port}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })); }
+  try { return await fn((p, body) => fetch(`http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}${p}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })); }
   finally { server.close(); }
 }
 

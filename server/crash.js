@@ -66,7 +66,11 @@ function listenErrorMessage(err, { host, port } = {}) {
 /**
  * Install the policy. `log`/`exit`/`on` are injectable so the classification can
  * be driven in a test without arming real process handlers or killing the runner.
- * @returns {{ handleException(err): boolean }} handleException reports whether the
+ * @param {object} [io]
+ * @param {(...args: any[]) => void} [io.log]
+ * @param {(code: number) => void} [io.exit]
+ * @param {(event: string, listener: (err: any) => void) => any} [io.on]
+ * @returns {{ handleException(err: any): boolean }} handleException reports whether the
  *          error was survived (true) or fatal (false), for tests.
  */
 function install({ log = console.error, exit = process.exit, on = process.on.bind(process) } = {}) {
@@ -94,7 +98,8 @@ function install({ log = console.error, exit = process.exit, on = process.on.bin
  * with no listener is re-thrown as an uncaughtException, which is how EADDRINUSE
  * ever reached the blanket handler in the first place; handling it here is what
  * turns it into a sentence the user can act on.
- * @param {import('http').Server} server
+ * @param {{ on: (event: string, listener: (err: any) => void) => any }} server
+ *        an http.Server, typed by the one thing this touches
  * @param {Addr} [addr]
  * @param {{ log?: Function, exit?: Function }} [io]
  */

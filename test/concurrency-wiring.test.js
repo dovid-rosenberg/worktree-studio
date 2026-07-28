@@ -474,7 +474,7 @@ const net = require('net');
 function freePort() {
   return new Promise((resolve) => {
     const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); });
+    srv.listen(0, '127.0.0.1', () => { const { port } = /** @type {import('net').AddressInfo} */ (srv.address()); srv.close(() => resolve(port)); });
   });
 }
 

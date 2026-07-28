@@ -18,20 +18,19 @@ const crash = require('../server/crash');
 // Arm install() against fakes and return what it did.
 function armed() {
   const handlers = new Map();
-  const logs = [];
-  const exits = [];
+  /** @type {string[]} */ const logs = [];
+  /** @type {number[]} */ const exits = [];
   crash.install({
-    log: (...a) => logs.push(a.map((x) => (x instanceof Error ? `${x.code || ''} ${x.message}` : String(x))).join(' ')),
+    log: (...a) => logs.push(a.map((/** @type {any} */ x) => (x instanceof Error ? `${/** @type {any} */ (x).code || ''} ${x.message}` : String(x))).join(' ')),
     exit: (c) => exits.push(c),
     on: (name, fn) => handlers.set(name, fn),
   });
   return { handlers, logs, exits };
 }
 
+// A Node-style error: the `code` is the only thing crash.js classifies on.
 function err(code, message = 'boom') {
-  const e = new Error(message);
-  e.code = code;
-  return e;
+  return Object.assign(new Error(message), { code });
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +82,7 @@ test('a client that vanished mid-write is survived, not fatal', () => {
 test('guardListen turns a bind failure into an explained non-zero exit', () => {
   const { EventEmitter } = require('events');
   const server = new EventEmitter();
-  const logs = []; const exits = [];
+  /** @type {string[]} */ const logs = []; /** @type {number[]} */ const exits = [];
   crash.guardListen(server, { host: '127.0.0.1', port: 4300 }, { log: (...a) => logs.push(String(a[0])), exit: (c) => exits.push(c) });
   server.emit('error', err('EADDRINUSE', 'listen EADDRINUSE 127.0.0.1:4300'));
   assert.deepEqual(exits, [1]);
@@ -173,7 +172,7 @@ test('a bare async handler that throws is a 500, and the process survives it', a
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   try {
-    const r = await fetch(`http://127.0.0.1:${server.address().port}/api/boom`);
+    const r = await fetch(`http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}/api/boom`);
     assert.equal(r.status, 500);
     assert.deepEqual(await r.json(), { error: 'handler exploded' });
   } finally { server.close(); }
@@ -191,7 +190,7 @@ test('a bare async handler that throws is a 500, and the process survives it', a
 function occupy() {
   return new Promise((resolve) => {
     const s = net.createServer();
-    s.listen(0, '127.0.0.1', () => resolve({ port: s.address().port, close: () => new Promise((r) => s.close(r)) }));
+    s.listen(0, '127.0.0.1', () => resolve({ port: /** @type {import('net').AddressInfo} */ (s.address()).port, close: () => new Promise((r) => s.close(r)) }));
   });
 }
 

@@ -10,8 +10,20 @@
 //   create → { ok:true, url } or { ok:false, stderr }
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
+// The interface above, made checkable — a provider injected by a test is held to
+// exactly this and nothing more.
+/**
+ * @typedef {{ passed: number, running: number, failed: number, total: number }} Checks
+ * @typedef {{ hasPR: boolean, provider?: string, number?: any, url?: any, state?: any, checks?: Checks }} PrView
+ * @typedef {object} Provider
+ * @property {string} id
+ * @property {string} cli
+ * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<PrView|null>} view
+ * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<{ ok: boolean, url?: string, stderr?: string }>} create
+ */
 const { run, has } = require('./util');
 
+/** @type {NodeJS.ProcessEnv} */
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
 // gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
@@ -61,6 +73,7 @@ function glChecks(status) {
   return { passed: 0, running: 0, failed: 0, total: 0 };
 }
 
+/** @type {Provider} */
 const github = {
   id: 'github',
   cli: 'gh',
@@ -78,6 +91,7 @@ const github = {
   },
 };
 
+/** @type {Provider} */
 const gitlab = {
   id: 'gitlab',
   cli: 'glab',
@@ -96,6 +110,7 @@ const gitlab = {
   },
 };
 
+/** @type {Provider[]} */
 const PROVIDERS = [github, gitlab];
 
 // Push a member's branch to origin. Split out (and injectable via createForge) so
@@ -125,10 +140,11 @@ function pushFailureLine(r) {
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
 /**
  * @param {object} [deps]
- * @param {InstanceType<typeof import('./sessions').SessionManager>} [deps.manager]
+ * @param {{ get: (id: string) => any }} [deps.manager] the SessionManager, typed by the
+ *        one method the routes below call
  * @param {(name: string) => Promise<{ group?: any }>} [deps.resolveGroup]
- * @param {typeof PROVIDERS} [deps.providers]
- * @param {(p: any) => boolean} [deps.isInstalled]
+ * @param {Provider[]} [deps.providers]
+ * @param {(p: Provider) => boolean} [deps.isInstalled]
  * @param {typeof pushBranchToOrigin} [deps.pushBranch]
  * @param {() => void} [deps.onChanged]
  */
@@ -207,7 +223,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   // `app` here is the API router — server.js mounts it at both /api and /api/v1.
   /**
    * @param {import('express').Router} app
-   * @param {{ manager?: InstanceType<typeof import('./sessions').SessionManager>, resolveGroup?: (name: string) => Promise<{ group?: any }> }} [deps]
+   * @param {{ manager?: { get: (id: string) => any }, resolveGroup?: (name: string) => Promise<{ group?: any }> }} [deps]
    */
   function register(app, deps = {}) {
     const mgr = deps.manager || manager;

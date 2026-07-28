@@ -30,6 +30,7 @@ function parse(text) {
 // from the sessions as they are AT BUILD TIME. That embedding is the reason a
 // client has to re-project: between two topology frames those copies age.
 function world() {
+  /** @type {{ worktrees: any[], sessions: any[], servers: any }} */
   const w = {
     worktrees: [{ wtname: 'feat-a', path: '/w/a', sessionId: 's_1' }],
     sessions: [{ id: 's_1', state: 'idle', activity: 'starting…', muxName: 'm1', title: 'A' }],
@@ -54,7 +55,9 @@ function world() {
 // verbatim, derive the state from the latest of both, and re-project the live
 // sessions onto the trimmed copies the topology embeds (stitchSessions()).
 function refClient() {
-  let topo = {}, sess = {}, state = {};
+  /** @type {any} */ let topo = {};
+  /** @type {any} */ let sess = {};
+  /** @type {any} */ let state = {};
   return {
     get state() { return state; },
     apply(frame) {

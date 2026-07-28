@@ -42,7 +42,7 @@ function harness({ session = { muxName: 'wts-x', worktreePath: '/wt' } } = {}) {
       attachSpawn: (name, opts) => ({ file: 'tmux', args: ['attach-session', '-t', opts.group === 'split' ? `${name}-split` : name], env: {} }),
     },
   };
-  const handler = createTerminalHandler({ manager, spawn: (...a) => { const t = fakeTerm(); t.args = a; terms.push(t); return t; } });
+  const handler = createTerminalHandler({ manager, spawn: /** @type {any} */ ((/** @type {any[]} */ ...a) => { const t = fakeTerm(); t.args = a; terms.push(t); return t; }) });
   return { handler, terms, release, manager };
 }
 

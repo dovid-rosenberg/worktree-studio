@@ -9,7 +9,9 @@ const pty = require('node-pty');
 
 /**
  * @param {object} deps
- * @param {InstanceType<typeof import('./sessions').SessionManager>} deps.manager
+ * @param {{ get: (id: string) => any, mux: { ensureSplit: Function, attachSpawn: Function } }} deps.manager
+ *        the SessionManager, typed by the three things this file reaches for — the
+ *        surface a test double has to stand in for is exactly that and no more.
  * @param {typeof pty.spawn} [deps.spawn]
  */
 function createTerminalHandler({ manager, spawn = pty.spawn }) {

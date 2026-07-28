@@ -51,6 +51,12 @@ const SESSION = { id: 's_1', repos: [{ repo: 'api', worktreePath: '/w/a', branch
 const OPEN_PR = { hasPR: true, provider: 'github', number: 4, url: 'https://gh/4', state: 'OPEN', checks: { passed: 1, running: 0, failed: 0, total: 1 } };
 
 // A feed with one attached stream and one promoted session, unless overridden.
+// `sessions`/`streams` take either a value or a thunk, so a test can change the
+// answer mid-flight (a dashboard opening, a session going away).
+/**
+ * @param {{ forge?: any, sessions?: any[] | (() => any[]),
+ *           streams?: number | (() => number), intervals?: object }} [opts]
+ */
 function feed({ forge = fakeForge(), sessions = [SESSION], streams = 1, intervals = FAST } = {}) {
   const frames = [];
   const f = createCiFeed({

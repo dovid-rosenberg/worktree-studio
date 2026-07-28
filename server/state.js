@@ -18,6 +18,17 @@ const sources = require('./sources');
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference
 // would go stale the first time either one is rescanned.
+/**
+ * @param {object} deps
+ * @param {any} deps.cfg
+ * @param {any} deps.manager
+ * @param {any} deps.servers
+ * @param {any} deps.mux
+ * @param {() => any[]} deps.repos      the repo scan cache, re-read per call
+ * @param {() => any} deps.running      the lsof discovery map, re-read per call
+ * @param {any} [deps.identity]         defaults to servers.identity — the two must
+ *                                      agree, so sharing one resolver is the point
+ */
 function createState({ cfg, manager, servers, mux, repos, running, identity }) {
   // The feature-identity resolver is shared with servers.js on purpose: the
   // grouping below and the concurrency slot key must be the same answer.

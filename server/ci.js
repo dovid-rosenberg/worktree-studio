@@ -64,8 +64,11 @@ async function pool(items, limit, fn) {
 
 /**
  * @param {object} deps
- * @param {ReturnType<typeof import('./forge').createForge>} deps.forge
- *                                   createForge() result — ciForRepo(entry) + invalidate()
+ * @param {{ ciForRepo: (entry: any) => Promise<any>, invalidate?: () => void }} deps.forge
+ *                                   createForge() result. Typed by the two methods the
+ *                                   feed actually reaches for, not by the whole object:
+ *                                   that IS the dependency, and a test double owes
+ *                                   nothing more.
  * @param {Function} deps.sessions   () → the current session list (manager.all())
  * @param {Function} [deps.streams]  () → open SSE stream count; the attention signal.
  *                                   Omitted, nothing ever sweeps — this fails closed,

@@ -31,6 +31,13 @@
 //
 // `ci` is optional: wired in, it joins the snapshot and gets its own flush flag;
 // omitted, the bus behaves exactly as it did with two events.
+/**
+ * @param {object} deps
+ * @param {() => any} deps.topology      builds the `topology` half on demand
+ * @param {() => any} deps.sessionState  builds the `session-state` half on demand
+ * @param {() => any} [deps.ci]          builds the `ci` half; omitted, two events
+ * @param {number} [deps.debounceMs]
+ */
 function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   const clients = new Set();
   let timer = null;
