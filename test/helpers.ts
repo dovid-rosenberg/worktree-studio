@@ -49,6 +49,12 @@ export function present<T>(v: T | null | undefined, what = 'value'): T {
  * A complete `Session`. Tests spell only the fields they assert on; everything else
  * takes a neutral default, so a new REQUIRED field on `Session` is added once here
  * rather than in every test that stores one.
+ *
+ * CAVEAT, and it has bitten once already: a test about a FALLBACK must clear the
+ * earlier fields explicitly. `worktreeNameFor()` reads worktree → primary.worktree →
+ * suggestedName → feature, and the defaults below fill `suggestedName`, so a test
+ * that means "an old row carries nothing but `feature`" has to say
+ * `suggestedName: ''` or it silently stops testing the fallback.
  */
 export function session(over: Partial<Session> = {}): Session {
   return {
