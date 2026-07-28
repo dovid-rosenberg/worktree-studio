@@ -178,7 +178,7 @@ class Servers {
   }
 
   startCfg(repo) {
-    const s = this.cfg.start && this.cfg.start[repo];
+    const s = this.cfg.start && Object.prototype.hasOwnProperty.call(this.cfg.start, repo) ? this.cfg.start[repo] : null;
     if (!s) return null;
     if (typeof s === 'string') return { cmd: s, ports: [] };
     return { cmd: s.cmd, ports: s.ports || [] };

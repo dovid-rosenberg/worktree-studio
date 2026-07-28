@@ -20,10 +20,10 @@ function fixture() {
 const CWD = '/Users/d/repo/.worktrees/feat';
 
 function session(over = {}) {
-  return { id: 's_1', title: 'demo', feature: 'feat', home: CWD, claudeSessionId: 'cs-idx', ...over };
+  return { id: 's_1', title: 'demo', feature: 'feat', home: CWD, claudeSessionId: 'cccccccc-0000-4000-8000-000000000015', ...over };
 }
 
-function transcriptFile(root, id = 'cs-idx') {
+function transcriptFile(root, id = 'cccccccc-0000-4000-8000-000000000015') {
   const dir = path.join(root, transcripts.projectSlug(CWD));
   fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, `${id}.jsonl`);
@@ -47,13 +47,13 @@ function usage(over = {}) {
 function asst({ msgId, text, model = 'claude-opus-5', use = usage(), blockType = 'text', ts = '2026-07-27T12:00:00.000Z' }) {
   const block = blockType === 'thinking' ? { type: 'thinking', thinking: text } : { type: 'text', text };
   return {
-    type: 'assistant', uuid: `u${++n}`, sessionId: 'cs-idx', timestamp: ts, cwd: CWD, gitBranch: 'feat/x',
+    type: 'assistant', uuid: `u${++n}`, sessionId: 'cccccccc-0000-4000-8000-000000000015', timestamp: ts, cwd: CWD, gitBranch: 'feat/x',
     requestId: `req-${msgId}`, message: { id: msgId, role: 'assistant', model, content: [block], usage: use },
   };
 }
 
 function user(text, ts = '2026-07-27T11:59:00.000Z') {
-  return { type: 'user', uuid: `u${++n}`, sessionId: 'cs-idx', timestamp: ts, cwd: CWD, gitBranch: 'feat/x', message: { role: 'user', content: text } };
+  return { type: 'user', uuid: `u${++n}`, sessionId: 'cccccccc-0000-4000-8000-000000000015', timestamp: ts, cwd: CWD, gitBranch: 'feat/x', message: { role: 'user', content: text } };
 }
 
 // ---- availability -----------------------------------------------------------
@@ -127,7 +127,7 @@ test('a relocated transcript is re-read from the start, not from a stale offset'
   const oldCwd = '/Users/d/repo';
   const oldDir = path.join(root, transcripts.projectSlug(oldCwd));
   fs.mkdirSync(oldDir, { recursive: true });
-  const oldFile = path.join(oldDir, 'cs-idx.jsonl');
+  const oldFile = path.join(oldDir, 'cccccccc-0000-4000-8000-000000000015.jsonl');
   append(oldFile, [user('pre-promote'), asst({ msgId: 'm1', text: 'before' })]);
   await index.index(session({ home: oldCwd }));
   assert.equal(index.status().messages, 2);
@@ -230,7 +230,9 @@ test('forget drops a closed session from the index', async () => {
 test('index reports why it cannot find a transcript', async () => {
   const { index } = fixture();
   assert.equal((await index.index(session({ claudeSessionId: null }))).ok, false);
-  assert.match((await index.index(session({ claudeSessionId: 'missing' }))).reason, /not found/);
+  assert.match((await index.index(session({ claudeSessionId: 'cccccccc-0000-4000-8000-000000009999' }))).reason, /not found/);
+  // Not a uuid → refused before it can be joined into a path at all (see locate()).
+  assert.match((await index.index(session({ claudeSessionId: 'missing' }))).reason, /uuid/);
   index.close();
 });
 

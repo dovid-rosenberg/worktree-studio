@@ -33,6 +33,15 @@ function projectsRoot(opts) {
 //     → -Users-davidr-Desktop-ab-code-ab-be-accept-blue--worktrees-fix-recurring-deleted-pm
 function projectSlug(cwd) { return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-'); }
 
+// A claudeSessionId is a uuid, and it is UNTRUSTED: it arrives verbatim in a
+// SessionStart hook payload (`session_id`) and is then joined into a filesystem path.
+// `../../..` in it escapes the transcript root, so locate() would happily point the
+// reader — and the indexer — at any .jsonl on the machine. Validate the shape rather
+// than sanitising it: anything that is not a uuid is not a session id, so there is
+// nothing to salvage.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isSessionId(id) { return typeof id === 'string' && UUID.test(id); }
+
 // Where a session's transcript lives. `session.home` tracks the cwd claude is
 // actually running in (promote sends `/cd`, which relocates BOTH cwd and transcript),
 // but a promote whose `/cd` never landed leaves `home` pointing at the old dir — so we
@@ -41,6 +50,7 @@ function projectSlug(cwd) { return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-
 function locate(session, opts = {}) {
   const id = session && session.claudeSessionId;
   if (!id) return { found: false, reason: 'session has no claudeSessionId yet' };
+  if (!isSessionId(id)) return { found: false, reason: 'claudeSessionId is not a uuid' };
   const root = projectsRoot(opts);
   const seen = new Set();
   const candidates = [session.home, session.worktreePath, session.repoPath];
@@ -355,7 +365,7 @@ function excerpt(text, at, len, pad = 90) {
 }
 
 module.exports = {
-  projectsRoot, projectSlug, locate,
+  projectsRoot, projectSlug, isSessionId, locate,
   scan, readTranscript, toEntry, normalizeUsage, contentText,
   aggregate, search, blankTotals, addUsage, usageKey, excerpt,
 };

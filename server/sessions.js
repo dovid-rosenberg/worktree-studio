@@ -406,7 +406,13 @@ class SessionManager extends EventEmitter {
     const s = this.get(id);
     if (!s) return { ok: false };
     if ((s.tabs || []).length <= 1) return { ok: false, error: 'can’t close the only tab' };
-    await this.mux.closeTab(s.muxName, index);
+    // closeTab() returns whether tmux actually killed the window, and that answer was
+    // being discarded: a failed kill-window (a stale index, a session tmux no longer
+    // has) still spliced the tab out of our list, so the strip claimed a tab was gone
+    // while it was still there — and every index after it then pointed at the wrong
+    // window. Only mirror a close that happened.
+    const ok = await this.mux.closeTab(s.muxName, index);
+    if (!ok) return { ok: false, error: 'the multiplexer did not close that tab' };
     (s.tabs || []).splice(index, 1);
     this._touch(id);
     return { ok: true };
