@@ -341,3 +341,66 @@ test('repeated transcript query params are collapsed, not passed through as arra
     });
   } finally { cleanup(); }
 });
+
+// ---------------------------------------------------------------------------
+// The reindex queue coalesces
+// ---------------------------------------------------------------------------
+//
+// Stop / SubagentStop / SessionEnd all enqueue a reindex, and a session running
+// parallel subagents fires a burst of them. The queue was an array, so a burst of N
+// hooks did N index passes over the same file — and indexing is incremental and
+// idempotent, so every pass after the first was pure re-stat work. A Set of session
+// ids is the right shape: whatever arrives while a pass is in flight collapses into
+// the single follow-up pass that pass is owed.
+
+test('a burst of Stop hooks collapses into one follow-up index pass', async () => {
+  const { EventEmitter } = require('node:events');
+  const manager = new EventEmitter();
+  const session = { id: 's1' };
+  manager.get = (id) => (id === 's1' ? session : null);
+  manager.all = () => [];
+
+  const app = express();
+  const api = express.Router();
+  app.use('/api', api);
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
+  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+
+  const calls = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  index.index = async (s) => { calls.push(s.id); await gate; return { ok: true }; };
+
+  // Three hooks with no await between them: the first starts a pass, the other two
+  // land while it is in flight.
+  for (const event of ['Stop', 'SubagentStop', 'SessionEnd']) manager.emit('hook', { id: 's1', event });
+  assert.equal(calls.length, 1, 'the first hook starts a pass; the rest must not each start their own');
+
+  release();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(calls.length, 2, 'the two queued hooks collapse into ONE follow-up pass, not two');
+  index.close();
+  fs.rmSync(stateDir, { recursive: true, force: true });
+});
+
+test('a hook for an event that is not a reindex trigger enqueues nothing', async () => {
+  const { EventEmitter } = require('node:events');
+  const manager = new EventEmitter();
+  manager.get = () => ({ id: 's1' });
+  manager.all = () => [];
+  const app = express();
+  const api = express.Router();
+  app.use('/api', api);
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
+  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+
+  const calls = [];
+  index.index = async (s) => { calls.push(s.id); return { ok: true }; };
+  for (const event of ['PreToolUse', 'Notification', 'SessionStart']) manager.emit('hook', { id: 's1', event });
+  assert.deepEqual(calls, [], 'every tool call must not re-stat the transcript');
+
+  index.close();
+  fs.rmSync(stateDir, { recursive: true, force: true });
+});
