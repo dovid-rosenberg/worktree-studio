@@ -41,6 +41,8 @@
 // be looked up more often than the 20 s cache already allowed. With nobody
 // subscribed the figure is zero.
 import { attention } from './watch.ts';
+import type { CiEntry } from './forge.ts';
+import type { CiPayload, CiRepo, CiSnapshot } from './types.ts';
 
 const DEFAULTS = {
   debounceMs: 500,       // coalesce a burst of triggers (a rescan storm, push then commit) into one sweep
@@ -51,42 +53,69 @@ const DEFAULTS = {
   sweepTimeoutMs: 45000, // a sweep that hasn't finished by now is abandoned so the next one can run
 };
 
-function unref(t) { if (t && typeof t.unref === 'function') t.unref(); return t; }
+function unref<T extends { unref?: () => unknown }>(t: T): T { if (t && typeof t.unref === 'function') t.unref(); return t; }
 
 // Run `fn` over `items` with at most `limit` in flight. Order is irrelevant here —
 // every result is keyed — so this is a pool of workers pulling from one cursor.
-async function pool(items, limit, fn) {
+async function pool<T>(items: T[], limit: number, fn: (item: T) => unknown): Promise<void> {
   let i = 0;
   const worker = async () => { while (i < items.length) { const n = i++; await fn(items[n]); } };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
 }
 
 /**
- * @param {object} deps
- * @param {{ ciForRepo: (entry: any) => Promise<any>, invalidate?: () => void }} deps.forge
- *                                   createForge() result. Typed by the two methods the
- *                                   feed actually reaches for, not by the whole object:
- *                                   that IS the dependency, and a test double owes
- *                                   nothing more.
- * @param {Function} deps.sessions   () → the current session list (manager.all())
- * @param {Function} [deps.streams]  () → open SSE stream count; the attention signal.
- *                                   Omitted, nothing ever sweeps — this fails closed,
- *                                   because a half-wired feed spawning `gh` for nobody
- *                                   is the one outcome worth ruling out by construction.
- * @param {Function} [deps.onChange] called when the snapshot differs from the last one
- * @param {Partial<typeof DEFAULTS>} [deps.intervals] DEFAULTS overrides — the tests run
- *                                   the same code paths on a millisecond timescale
+ * createForge()'s result, typed by the two methods the feed actually reaches for,
+ * not by the whole object: that IS the dependency, and a test double owes nothing
+ * more.
  */
-function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals }) {
+interface CiForge {
+  ciForRepo: (entry: CiEntry) => Promise<CiRepo>;
+  invalidate?: () => void;
+}
+
+/**
+ * A session, as the sweep reads it: an id to key the snapshot by, and the repos it
+ * may have promoted. `types.ts`'s `Session` satisfies it.
+ */
+interface CiSession {
+  id: string;
+  repos?: CiEntry[] | null;
+}
+
+interface CiFeedDeps {
+  forge: CiForge;
+  /** () → the current session list (manager.all()) */
+  sessions?: () => CiSession[];
+  /**
+   * () → open SSE stream count; the attention signal. Omitted, nothing ever sweeps —
+   * this fails closed, because a half-wired feed spawning `gh` for nobody is the one
+   * outcome worth ruling out by construction.
+   */
+  streams?: () => number;
+  /** called when the snapshot differs from the last one */
+  onChange?: (snapshot: CiSnapshot) => void;
+  /** DEFAULTS overrides — the tests run the same code paths on a millisecond timescale */
+  intervals?: Partial<typeof DEFAULTS>;
+}
+
+interface PokeOptions {
+  /**
+   * the caller knows the truth changed (a commit, a push, a PR just opened), so the
+   * cached answer is wrong rather than merely old and has to be dropped.
+   */
+  force?: boolean;
+}
+
+function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals }: CiFeedDeps) {
   const o = { ...DEFAULTS, ...(intervals || {}) };
   // The poll arm is deliberately never fed (`seen()` is not called): for CI,
   // "someone is looking" means an open stream and nothing else. See above.
   const watching = attention({ streams });
 
-  let snapshot = {};
+  let snapshot: CiSnapshot = {};
   let sig = '{}';
   let stopped = false;
-  let timer = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let busy = false;
   let queued = false;
   let gen = 0;
@@ -97,8 +126,8 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
   // Every distinct worktree+branch a session owns, keyed exactly as forge's cache
   // keys it. One entry per pair: the map collapses the duplicates before they can
   // become processes.
-  function entries(list) {
-    const out = new Map();
+  function entries(list: CiSession[] | null | undefined): Map<string, CiEntry> {
+    const out = new Map<string, CiEntry>();
     for (const s of (list || [])) {
       for (const r of (s.repos || [])) {
         if (r && r.worktreePath && r.branch) out.set(`${r.worktreePath}\n${r.branch}`, r);
@@ -111,10 +140,10 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
   // { repo, hasPR:false } for every failure mode (no CLI, not authenticated, no
   // remote, no PR, a CLI that blew up), and the guard here covers the rest so a
   // sweep can never reject into the caller or the bus.
-  async function sweep(my) {
+  async function sweep(my: number): Promise<void> {
     const list = sessions ? sessions() : [];
     const wanted = entries(list);
-    const results = new Map();
+    const results = new Map<string, CiRepo>();
     await pool([...wanted], o.concurrency, async ([key, entry]) => {
       lookups += 1;
       try { results.set(key, await forge.ciForRepo(entry)); }
@@ -122,9 +151,9 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     });
     if (stopped || my !== gen) return; // abandoned mid-flight — a newer sweep owns the snapshot
 
-    const next = {};
+    const next: CiSnapshot = {};
     for (const s of list) {
-      const repos = [];
+      const repos: CiRepo[] = [];
       for (const r of (s.repos || [])) {
         if (!r || !r.worktreePath || !r.branch) continue;
         const found = results.get(`${r.worktreePath}\n${r.branch}`);
@@ -140,7 +169,7 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     try { onChange(snapshot); } catch { /* a broken listener must not kill the feed */ }
   }
 
-  function runSweep() {
+  function runSweep(): void {
     if (stopped) return;
     if (busy) { queued = true; return; }
     busy = true;
@@ -166,12 +195,8 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
    * "Something happened that may have changed CI." Debounced, floored at
    * minSweepMs, and a no-op when nobody is subscribed — the timer is not even
    * armed then, so an idle server with a busy git repo stays silent.
-   * @param {object} [opts]
-   * @param {boolean} [opts.force] the caller knows the truth changed (a commit, a push,
-   *                          a PR just opened), so the cached answer is wrong rather
-   *                          than merely old and has to be dropped.
    */
-  function poke({ force = false } = {}) {
+  function poke({ force = false }: PokeOptions = {}): void {
     if (stopped || !watching.active()) return;
     if (force && forge && typeof forge.invalidate === 'function') forge.invalidate();
     if (timer) return;
@@ -193,8 +218,8 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     poke,
     // The `ci` half as the bus serializes it. A getter, not a value: the bus reads
     // it at write time, so a subscriber and a flush can never disagree.
-    snapshot() { return { ci: snapshot }; },
-    stop() {
+    snapshot(): CiPayload { return { ci: snapshot }; },
+    stop(): void {
       stopped = true;
       clearInterval(heartbeat);
       if (timer) clearTimeout(timer);

@@ -128,7 +128,7 @@ function register(api: Router, deps: ReviewDeps): void {
   // changes (binary, mode-only) can only be staged whole, and that is what the error
   // from these routes says.
   const applyRoute = (op: 'stage' | 'unstage') => async (req: Request<{ id: string }>, res: Response) => {
-    const body = req.body || {};
+    const body: ApplyBody = req.body || {};
     const r = resolveWorktree(deps, req, body.repo);
     if (!r.entry) return res.status(r.status).json({ error: r.error });
     const out = await hunks[op](r.entry.worktreePath, {
