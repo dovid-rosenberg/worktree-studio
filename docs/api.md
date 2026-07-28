@@ -28,8 +28,9 @@ are baked into things outside the server:
 - `ws://…/ws/term` — the terminal WebSocket.
 
 Requests: `application/json` bodies up to 8 MB (`text/*` is also accepted and
-arrives as a string — only the hook receiver uses that). Responses are JSON
-unless stated otherwise.
+arrives as a string — only the hook receiver uses that). A body that is malformed
+or over the limit is refused as `400` / `413` in the same `{ error }` shape as
+everything else. Responses are JSON unless stated otherwise.
 
 ## Authentication
 
@@ -81,6 +82,7 @@ refused before there is a document to read.
 | 403    | Disallowed `Host` or `Origin` (`{ error }`) — see *Authentication*.           |
 | 404    | Named session / feature does not exist (`{ error }`).                        |
 | 409    | No free concurrency slot (`{ ok: false, error }`) — see *Concurrency slots*. |
+| 413    | Body over the 8 MB limit (`{ error: 'request entity too large' }`).          |
 | 500    | Unhandled exception in a handler (`{ error: <message> }`), also logged.      |
 
 Many routes answer `200` with `{ ok: false, error }` instead of a 4xx — a failed
