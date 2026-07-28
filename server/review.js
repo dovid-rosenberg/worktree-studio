@@ -33,6 +33,56 @@ function countLines(worktreePath, rel) {
   } catch { return 0; }
 }
 
+// `-z` is the only unambiguous way to read a rename out of git. The human-readable
+// form collapses it into ONE field (`old => name.js`, or `{src => lib}/math.js`),
+// which is indistinguishable from a filename that genuinely contains " => " — and,
+// worse, --numstat spells it that way while --name-status reports only the new path.
+// Keying off both then produced TWO entries for one rename: the real file, plus a
+// phantom keyed `old => new` with no parsed diff. The phantom rendered as an empty
+// file block and, in the uncommitted view, claimed "nothing left to stage" — which
+// reads to the user as though their changes had vanished.
+//
+// Under -z a rename emits its paths as separate NUL-terminated fields, so the two
+// commands finally agree on one key: the new path.
+
+// `add\tdel\tpath\0` per file — except a rename, which is `add\tdel\t\0old\0new\0`.
+function parseNumstatZ(raw) {
+  const out = [];
+  const tok = String(raw || '').split('\0');
+  for (let i = 0; i < tok.length; i++) {
+    if (!tok[i]) continue;
+    const parts = tok[i].split('\t');
+    if (parts.length < 3) continue; // not a record header
+    const [a, d, inline] = parts;
+    const num = (v) => (v === '-' ? 0 : Number(v) || 0);
+    if (inline) { out.push({ added: num(a), deleted: num(d), file: inline }); continue; }
+    // empty third field → the next two tokens are the old and new paths
+    const oldFile = tok[++i];
+    const file = tok[++i];
+    if (file) out.push({ added: num(a), deleted: num(d), file, oldFile });
+  }
+  return out;
+}
+
+// `X\0path\0` per file — except a rename/copy, which is `Rnnn\0old\0new\0`.
+function parseNameStatusZ(raw) {
+  const out = [];
+  const tok = String(raw || '').split('\0').filter((t) => t !== '');
+  for (let i = 0; i < tok.length; i++) {
+    const code = tok[i];
+    if (!/^[A-Z]/.test(code)) continue;
+    const letter = code[0];
+    if (letter === 'R' || letter === 'C') {
+      const oldFile = tok[++i]; const file = tok[++i];
+      if (file) out.push({ status: letter, file, oldFile });
+    } else {
+      const file = tok[++i];
+      if (file) out.push({ status: letter, file });
+    }
+  }
+  return out;
+}
+
 // The working tree's UNCOMMITTED changes (vs HEAD), de-duped by path: tracked changes
 // from git diff HEAD (numstat counts + name-status), untracked files from git status
 // --porcelain (status 'A', line count as added). Excludes everything already committed.
@@ -43,20 +93,17 @@ async function working(worktreePath) {
     return byPath.get(f);
   };
 
-  const numstat = await git(worktreePath, ['diff', '--numstat', 'HEAD']);
-  for (const line of numstat.split('\n')) {
-    if (!line) continue;
-    const [a, d, ...rest] = line.split('\t');
-    const e = get(rest.join('\t'));
-    e.added = a === '-' ? 0 : Number(a) || 0;
-    e.deleted = d === '-' ? 0 : Number(d) || 0;
+  for (const r of parseNumstatZ(await git(worktreePath, ['diff', '--numstat', '-z', 'HEAD']))) {
+    const e = get(r.file);
+    e.added = r.added;
+    e.deleted = r.deleted;
+    if (r.oldFile) e.oldFile = r.oldFile;
   }
 
-  const nameStatus = await git(worktreePath, ['diff', '--name-status', 'HEAD']);
-  for (const line of nameStatus.split('\n')) {
-    if (!line) continue;
-    const parts = line.split('\t');
-    get(parts[parts.length - 1]).status = parts[0][0];
+  for (const r of parseNameStatusZ(await git(worktreePath, ['diff', '--name-status', '-z', 'HEAD']))) {
+    const e = get(r.file);
+    e.status = r.status;
+    if (r.oldFile) e.oldFile = r.oldFile;
   }
 
   const porcelain = await git(worktreePath, ['status', '--porcelain']);
@@ -116,19 +163,16 @@ async function commitDetail(worktreePath, defaultBranch, sha) {
     if (!byPath.has(f)) byPath.set(f, { file: f, status: 'M', added: 0, deleted: 0 });
     return byPath.get(f);
   };
-  const numstat = await git(worktreePath, ['show', '--format=', '--numstat', sha]);
-  for (const line of numstat.split('\n')) {
-    if (!line) continue;
-    const [a, d, ...rest] = line.split('\t');
-    const e = get(rest.join('\t'));
-    e.added = a === '-' ? 0 : Number(a) || 0;
-    e.deleted = d === '-' ? 0 : Number(d) || 0;
+  for (const r of parseNumstatZ(await git(worktreePath, ['show', '--format=', '--numstat', '-z', sha]))) {
+    const e = get(r.file);
+    e.added = r.added;
+    e.deleted = r.deleted;
+    if (r.oldFile) e.oldFile = r.oldFile;
   }
-  const nameStatus = await git(worktreePath, ['show', '--format=', '--name-status', sha]);
-  for (const line of nameStatus.split('\n')) {
-    if (!line) continue;
-    const parts = line.split('\t');
-    get(parts[parts.length - 1]).status = parts[0][0];
+  for (const r of parseNameStatusZ(await git(worktreePath, ['show', '--format=', '--name-status', '-z', sha]))) {
+    const e = get(r.file);
+    e.status = r.status;
+    if (r.oldFile) e.oldFile = r.oldFile;
   }
   const files = [...byPath.values()];
   for (const f of files) {
