@@ -246,3 +246,25 @@ test('GET /sessions/:id/diff still defaults to the working tree and accepts a re
   assert.deepEqual(commit.body.files.map((f) => f.file), ['f.txt']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// A repeated query param parses to an ARRAY, and an array on its way to isValidSha and
+// then a git argv is a TypeError — a 500 leaking an internal message for what is only a
+// malformed request. `?file=` was already String()-coerced; `?sha=` now is too.
+test('a repeated ?sha= is a 400, not a 500', async () => {
+  const { app, dir } = registered();
+  const r = await app.call('get', '/sessions/:id/diff', {
+    params: { id: 's1' }, query: { sha: ['abcdef1', 'abcdef2'] },
+  });
+  assert.equal(r.status, 400, 'coerced and rejected at the boundary');
+  assert.match(r.body.error, /hex object name/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a repeated ?file= still resolves to one file', async () => {
+  const { app, dir } = registered();
+  const r = await app.call('get', '/sessions/:id/hunks', {
+    params: { id: 's1' }, query: { repo: 'demo', file: ['f.txt'] },
+  });
+  assert.equal(r.status, 200);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

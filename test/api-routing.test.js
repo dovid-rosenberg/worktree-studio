@@ -313,3 +313,31 @@ test('every cost-bearing response carries the same pricing block', async () => {
     });
   } finally { cleanup(); }
 });
+
+// ---------------------------------------------------------------------------
+// Repeated query params are a malformed request, not a 500
+// ---------------------------------------------------------------------------
+//
+// `?q=a&q=b` parses to an ARRAY. An array reaching a sqlite bind or an execFile argv
+// is a TypeError, which the async wrapper turns into a 500 carrying an internal
+// message — for a request that is simply malformed. Every one of these used to do that.
+
+test('repeated transcript query params are collapsed, not passed through as arrays', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      const cases = [
+        '/transcripts/search?q=alpha&q=beta',
+        '/transcripts/search?q=alpha&role=user&role=assistant',
+        '/transcripts/search?q=alpha&session=x&session=y',
+        '/transcripts/search?q=alpha&order=rank&order=recent',
+        '/transcripts/search?q=alpha&limit=5&limit=9',
+        '/transcripts/search?q=alpha&since=1&since=2',
+      ];
+      for (const route of cases) {
+        const { status } = await bothPrefixes(get, route);
+        assert.equal(status, 200, `${route} answered ${status} — an array reached the query layer`);
+      }
+    });
+  } finally { cleanup(); }
+});
