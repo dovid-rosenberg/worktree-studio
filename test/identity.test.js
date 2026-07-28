@@ -235,3 +235,16 @@ test('identity follows a non-default worktree layout', () => {
   assert.equal(id.ofPath('/code/feat-a'), 'feat-a');
   assert.equal(id.of({ repo: 'api', path: '/code/feat-a' }), 'feat-a', 'derives the name when wtname is absent');
 });
+
+test('manifest picks up a live edit to config.groups (POST /settings replaces the array)', () => {
+  const cfg = { featureIdentity: { strategy: 'manifest' }, groups: [] };
+  const id = createIdentity(cfg);
+  const w = wt('api', 'wt-a', 'feature/alpha');
+  id.reindex(scan([w]));
+  assert.equal(id.of(w), 'wt-a', 'ungrouped to begin with');
+  cfg.groups = [{ name: 'Alpha', members: ['api/wt-a'] }]; // what POST /settings does
+  assert.equal(id.of(w), 'Alpha', 'the new grouping is live');
+  assert.equal(id.ofPath(w.path), 'Alpha', 'and slot keying followed it');
+  cfg.groups = [];
+  assert.equal(id.of(w), 'wt-a', 'and back again');
+});

@@ -94,11 +94,17 @@ Many routes answer `200` with `{ ok: false, error }` instead of a 4xx — a fail
 - **repo** — a git repository found by scanning `config.baseDirs`, identified by
   its directory basename.
 - **worktree** — a git worktree of a repo. The repo's own checkout is the *main*
-  worktree (`isMain: true`); the rest live in `<repo>/.worktrees/<name>`.
-- **feature** — one linked worktree name, across every repo that has a worktree
-  by that name. `.worktrees/login-fix` in three repos is one feature,
-  `login-fix`. Features are computed, not stored. A *manual group* from
-  `config.groups` names its members explicitly instead.
+  worktree (`isMain: true`); the rest live wherever `config.worktrees.layout`
+  says, `<repo>/.worktrees/<name>` by default. Clients must treat `path` as
+  opaque and never reconstruct it from the repo and name.
+- **feature** — one *feature identity*, across every repo that has a worktree
+  with it. Under the default `basename` strategy the identity is the worktree's
+  directory name, so `.worktrees/login-fix` in three repos is one feature,
+  `login-fix`. `config.featureIdentity.strategy` can key it on a capture group of
+  the branch name (`branch`) or on `config.groups` (`manifest`) instead — see
+  [config.md](config.md#2-what-makes-two-worktrees-one-feature--featureidentity).
+  Features are computed, not stored. A *manual group* from `config.groups` names
+  its members explicitly regardless of strategy.
 - **session** — a Claude Code process running in a multiplexer (tmux) session,
   owning one or more worktrees.
 - **concurrency slot** — a small integer (0, 1, 2…) assigned to a feature while
@@ -192,7 +198,7 @@ sets: a manual group appears in both. Use `features` for a complete list, and
 | Field        | Type            | Meaning                                                                 |
 | ------------ | --------------- | ----------------------------------------------------------------------- |
 | `repo`       | string          | Owning repo name.                                                        |
-| `wtname`     | string          | Directory basename. For the main checkout this equals `repo`.            |
+| `wtname`     | string          | Directory basename. For the main checkout this equals `repo`. Under a non-`basename` feature identity this is **not** the feature name — read that off the *Feature* the worktree is a member of. |
 | `branch`     | string \| null  | Checked-out branch, `null` when detached.                                |
 | `path`       | string          | Absolute worktree path. **The identifier** for every server/worktree route. |
 | `isMain`     | boolean         | True for the repo's own checkout. Main checkouts are never features and are never session-decorated. |
@@ -210,7 +216,7 @@ sets: a manual group appears in both. Use `features` for a complete list, and
 
 | Field     | Type            | Meaning                                                                       |
 | --------- | --------------- | ----------------------------------------------------------------------------- |
-| `name`    | string          | The shared worktree name, or the manual group's name. **The identifier** for every `/group/*` route. |
+| `name`    | string          | The feature identity its members share (the shared worktree name under the default `basename` strategy), or the manual group's name. **The identifier** for every `/group/*` route, and the key a concurrency slot is allocated against. |
 | `auto`    | boolean         | `false` for a manual group from `config.groups`, `true` for a discovered one.  |
 | `members` | object[]        | Full *Worktree* objects. A manual group member that resolves to nothing is the stub `{ missing: true, ref: "<repo>/<branch-or-name>" }` instead — check `missing` before reading any other field. |
 | `session` | object \| null  | The one session driving this feature (the first member that has one), same trimmed shape as `worktree.session`. |
@@ -308,7 +314,13 @@ Every field is optional; only what is present is touched. Responds with
 | `start`         | Full replace of `{ "<repo>": { cmd, ports } }`; rows without a name or `cmd` are dropped, `ports` is coerced from an array or a comma/space-separated string to positive integers. Triggers a rescan. |
 | `editors`       | Full replace; rows without a name or `open` are dropped. `openGroup` kept when non-blank. |
 | `defaultEditor` | Set when a non-blank string.                                                     |
-| `groups`        | Full replace of `[{ name, members }]`; rows without a name or with no members are dropped. Triggers a rescan. |
+| `groups`        | Full replace of `[{ name, members }]`; rows without a name or with no members are dropped. Triggers a rescan. Under `featureIdentity.strategy: "manifest"` this list is also what feature identity is read from, so a change here re-keys features **and** their concurrency slots, live. |
+
+The convention blocks — `worktrees`, `featureIdentity`, `copyPatterns`,
+`copyAlways`, `concurrency` — are **not** writable through this endpoint. They are
+read once at boot (the identity resolver and the slot registry are built from
+them), so they are edited in `config.json` and picked up on restart. See
+[config.md](config.md).
 
 `open` / `openGroup` are shell commands with `{path}` / `{paths}` placeholders,
 substituted with shell-quoted paths and run via `bash -lc`.
@@ -484,10 +496,13 @@ branch.
 
 ### `POST /worktrees`
 
-`{ repo, branch, name? }` → create `<repo>/.worktrees/<name>`, branching off the
-default base if `branch` doesn't exist, then copy in the gitignored bits a plain
-`git worktree add` drops (WebStorm run configs, `.env`, local config files per
-`config.copyPatterns`). Returns
+`{ repo, branch, name? }` → create a worktree named `name` at the location
+`config.worktrees.layout` dictates (`<repo>/.worktrees/<name>` by default),
+branching off the default base if `branch` doesn't exist, then copy in the bits a
+plain `git worktree add` drops: `config.copyAlways` patterns unconditionally
+(JetBrains run configs by default) and `config.copyPatterns` patterns when git
+ignores them (`.env`, local config files). Read the created location off `path`
+in the response rather than assuming a layout. Returns
 `{ ok, path, branch, name, base, created, copied: { runConfigs, files }, warnings }`,
 or `{ ok: false, error, path, name, branch }`. At least one of `branch` / `name`
 is required (`400`).

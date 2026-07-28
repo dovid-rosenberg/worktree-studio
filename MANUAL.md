@@ -35,7 +35,7 @@ dashboard with a single page at **http://127.0.0.1:7788**.
 |------|---------|
 | **Session** | A live Claude Code process running inside a tmux session, tracked by Studio with an id like `s_5ii11`. This is where you actually talk to Claude. |
 | **Repo** | One of your git repositories under `baseDirs` (e.g. `accept-blue`, `merchant-v3`, `ab-iso-fe`, `ab-su`). Discovered automatically. |
-| **Worktree** | A git worktree checked out on a feature branch, living at `<repo>/.worktrees/<name>`. Isolated working copy — you can have many per repo. |
+| **Worktree** | A git worktree checked out on a feature branch, living at `<repo>/.worktrees/<name>` by default (`worktrees.layout` — see [docs/config.md](docs/config.md)). Isolated working copy — you can have many per repo. |
 | **Promote** | Turn a session that started in the main checkout into one bound to a fresh worktree. The **same Claude conversation continues** (see [Claude integration](#claude-code-integration)). |
 | **Feature** | A named unit of work, identified by its worktree name. One feature can span multiple repos (BE + FE) — they’re grouped by sharing the same worktree name. |
 | **Slot** | A concurrency offset (0, 1, 2…) that gives a feature its own ports and Redis DB, so multiple features run at once without colliding. |
@@ -247,8 +247,14 @@ database** is intentionally still shared across slots.
 ## Configuration reference
 
 Config lives at `~/.config/worktree-studio/config.json`. Missing keys fall back to
-built-in defaults (and `copyPatterns.default` is **unioned** with the defaults on every
-load, so you always get the full set even if your file lists an older subset).
+built-in defaults (and `copyPatterns.default` / `copyAlways.default` are **unioned** with
+the defaults on every load, so you always get the full set even if your file lists an
+older subset).
+
+The four blocks with real choices in them — worktree layout, feature identity, copy
+patterns and concurrency — have a reference of their own with worked examples:
+**[docs/config.md](docs/config.md)**. Every default below reproduces the behavior Studio
+had before those conventions were configurable.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
@@ -258,8 +264,16 @@ load, so you always get the full set even if your file lists an older subset).
 | `claude.cmd` | `claude` | The agent binary (swappable) |
 | `editors` | WebStorm, Zed | `{ name: { open: 'cmd {path}' } }` |
 | `defaultEditor` | `WebStorm` | Editor used by “Open in editor” |
-| `copyPatterns.default` | `.env`, `.env.local`, `.env.*.local`, `config/*-config.js`, `src/config.js`, `src/config/config.js` | Gitignored files copied into new worktrees |
+| `worktrees.layout` | `nested` | `nested` (`<repo>/<dir>/<name>`), `sibling` (`<repo>/../<name>`) or `external` (`<root>/<repo>/<name>`) |
+| `worktrees.dir` | `.worktrees` | `nested` only — the container dir inside the repo (must be gitignored) |
+| `worktrees.root` | `''` | `external` only — root of the worktree tree; required for that layout |
+| `featureIdentity.strategy` | `basename` | What makes two worktrees one feature: `basename`, `branch` or `manifest` |
+| `featureIdentity.branchPattern` | `''` | `branch` only — regex with one capture group, matched against the branch name |
+| `featureIdentity.branchFlags` | `''` | `branch` only — regex flags (`g`/`y` ignored) |
+| `copyPatterns.default` | `.env`, `.env.local`, `.env.*.local`, `.env*`, `config/*-config.js`, `src/config.js`, `src/config/config.js`, `.vscode/*.json` | **Gitignored** files copied into new worktrees |
 | `copyPatterns.<repo>` | — | Per-repo override list |
+| `copyAlways.default` | `.idea/runConfigurations/*.xml` | Copied into new worktrees **whether or not git ignores them** — editor scratch. `[]` turns it off |
+| `copyAlways.<repo>` | — | Per-repo override list |
 | `start.<repo>` | `{}` | Dev-server launch: `{ cmd, ports:[…] }` |
 | `webRepos` | `merchant-v3`, `ab-iso-fe`, `ab-su` | Repos that get an “Open ‹repo› ↗” button |
 | `groups` | `[]` | Manual feature groups `{name, members:["repo/branch"]}` |

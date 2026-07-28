@@ -113,7 +113,17 @@ function createIdentity(cfg = {}) {
   }
   if (warning) console.warn(`[wt-studio] ${warning}.`);
 
-  const manifest = strategy === 'manifest' ? manifestIndex(cfg.groups) : null;
+  // Built lazily and re-built whenever cfg.groups is REPLACED. POST /settings
+  // assigns a fresh array, so comparing identity is enough to notice an edit —
+  // and it costs one reference check per lookup rather than a rebuild.
+  // The sentinel is a fresh object rather than undefined/null, so an absent
+  // cfg.groups still counts as "not built yet" on the first call.
+  const UNBUILT = {};
+  let manifestCache = { src: UNBUILT, map: null };
+  function manifestMap() {
+    if (manifestCache.src !== cfg.groups) manifestCache = { src: cfg.groups, map: manifestIndex(cfg.groups) };
+    return manifestCache.map;
+  }
 
   // path → { repo, wtname, branch }, fed from the repo scan. Only built for the
   // strategies that need more than the path itself, so the default costs nothing.
@@ -139,10 +149,9 @@ function createIdentity(cfg = {}) {
       if (cap) return cap;
       // no match → this worktree isn't part of the scheme; group it by name
     }
-    if (strategy === 'manifest' && manifest) {
-      const repo = w.repo;
-      const hit = (repo && manifest.get(`${repo}/${nameOf(w)}`))
-        || (repo && w.branch && manifest.get(`${repo}/${w.branch}`));
+    if (strategy === 'manifest' && w.repo) {
+      const m = manifestMap();
+      const hit = m.get(`${w.repo}/${nameOf(w)}`) || (w.branch && m.get(`${w.repo}/${w.branch}`));
       if (hit) return hit;
     }
     return nameOf(w);
