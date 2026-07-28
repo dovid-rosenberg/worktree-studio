@@ -1,0 +1,96 @@
+/* Design tokens + global primitives, ported verbatim from public/style.css.
+   The values are deliberately unchanged: the old UI and this one have to be
+   indistinguishable while the port is half-done and both are being compared
+   side by side.
+
+   Split of responsibility: anything with no owning component (tokens, the reset,
+   the focus ring) lives here; everything that belongs to exactly one component
+   (.term-wrap, tab strips, cards) lives in that component's <style> block, where
+   Svelte scopes it and dead rules can't accumulate. So this file is much shorter
+   than style.css — the missing rules move with their components, not away. */
+
+:root {
+  --bg:#0e1116; --panel:#161b22; --elevated:#1b212a; --border:#262d38; --border-strong:#333c49;
+  --ink:#e7ebf1; --muted:#8b95a3; --faint:#868f9e;
+  --working:#9b8cf5; --working-bg:#221f3a; --waiting:#e5ab3c; --waiting-bg:#332a16;
+  --done:#4bb96a; --done-bg:#16301f; --idle:#5d6673; --idle-bg:#1c222b;
+  --brand:#e0733f; --brand-ink:#140d08; --brand-soft:#2c1a10;
+  --add:#3fb950; --add-bg:#0f2417; --del:#f85149; --del-bg:#2a1315;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -14px rgba(0,0,0,.7);
+  --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --rail-w: 264px;
+
+  /* The terminal chrome is dark in BOTH themes — a light-on-white terminal reads as a
+     different app. style.css expressed this as a `.term-wrap` override; naming it here
+     lets the Terminal component and its CSS agree on one value. */
+  --term-bg:#0c0f14;
+  --term-fg:#cdd4de;
+  --term-cursor: var(--brand);
+}
+:root[data-theme="light"] {
+  --bg:#f4f2ee; --panel:#ffffff; --elevated:#fbfaf7; --border:#e4ded4; --border-strong:#d3ccbf;
+  --ink:#1b1e24; --muted:#5c6470; --faint:#666d78;
+  --working:#6b5be0; --working-bg:#ece9fb; --waiting:#d99413; --waiting-bg:#faf0d8;
+  --done:#2f9e5a; --done-bg:#dcf1e3; --idle:#9aa1ab; --idle-bg:#ecebe7;
+  --brand:#d05f30; --brand-ink:#ffffff; --brand-soft:#f7e4da;
+  --add:#1a7f37; --add-bg:#e6f4ea; --del:#cf222e; --del-bg:#fbe9e9;
+  --shadow:0 1px 2px rgba(20,22,28,.06),0 8px 24px -12px rgba(20,22,28,.18);
+  --term-bg:#12151b;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); -webkit-font-smoothing:antialiased; display:flex; flex-direction:column; }
+button { font-family:inherit; }
+
+/* keyboard focus indicator — mouse clicks don't trigger :focus-visible, so this
+   only shows for keyboard/AT users and never changes the click experience. */
+:focus-visible { outline:2px solid var(--brand); outline-offset:2px; border-radius:4px; }
+
+[hidden] { display:none !important; }
+.spacer { flex:1; }
+
+/* ---- buttons ---- */
+.btn { font-size:12.5px; font-weight:600; border-radius:8px; padding:7px 13px; border:1px solid var(--border-strong); background:var(--elevated); color:var(--ink); cursor:pointer; }
+.btn:hover { border-color:var(--brand); }
+.btn.primary { background:var(--brand); border-color:var(--brand); color:var(--brand-ink); }
+.btn.primary:hover { filter:brightness(1.06); }
+.btn.danger { background:#e5484d; border-color:#e5484d; color:#fff; }
+.btn.danger:hover { filter:brightness(1.06); border-color:#e5484d; }
+.btn.go { background:var(--done); border-color:var(--done); color:#06180d; }
+.btn.go:hover { filter:brightness(1.08); border-color:var(--done); }
+.btn.ghost { background:transparent; border-color:transparent; color:var(--muted); }
+.btn.ghost:hover { color:var(--ink); border-color:var(--border); }
+.btn.sm { font-size:11.5px; padding:5px 10px; }
+.btn.xs { font-size:10.5px; padding:2px 8px; font-weight:600; }
+.btn[disabled] { opacity:.5; cursor:not-allowed; }
+
+/* ---- status vocabulary (dot + pill), shared by rail, fleet and palette ---- */
+.dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
+.dot.working{ background:var(--working); } .dot.waiting{ background:var(--waiting); }
+.dot.done{ background:var(--done); } .dot.idle{ background:var(--idle); box-shadow:inset 0 0 0 1.5px var(--border-strong); }
+.dot.stopped{ background:var(--faint); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+.dot.working { animation:pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion:reduce){ .dot.working{ animation:none; } }
+
+.pill { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10.5px; font-weight:600; padding:2px 8px; border-radius:999px; }
+.pill.working{ color:var(--working); background:var(--working-bg); } .pill.waiting{ color:var(--waiting); background:var(--waiting-bg); }
+.pill.done{ color:var(--done); background:var(--done-bg); } .pill.idle{ color:var(--muted); background:var(--idle-bg); }
+.pill.stopped{ color:var(--faint); background:var(--idle-bg); }
+.pill.run{ color:var(--done); background:var(--done-bg); }
+.pill.run .pi{ font-style:normal; }
+.pill.agent { box-shadow:inset 2px 0 0 currentColor; padding-left:9px; }
+.pill.srv { opacity:.95; } .pill .pi { font-size:9px; margin-right:1px; }
+.pill.srv.nowt { color:var(--faint); }
+
+.chip { font-family:var(--mono); font-size:10.5px; color:var(--muted); border:1px solid var(--border); border-radius:20px; padding:2px 9px; display:inline-flex; gap:6px; align-items:center; }
+.chip .cdot { width:7px; height:7px; border-radius:50%; }
+.grp, .link, .src { font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; border:1px solid var(--border); border-radius:5px; padding:1px 6px; color:var(--muted); }
+.link { color:var(--brand); border-color:var(--brand); text-transform:none; }
+
+/* ---- form controls ---- */
+.select, .input, .textarea { background:var(--panel); border:1px solid var(--border-strong); border-radius:8px; padding:8px 11px; color:var(--ink); font-family:var(--mono); font-size:12.5px; width:100%; }
+.textarea { resize:vertical; font-family:var(--sans); }
+.mini-select { background:var(--elevated); color:var(--muted); border:1px solid var(--border); border-radius:6px; font-size:11px; padding:2px 4px; font-family:var(--mono); max-width:120px; }

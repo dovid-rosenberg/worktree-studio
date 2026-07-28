@@ -162,6 +162,39 @@ test('commitDetail(uncommitted) of an untracked file shows it as a new file', as
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('commitDetail() carries the structured model alongside the raw patch', async () => {
+  const { dir, commitSha } = tempRepo();
+  const { files } = await review.commitDetail(dir, 'main', commitSha);
+  const f = fileOf(files, 'committed.txt');
+  assert.equal(f.parsed.path, 'committed.txt');
+  assert.equal(f.parsed.status, 'added');
+  assert.equal(f.parsed.hunks.length, 1);
+  assert.deepEqual(f.parsed.hunks[0].lines.map((l) => [l.type, l.text]), [['add', 'committed work']]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('commitDetail(uncommitted) aligns a changed line into one side-by-side row', async () => {
+  const { dir } = tempRepo();
+  const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
+  const m = fileOf(files, 'modified.txt');
+  const [h] = m.parsed.hunks;
+  const change = h.rows.find((r) => r.type === 'change');
+  assert.equal(h.lines[change.left].text, 'line one', 'the old version on the left');
+  assert.equal(h.lines[change.right].text, 'line ONE changed', 'the new one on the right');
+  assert.equal(h.lines[change.left].oldLine, 1);
+  assert.equal(h.lines[change.right].newLine, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('commitDetail(uncommitted) models a deleted file as one all-removed hunk', async () => {
+  const { dir } = tempRepo();
+  const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
+  const d = fileOf(files, 'deleted.txt');
+  assert.equal(d.parsed.status, 'deleted');
+  assert.ok(d.parsed.hunks[0].rows.every((r) => r.type === 'del' && r.right === null));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('commit() advances HEAD to a new commit', async () => {
   const { dir } = tempRepo();
   const before = sh(dir, ['rev-parse', 'HEAD']);
@@ -177,4 +210,64 @@ test('commit() leaves no uncommitted working changes', async () => {
   await review.commit(dir, 'do the work', {});
   assert.equal(sh(dir, ['status', '--porcelain']), '');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A rename is the one case where git's human-readable and -z outputs disagree:
+// --numstat writes `src/{math.js => calc.js}` (one field) while --name-status writes
+// only the new path, so keying off both produced a phantom entry alongside the real
+// file. The phantom had no parsed diff — it drew an empty file block and made the
+// uncommitted view claim "nothing left to stage", which reads as data loss.
+test('working() reports a rename once, keyed on the new path', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-rename-'));
+  sh(dir, ['init', '-q', '-b', 'main']);
+  sh(dir, ['config', 'user.email', 't@t.t']);
+  sh(dir, ['config', 'user.name', 't']);
+  fs.mkdirSync(path.join(dir, 'src'));
+  fs.writeFileSync(path.join(dir, 'src/math.js'), 'a\nb\nc\nd\ne\nf\n');
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'base']);
+  sh(dir, ['mv', 'src/math.js', 'src/calc.js']);
+
+  const { files } = await review.working(dir);
+  assert.equal(files.length, 1, 'a rename is one file, not two');
+  assert.equal(files[0].file, 'src/calc.js');
+  assert.equal(files[0].status, 'R');
+  assert.equal(files[0].oldFile, 'src/math.js');
+  assert.ok(!files.some((f) => f.file.includes('=>')), 'no phantom "old => new" entry');
+});
+
+// The reason -z is required rather than just parsing the arrow form: " => " is legal
+// in a filename, so the readable output is genuinely ambiguous.
+test('working() treats a filename containing " => " as one real file', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-arrow-'));
+  sh(dir, ['init', '-q', '-b', 'main']);
+  sh(dir, ['config', 'user.email', 't@t.t']);
+  sh(dir, ['config', 'user.name', 't']);
+  fs.writeFileSync(path.join(dir, 'a => b.txt'), 'x\n');
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'base']);
+  fs.writeFileSync(path.join(dir, 'a => b.txt'), 'x\ny\n');
+
+  const { files } = await review.working(dir);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].file, 'a => b.txt');
+  assert.equal(files[0].added, 1);
+});
+
+test('commitDetail() reports a committed rename once, with a parsed diff', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-crename-'));
+  sh(dir, ['init', '-q', '-b', 'main']);
+  sh(dir, ['config', 'user.email', 't@t.t']);
+  sh(dir, ['config', 'user.name', 't']);
+  fs.writeFileSync(path.join(dir, 'old.js'), 'a\nb\nc\nd\ne\nf\n');
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'base']);
+  sh(dir, ['mv', 'old.js', 'new.js']);
+  sh(dir, ['commit', '-q', '-am', 'rename it']);
+  const sha = sh(dir, ['rev-parse', 'HEAD']);
+
+  const { files } = await review.commitDetail(dir, 'main', sha);
+  assert.equal(files.length, 1, 'a renamed file is one entry');
+  assert.equal(files[0].file, 'new.js');
+  assert.ok(!files.some((f) => f.file.includes('=>')), 'no phantom entry');
 });

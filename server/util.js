@@ -1,6 +1,7 @@
 'use strict';
 // Small shared helpers: shell/git exec, atomic JSON, tilde expansion, ids.
 const { execFile } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -61,11 +62,61 @@ function writeJson(file, obj) {
   fs.renameSync(tmp, file);
 }
 
-let _n = 0;
-function makeId(prefix = '') {
-  _n = (_n + 1) % 1e6;
-  const s = Math.floor(process.hrtime()[1] / 1000).toString(36) + _n.toString(36);
-  return prefix ? `${prefix}${s}` : s;
+// A session id is a credential, not a sequence number: `/ws/term?session=<id>`
+// hands out a read/write PTY into that session's tmux, so an id that can be guessed
+// or enumerated is a remote shell. The old scheme (a microsecond clock reading plus
+// a counter) was both. randomUUID is 122 CSPRNG bits.
+// Ids are only ever compared for equality and used as map keys — nothing validates
+// their shape — so ids minted by the old scheme keep working unchanged.
+function makeId(prefix = '') { return `${prefix}${crypto.randomUUID()}`; }
+
+// Short, stable handle derived from an id, for the places that need a *label* rather
+// than a credential — tmux session names, which have to stay inside 60-odd readable
+// characters. Never use this where the full id is the thing being authenticated.
+function shortId(id) { return String(id).replace(/[^0-9a-f]/gi, '').slice(-8) || 'session'; }
+
+// Resolve a path through its symlinks, falling back to the path itself when it
+// can't be resolved (doesn't exist yet, permission denied). Worktree paths are
+// compared across three independent sources — the git scan, a session's stored
+// paths, and lsof's view of a running process — and any of them may hand us a
+// symlinked spelling (/tmp vs /private/tmp, a symlinked home), so every
+// comparison goes through this first.
+function realpath(p) { try { return fs.realpathSync(p); } catch { return p; } }
+
+// A memo for realpath(), because resolving a path costs a syscall per path
+// component and the state build resolves the same few dozen worktree paths many
+// times a second.
+//
+// Two rules keep it from going stale, and neither is a clock:
+//   - A failure is never cached. An unresolvable path is one that doesn't exist
+//     *yet*; caching the fallback would pin it even after it appears.
+//   - `retain(livePaths)` drops every entry whose path is not in the caller's
+//     current list of real paths. A resolved path cannot change while the path
+//     keeps existing (it is pure symlink resolution over the components), so the
+//     only way to go stale is removal followed by recreation somewhere else —
+//     and the caller that knows about removals is the one holding the live list.
+// Deliberately NOT usage-based: an entry retained merely because something asked
+// for it recently is exactly the entry that survives a removal.
+function createRealpathCache() {
+  const cache = new Map();
+  let hits = 0, misses = 0;
+  return {
+    resolve(p) {
+      if (!p) return p;
+      if (cache.has(p)) { hits++; return cache.get(p); }
+      misses++;
+      let r;
+      try { r = fs.realpathSync(p); } catch { return p; }
+      cache.set(p, r);
+      return r;
+    },
+    retain(livePaths) {
+      const keep = livePaths instanceof Set ? livePaths : new Set(livePaths);
+      for (const p of cache.keys()) if (!keep.has(p)) cache.delete(p);
+    },
+    get size() { return cache.size; },
+    get stats() { return { hits, misses }; },
+  };
 }
 
 // Turn any string into a safe slug usable as branch/worktree/mux-session name.
@@ -82,4 +133,12 @@ function shq(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, slug, shq };
+// Wrap async route handlers so a rejected promise becomes a 500 instead of an
+// unhandled rejection (Express 4 doesn't await handlers). Lives here so every
+// route module wraps its handlers the same way.
+const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
+  console.error('[wt-studio]', e);
+  if (!res.headersSent) res.status(500).json({ error: e.message });
+});
+
+module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A };

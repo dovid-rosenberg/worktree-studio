@@ -1,4 +1,5 @@
 'use strict';
+const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const express = require('express');
@@ -8,20 +9,21 @@ const pty = require('node-pty');
 const configMod = require('./config');
 const muxSelect = require('./multiplexer');
 const gitMod = require('./git');
+const watchMod = require('./watch');
 const worktree = require('./worktree');
+const { worktreeCopyOpts } = worktree;
 const review = require('./review');
 const sources = require('./sources');
 const { SessionManager } = require('./sessions');
-const { Servers, featureFromPath } = require('./servers');
-const { computeFeatures } = require('./features');
-const { run, has, shq } = require('./util');
-
-// Wrap async route handlers so a rejected promise becomes a 500 instead of an
-// unhandled rejection (Express 4 doesn't await handlers).
-const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
-  console.error('[wt-studio]', e);
-  if (!res.headersSent) res.status(500).json({ error: e.message });
-});
+const { Servers } = require('./servers');
+const { createIdentity } = require('./identity');
+const { createState } = require('./state');
+const { createBroadcast } = require('./broadcast');
+const { createForge } = require('./forge');
+const { createCiFeed } = require('./ci');
+const orchestrator = require('./orchestrator');
+const { createGuard } = require('./security');
+const { run, has, shq, A } = require('./util');
 
 async function main() {
   const cfg = configMod.load();
@@ -33,7 +35,10 @@ async function main() {
   }
 
   const manager = new SessionManager(cfg, mux || require('./multiplexer/tmux'));
-  const servers = new Servers(cfg);
+  // One feature-identity resolver for the whole process: state.js groups worktrees
+  // with it and servers.js keys concurrency slots with it, so the two cannot drift.
+  const identity = createIdentity(cfg);
+  const servers = new Servers(cfg, identity);
 
   // ---- repo scan cache ----
   let repos = [];
@@ -42,139 +47,136 @@ async function main() {
     if (scanning) return;
     scanning = true;
     try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
+    // The scan is the only thing that knows each worktree's branch, and the
+    // branch/manifest identity strategies need it to answer from a path alone.
+    identity.reindex(repos);
     scanning = false;
-    scheduleBroadcast();
-  }
-
-  function baseDirOf(repoPath) {
-    return (cfg.baseDirs || []).find((b) => repoPath.startsWith(b)) || '';
+    prunePaths();        // the fresh scan is what says which worktrees still exist
+    broadcastTopology(); // the scan IS the topology
+    // A scan is also the server's only notice that git moved. watch.js arms
+    // fs.watch on `.git/refs` (recursive), so a commit writes refs/heads/<branch>,
+    // a push writes refs/remotes/origin/<branch>, and a branch switch writes HEAD —
+    // each lands here. Those are precisely the three local events that change what
+    // `gh pr view` would answer, so this is the CI feed's main trigger. Fire and
+    // forget: the feed debounces, floors and gates it, and nothing here waits.
+    ciFeed.poke({ force: true });
   }
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
   // every SSE broadcast (which fires per Claude hook → per tool call).
   let runningCache = new Map();
+  let runningSig = '';
   async function refreshRunning() {
     try {
       runningCache = await servers.discoverRunning();
       servers.reconcileSlots(runningCache); // self-heal leaked/stale slots against reality
-    } catch { /* */ }
+    } catch { return; }
+    // Discovery feeds the topology half (each worktree's running/ports), so a new
+    // or vanished server has to push one — but only when what lsof found actually
+    // changed, or this 3 s timer would re-send the slow half 20 times a minute.
+    const sig = [...runningCache].map(([p, v]) => `${p}:${(v.ports || []).join(',')}`).sort().join('|');
+    if (sig === runningSig) return;
+    runningSig = sig;
+    broadcastTopology();
   }
 
-  // Unified state: every worktree decorated with discovered server state + its
-  // session (if any), grouped into features. Superset of worktree-dash's contract.
-  async function buildState() {
-    const running = runningCache;
-    const sessions = manager.all();
-    const reposOut = [];
-    const flat = [];
-    for (const repo of repos) {
-      const wts = [];
-      for (const w of repo.worktrees) {
-        const dec = servers.decorate({ path: w.path, repo: repo.name }, running);
-        const sess = w.isMain ? null : manager.sessionForWorktree(w.path);
-        const wt = {
-          repo: repo.name, wtname: w.name, branch: w.branch, path: w.path,
-          isMain: w.isMain, detached: w.detached, merged: w.merged,
-          baseBranch: repo.defaultBranch, baseDir: baseDirOf(repo.path),
-          running: dec.running, pid: dec.pid, ports: dec.ports, canStart: dec.canStart,
-          session: sess ? { id: sess.id, state: sess.state, activity: sess.activity, muxName: sess.muxName } : null,
-        };
-        wts.push(wt);
-        flat.push(wt);
-      }
-      reposOut.push({ name: repo.name, repo: repo.name, path: repo.path, defaultBranch: repo.defaultBranch, worktrees: wts });
-    }
-    const { features, groups } = computeFeatures(flat, cfg.groups || []);
-    // one session per feature: surface the single driving session on the feature,
-    // plus its concurrency slot (0,1,2…) when one is allocated — powers the Fleet badge.
-    for (const f of [...features, ...groups]) {
-      const m = (f.members || []).find((x) => x && x.session);
-      f.session = m ? m.session : null;
-      if (servers.slots.has(f.name)) f.slot = servers.slots.get(f.name);
-    }
-    // per-session server state — every repo the session owns (its shared workspace)
-    const { realpath } = require('./servers');
-    const serversById = {};
-    for (const s of sessions) {
-      const owned = (s.repos || []).filter((r) => r.worktreePath);
-      const list = owned.length ? owned : (s.worktreePath ? [{ repo: s.repoName, worktreePath: s.worktreePath }] : []);
-      if (list.length) {
-        serversById[s.id] = {
-          repos: list.map((r) => {
-            const hit = running.get(realpath(r.worktreePath));
-            return { repo: r.repo, worktreePath: r.worktreePath, running: !!hit, ports: hit ? hit.ports : [], canStart: !!servers.startCfg(r.repo) };
-          }),
-        };
-      }
-    }
-    return {
-      mux: mux ? mux.name : 'none',
-      config: { port: cfg.web.port, configFile: cfg._file },
-      runningTotal: flat.filter((w) => w.running).length,
-      baseDirs: cfg.baseDirs,
-      editors: Object.keys(cfg.editors || {}),
-      defaultEditor: cfg.defaultEditor,
-      webRepos: cfg.webRepos || [],
-      runConfigs: cfg.runConfigs || {},
-      sources: sources.enabled(cfg),
-      repos: reposOut,
-      features, groups,
-      sessions,
-      servers: serversById,
-    };
-  }
-
-  // Resolve a feature/group by name from current state; drop missing members.
-  async function resolveGroup(name) {
-    const st = await buildState();
-    const g = (st.features || []).find((x) => x.name === name) || (st.groups || []).find((x) => x.name === name);
-    if (!g) return { group: null, flat: [] };
-    const flat = st.repos.flatMap((r) => r.worktrees);
-    return { group: { ...g, members: g.members.filter((m) => m && !m.missing) }, flat };
-  }
-
-  // running worktrees in the same repo at a different path (must stop to switch) —
-  // but a concurrency-slotted repo runs on its own offset ports per feature, so
-  // running it in another worktree is NOT a conflict (no stop & switch needed).
-  function conflictsFor(member, flat) {
-    if (servers.isSlotted(member.repo)) return [];
-    return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);
-  }
+  // The state payload lives in state.js; both caches above are handed over as
+  // getters because each is replaced (not mutated) on every refresh.
+  const { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor } = createState({
+    cfg, manager, servers, mux, identity, repos: () => repos, running: () => runningCache,
+  });
 
   // ---- SSE live state ----
-  const sseClients = new Set();
-  let broadcastTimer = null;
-  function scheduleBroadcast() {
-    if (broadcastTimer) return;
-    broadcastTimer = setTimeout(async () => {
-      broadcastTimer = null;
-      const state = await buildState();
-      const payload = `data: ${JSON.stringify(state)}\n\n`;
-      for (const res of sseClients) { try { res.write(payload); } catch { /* */ } }
-    }, 80);
-  }
+  // Two named event types with very different rates (see broadcast.js).
+  // scheduleBroadcast() sends the small session half only — that is what every
+  // Claude hook gets. broadcastTopology() adds the slow half and is called by the
+  // handful of things that can actually change the repo → worktree shape (a git
+  // rescan, a worktree/session mutation, dev-server discovery, a config save).
+  // ---- PR/MR + CI status (serverbar pill) ----
+  // Pushed, not polled. Three objects that each only reach the next one at call
+  // time: the forge does the lookups and tells the feed when it opened a PR, the
+  // feed owns the snapshot and decides when to look, the bus carries the result.
+  const forge = createForge({ manager, resolveGroup, onChanged: () => ciFeed.poke({ force: true }) });
+  const ciFeed = createCiFeed({
+    forge,
+    sessions: () => manager.all(),
+    streams: () => bus.clients.size, // an SSE subscriber is the only thing a `ci` frame can reach
+    onChange: () => bus.schedule({ ci: true }),
+  });
+
+  const bus = createBroadcast({ topology, sessionState, ci: ciFeed.snapshot });
+  const scheduleBroadcast = () => bus.schedule();
+  const broadcastTopology = () => bus.schedule({ topology: true });
+
+  // Paces the watcher's sweeps. Only the browser subscribes to /api/events — SwiftBar
+  // polls /api/state every 10s and Alfred once per keystroke — so a recent poll has to
+  // count as "someone is looking" too, or the menubar's server dots go minutes stale.
+  const attention = watchMod.attention({ streams: () => bus.clients.size });
   manager.on('change', scheduleBroadcast);
 
   // ---- express ----
   const app = express();
+
+  // Everything below sits behind the Host/Origin allowlist — see security.js for
+  // what each gate stops. It runs before the body parsers so a rejected request is
+  // never given the chance to make us buffer 8 MB of its JSON.
+  const guard = createGuard({ cfg, token: cfg._token });
+  app.use(guard.browser);
+
   app.use(express.json({ limit: '8mb' }));
   app.use(express.text({ type: 'text/*', limit: '8mb' }));
-  app.use(express.static(path.join(__dirname, '..', 'public')));
 
-  app.get('/api/state', A(async (req, res) => res.json(await buildState())));
+  // The browser tab cannot be handed a header before it exists, so the boot token is
+  // injected into the one document we hand it. That is safe precisely because of the
+  // gate above: a cross-origin page cannot read this response body, and a rebinding
+  // page is refused before there is a body to read. no-store keeps the token out of
+  // the disk cache.
+  const INDEX = path.join(__dirname, '..', 'public', 'index.html');
+  app.get(['/', '/index.html'], (req, res) => {
+    let html;
+    try { html = fs.readFileSync(INDEX, 'utf8'); } catch { return res.status(500).send('index.html is missing'); }
+    return res.type('html').set('Cache-Control', 'no-store').send(html.replace('__WTS_TOKEN__', cfg._token));
+  });
+  // index:false so the directory listing never serves the un-injected index.html.
+  app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
 
-  app.get('/api/events', (req, res) => {
+  // Every API route needs the boot token. The Origin/Host gate above only constrains
+  // browsers; this is what stops any other local process — or a browser request that
+  // carries no Origin at all — from driving the studio. It goes on the /api PREFIX
+  // rather than on the router below, so it also covers the routers other modules
+  // mount there themselves (transcript-routes); /api/v1 is nested under /api, so one
+  // line covers both prefixes.
+  app.use('/api', guard.authed);
+
+  // Every route below is registered once on this router and served at BOTH
+  // /api/v1/* (the versioned contract new clients should use) and /api/* (the
+  // unversioned aliases SwiftBar, Alfred and the current web UI already call).
+  // Feature modules register onto the same router — one line each, see below.
+  const api = express.Router();
+  app.use('/api', api);
+  app.use('/api/v1', api);
+
+  // attention.seen(): SwiftBar and Alfred poll this route instead of subscribing to
+  // /api/events, so a poll is what tells the watcher someone is still looking.
+  api.get('/state', A(async (req, res) => { attention.seen(); res.json(await buildState()); }));
+
+  api.get('/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.flushHeaders();
-    res.write(':ok\n\n');
-    sseClients.add(res);
-    buildState().then((st) => res.write(`data: ${JSON.stringify(st)}\n\n`));
+    // subscribe() writes the full snapshot (one `topology` + one `session-state`)
+    // before this client joins the fan-out, so it can never miss the snapshot or
+    // see an event that predates it.
+    const unsubscribe = bus.subscribe(res);
+    // Someone started looking. While nobody was, the CI feed deliberately did
+    // nothing at all, so its snapshot may be stale or empty — this is what makes an
+    // opened dashboard fill in within a second rather than at the next safety net.
+    ciFeed.poke();
     const hb = setInterval(() => { try { res.write(':hb\n\n'); } catch { /* */ } }, 25000);
-    req.on('close', () => { clearInterval(hb); sseClients.delete(res); });
+    req.on('close', () => { clearInterval(hb); unsubscribe(); });
   });
 
   // ---- settings / connections ----
-  app.get('/api/settings', A(async (req, res) => {
+  api.get('/settings', A(async (req, res) => {
     const gh = await run('gh', ['auth', 'status'], {});
     res.json({
       sources: cfg.sources || {},
@@ -189,7 +191,7 @@ async function main() {
       githubAuthed: gh.code === 0,
     });
   }));
-  app.post('/api/settings', A(async (req, res) => {
+  api.post('/settings', A(async (req, res) => {
     const { sources: srcs, baseDirs, notify, start, editors, defaultEditor, groups } = req.body || {};
     if (srcs) {
       cfg.sources = cfg.sources || {};
@@ -240,7 +242,7 @@ async function main() {
       rescanNeeded = true;
     }
     configMod.save(cfg);
-    if (rescanNeeded) await rescan(); else scheduleBroadcast();
+    if (rescanNeeded) await rescan(); else broadcastTopology();
     res.json({
       ok: true,
       sources: cfg.sources,
@@ -255,15 +257,15 @@ async function main() {
   }));
 
   // ---- sources ----
-  app.get('/api/sources', (req, res) => res.json(sources.enabled(cfg)));
-  app.get('/api/sources/:source/items', A(async (req, res) => {
+  api.get('/sources', (req, res) => res.json(sources.enabled(cfg)));
+  api.get('/sources/:source/items', A(async (req, res) => {
     const repo = repos.find((r) => r.name === req.query.repo);
     const out = await sources.list(cfg, req.params.source, { repoPath: repo && repo.path, q: req.query.q });
     res.json(out);
   }));
 
   // ---- sessions ----
-  app.post('/api/sessions', A(async (req, res) => {
+  api.post('/sessions', A(async (req, res) => {
     try {
       const { source, sourceId, text, name, repo, additionalRepos } = req.body || {};
       const repoObj = repos.find((r) => r.name === repo);
@@ -277,15 +279,15 @@ async function main() {
     } catch (e) { res.status(500).json({ error: e.message }); }
   }));
 
-  app.post('/api/sessions/:id/rename', A(async (req, res) => {
+  api.post('/sessions/:id/rename', A(async (req, res) => {
     res.json(await manager.rename(req.params.id, (req.body && req.body.title) || ''));
   }));
-  app.post('/api/sessions/:id/deactivate', A(async (req, res) => { res.json(await manager.deactivate(req.params.id)); }));
-  app.post('/api/sessions/:id/activate', A(async (req, res) => { res.json(await manager.activate(req.params.id)); }));
+  api.post('/sessions/:id/deactivate', A(async (req, res) => { res.json(await manager.deactivate(req.params.id)); }));
+  api.post('/sessions/:id/activate', A(async (req, res) => { res.json(await manager.activate(req.params.id)); }));
 
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
-  app.post('/api/sessions/:id/add-repo', A(async (req, res) => {
+  api.post('/sessions/:id/add-repo', A(async (req, res) => {
     const repoObj = repos.find((r) => r.name === (req.body && req.body.repo));
     if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body && req.body.repo}'` });
     const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
@@ -294,7 +296,7 @@ async function main() {
     res.json(out);
   }));
 
-  app.post('/api/sessions/:id/promote', A(async (req, res) => {
+  api.post('/sessions/:id/promote', A(async (req, res) => {
     const out = await manager.promote(req.params.id, req.body || {});
     // Dirty-main warning: 200 (not 400) so the client can read needsConfirm and re-prompt.
     if (out.needsConfirm) return res.json(out);
@@ -303,76 +305,77 @@ async function main() {
     res.json(out);
   }));
 
-  app.post('/api/sessions/:id/tabs', A(async (req, res) => {
+  api.post('/sessions/:id/tabs', A(async (req, res) => {
     res.json(await manager.addTab(req.params.id, req.body || {}));
   }));
 
-  app.post('/api/sessions/:id/select-tab', A(async (req, res) => {
+  api.post('/sessions/:id/select-tab', A(async (req, res) => {
     res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
   }));
 
   // The split pane is a standalone `-split` session with its own tabs. These operate on
   // it directly through the mux (tmux is the source of truth for its window list).
-  app.get('/api/sessions/:id/split/tabs', A(async (req, res) => {
+  api.get('/sessions/:id/split/tabs', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
     res.json({ tabs: await manager.mux.listTabs(`${s.muxName}-split`) });
   }));
-  app.post('/api/sessions/:id/split/tabs', A(async (req, res) => {
+  api.post('/sessions/:id/split/tabs', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
     const r = await manager.mux.newTab(`${s.muxName}-split`, { title: (req.body && req.body.title) || 'shell', cwd: s.worktreePath || s.repoPath });
     res.json(r);
   }));
-  app.post('/api/sessions/:id/split/select-tab', A(async (req, res) => {
+  api.post('/sessions/:id/split/select-tab', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     res.json({ ok: await manager.mux.selectTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
   }));
-  app.post('/api/sessions/:id/split/close-tab', A(async (req, res) => {
+  api.post('/sessions/:id/split/close-tab', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     res.json({ ok: await manager.mux.closeTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
   }));
 
-  app.post('/api/sessions/:id/close-tab', A(async (req, res) => {
+  api.post('/sessions/:id/close-tab', A(async (req, res) => {
     res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
   }));
 
   // Start / stop ALL dev servers of a session's shared workspace (every repo it owns).
-  app.post('/api/sessions/:id/servers/start', A(async (req, res) => {
+  api.post('/sessions/:id/servers/start', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const toStart = (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo));
-    // Key the slot on the per-worktree feature (its `.worktrees/<name>` basename) — the
-    // one canonical key used everywhere. A session's repos share the basename → one slot.
+    // Key the slot on the per-worktree feature identity (server/identity.js) — the
+    // one canonical key used everywhere. A session's repos resolve to the same
+    // identity → one slot.
     for (const r of toStart) {
-      const alloc = servers.allocSlotFor(featureFromPath(r.worktreePath));
+      const alloc = servers.allocSlotFor(servers.featureFor(r.worktreePath));
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
     const results = [];
     for (const r of toStart) {
-      const feat = featureFromPath(r.worktreePath);
+      const feat = servers.featureFor(r.worktreePath);
       results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, feat))) });
     }
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json({ ok: results.some((r) => r.ok), results });
   }));
-  app.post('/api/sessions/:id/servers/stop', A(async (req, res) => {
+  api.post('/sessions/:id/servers/stop', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const owned = (s.repos || []).filter((x) => x.worktreePath);
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
-    for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath)); // whole stack stopped → free the feature's slot
+    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath)); // whole stack stopped → free the feature's slot
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json({ ok: true });
   }));
 
-  app.post('/api/sessions/:id/popout', A(async (req, res) => {
+  api.post('/sessions/:id/popout', A(async (req, res) => {
     const cmd = manager.popout(req.params.id);
     if (!cmd) return res.status(404).json({ error: 'no such session' });
     // open a native Terminal window attached to the same mux session
@@ -381,7 +384,7 @@ async function main() {
     res.json({ ok: true, cmd });
   }));
 
-  app.delete('/api/sessions/:id', A(async (req, res) => {
+  api.delete('/sessions/:id', A(async (req, res) => {
     // Capture the session BEFORE close (close deletes it). Mirror /api/group/delete's
     // orphan cleanup: stop each owned worktree's dev servers + release its slot, else a
     // running server is orphaned and its concurrency slot leaks.
@@ -389,15 +392,15 @@ async function main() {
     const owned = s ? (s.repos || []).filter((r) => r.worktreePath) : [];
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
-    for (const r of owned) servers.releaseSlot(featureFromPath(r.worktreePath));
-    if (owned.length) { await refreshRunning(); scheduleBroadcast(); }
+    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath));
+    if (owned.length) { await refreshRunning(); broadcastTopology(); }
     res.json(out);
   }));
 
   // ---- review (commits, per-commit diffs & commit) ----
   // The branch's commits per repo (+ an uncommitted summary), and one commit's inline
   // per-file diffs on demand.
-  app.get('/api/sessions/:id/commits', A(async (req, res) => {
+  api.get('/sessions/:id/commits', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const out = [];
@@ -417,7 +420,7 @@ async function main() {
     res.json({ repos: out });
   }));
 
-  app.get('/api/sessions/:id/commit-detail', A(async (req, res) => {
+  api.get('/sessions/:id/commit-detail', A(async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const entry = (s.repos || []).find((r) => r.repo === req.query.repo);
@@ -426,7 +429,7 @@ async function main() {
     res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, req.query.sha || 'uncommitted'));
   }));
 
-  app.post('/api/sessions/:id/commit', A(async (req, res) => {
+  api.post('/sessions/:id/commit', A(async (req, res) => {
     const s = manager.get(req.params.id);
     const { repo, message, paths, amend } = req.body || {};
     if (!s) return res.status(400).json({ error: 'no such session' });
@@ -434,24 +437,28 @@ async function main() {
     if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     if (!message || !message.trim()) return res.status(400).json({ error: 'message is required' });
     const out = await review.commit(entry.worktreePath, message, { amend, paths });
-    if (out.ok) scheduleBroadcast();
+    // A commit made through the UI writes refs/heads/<branch>, so the watcher would
+    // find it anyway — but it can take a debounce plus a scan to get here, and we
+    // already know. Poke directly rather than wait to be told what we just did.
+    if (out.ok) { broadcastTopology(); ciFeed.poke({ force: true }); }
     res.json(out);
   }));
 
   // ---- worktrees (manual) ----
-  app.post('/api/worktrees', A(async (req, res) => {
+  api.post('/worktrees', A(async (req, res) => {
     const { repo, branch, name } = req.body || {};
     if (!branch && !name) return res.status(400).json({ error: 'branch or name is required' });
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     const out = await worktree.create(repoObj.path, branch, name, {
-      copyPatterns: (cfg.copyPatterns && (cfg.copyPatterns[repo] || cfg.copyPatterns.default)) || [],
+      layout: identity.layout,
+      ...worktreeCopyOpts(cfg, repo),
     });
     await rescan();
     res.json(out);
   }));
 
-  app.delete('/api/worktrees', A(async (req, res) => {
+  api.delete('/worktrees', A(async (req, res) => {
     const { repo, worktreePath, branch, deleteBranch } = req.body || {};
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
@@ -461,273 +468,64 @@ async function main() {
   }));
 
   // ---- dev servers ----
-  app.post('/api/servers/start', A(async (req, res) => {
+  api.post('/servers/start', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const feature = featureFromPath(worktreePath);
+    const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature);
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const out = await servers.start(repo, worktreePath, servers.launchOpts(repo, feature));
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json(out);
   }));
-  app.post('/api/servers/stop', A(async (req, res) => {
+  api.post('/servers/stop', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.stop(repo, worktreePath);
     await refreshRunning();
     // only free the feature's slot once no sibling repo of the feature is still running
-    const feature = featureFromPath(worktreePath);
-    if (![...runningCache.keys()].some((p) => featureFromPath(p) === feature)) servers.releaseSlot(feature);
-    scheduleBroadcast();
+    const feature = servers.featureFor(worktreePath);
+    if (![...runningCache.keys()].some((p) => servers.featureFor(p) === feature)) servers.releaseSlot(feature);
+    broadcastTopology();
     res.json(out);
   }));
-  app.post('/api/servers/restart', A(async (req, res) => {
+  api.post('/servers/restart', A(async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const feature = featureFromPath(worktreePath);
+    const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const out = await servers.restart(repo, worktreePath, servers.launchOpts(repo, feature));
     await refreshRunning();
-    scheduleBroadcast();
+    broadcastTopology();
     res.json(out);
   }));
-  app.get('/api/servers/logs', (req, res) => {
+  api.get('/servers/logs', (req, res) => {
     const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
     res.json(servers.logs(req.query.worktreePath, { offset }));
   });
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
-  app.post('/api/group/start', A(async (req, res) => {
-    const { group, stopConflicts } = req.body || {};
-    const { group: g, flat } = await resolveGroup(group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const toStart = g.members.filter((m) => !m.running && m.canStart);
-    const conflicts = [];
-    const seen = new Set();
-    for (const m of toStart) for (const c of conflictsFor(m, flat)) if (!seen.has(c.path)) { seen.add(c.path); conflicts.push(c); }
-    if (conflicts.length && !stopConflicts) {
-      return res.json({ ok: true, needsConfirm: true, conflicts, willStart: toStart });
-    }
-    if (stopConflicts) {
-      for (const c of conflicts) await servers.stop(c.repo, c.path);
-      await new Promise((r) => setTimeout(r, 1200));
-    }
-    // Key each slot on the member's own feature (its `.worktrees/<name>` basename) — the
-    // one canonical key. Members of a real feature share the basename → one slot; a
-    // degenerate mixed-name manual group correctly gets a per-worktree slot each.
-    for (const m of toStart) {
-      const alloc = servers.allocSlotFor(featureFromPath(m.path));
-      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    }
-    let started = 0; const failures = [];
-    await Promise.all(toStart.map(async (m) => {
-      const feat = featureFromPath(m.path);
-      const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, feat));
-      if (r.ok) started++; else failures.push({ repo: m.repo, error: r.error });
-    }));
-    await refreshRunning();
-    scheduleBroadcast();
-    res.json({ ok: true, started, total: toStart.length, failures });
-  }));
-  app.post('/api/group/stop', A(async (req, res) => {
-    const { group } = req.body || {};
-    const { group: g } = await resolveGroup(group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
-    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // whole stack stopped → free the feature's slot
-    await refreshRunning();
-    scheduleBroadcast();
-    res.json({ ok: true });
-  }));
-  app.post('/api/group/restart', A(async (req, res) => {
-    const { group } = req.body || {};
-    const { group: g } = await resolveGroup(group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const toRestart = g.members.filter((m) => m.running || m.canStart);
-    for (const m of toRestart) {
-      const alloc = servers.allocSlotFor(featureFromPath(m.path)); // reuse the feature's slot across the restart
-      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    }
-    await Promise.all(toRestart.map((m) => servers.restart(m.repo, m.path, servers.launchOpts(m.repo, featureFromPath(m.path)))));
-    await refreshRunning();
-    scheduleBroadcast();
-    res.json({ ok: true });
-  }));
-  app.post('/api/group/open', A(async (req, res) => {
-    const { group, editor } = req.body || {};
-    const { group: g } = await resolveGroup(group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
-    if (!ed) return res.status(400).json({ error: 'no editor configured' });
-    const paths = g.members.map((m) => m.path);
-    if (ed.openGroup) { await run('bash', ['-lc', ed.openGroup.replace('{paths}', paths.map(shq).join(' '))]); }
-    else { for (const p of paths) await run('bash', ['-lc', ed.open.replace('{path}', shq(p))]); }
-    res.json({ ok: true });
-  }));
+  orchestrator.register(api, {
+    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast: broadcastTopology, rescan,
+  });
 
-  // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
-  app.post('/api/group/close', A(async (req, res) => {
-    const { group: g } = await resolveGroup(req.body && req.body.group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    for (const m of g.members) {
-      if (m.running) await servers.stop(m.repo, m.path);
-      if (m.session) await manager.deactivate(m.session.id);
-    }
-    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // whole stack stopped → free the feature's slot
-    scheduleBroadcast();
-    res.json({ ok: true });
-  }));
-
-  // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
-  app.post('/api/group/delete', A(async (req, res) => {
-    const { group, deleteBranches } = req.body || {};
-    const { group: g } = await resolveGroup(group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const results = [];
-    for (const m of g.members) {
-      const repoObj = repos.find((r) => r.name === m.repo);
-      if (!repoObj) { results.push({ repo: m.repo, ok: false, error: 'unknown repo' }); continue; }
-      if (m.running) await servers.stop(m.repo, m.path);
-      if (m.session) await manager.close(m.session.id);
-      const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: deleteBranches });
-      results.push({ repo: m.repo, ok: rr.ok, error: rr.error });
-    }
-    for (const m of g.members) servers.releaseSlot(featureFromPath(m.path)); // feature removed → free its slot
-    await rescan();
-    res.json({ ok: results.every((r) => r.ok), results });
-  }));
-
-  // Open a PR (gh) / MR (glab) for each of a feature's branches.
-  app.post('/api/group/pr', A(async (req, res) => {
-    const { group: g } = await resolveGroup(req.body && req.body.group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
-    const results = [];
-    for (const m of g.members) {
-      await run('git', ['-C', m.path, 'push', '-u', 'origin', m.branch], { env });
-      let r = await run('gh', ['pr', 'create', '--fill', '--head', m.branch], { cwd: m.path, env });
-      if (r.code === 0) { results.push({ repo: m.repo, url: r.stdout.trim().split('\n').pop() }); continue; }
-      r = await run('glab', ['mr', 'create', '--fill', '--yes'], { cwd: m.path, env });
-      if (r.code === 0) { results.push({ repo: m.repo, url: (r.stdout.match(/https?:\/\/\S+/) || ['created'])[0] }); continue; }
-      results.push({ repo: m.repo, error: (r.stderr || '').trim().split('\n')[0] || 'gh/glab unavailable or failed' });
-    }
-    res.json({ ok: results.some((r) => r.url), results });
-  }));
-
-  // ---- PR / CI status (serverbar pill) ----
-  // gh/glab lookups cached per worktreePath+branch for ~20s so UI polling doesn't
-  // hammer the CLIs. Value: { at, data } where data is the per-repo result.
-  const ciCache = new Map();
-  const CI_TTL = 20000;
-  const hasGh = has('gh');
-  const hasGlab = has('glab');
-
-  // Tally a GitHub statusCheckRollup (mixed CheckRun / StatusContext nodes) into
-  // { passed, running, failed, total }. Neutral/skipped count toward total only.
-  function ghChecks(rollup) {
-    const c = { passed: 0, running: 0, failed: 0, total: 0 };
-    for (const n of (Array.isArray(rollup) ? rollup : [])) {
-      c.total++;
-      const conclusion = String(n.conclusion || '').toUpperCase();
-      const status = String(n.status || n.state || '').toUpperCase();
-      if (conclusion === 'SUCCESS' || status === 'SUCCESS') c.passed++;
-      else if (['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ERROR', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(conclusion) || status === 'FAILURE' || status === 'ERROR') c.failed++;
-      else if (['QUEUED', 'IN_PROGRESS', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED'].includes(status)) c.running++;
-    }
-    return c;
-  }
-
-  // Map a single GitLab pipeline status into the same { passed, running, failed, total } shape.
-  function glChecks(status) {
-    const s = String(status || '').toLowerCase();
-    if (!s) return { passed: 0, running: 0, failed: 0, total: 0 };
-    if (s === 'success') return { passed: 1, running: 0, failed: 0, total: 1 };
-    if (['failed', 'canceled', 'cancelled'].includes(s)) return { passed: 0, running: 0, failed: 1, total: 1 };
-    if (['running', 'pending', 'created', 'preparing', 'scheduled', 'waiting_for_resource'].includes(s)) return { passed: 0, running: 1, failed: 0, total: 1 };
-    return { passed: 0, running: 0, failed: 0, total: 0 };
-  }
-
-  // Look up a single repo's PR/MR + checks (GitHub first, then GitLab). Never
-  // throws — returns { repo, hasPR:false } on any miss/failure. Cached per key.
-  async function ciForRepo(entry, env) {
-    const { repo, worktreePath, branch } = entry;
-    if (!worktreePath || !branch) return { repo, hasPR: false };
-    const key = `${worktreePath}\n${branch}`;
-    const hit = ciCache.get(key);
-    if (hit && Date.now() - hit.at < CI_TTL) return { ...hit.data, repo };
-    let data = { repo, hasPR: false };
-    try {
-      if (hasGh) {
-        const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], { cwd: worktreePath, env });
-        if (r.code === 0 && r.stdout.trim()) {
-          const j = JSON.parse(r.stdout);
-          data = { repo, hasPR: true, provider: 'github', number: j.number, url: j.url, state: j.state, checks: ghChecks(j.statusCheckRollup) };
-        }
-      }
-      if (!data.hasPR && hasGlab) {
-        const r = await run('glab', ['mr', 'view', branch, '-F', 'json'], { cwd: worktreePath, env });
-        if (r.code === 0 && r.stdout.trim()) {
-          const j = JSON.parse(r.stdout);
-          const pipe = j.pipeline || j.head_pipeline || {};
-          data = { repo, hasPR: true, provider: 'gitlab', number: j.iid, url: j.web_url, state: j.state, checks: glChecks(pipe.status) };
-        }
-      }
-    } catch { data = { repo, hasPR: false }; }
-    ciCache.set(key, { at: Date.now(), data });
-    return { ...data, repo };
-  }
-
-  app.get('/api/sessions/:id/ci', A(async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    const entries = (s.repos || []).filter((r) => r.worktreePath && r.branch);
-    // Neither CLI installed → answer instantly without shelling out.
-    if (!hasGh && !hasGlab) return res.json({ repos: entries.map((r) => ({ repo: r.repo, hasPR: false })) });
-    const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
-    // Per-repo lookups are independent (and each is cached + never throws) — run them
-    // in parallel so a multi-repo feature isn't gated on serial gh/glab round-trips.
-    const repos = await Promise.all(entries.map(async (entry) => {
-      try { return await ciForRepo(entry, env); }
-      catch { return { repo: entry.repo, hasPR: false }; }
-    }));
-    res.json({ repos });
-  }));
-
-  // One session per feature: return the existing one, or start a single session
-  // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
-  app.post('/api/group/session', A(async (req, res) => {
-    const { group: g } = await resolveGroup(req.body && req.body.group);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const members = g.members;
-    if (!members.length) return res.status(400).json({ error: 'feature has no members' });
-    for (const m of members) { const s = manager.sessionForWorktree(m.path); if (s) return res.json({ ok: true, session: s, existed: true }); }
-    const [primary, ...rest] = members;
-    const pRepo = repos.find((r) => r.name === primary.repo);
-    const session = await manager.adopt({ worktreePath: primary.path, repoName: primary.repo, repoPath: pRepo.path, branch: primary.branch, wtname: primary.wtname });
-    if (session) {
-      for (const m of rest) {
-        const ro = repos.find((r) => r.name === m.repo);
-        if (ro) await manager.attachRepo(session.id, { repo: m.repo, repoPath: ro.path, worktreePath: m.path, branch: m.branch, wtname: m.wtname });
-      }
-    }
-    scheduleBroadcast();
-    res.json({ ok: true, session });
-  }));
+  // GET /sessions/:id/ci (still an on-demand answer for SwiftBar/Alfred and any
+  // external caller) + POST /group/pr. Created above, next to the feed it feeds.
+  forge.register(api);
 
   // Start a session in an existing worktree (Fleet: "Start session here")
-  app.post('/api/worktrees/adopt', A(async (req, res) => {
+  api.post('/worktrees/adopt', A(async (req, res) => {
     const { repo, worktreePath, branch, wtname } = req.body || {};
     if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     let s = await manager.adopt({ worktreePath, repoName: repo, repoPath: repoObj.path, branch, wtname });
     if (!s) s = manager.sessionForWorktree(worktreePath); // an adopt was already in flight
-    scheduleBroadcast();
+    broadcastTopology();
     res.json(s || { error: 'session is already being opened' });
   }));
 
   // ---- editor open ----
-  app.post('/api/open', A(async (req, res) => {
+  api.post('/open', A(async (req, res) => {
     const { path: p, editor } = req.body || {};
     const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
@@ -736,9 +534,22 @@ async function main() {
     res.json({ ok: true });
   }));
 
+  require('./transcript-routes').register(app, { manager, cfg });
+  require('./routes-review').register(app, { manager, repos: () => repos, broadcast: scheduleBroadcast });
+
   // ---- Claude Code hook receiver ----
+  // Not under /api: the URL is baked into every session's generated settings file.
+  // Those files are read once, at claude's launch — so a session that was already
+  // running when this build first started still POSTs a tokenless URL and cannot be
+  // told otherwise without killing it. `hookAuth` marks the sessions whose settings
+  // file we have since written *with* a token; anything else is grandfathered in.
+  // The exemption is narrow (this route only sets a session's state/activity string)
+  // and self-clearing (activate/restore rewrites the file and sets the flag).
   app.post('/hook/:event', (req, res) => {
     const id = req.query.wts;
+    const known = id ? manager.get(id) : null;
+    const deny = guard.denyToken(req);
+    if (deny && !(known && known.hookAuth !== true)) return res.status(deny.status).json({ error: deny.error });
     let payload = req.body;
     if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch { payload = { raw: payload }; } }
     if (id) manager.applyHook(id, req.params.event, payload || {});
@@ -747,7 +558,28 @@ async function main() {
 
   // ---- HTTP + WS ----
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server, path: '/ws/term' });
+
+  // noServer + a hand-written upgrade handler, not `{ server }`: the checks have to
+  // run and the socket has to be destroyed BEFORE ws accepts the handshake and this
+  // module's connection handler spawns a pty. WebSockets are exempt from CORS, so
+  // the Origin check here is the only thing standing between an open browser tab on
+  // any site and a read/write shell in the user's tmux.
+  const wss = new WebSocketServer({ noServer: true });
+  server.on('upgrade', (req, socket, head) => {
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); } catch { socket.destroy(); return; }
+    if (url.pathname !== '/ws/term') { socket.destroy(); return; }
+    const deny = guard.denyBrowser(req) || guard.denyToken(req, url.searchParams.get('token'));
+    if (deny) {
+      // A plain HTTP response, then close: the client never reaches ws state OPEN, so
+      // it sees a failed handshake rather than a socket that opens and dies.
+      socket.write(`HTTP/1.1 ${deny.status} ${deny.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\n\r\n`);
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+
   wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
     const id = url.searchParams.get('session');
@@ -780,12 +612,7 @@ async function main() {
   // ---- boot ----
   process.on('unhandledRejection', (e) => console.error('[wt-studio] unhandledRejection', e));
   process.on('uncaughtException', (e) => console.error('[wt-studio] uncaughtException', e));
-  await rescan();
-  setInterval(rescan, 15000);
-  await refreshRunning();
-  setInterval(refreshRunning, 3000);
-  // Flip sessions whose tmux session died out-of-band to stopped (one has-session each).
-  setInterval(() => manager.reconcile().catch(() => {}), 4000);
+  await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 

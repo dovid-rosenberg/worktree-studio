@@ -24,21 +24,28 @@ function mapEvent(event, payload) {
 }
 
 // Build the settings JSON for a studio session; hooks curl back with ?wts=<id>.
-function buildSettings(studioId, port) {
+// The boot token rides in the query string because that URL is all the hook script
+// gets — it cannot be handed a header. The file now holds a secret, so it and its
+// directory are written 0600/0700; only the session's own claude process reads it.
+function buildSettings(studioId, port, token) {
   const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'SessionEnd'];
   const hooks = {};
+  const auth = token ? `&token=${encodeURIComponent(token)}` : '';
   for (const ev of events) {
-    const url = `http://127.0.0.1:${port}/hook/${ev}?wts=${encodeURIComponent(studioId)}`;
+    const url = `http://127.0.0.1:${port}/hook/${ev}?wts=${encodeURIComponent(studioId)}${auth}`;
     hooks[ev] = [{ hooks: [{ type: 'command', command: `${REPORT} ${JSON.stringify(url)}`, timeout: 5 }] }];
   }
   return { hooks };
 }
 
-function settingsFile(stateDir, studioId, port) {
+function settingsFile(stateDir, studioId, port, token) {
   const dir = path.join(stateDir, 'hooks');
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const f = path.join(dir, `${studioId}.settings.json`);
-  fs.writeFileSync(f, JSON.stringify(buildSettings(studioId, port), null, 2));
+  fs.writeFileSync(f, JSON.stringify(buildSettings(studioId, port, token), null, 2), { mode: 0o600 });
+  // `mode` only applies when the file is created — chmod so files written by an
+  // older build (which now hold a token) get tightened too.
+  try { fs.chmodSync(f, 0o600); } catch { /* best effort */ }
   return f;
 }
 

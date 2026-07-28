@@ -7,7 +7,9 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 CFG="${WT_STUDIO_CONFIG:-$HOME/.config/worktree-studio/config.json}"
 PORT="$(jq -r '.web.port // 7788' "$CFG" 2>/dev/null || echo 7788)"
 BASE="http://127.0.0.1:$PORT"
-post() { curl -s -m 10 -X POST "$BASE$1" -H 'content-type: application/json' -d "$2" >/dev/null 2>&1; }
+STATE_DIR="${WT_STUDIO_STATE:-$HOME/.local/state/worktree-studio}"
+TOKEN="$(cat "$STATE_DIR/token" 2>/dev/null | tr -d '[:space:]')"
+post() { curl -s -m 10 -X POST "$BASE$1" -H 'content-type: application/json' -H "x-wts-token: $TOKEN" -d "$2" >/dev/null 2>&1; }
 
 case "$1" in
   group-start)   post /api/group/start   "$(jq -nc --arg g "$2" '{group:$g,stopConflicts:true}')" ;;

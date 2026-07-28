@@ -40,6 +40,67 @@ test('sessionForWorktree finds a session by ANY of its repos worktreePaths', () 
   assert.equal(m.sessionForWorktree('/nope'), null);
 });
 
+// The lookup topology() used to do per worktree: scan every session, resolving
+// every path it owns, and take the first match. sessionIndex() replaced N of
+// these with one pass, so it has to answer identically — including for a session
+// that owns several repos' worktrees, and for symlinked spellings of a path.
+function scanForWorktree(sessions, worktreePath) {
+  const norm = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  const target = norm(worktreePath);
+  for (const s of sessions) {
+    if (s.worktreePath && norm(s.worktreePath) === target) return s;
+    if ((s.repos || []).some((r) => r.worktreePath && norm(r.worktreePath) === target)) return s;
+  }
+  return null;
+}
+
+test('sessionIndex answers exactly like the per-worktree scan it replaced', () => {
+  // Real dirs plus a symlinked alias, so resolution actually has work to do.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wts-idx-')));
+  const real = (n) => { const p = path.join(root, n); fs.mkdirSync(p); return p; };
+  const primary = real('primary');
+  const sibling = real('sibling');
+  const lone = real('lone');
+  const gone = path.join(root, 'never-existed');
+  const alias = path.join(root, 'alias');
+  fs.symlinkSync(sibling, alias); // another spelling of the sibling worktree
+
+  const m = manager();
+  const s1 = { id: 's1', worktreePath: primary, repos: [
+    { repo: 'a', worktreePath: primary, primary: true },
+    { repo: 'b', worktreePath: alias, primary: false }, // stored under the symlink
+  ] };
+  const s2 = { id: 's2', worktreePath: lone, repos: [{ repo: 'c', worktreePath: lone, primary: true }] };
+  const s3 = { id: 's3', worktreePath: null, repos: [{ repo: 'd', worktreePath: null, primary: true }] }; // unpromoted
+  for (const s of [s1, s2, s3]) m.sessions.set(s.id, s);
+
+  const index = m.sessionIndex();
+  const norm = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  const sessions = [s1, s2, s3];
+  for (const p of [primary, sibling, alias, lone, gone, root]) {
+    assert.equal(index.get(norm(p)) || null, scanForWorktree(sessions, p), `same answer for ${path.basename(p)}`);
+  }
+  // and the answers are the ones that matter, not two matching nulls
+  assert.equal(index.get(sibling).id, 's1', 'a multi-repo session is found by a sibling repo worktree');
+  assert.equal(index.get(primary).id, 's1');
+  assert.equal(index.get(lone).id, 's2');
+  assert.equal(index.get(gone), undefined);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('sessionForWorktree still resolves symlinks and is first-match-wins', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wts-idx2-')));
+  const wt = path.join(root, 'wt'); fs.mkdirSync(wt);
+  const alias = path.join(root, 'alias'); fs.symlinkSync(wt, alias);
+  const m = manager();
+  m.sessions.set('first', { id: 'first', worktreePath: wt, repos: [] });
+  m.sessions.set('second', { id: 'second', worktreePath: alias, repos: [] }); // same worktree, other spelling
+  assert.equal(m.sessionForWorktree(alias).id, 'first', 'the symlinked spelling finds the session stored under the real path');
+  assert.equal(m.sessionForWorktree(wt).id, 'first', 'the earlier session wins a duplicate claim');
+  assert.equal(m.sessionForWorktree(null), null);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('addRepo creates a same-named sibling worktree, tracks it, and grants /add-dir access', async () => {
   const m = manager();
   const repoB = tempRepo('b');
