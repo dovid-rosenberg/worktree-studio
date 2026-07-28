@@ -42,21 +42,57 @@
 
 import { tokenQuery } from '$lib/api.js';
 
+/*
+ * The wire contract comes from the SERVER'S OWN types, not a copy.
+ *
+ * This is the whole reason the client was worth porting. Every shape below is
+ * serialized by the daemon and re-derived here; before this import the client
+ * re-described them in prose and a change to `TopologyPayload` broke this file
+ * SILENTLY. Now it is a compile error.
+ *
+ * A relative `import type` rather than a `paths` alias, deliberately: `paths` does not
+ * merge across `extends`, so declaring one here would clobber the `$lib`/`$app` mappings
+ * SvelteKit generates into .svelte-kit/tsconfig.json and pin us to whatever they happen
+ * to be today. `server/types.ts` imports nothing, so pulling it across the package
+ * boundary drags in no module graph, and `import type` is erased before Vite sees it.
+ */
+import type {
+  CiPayload, CiRepo, EmbeddedSession, Feature, FeatureMember, Repo, Session,
+  SessionServers, SessionStatePayload, TopologyPayload, Worktree,
+} from '../../../../server/types';
+
+/** The two halves as received, plus the CI half, all optional before first frame. */
+export type WorldFrames = Partial<TopologyPayload> & Partial<SessionStatePayload> & Partial<CiPayload>;
+
+/** The stitched world every consumer reads. */
+export interface WorldView extends WorldFrames {
+  mux: string;
+  repos: Repo[];
+  sessions: Session[];
+  servers: SessionServers;
+  features: Feature[];
+  groups: Feature[];
+  webRepos: string[];
+  baseDirs: string[];
+  editors: string[];
+  ci: Record<string, CiRepo[]>;
+}
+
 /** The shape every consumer can rely on before (and between) frames. */
 const EMPTY = {
   mux: '…',
-  repos: /** @type {any[]} */ ([]),
-  sessions: /** @type {any[]} */ ([]),
-  servers: /** @type {Record<string, any>} */ ({}),
-  sources: /** @type {any[]} */ ([]),
-  features: /** @type {any[]} */ ([]),
-  groups: /** @type {any[]} */ ([]),
-  webRepos: /** @type {string[]} */ ([]),
-  baseDirs: /** @type {string[]} */ ([]),
-  editors: /** @type {string[]} */ ([]),
-  runConfigs: /** @type {Record<string, any>} */ ({}),
-  config: /** @type {Record<string, any>} */ ({}),
-  ci: /** @type {Record<string, any[]>} */ ({}),
+  repos: [] as Repo[],
+  sessions: [] as Session[],
+  servers: {} as SessionServers,
+  sources: [] as TopologyPayload['sources'],
+  features: [] as Feature[],
+  groups: [] as Feature[],
+  webRepos: [] as string[],
+  baseDirs: [] as string[],
+  editors: [] as string[],
+  runConfigs: {} as TopologyPayload['runConfigs'],
+  config: {} as TopologyPayload['config'],
+  ci: {} as Record<string, CiRepo[]>,
 };
 
 /**
@@ -66,29 +102,28 @@ const EMPTY = {
  * session lingers on its worktree forever.
  *
  * Pure: returns a new object and never writes into the frames it reads.
- * @param {any} next
  */
-export function stitchSessions(next) {
-  const byId = new Map((next.sessions || []).map((/** @type {any} */ s) => [s.id, s]));
-  /** @param {any} embedded */
-  const fresh = (embedded) => {
+export function stitchSessions(next: WorldView): WorldView {
+  const byId = new Map<string, Session>((next.sessions || []).map((s) => [s.id, s]));
+  const fresh = (embedded: EmbeddedSession | null | undefined): EmbeddedSession | null => {
     if (!embedded) return null;
     const s = byId.get(embedded.id);
     return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName } : null;
   };
   // A feature's members are serialized separately from repos[].worktrees, so on this
   // side they are distinct objects and need the same projection.
-  /** @param {any[]} list */
-  const feat = (list) => (list || []).map((f) => ({
+  const feat = (list: Feature[]): Feature[] => (list || []).map((f) => ({
     ...f,
     session: fresh(f.session),
-    members: (f.members || []).map((/** @type {any} */ m) => (m && !m.missing ? { ...m, session: fresh(m.session) } : m)),
+    members: (f.members || []).map(
+      (m: FeatureMember) => (m && !('missing' in m && m.missing) ? { ...m, session: fresh((m as Worktree).session) } : m),
+    ),
   }));
   return {
     ...next,
-    repos: (next.repos || []).map((/** @type {any} */ r) => ({
+    repos: (next.repos || []).map((r) => ({
       ...r,
-      worktrees: (r.worktrees || []).map((/** @type {any} */ w) => ({ ...w, session: fresh(w.session) })),
+      worktrees: (r.worktrees || []).map((w) => ({ ...w, session: fresh(w.session) })),
     })),
     features: feat(next.features),
     groups: feat(next.groups),
@@ -102,11 +137,11 @@ export function stitchSessions(next) {
  */
 class World {
   /** Last `topology` frame, exactly as received. */
-  topology = $state.raw(/** @type {any} */ ({}));
+  topology = $state.raw<Partial<TopologyPayload>>({});
   /** Last `session-state` frame, exactly as received. */
-  sessionHalf = $state.raw(/** @type {any} */ ({}));
+  sessionHalf = $state.raw<Partial<SessionStatePayload>>({});
   /** Last `ci` frame, exactly as received. */
-  ciHalf = $state.raw(/** @type {any} */ ({}));
+  ciHalf = $state.raw<Partial<CiPayload>>({});
   /** True once the first frame of either kind has landed. */
   connected = $state(false);
   /** Set when the stream has errored and not yet re-delivered a frame. */
@@ -115,19 +150,18 @@ class World {
   /** The stitched view. Recomputed from the two pristine halves on every frame. */
   view = $derived(stitchSessions({ ...EMPTY, ...this.topology, ...this.sessionHalf, ...this.ciHalf }));
 
-  get mux() { return this.view.mux; }
-  get repos() { return this.view.repos; }
-  get sessions() { return this.view.sessions; }
-  get servers() { return this.view.servers; }
-  get sources() { return this.view.sources; }
-  get features() { return this.view.features; }
-  get groups() { return this.view.groups; }
-  get webRepos() { return this.view.webRepos; }
+  get mux(): string { return this.view.mux; }
+  get repos(): Repo[] { return this.view.repos; }
+  get sessions(): Session[] { return this.view.sessions; }
+  get servers(): SessionServers { return this.view.servers; }
+  get sources(): TopologyPayload['sources'] { return this.view.sources ?? []; }
+  get features(): Feature[] { return this.view.features; }
+  get groups(): Feature[] { return this.view.groups; }
+  get webRepos(): string[] { return this.view.webRepos; }
   /** sessionId → the repos array `GET /sessions/:id/ci` would answer with. */
-  get ci() { return this.view.ci; }
+  get ci(): Record<string, CiRepo[]> { return this.view.ci; }
 
-  /** @param {string} id */
-  session(id) { return this.sessions.find((/** @type {any} */ s) => s.id === id) || null; }
+  session(id: string): Session | null { return this.sessions.find((s) => s.id === id) || null; }
 }
 
 export const world = new World();
@@ -136,16 +170,18 @@ export const world = new World();
  * Subscribe to the stream. Returns a teardown fn, so a layout can own the connection
  * for the lifetime of the app and nothing leaks on HMR.
  *
- * @param {{ onSessionFrame?: (frame: any) => void }} [hooks]
- *   `onSessionFrame` runs with the incoming frame BEFORE it is swapped in, which is
- *   what lets notification code diff new state against the previous one.
+ * `onSessionFrame` runs with the incoming frame BEFORE it is swapped in, which is what
+ * lets notification code diff new state against the previous one.
  */
-export function connectStream(hooks = {}) {
+export interface StreamHooks {
+  onSessionFrame?: (frame: SessionStatePayload) => void;
+}
+
+export function connectStream(hooks: StreamHooks = {}): () => void {
   // EventSource cannot set headers, so the boot token rides in the query string.
   const ev = new EventSource(`/api/events${tokenQuery('?')}`);
 
-  /** @param {'topology'|'sessions'|'ci'} half */
-  const apply = (half) => (/** @type {MessageEvent} */ e) => {
+  const apply = (half: 'topology' | 'sessions' | 'ci') => (e: MessageEvent) => {
     let frame;
     try { frame = JSON.parse(e.data); } catch { return; }
     if (half === 'sessions') {
@@ -172,22 +208,34 @@ export function connectStream(hooks = {}) {
   return () => { try { ev.close(); } catch { /* already closed */ } };
 }
 
+/** The minimum a row needs for `webAppsFor` to judge it — a worktree or a session repo. */
+export interface ServableRow {
+  repo: string;
+  running?: boolean;
+  ports?: number[];
+}
+
+export interface WebApp {
+  repo: string;
+  port: number;
+}
+
 /**
  * The browsable frontends of a feature/session: every web repo (config.webRepos) that
  * is running with a discovered port. One "Open <repo> ↗" button per entry.
- * @param {any[]} list
  */
-export function webAppsFor(list) {
+export function webAppsFor(list: ServableRow[]): WebApp[] {
   const web = new Set(world.webRepos || []);
-  /** @type {{repo:string, port:number}[]} */
-  const out = [];
+  const out: WebApp[] = [];
   for (const r of list || []) {
-    if (web.has(r.repo) && r.running && (r.ports || []).length) out.push({ repo: r.repo, port: r.ports[0] });
+    // Bind the array before testing it: `(r.ports || []).length` does not narrow
+    // `r.ports` itself, so indexing it afterwards is still possibly-undefined.
+    const ports = r.ports || [];
+    if (web.has(r.repo) && r.running && ports.length) out.push({ repo: r.repo, port: ports[0] });
   }
   return out;
 }
 
-/** @param {number} port */
-export function openApp(port) {
+export function openApp(port: number): void {
   window.open(`http://localhost:${port}`, '_blank', 'noopener');
 }

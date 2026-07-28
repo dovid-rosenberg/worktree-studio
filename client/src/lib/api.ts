@@ -24,30 +24,28 @@
  * An unsubstituted placeholder with no dev value means neither path ran; treat it as
  * absent so the failure is a clean 401 rather than a token that is silently wrong.
  */
-export const TOKEN = (() => {
-  const injected = typeof window !== 'undefined' ? /** @type {any} */ (window).WTS_TOKEN : '';
+export const TOKEN: string = (() => {
+  const injected = typeof window !== 'undefined' ? (window as unknown as { WTS_TOKEN?: string }).WTS_TOKEN : '';
   if (injected && !/^__WTS_TOKEN/.test(injected)) return String(injected);
   return String(import.meta.env.VITE_WTS_TOKEN || '');
 })();
 
-/**
- * `?token=…` / `&token=…` for EventSource and WebSocket URLs.
- * @param {'?'|'&'} sep
- */
-export const tokenQuery = (sep) => (TOKEN ? `${sep}token=${encodeURIComponent(TOKEN)}` : '');
+/** `?token=…` / `&token=…` for EventSource and WebSocket URLs. */
+export const tokenQuery = (sep: '?' | '&'): string => (TOKEN ? `${sep}token=${encodeURIComponent(TOKEN)}` : '');
 
 /**
  * A JSON call to the daemon. Throws `Error(data.error || statusText)` on a non-2xx so
  * callers can `try { … } catch (e) { toast(e.message, true) }` exactly as app.js did.
  *
- * @param {'GET'|'POST'|'DELETE'|'PUT'} method
- * @param {string} url
- * @param {unknown} [body]
- * @returns {Promise<any>}
+ * The return stays `any`: every endpoint answers a different shape and the call sites
+ * narrow it themselves. Promising something more specific here would be a lie that
+ * only moves the cast.
  */
-export async function api(method, url, body) {
-  /** @type {RequestInit & { headers: Record<string,string> }} */
-  const opt = { method, headers: { 'x-wts-token': TOKEN } };
+export type HttpMethod = 'GET' | 'POST' | 'DELETE' | 'PUT';
+
+export async function api(method: HttpMethod, url: string, body?: unknown): Promise<any> {
+  const opt: RequestInit & { headers: Record<string, string> } =
+    { method, headers: { 'x-wts-token': TOKEN } };
   if (body !== undefined) {
     opt.headers['content-type'] = 'application/json';
     opt.body = JSON.stringify(body);
@@ -64,12 +62,8 @@ export async function api(method, url, body) {
  * Run an async action with a visible "in flight" flag, guaranteeing the flag clears.
  * Replaces app.js's guardBtn(), which disabled a DOM node directly; here the caller
  * owns a `$state` boolean and binds it to `disabled`.
- *
- * @template T
- * @param {(v: boolean) => void} setBusy
- * @param {() => Promise<T>} fn
  */
-export async function busy(setBusy, fn) {
+export async function busy<T>(setBusy: (v: boolean) => void, fn: () => Promise<T>): Promise<T> {
   setBusy(true);
   try { return await fn(); }
   finally { setBusy(false); }

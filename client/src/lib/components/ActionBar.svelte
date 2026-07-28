@@ -37,7 +37,6 @@
   const webApps = $derived(webAppsFor(ms));
   const isPending = $derived(!!target && pending.has(target.name));
 
-  const promoted = $derived(!!session?.worktreePath);
   const label = $derived(session ? session.title : (feature ? feature.name : ''));
   const sub = $derived(
     session
@@ -82,8 +81,13 @@
       {/if}
 
       {#if session}
-        {#if promoted}
-          <button class="btn sm" onclick={() => openEditor(session.worktreePath)}>Open in editor</button>
+        <!-- Branch on worktreePath itself rather than a derived boolean: a boolean
+             tells the compiler nothing about the field being non-null here. -->
+        {#if session.worktreePath}
+          <!-- Bound to a const: the narrowing inside the block does not survive into an
+               arrow function, since `session` could be reassigned before it runs. -->
+          {@const wt = session.worktreePath}
+          <button class="btn sm" onclick={() => openEditor(wt)}>Open in editor</button>
           <button class="btn sm" onclick={() => startSessionServers(session)}>Run servers</button>
           <button class="btn sm ghost" onclick={() => stopSessionServers(session)}>Stop servers</button>
         {:else}
