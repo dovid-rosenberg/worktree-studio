@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { run, readJson, writeJson, realpath, slug } = require('./util');
+const { run, readJsonState, writeJson, realpath, slug } = require('./util');
 const { deriveEnv, allocSlot, rewriteAllSiblingPorts } = require('./concurrency');
 const { createIdentity } = require('./identity');
 
@@ -52,7 +52,8 @@ class Servers {
     fs.mkdirSync(this.lockDir, { recursive: true });
     // servers.json shape: { tracked: { worktreePath → { pid, repo, log } }, slots: { feature → slot } }.
     // Back-compat: an old flat file (just the tracked object) still loads as `tracked`.
-    const saved = readJson(this.file, {});
+    // readJsonState: a corrupt servers.json is kept aside, not overwritten (see util.js).
+    const saved = readJsonState(this.file, {});
     this.tracked = saved.tracked || saved; // worktreePath → { pid, repo, log }
     // featureName → slot (concurrency: one slot per feature, shared by its repos). Persisted
     // so a Studio restart while features run doesn't re-slot a running feature to slot 0.

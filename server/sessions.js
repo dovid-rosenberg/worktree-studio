@@ -5,7 +5,7 @@
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
-const { readJson, writeJson, makeId, shortId, realpath, slug, shq, run } = require('./util');
+const { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } = require('./util');
 const status = require('./status');
 const worktree = require('./worktree');
 const layoutMod = require('./layout');
@@ -69,7 +69,10 @@ class SessionManager extends EventEmitter {
     this.file = path.join(cfg._stateDir, 'sessions.json');
     this.sessions = new Map();
     this._adopting = new Set(); // worktreePaths with an adopt in flight (dedup guard)
-    for (const s of readJson(this.file, []) || []) this.sessions.set(s.id, s);
+    // readJsonState, not readJson: a corrupt sessions.json must be preserved rather
+    // than silently replaced by an empty one on the next save — it holds the
+    // claudeSessionId values that tie each session to a live claude conversation.
+    for (const s of readJsonState(this.file, []) || []) this.sessions.set(s.id, s);
   }
 
   all() { return [...this.sessions.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); }

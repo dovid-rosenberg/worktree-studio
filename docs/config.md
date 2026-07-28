@@ -102,7 +102,10 @@ Rules, all of them deliberate:
 - **No capture group at all** → rejected at load with a warning; the pattern
   could only ever match, never extract.
 - **An invalid regex** → warning on stderr, strategy falls back to `basename`.
-  A typo in config.json never stops the server booting.
+  A bad *value* never stops the server booting. (A bad *syntax* does — see
+  "If config.json won't parse" below. The difference is that a value Studio
+  can't use has a safe default, and a file it can't read has no contents at
+  all.)
 - `g` and `y` flags are stripped: they make `exec()` stateful, so the same branch
   would match on one call and miss on the next.
 
@@ -286,27 +289,43 @@ the first load, or set it to `{}`.
 
 ---
 
-## Known limitation of the non-default identity strategies
+## `session.feature` under the non-default identity strategies
 
-A session records the worktree name it was created with as `session.feature`
-(`sessions.json`), and a few things read it:
+A session records the feature identity of its worktree as `session.feature`
+(`sessions.json`), resolved through the same `featureIdentity` strategy the
+Fleet rail groups by. The "Open PR for this feature" button (`POST /group/pr`)
+and the transcript search grouping key both read it, so both find the right
+feature under every strategy.
 
-- the "Open PR for this feature" button in the web UI (`POST /group/pr`),
-- the worktree name `wt-studio add-repo` gives the sibling worktree it creates,
-- the branch name used when a session has none (`feature/<feature>`),
-- the transcript search grouping key.
+This used to store the worktree's *directory name* instead. The two coincide
+under `basename`, so the mismatch only surfaced under `branch`/`manifest`, where
+the PR button looked up a feature that did not exist.
 
-Under the default `basename` strategy that string *is* the feature identity, so
-all four are correct. Under `branch` or `manifest` it is the worktree's
-directory name while the feature is named something else, so **"Open PR for this
-feature" will not find the feature** for a session started before you switched
-strategies, or for any session whose worktree name differs from its feature name.
+Naming is a separate question and did not move with it. The worktree name
+`wt-studio add-repo` gives a sibling worktree, and the branch name used when a
+session has none (`feature/<name>`), still come from the session's own worktree
+name — under `branch`, a feature identity like `4821` is a ticket number, not a
+directory name.
 
-Grouping, concurrency slots, `/group/start` · `/stop` · `/restart` · `/open` ·
-`/close` · `/delete` · `/session`, the Fleet rail, SwiftBar and Alfred all read
-the computed feature list and are correct under every strategy. Only the
-session's own stored label lags, and only for the PR button.
+Sessions written before the split keep working: the naming fallback ends at
+`session.feature`, which is exactly what those rows hold.
 
-Reconciling `session.feature` with the resolved identity would change how
-worktrees are *named* as well as grouped, so it is deliberately left alone here
-rather than folded into a change whose whole point is that defaults do not move.
+---
+
+## If config.json won't parse
+
+Studio refuses to start and prints the parse error, the file name and the line.
+It does **not** overwrite the file — what is on disk stays byte-for-byte what
+you wrote. Fix the syntax error and start it again.
+
+This matters because `config.json` is a file you are invited to edit (SwiftBar
+has an "Edit config…" item), and seeding defaults over an unreadable one would
+silently discard `baseDirs`, `start`, `editors`, `groups` and the whole
+`concurrency.repos` port map. An absent or empty file is a different thing
+entirely and is still seeded with defaults on first run.
+
+The state files (`sessions.json`, `servers.json`) are not hand-edited, so a
+corrupt one does not block boot: it is renamed to `<name>.corrupt-<timestamp>`,
+reported on stderr, and Studio continues with empty state. The copy is kept
+because `sessions.json` holds the `claudeSessionId` values that tie a session to
+a live claude conversation.

@@ -166,8 +166,52 @@ function validateConcurrency(cfg) {
   }
 }
 
+// Read config.json, telling "not there" apart from "there but broken".
+//
+// readJson() collapses both into its fallback, and load() answered a null by
+// writing defaults() straight over the file. So a single trailing comma in a
+// file the user is explicitly invited to edit — SwiftBar has an "Edit config…"
+// item — silently destroyed baseDirs, start commands, editors, groups and the
+// whole concurrency.repos port map, printed nothing, and left no way back.
+//
+// A syntax error is not a state to recover from by guessing; it is one the user
+// fixes in ten seconds if they are told. So: refuse, loudly, and do not touch
+// the file. Not overwriting it is a stronger guarantee than backing it up —
+// what is on disk is still exactly what they wrote.
+function readConfigFile() {
+  let text;
+  try { text = fs.readFileSync(CONFIG_FILE, 'utf8'); }
+  catch (e) {
+    if (e.code === 'ENOENT') return { absent: true };
+    throw new Error(`[wt-studio] cannot read ${CONFIG_FILE}: ${e.message}`);
+  }
+  // An empty (or whitespace-only) file is what a bare `touch` leaves behind, and
+  // there is nothing in it to lose — seed it like an absent one.
+  if (!text.trim()) return { absent: true };
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (e) {
+    throw new Error(
+      `[wt-studio] ${CONFIG_FILE} is not valid JSON: ${e.message}\n`
+      + '  Your config has NOT been modified — fix the syntax error and start Studio again.\n'
+      + '  (Refusing to boot on purpose: seeding defaults over it would lose baseDirs,\n'
+      + '   start commands, editors, groups and the concurrency port map.)',
+    );
+  }
+  // `[]`, `"x"` or `null` parse fine but cannot be merged with defaults, and
+  // treating them as absent would overwrite the file just the same.
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(
+      `[wt-studio] ${CONFIG_FILE} must contain a JSON object, found ${Array.isArray(parsed) ? 'an array' : typeof parsed}.\n`
+      + '  Your config has NOT been modified.',
+    );
+  }
+  return { cfg: parsed };
+}
+
 function load() {
-  let cfg = readJson(CONFIG_FILE, null);
+  const found = readConfigFile();
+  let cfg = found.absent ? null : found.cfg;
   if (!cfg) {
     cfg = defaults();
     writeJson(CONFIG_FILE, cfg);

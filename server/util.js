@@ -55,6 +55,29 @@ function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 
+// Read a JSON *state* file, telling "not there yet" apart from "there but corrupt".
+//
+// readJson() returns its fallback for both, and the callers then write that
+// fallback back over the file at the next save — so a truncated sessions.json
+// silently becomes an empty one, taking the claudeSessionId values that tie each
+// Studio session to a live tmux/claude conversation with it. Unlike config.json
+// these files are not hand-edited (writeJson is atomic), so refusing to boot would
+// be the wrong trade: preserve the bad file, say so, and carry on empty.
+function readJsonState(file, fallback) {
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return fallback; }
+  if (!text.trim()) return fallback;
+  try { return JSON.parse(text); }
+  catch (e) {
+    const aside = `${file}.corrupt-${Date.now()}`;
+    let kept = false;
+    try { fs.renameSync(file, aside); kept = true; } catch { /* */ }
+    console.error(`[wt-studio] ${file} is not valid JSON (${e.message}). `
+      + `${kept ? `Kept it at ${aside}` : 'Could not move it aside'}; continuing with empty state.`);
+    return fallback;
+  }
+}
+
 function writeJson(file, obj) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
@@ -141,4 +164,4 @@ const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   if (!res.headersSent) res.status(500).json({ error: e.message });
 });
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A };
+module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A };

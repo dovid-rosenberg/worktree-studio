@@ -47,3 +47,53 @@ test('load() leaves per-repo copyPatterns overrides untouched', () => {
   assert.deepEqual(cfg.copyPatterns['merchant-v3'], ['special/only-here.js']);
   for (const p of SHIPPED) assert.ok(cfg.copyPatterns.default.includes(p), `missing shipped pattern ${p}`);
 });
+
+// ---------------------------------------------------------------------------
+// A broken config.json must never be overwritten
+//
+// readJson() collapsed "absent" and "unparseable" into the same null, and load()
+// answered a null by writing defaults() over the file. config.json is a file the
+// user is invited to edit (SwiftBar ships an "Edit config…" item), so one trailing
+// comma destroyed baseDirs, start commands, editors, groups and the concurrency
+// port map — silently, and unrecoverably.
+// ---------------------------------------------------------------------------
+
+const FILE = process.env.WT_STUDIO_CONFIG;
+
+test('a syntax error in config.json is refused loudly and the file is left alone', () => {
+  const original = '{\n  "baseDirs": ["~/code"],\n  "start": { "api": "npm run dev" },\n}\n'; // trailing comma
+  fs.writeFileSync(FILE, original);
+  assert.throws(() => load(), /is not valid JSON/, 'load() must not answer a broken config with defaults');
+  assert.equal(fs.readFileSync(FILE, 'utf8'), original, 'the user\'s config is byte-for-byte untouched');
+});
+
+test('the refusal names the file and says the config was not modified', () => {
+  fs.writeFileSync(FILE, '{ "baseDirs": [oops] }');
+  try { load(); assert.fail('expected a throw'); }
+  catch (e) {
+    assert.ok(e.message.includes(FILE), e.message);
+    assert.match(e.message, /has NOT been modified/);
+  }
+});
+
+test('a config.json that is valid JSON but not an object is refused, not merged', () => {
+  for (const bad of ['[]', '"a string"', 'null', '42']) {
+    fs.writeFileSync(FILE, bad);
+    assert.throws(() => load(), /not been modified|must contain a JSON object/, `bad top level: ${bad}`);
+    assert.equal(fs.readFileSync(FILE, 'utf8'), bad, `${bad} was left on disk`);
+  }
+});
+
+test('an absent config.json is still seeded with defaults', () => {
+  fs.rmSync(FILE, { force: true });
+  const cfg = load();
+  assert.ok(Array.isArray(cfg.baseDirs));
+  assert.ok(fs.existsSync(FILE), 'first run still writes a config');
+});
+
+test('an empty config.json is treated as absent — there is nothing in it to lose', () => {
+  fs.writeFileSync(FILE, '\n  \n');
+  const cfg = load();
+  assert.ok(Array.isArray(cfg.baseDirs));
+  assert.ok(JSON.parse(fs.readFileSync(FILE, 'utf8')).baseDirs, 'seeded');
+});
