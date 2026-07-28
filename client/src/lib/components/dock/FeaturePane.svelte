@@ -74,7 +74,7 @@
           <tr>
             <td class="r">{m.repo}</td>
             <td>{m.branch || m.wtname}{#if m.merged}<span class="badge merged">✓ merged</span>{/if}</td>
-            <td>{m.running ? 'running' : 'stopped'}</td>
+            <td>{m.running ? 'running' : (m.depsMissing ? 'deps missing' : 'stopped')}</td>
             <td class="ports">{(m.ports || []).length ? m.ports.map((p: number) => m.repo + ':' + p).join(' ') : '—'}</td>
             <td><span class="pill {memberState(m)}">{memberState(m)}</span></td>
           </tr>
