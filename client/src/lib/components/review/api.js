@@ -32,6 +32,24 @@
 const api = (/** @type {string} */ id) => `/api/v1/sessions/${encodeURIComponent(id)}`;
 
 /**
+ * The daemon's boot token, when there is one.
+ *
+ * `feat/security-hardening` puts an Origin/Host allowlist and a boot token in front of
+ * every `/api` route, and the token reaches the browser as `window.WTS_TOKEN`,
+ * substituted into the served HTML by the daemon (see `public/app.js` on that branch —
+ * same convention, deliberately, rather than a second one invented here).
+ *
+ * That work is NOT on this branch, so today this reads undefined and sends nothing,
+ * which is exactly right against a daemon with no auth. It is here so the panel does not
+ * start 401-ing the day the two merge. Read per request, not captured at module load,
+ * because the shell may set it after this module is evaluated.
+ */
+function authHeaders() {
+  const token = /** @type {any} */ (globalThis).WTS_TOKEN;
+  return typeof token === 'string' && token ? { 'x-wts-token': token } : undefined;
+}
+
+/**
  * One place that turns a non-2xx into a thrown Error carrying the server's own message.
  * The hunk routes answer 400 with `{ ok:false, error }` for every refusal that is the
  * caller's to fix (stale hunk, binary file, nothing to stage) — that text is written for
@@ -52,7 +70,7 @@ async function unwrap(res) {
  * @returns {Promise<{ repos: RepoCommits[] }>}
  */
 export async function fetchCommits(sessionId, signal) {
-  return unwrap(await fetch(`${api(sessionId)}/commits`, { signal }));
+  return unwrap(await fetch(`${api(sessionId)}/commits`, { signal, headers: authHeaders() }));
 }
 
 /**
@@ -65,7 +83,7 @@ export async function fetchCommits(sessionId, signal) {
  */
 export async function fetchCommitDetail(sessionId, repo, sha, signal) {
   const q = `?repo=${encodeURIComponent(repo)}&sha=${encodeURIComponent(sha)}`;
-  return unwrap(await fetch(`${api(sessionId)}/commit-detail${q}`, { signal }));
+  return unwrap(await fetch(`${api(sessionId)}/commit-detail${q}`, { signal, headers: authHeaders() }));
 }
 
 /**
@@ -78,7 +96,7 @@ export async function fetchCommitDetail(sessionId, repo, sha, signal) {
  */
 export async function fetchHunks(sessionId, repo, file, signal) {
   const q = `?repo=${encodeURIComponent(repo)}&file=${encodeURIComponent(file)}`;
-  return unwrap(await fetch(`${api(sessionId)}/hunks${q}`, { signal }));
+  return unwrap(await fetch(`${api(sessionId)}/hunks${q}`, { signal, headers: authHeaders() }));
 }
 
 /**
@@ -99,7 +117,7 @@ export async function fetchHunks(sessionId, repo, file, signal) {
 export async function applyHunks(op, sessionId, sel) {
   const res = await fetch(`${api(sessionId)}/hunks/${op}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(sel),
   });
   return unwrap(res);
