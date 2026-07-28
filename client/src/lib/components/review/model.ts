@@ -17,18 +17,32 @@
  *   side-by-side   → walk hunk.rows, whose left/right index INTO hunk.lines
  */
 
-/** @typedef {import('./api.js').DiffLine} DiffLine */
-/** @typedef {import('./api.js').Hunk} Hunk */
-/** @typedef {import('./api.js').ParsedFile} ParsedFile */
+import type { DiffLine, Hunk, ParsedFile } from './api';
 
-/**
- * @typedef {{ label:string, side:'unstaged'|'staged'|null, action:'stage'|'unstage'|null,
- *             hunks:Hunk[] }} Group
- * @typedef {{ tone:'info'|'warn'|'error', text:string }} Note
- * @typedef {{ file:string, status:string, added:number, deleted:number,
- *             collapsed:boolean, rename:string|null, busy:boolean,
- *             note:Note|null, error:string|null, groups:Group[] }} Block
- */
+export interface Group {
+  label: string;
+  side: 'unstaged' | 'staged' | null;
+  action: 'stage' | 'unstage' | null;
+  hunks: Hunk[];
+}
+
+export interface Note {
+  tone: 'info' | 'warn' | 'error';
+  text: string;
+}
+
+export interface Block {
+  file: string;
+  status: string;
+  added: number;
+  deleted: number;
+  collapsed: boolean;
+  rename: string | null;
+  busy: boolean;
+  note: Note | null;
+  error: string | null;
+  groups: Group[];
+}
 
 /**
  * Item heights, in px. These are LOAD-BEARING: the viewport positions every row from
@@ -42,15 +56,15 @@ export const H = { file: 34, note: 30, group: 24, hunk: 24, row: 19, gap: 9 };
  *  the unit a reader actually moves through. */
 const NAVIGABLE = new Set(['file', 'note', 'group', 'hunk', 'row']);
 
-/**
- * @typedef {{ k:'file', b:Block }
- *         | { k:'note', b:Block, note:Note }
- *         | { k:'group', b:Block, g:Group }
- *         | { k:'hunk', b:Block, g:Group, hunk:Hunk }
- *         | { k:'row', b:Block, type:'context'|'add'|'del'|'change',
- *             left:DiffLine|null, right:DiffLine|null }
- *         | { k:'gap' }} Item
- */
+/** One drawn row. `k` is the discriminant every consumer switches on. */
+export type Item =
+  | { k: 'file'; b: Block }
+  | { k: 'note'; b: Block; note: Note }
+  | { k: 'group'; b: Block; g: Group }
+  | { k: 'hunk'; b: Block; g: Group; hunk: Hunk }
+  | { k: 'row'; b: Block; type: 'context' | 'add' | 'del' | 'change';
+      left: DiffLine | null; right: DiffLine | null }
+  | { k: 'gap' };
 
 /**
  * Tab stops matter for width: a tab is one character in the string but up to `TAB` columns
@@ -59,8 +73,7 @@ const NAVIGABLE = new Set(['file', 'note', 'group', 'hunk', 'row']);
  */
 const TAB = 4;
 
-/** @param {string} text */
-export function displayWidth(text) {
+export function displayWidth(text: string) {
   if (text.indexOf('\t') === -1) return text.length;
   let n = 0;
   for (let i = 0; i < text.length; i++) n = text[i] === '\t' ? n + TAB - (n % TAB) : n + 1;
@@ -70,8 +83,6 @@ export function displayWidth(text) {
 /**
  * Flatten blocks into the render list.
  *
- * @param {Block[]} blocks
- * @param {'unified'|'split'} view
  * @returns {{ items:Item[], offsets:Float64Array, total:number,
  *             cols:number, colsLeft:number, colsRight:number }}
  *   `offsets[i]` is item i's top; `offsets[items.length]` is the total height.
@@ -83,9 +94,8 @@ export function displayWidth(text) {
  *   are recycled — and so one 260-column line on the right cannot invent scroll range
  *   on the left, where every line is short.
  */
-export function buildItems(blocks, view) {
-  /** @type {Item[]} */
-  const items = [];
+export function buildItems(blocks: Block[], view: 'unified' | 'split') {
+  const items: Item[] = [];
   const split = view === 'split';
   let cols = 0;
   let colsLeft = 0;
@@ -128,18 +138,16 @@ export function buildItems(blocks, view) {
   offsets[items.length] = y;
   // A hard floor keeps short diffs from collapsing the gutter, and the cap stops one
   // pathological minified line from creating a 200k-pixel-wide surface nothing can scroll.
-  const clamp = (/** @type {number} */ n) => Math.max(40, Math.min(n, 2000));
+  const clamp = (n: number) => Math.max(40, Math.min(n, 2000));
   return { items, offsets, total: y, cols: clamp(cols), colsLeft: clamp(colsLeft), colsRight: clamp(colsRight) };
 }
 
 /**
  * Index of the last item whose top is <= y. Binary search, so scrolling a 100k-row diff
  * costs the same as scrolling a 100-row one.
- * @param {Float64Array} offsets
- * @param {number} y
- * @param {number} count
+
  */
-export function indexAt(offsets, y, count) {
+export function indexAt(offsets: Float64Array, y: number, count: number): number {
   let lo = 0;
   let hi = count - 1;
   if (hi < 0) return 0;
@@ -150,16 +158,14 @@ export function indexAt(offsets, y, count) {
   return lo;
 }
 
-/** @param {Item} item */
-export const navigable = (item) => NAVIGABLE.has(item.k);
+export const navigable = (item: Item): boolean => NAVIGABLE.has(item.k);
 
 /**
  * git's status letter → the class and label the file header shows. `R` (rename) only
  * appears when git's own rename detection fired; when it did not, the change arrives as
  * a `D` + `A` pair and `pairRenames()` below re-links them for display.
- * @param {string} status
  */
-export function statusInfo(status) {
+export function statusInfo(status: string) {
   const s = (status || 'M').toUpperCase()[0];
   if (s === 'A') return { letter: 'A', cls: 'a', label: 'added' };
   if (s === 'D') return { letter: 'D', cls: 'd', label: 'deleted' };
@@ -181,9 +187,8 @@ export function statusInfo(status) {
  *
  * A path test rather than a payload flag because the daemon does not mark them, and
  * ` => ` does not occur in real paths.
- * @param {string} file
  */
-export function isRenameSummaryPath(file) {
+export function isRenameSummaryPath(file: string): boolean {
   return / => /.test(file);
 }
 
@@ -191,10 +196,9 @@ export function isRenameSummaryPath(file) {
  * Why a file has no stageable hunks, phrased for the user. Mirrors
  * `unstageableReason()` in server/hunks.js — the server refuses these, and the panel
  * has to say so up front rather than letting the user press Stage and get a 400.
- * @param {ParsedFile|null|undefined} p
- * @returns {Note|null}
+
  */
-export function refusal(p) {
+export function refusal(p: ParsedFile | null | undefined): Note | null {
   if (!p) return null;
   if (p.binary) return { tone: 'warn', text: 'Binary file — no textual diff. Hunk staging is unavailable; stage the whole file from the command line.' };
   if (p.unsupported === 'combined') return { tone: 'warn', text: 'Combined (merge) diff — hunk staging is not supported for this file.' };
@@ -215,11 +219,9 @@ export function refusal(p) {
  * Matching on basename is a display hint only: nothing is merged, both files still
  * render and stage on their own, they just say what they are probably part of.
  *
- * @param {Block[]} blocks
  */
-export function pairRenames(blocks) {
-  /** @param {string} p */
-  const base = (p) => p.slice(p.lastIndexOf('/') + 1);
+export function pairRenames(blocks: Block[]): Block[] {
+  const base = (p: string) => p.slice(p.lastIndexOf('/') + 1);
   const dels = blocks.filter((b) => statusInfo(b.status).letter === 'D');
   const adds = blocks.filter((b) => statusInfo(b.status).letter === 'A');
   if (!dels.length || !adds.length) return blocks;
@@ -232,7 +234,12 @@ export function pairRenames(blocks) {
   return blocks;
 }
 
-/** `+12 −3`, or '' when nothing changed. Unicode minus, matching public/style.css. */
-export function stat(/** @type {number} */ a, /** @type {number} */ d) {
-  return [a ? `+${a}` : '', d ? `−${d}` : ''];
-}
+/*
+ * `stat(added, deleted)` was removed here rather than given a type.
+ *
+ * It was exported, imported by nothing in the repo, and its body contradicted its own
+ * docstring: documented as returning `+12 −3`, it actually returned the two-element
+ * array ['+12', '−3'], which renders as "+12,−3". Typing it would have meant either
+ * enshrining the wrong return or silently changing dead code's behaviour. The two
+ * components that show this stat (CommitList, ReviewPanel) build the markup inline.
+ */
