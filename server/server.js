@@ -22,6 +22,7 @@ const { createCiFeed } = require('./ci');
 const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
 const webui = require('./webui');
+const crash = require('./crash');
 const { run, has, shq, A } = require('./util');
 
 async function main() {
@@ -33,10 +34,11 @@ async function main() {
     console.log(`[wt-studio] multiplexer: ${mux.name}`);
   }
 
-  const manager = new SessionManager(cfg, mux || require('./multiplexer/tmux'));
   // One feature-identity resolver for the whole process: state.js groups worktrees
-  // with it and servers.js keys concurrency slots with it, so the two cannot drift.
+  // with it, servers.js keys concurrency slots with it and sessions.js records it
+  // on each session, so none of the three can drift.
   const identity = createIdentity(cfg);
+  const manager = new SessionManager(cfg, mux || require('./multiplexer/tmux'), identity);
   const servers = new Servers(cfg, identity);
 
   // ---- repo scan cache ----
@@ -423,7 +425,11 @@ async function main() {
     const entry = (s.repos || []).find((r) => r.repo === req.query.repo);
     if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     const repoObj = repos.find((r) => r.name === entry.repo);
-    res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, req.query.sha || 'uncommitted'));
+    const sha = req.query.sha || 'uncommitted';
+    // Same boundary check as routes-review.js: `sha` reaches a git argv, so it has
+    // to be an object name and not an option (see server/review.js).
+    if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
+    res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, sha));
   }));
 
   api.post('/sessions/:id/commit', A(async (req, res) => {
@@ -611,8 +617,18 @@ async function main() {
   });
 
   // ---- boot ----
-  process.on('unhandledRejection', (e) => console.error('[wt-studio] unhandledRejection', e));
-  process.on('uncaughtException', (e) => console.error('[wt-studio] uncaughtException', e));
+  // Crash policy lives in server/crash.js: fatal by default, with one narrow
+  // exemption for errors confined to an already-dead client socket.
+  crash.install();
+  // A failed bind has to kill the process. Without this the 'error' event has no
+  // listener, Node re-throws it, and the daemon runs on with no HTTP server.
+  crash.guardListen(server, { host: cfg.web.host, port: cfg.web.port });
+  // servers.json's tracked pids outlive this process — and reboots, after which the
+  // OS starts handing out low pids again. Drop the ones that no longer name a
+  // process we launched before anything can use them as a kill target.
+  for (const d of await servers.pruneTracked()) {
+    console.warn(`[wt-studio] dropped stale tracked pid ${d.pid} for ${d.worktreePath}`);
+  }
   await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);

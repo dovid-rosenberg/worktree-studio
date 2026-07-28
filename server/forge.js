@@ -90,14 +90,30 @@ const gitlab = {
 
 const PROVIDERS = [github, gitlab];
 
+// Push a member's branch to origin. Split out (and injectable via createForge) so
+// the push half of openPullRequest can be driven without a remote.
+function pushBranchToOrigin(member, env) {
+  return run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env });
+}
+
+// The one line of a failed `git push` worth showing. git interleaves progress
+// ("To github.com:acme/api.git") with the actual complaint, and the complaint is
+// rarely first — so pick the first line that IS one, rather than blindly taking
+// line 1 and showing the user a remote URL as an error message.
+function pushFailureLine(r) {
+  const lines = `${r.stderr || ''}\n${r.stdout || ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /^(?:error|fatal|remote)\b/i.test(l) || l.startsWith('!')) || lines[0] || `git push exited ${r.code}`;
+}
+
 // `providers` / `isInstalled` are injectable so tests can drive the provider contract
 // on a machine without gh or glab. CLI presence is probed once, at startup, exactly
 // as before — a `has()` per request would shell out on every poll.
 // `onChanged` is how the push side (server/ci.js) hears that *this* module just did
 // something that changes a branch's PR state — opening one. Everything else that can
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
-function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), onChanged = () => {} } = {}) {
+function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), pushBranch = pushBranchToOrigin, onChanged = () => {} } = {}) {
   const installed = providers.filter(isInstalled);
+  const installedSet = new Set(installed); // membership test for failure attribution
   const ciCache = new Map();
 
   // Drop every cached answer. Called when something is known to have changed the
@@ -124,18 +140,47 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
     return { ...data, repo };
   }
 
+  // Which of several failures to report when nothing could be opened.
+  //
+  // Reporting the LAST provider's stderr was wrong because "didn't run" and
+  // "ran and refused" are not the same failure. On a GitHub-only repo `gh pr
+  // create` fails with a real reason, then `glab` isn't installed, its spawn
+  // fails with ENOENT and its stderr is empty — so the empty string overwrote
+  // gh's reason and the user got a generic "gh/glab unavailable or failed".
+  //
+  // The failure that matters is the first one from a provider that is actually
+  // installed (GitHub first, matching the try order — that is the forge the
+  // repo is on). Only when no installed provider had anything to say do we fall
+  // back, and a machine with no forge CLI at all gets told exactly that instead
+  // of a sentence implying its CLI refused.
+  function failureReason(failures) {
+    const ran = failures.find((f) => f.installed && f.stderr);
+    if (ran) return ran.stderr;
+    if (failures.some((f) => f.installed)) return 'gh/glab unavailable or failed';
+    const said = failures.find((f) => f.stderr);
+    if (said) return said.stderr;
+    return 'no forge CLI installed — install gh (GitHub) or glab (GitLab)';
+  }
+
   // Push the branch, then open a PR/MR with the first provider that accepts it.
-  // Reports the LAST provider's stderr on total failure — that's the one that had
-  // the final say about why nothing could be opened.
   async function openPullRequest(member, env) {
-    await run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env });
-    let last = null;
+    // The push result used to be discarded. It can't be: a rejected push (no
+    // `origin`, no upstream, non-fast-forward) means the branch the PR would be
+    // opened from is not on the forge, so `gh pr create` fails too — with a
+    // downstream symptom ("No commits between…") that hides the real cause.
+    // Stop here and report what git actually said.
+    const pushed = await pushBranch(member, env);
+    if (pushed.code !== 0) return { repo: member.repo, error: `git push failed: ${pushFailureLine(pushed)}` };
+    // Creation is attempted for every provider, installed or not (a missing CLI
+    // simply fails and the next one gets its turn) — but whether it was installed
+    // is what decides whose failure is worth reporting.
+    const failures = [];
     for (const p of providers) {
       const r = await p.create(member.branch, member.path, env);
       if (r.ok) return { repo: member.repo, url: r.url };
-      last = r;
+      failures.push({ installed: installedSet.has(p), stderr: (r.stderr || '').trim().split('\n')[0] });
     }
-    return { repo: member.repo, error: ((last && last.stderr) || '').trim().split('\n')[0] || 'gh/glab unavailable or failed' };
+    return { repo: member.repo, error: failureReason(failures) };
   }
 
   // `app` here is the API router — server.js mounts it at both /api and /api/v1.
@@ -175,4 +220,4 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   return { register, ciForRepo, openPullRequest, invalidate, installed };
 }
 
-module.exports = { createForge, PROVIDERS, github, gitlab, ghChecks, glChecks };
+module.exports = { createForge, PROVIDERS, github, gitlab, ghChecks, glChecks, pushFailureLine };

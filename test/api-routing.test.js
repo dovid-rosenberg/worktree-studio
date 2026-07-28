@@ -21,7 +21,7 @@ const identity = createIdentity({});
 const WT = (name) => `/code/api/.worktrees/${name}`;
 
 // Records what the orchestrator asked of the collaborators it was handed.
-function harness({ group, flat = [], conflicts = [], allocError = null } = {}) {
+function harness({ group, flat = [], conflicts = [], allocError = null, startError = null } = {}) {
   const calls = { stopped: [], started: [], released: [], allocated: [], broadcasts: 0 };
   const servers = {
     identity,
@@ -30,7 +30,7 @@ function harness({ group, flat = [], conflicts = [], allocError = null } = {}) {
     releaseSlot: (f) => calls.released.push(f),
     launchOpts: () => ({ env: {}, ports: [] }),
     stop: async (repo, p) => { calls.stopped.push([repo, p]); return { ok: true }; },
-    start: async (repo, p) => { calls.started.push([repo, p]); return { ok: true }; },
+    start: async (repo, p) => { calls.started.push([repo, p]); return startError ? { ok: false, error: startError } : { ok: true }; },
     restart: async (repo, p) => { calls.started.push([repo, p]); return { ok: true }; },
   };
   const deps = {
@@ -154,4 +154,56 @@ test('group/start is a 409 when no concurrency slot is free', async () => {
     assert.deepEqual(await r.json(), { ok: false, error: 'no free concurrency slot (max 3 running)' });
   });
   assert.deepEqual(calls.started, [], 'no member is launched once the allocation failed');
+});
+
+// ---------------------------------------------------------------------------
+// /group/start's `ok` is a verdict, not a constant
+// ---------------------------------------------------------------------------
+
+// Both members are startable, so a failing servers.start() fails the whole stack.
+const STARTABLE = {
+  name: 'feat-b',
+  members: [
+    { repo: 'api', path: WT('feat-b'), branch: 'feature/b', wtname: 'feat-b', running: false, canStart: true },
+    { repo: 'fe', path: '/code/fe/.worktrees/feat-b', branch: 'feature/b', wtname: 'feat-b', running: false, canStart: true },
+  ],
+};
+
+test('group/start reports ok:false when every member failed to start', async () => {
+  const { app } = harness({ group: STARTABLE, startError: 'port 3030 already in use (pid 991)' });
+  await serving(app, async (get) => {
+    const body = await (await get('/api/v1/group/start', post({ group: 'feat-b' }))).json();
+    assert.equal(body.started, 0);
+    assert.equal(body.total, 2);
+    assert.equal(body.failures.length, 2);
+    assert.equal(body.ok, false, 'a client keying on ok must not read total failure as success');
+  });
+});
+
+test('group/start reports ok:false for a partial start too', async () => {
+  // FEATURE has one member already running, so exactly one is attempted — and it fails.
+  const { app } = harness({ group: FEATURE, startError: 'no start config for repo \'fe\'' });
+  await serving(app, async (get) => {
+    const body = await (await get('/api/v1/group/start', post({ group: 'feat-a' }))).json();
+    assert.deepEqual(body, { ok: false, started: 0, total: 1, failures: [{ repo: 'fe', error: "no start config for repo 'fe'" }] });
+  });
+});
+
+test('group/start with nothing to start is a no-op, not a failure', async () => {
+  const allRunning = { name: 'feat-c', members: [{ repo: 'api', path: WT('feat-c'), running: true, canStart: true }] };
+  const { app } = harness({ group: allRunning });
+  await serving(app, async (get) => {
+    const body = await (await get('/api/v1/group/start', post({ group: 'feat-c' }))).json();
+    assert.deepEqual(body, { ok: true, started: 0, total: 0, failures: [] });
+  });
+});
+
+test('the needsConfirm answer stays ok:true — the server is asking, not failing', async () => {
+  const conflict = { repo: 'fe', path: '/code/fe/.worktrees/other', running: true };
+  const { app } = harness({ group: FEATURE, conflicts: [conflict] });
+  await serving(app, async (get) => {
+    const body = await (await get('/api/v1/group/start', post({ group: 'feat-a' }))).json();
+    assert.equal(body.needsConfirm, true);
+    assert.equal(body.ok, true, 'clients branch on needsConfirm before ok');
+  });
 });

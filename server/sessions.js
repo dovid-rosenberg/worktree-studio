@@ -5,10 +5,11 @@
 const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
-const { readJson, writeJson, makeId, shortId, realpath, slug, shq, run } = require('./util');
+const { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } = require('./util');
 const status = require('./status');
 const worktree = require('./worktree');
 const layoutMod = require('./layout');
+const { createIdentity } = require('./identity');
 const { worktreeCopyOpts } = worktree;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -54,15 +55,24 @@ function seedPrompt(seed) {
 }
 
 class SessionManager extends EventEmitter {
-  constructor(cfg, mux) {
+  // `identity` is the shared server/identity.js resolver (server.js builds one and
+  // hands the same instance to state.js/servers.js). A session stores the feature
+  // IDENTITY it belongs to, and that has to be the same answer features.js groups
+  // by — otherwise `POST /group/pr { group: session.feature }` looks up a feature
+  // that doesn't exist under any strategy but `basename`.
+  constructor(cfg, mux, identity) {
     super();
     this.cfg = cfg;
     this.mux = mux;
+    this.identity = identity || createIdentity(cfg);
     this.layout = layoutMod.resolve(cfg); // where the worktrees this manager creates live
     this.file = path.join(cfg._stateDir, 'sessions.json');
     this.sessions = new Map();
     this._adopting = new Set(); // worktreePaths with an adopt in flight (dedup guard)
-    for (const s of readJson(this.file, []) || []) this.sessions.set(s.id, s);
+    // readJsonState, not readJson: a corrupt sessions.json must be preserved rather
+    // than silently replaced by an empty one on the next save — it holds the
+    // claudeSessionId values that tie each session to a live claude conversation.
+    for (const s of readJsonState(this.file, []) || []) this.sessions.set(s.id, s);
   }
 
   all() { return [...this.sessions.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); }
@@ -109,6 +119,25 @@ class SessionManager extends EventEmitter {
   sessionForWorktree(worktreePath) {
     if (!worktreePath) return null;
     return this.sessionIndex().get(realpath(worktreePath)) || null;
+  }
+
+  // The feature identity of a worktree this session owns — the value that has to
+  // match a name in state.js's features/groups list. Delegated to the one resolver
+  // so a session and the Fleet rail can never disagree about which feature a
+  // worktree is part of.
+  featureOf({ repo, wtname, branch, path: p }) {
+    return this.identity.of({ repo, wtname, branch, path: p });
+  }
+
+  // The NAME a worktree of this session should be given on disk. Deliberately NOT
+  // `s.feature`: naming and grouping are different questions (server/identity.js),
+  // and under the `branch`/`manifest` strategies the identity is a grouping key
+  // (`123`, a manual group name), not a directory name. The session's own worktree
+  // name is the authority; `s.feature` remains the last fallback so sessions
+  // persisted before the two were told apart keep naming siblings exactly as before.
+  worktreeNameFor(s) {
+    const primary = (s.repos || []).find((r) => r.primary);
+    return s.worktree || (primary && primary.worktree) || s.suggestedName || s.feature;
   }
 
   claudeCmd(session, { resume } = {}) {
@@ -181,8 +210,9 @@ class SessionManager extends EventEmitter {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
     if ((s.repos || []).some((r) => r.repo === repo)) return { ok: true, already: true, session: s };
-    const branch = s.branch || `feature/${s.feature}`;
-    const res = await worktree.create(repoPath, branch, s.feature, {
+    const wtname = this.worktreeNameFor(s);
+    const branch = s.branch || `feature/${wtname}`;
+    const res = await worktree.create(repoPath, branch, wtname, {
       layout: this.layout,
       ...worktreeCopyOpts(this.cfg, repo),
     });
@@ -230,7 +260,10 @@ class SessionManager extends EventEmitter {
       worktree: null,
       worktreePath: null,
       branch: null,
-      feature: name, // the identity that ties this feature's worktrees together across repos
+      // A pre-promote session owns no worktree, so it has no feature identity yet —
+      // there is nothing for a strategy to resolve. This is a placeholder that
+      // promote() replaces with the real identity the moment a worktree exists.
+      feature: name,
       // repos this session spans; the primary is where claude launches. Additional
       // repos are reached via --add-dir / /add-dir. Worktrees are null until promote.
       repos: [{ repo: repoName, repoPath, worktree: null, worktreePath: null, branch: null, primary: true }],
@@ -278,7 +311,10 @@ class SessionManager extends EventEmitter {
       id, title, source: s.source, sourceId: s.id || null, sourceUrl: s.url || null,
       repoName, repoPath, home: worktreePath, // launch/transcript dir (claude runs here) — so --resume finds it
       worktree: wtname, worktreePath, branch: branch || null,
-      feature: slug(wtname || title),
+      // The identity the worktree ALREADY has under the configured strategy — this
+      // worktree exists on disk and features.js is grouping it right now, so the
+      // session has to record the same answer, not a slug of its own devising.
+      feature: this.featureOf({ repo: repoName, wtname, branch, path: worktreePath }),
       repos: [{ repo: repoName, repoPath, worktree: wtname, worktreePath, branch: branch || null, primary: true }],
       pendingRepos: [],
       suggestedBranch: branch || null, suggestedName: wtname || slug(title),
@@ -327,7 +363,10 @@ class SessionManager extends EventEmitter {
     s.worktree = res.name;
     s.worktreePath = res.path;
     s.branch = res.branch;
-    s.feature = res.name; // the worktree name is the feature identity across repos
+    // The worktree is NAMED res.name; which feature it belongs to is a separate
+    // question the identity resolver answers (under `basename` the two coincide,
+    // which is why storing the name looked right for so long).
+    s.feature = this.featureOf({ repo: s.repoName, wtname: res.name, branch: res.branch, path: res.path });
     s.promotedAt = Date.now();
     // record the primary repo's worktree
     const primary = (s.repos || []).find((r) => r.primary);

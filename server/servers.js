@@ -7,12 +7,18 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { run, readJson, writeJson, realpath, slug } = require('./util');
+const { run, readJsonState, writeJson, realpath, slug } = require('./util');
 const { deriveEnv, allocSlot, rewriteAllSiblingPorts } = require('./concurrency');
 const { createIdentity } = require('./identity');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
+
+// How far a process's real start time may sit from the moment we recorded spawning
+// it. `ps -o lstart=` has one-second resolution and we stamp the record either side
+// of the spawn, so a few seconds of slack is required; a pid the OS handed to
+// somebody else is off by hours, or by a reboot.
+const PID_START_SKEW_MS = 10000;
 
 // Feature identity of a worktree, from a path alone. Kept as a free function for
 // the callers that have nothing but a path and no resolver to hand; it answers
@@ -46,7 +52,8 @@ class Servers {
     fs.mkdirSync(this.lockDir, { recursive: true });
     // servers.json shape: { tracked: { worktreePath → { pid, repo, log } }, slots: { feature → slot } }.
     // Back-compat: an old flat file (just the tracked object) still loads as `tracked`.
-    const saved = readJson(this.file, {});
+    // readJsonState: a corrupt servers.json is kept aside, not overwritten (see util.js).
+    const saved = readJsonState(this.file, {});
     this.tracked = saved.tracked || saved; // worktreePath → { pid, repo, log }
     // featureName → slot (concurrency: one slot per feature, shared by its repos). Persisted
     // so a Studio restart while features run doesn't re-slot a running feature to slot 0.
@@ -54,6 +61,16 @@ class Servers {
     // pid (string) → { cwd, top } — a process's cwd/git-toplevel never change, so we
     // resolve each listening pid once and reuse it across discoverRunning scans.
     this._pidInfoCache = new Map();
+    // feature → number of launches currently in flight. start() polls up to ~8 s for
+    // ports to bind, and the periodic sweep runs every ~3 s, so a feature that is
+    // slow to come up looks exactly like a dead one to reconcileSlots() — "nothing
+    // is listening" is the normal state DURING a launch. Without this, its slot gets
+    // reclaimed mid-launch and handed to the next feature, which then binds the same
+    // ports. Counted rather than a flag because a multi-repo feature launches all of
+    // its members concurrently, each entering and leaving independently.
+    // Deliberately in-memory: a launch cannot outlive the process that is polling it,
+    // so persisting this could only ever resurrect a guard for a start that is over.
+    this._starting = new Map();
   }
 
   _save() { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
@@ -86,13 +103,35 @@ class Servers {
 
   releaseSlot(feature) { if (feature && this.slots.delete(feature)) this._save(); }
 
+  // Mark a feature as having a launch in flight, so its slot is not reclaimable
+  // while its ports are still coming up. Always paired in a finally.
+  _beginStart(feature) {
+    if (!feature) return;
+    this._starting.set(feature, (this._starting.get(feature) || 0) + 1);
+  }
+
+  _endStart(feature) {
+    if (!feature) return;
+    const left = (this._starting.get(feature) || 0) - 1;
+    if (left > 0) this._starting.set(feature, left);
+    else this._starting.delete(feature);
+  }
+
+  // Is a launch for this feature in flight right now?
+  isStarting(feature) { return this._starting.has(feature); }
+
   // Self-heal the slot map against reality: drop any slot whose feature has no
   // running worktree in `runningMap` (Map(realpath → {pid,ports}) from discoverRunning).
   // Called on the periodic refresh so leaked/stale slots are released and a
   // restart-with-running-servers keeps only the slots that are actually live.
+  //
+  // "Reality" here is what is LISTENING, and a feature that is still starting is
+  // legitimately not listening yet — see `_starting`. Reclaiming its slot would
+  // hand the ports it is about to bind to somebody else.
   reconcileSlots(runningMap) {
     let changed = false;
     for (const feature of [...this.slots.keys()]) {
+      if (this._starting.has(feature)) continue; // launch in flight — not yet up ≠ gone
       if (![...runningMap.keys()].some((p) => this.featureFor(p) === feature)) {
         this.slots.delete(feature);
         changed = true;
@@ -146,6 +185,58 @@ class Servers {
   }
 
   alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
+
+  // { startedAt, command } for a live pid, or null when there is no such process.
+  // `lstart` is a fixed-width ctime string — "Mon Jul 27 22:46:40 2026", 24 chars —
+  // so the command is simply the rest of the line.
+  async _psInfo(pid) {
+    const r = await run('ps', ['-o', 'lstart=,command=', '-p', String(pid)], { env: ENV });
+    const line = (r.stdout || '').split('\n').find((l) => l.trim());
+    if (!line) return null;
+    const at = Date.parse(line.slice(0, 24));
+    if (!Number.isFinite(at)) return null;
+    return { startedAt: at, command: line.slice(24).trim() };
+  }
+
+  // What a tracked record's pid actually names right now:
+  //   'ours'     — still the process we launched, safe to signal
+  //   'gone'     — no such process; the record is simply stale
+  //   'stranger' — a live process that is NOT ours (the pid was recycled)
+  //
+  // This exists because `tracked` is persisted to servers.json and survives daemon
+  // restarts AND reboots, while nothing ever pruned it. `alive(pid)` only proves
+  // SOME process holds the number — and pids restart low after a reboot, so
+  // collision is ordinary rather than exotic. stop() then sent SIGTERM to the whole
+  // process GROUP of whatever now owned it, and stop() is reached with no running
+  // check at all from DELETE /sessions/:id and POST /sessions/:id/servers/stop.
+  // A process's start time is fixed at exec and cannot be inherited with the pid,
+  // which is what makes the record self-validating.
+  async _trackedPidState(t) {
+    if (!t || !t.pid) return 'gone';
+    const info = await this._psInfo(t.pid);
+    if (!info) return 'gone';
+    if (t.startedAt) return Math.abs(info.startedAt - t.startedAt) <= PID_START_SKEW_MS ? 'ours' : 'stranger';
+    // Records written before `startedAt` existed — servers.json outlives upgrades.
+    // Fall back to the command we would have launched for that repo: weaker than a
+    // start time, but it still tells a dev server from someone else's daemon, and
+    // it is strictly better than trusting the bare number.
+    const sc = this.startCfg(t.repo);
+    return sc && sc.cmd && info.command.includes(sc.cmd) ? 'ours' : 'stranger';
+  }
+
+  // Drop every tracked record that no longer names a process we launched. Called at
+  // boot, which is where the damage was: the map accumulated across restarts and
+  // reboots, so entries written days ago were still live kill targets.
+  async pruneTracked() {
+    const dropped = [];
+    for (const [wt, t] of Object.entries(this.tracked)) {
+      if (await this._trackedPidState(t) === 'ours') continue;
+      dropped.push({ worktreePath: wt, pid: t.pid });
+      delete this.tracked[wt];
+    }
+    if (dropped.length) this._save();
+    return dropped;
+  }
 
   async portPid(port) {
     const r = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { env: ENV });
@@ -247,6 +338,11 @@ class Servers {
     const ports = opts.ports && opts.ports.length ? opts.ports : sc.ports;
     const lock = this._lock(worktreePath);
     if (!lock) return { ok: false, error: `another launch for '${repo}' at ${worktreePath} is in progress` };
+    // From here until the ports are up (or we give up waiting), this feature's slot
+    // must survive a reconcile sweep — the ports it was allocated for are exactly
+    // the ones not bound yet.
+    const feature = this.featureFor(worktreePath);
+    this._beginStart(feature);
     try {
       for (const p of ports) {
         const pid = await this.portPid(p);
@@ -257,9 +353,13 @@ class Servers {
       const log = path.join(this.logDir, `${repo}__${path.basename(worktreePath)}.log`);
       const fd = fs.openSync(log, 'a');
       fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);
+      // Stamped either side of the spawn so the record can later be checked against
+      // the process's real start time — that is what stops a recycled pid from
+      // being signalled as though it were still this dev server.
+      const startedAt = Date.now();
       const child = spawn('bash', ['-lc', sc.cmd], { cwd: worktreePath, detached: true, stdio: ['ignore', fd, fd], env });
       child.unref();
-      this.tracked[worktreePath] = { pid: child.pid, repo, log };
+      this.tracked[worktreePath] = { pid: child.pid, repo, log, startedAt };
       this._save();
       // poll for ports to bind (best-effort)
       for (let i = 0; i < 16 && ports.length; i++) {
@@ -269,7 +369,7 @@ class Servers {
         if (allUp) break;
       }
       return { ok: true, pid: child.pid, log };
-    } finally { this._unlock(lock); }
+    } finally { this._endStart(feature); this._unlock(lock); }
   }
 
   // Ports a server in this worktree would be listening on: the feature's
@@ -284,8 +384,17 @@ class Servers {
   async stop(repo, worktreePath) {
     let killed = false;
     const t = this.tracked[worktreePath];
-    if (t && this.alive(t.pid)) {
+    // Never signal a pid we cannot still prove is ours — see _trackedPidState.
+    // `kill(-pid)` takes out a whole process group, so getting this wrong is not a
+    // near miss.
+    const state = t ? await this._trackedPidState(t) : 'gone';
+    if (state === 'ours') {
       try { process.kill(-t.pid, 'SIGTERM'); killed = true; } catch { try { process.kill(t.pid, 'SIGTERM'); killed = true; } catch { /* */ } }
+    } else if (state === 'stranger') {
+      // Loud, because it means this record was about to be used to kill something
+      // that has nothing to do with Studio. The port sweep below still frees
+      // whatever is genuinely holding this worktree's ports.
+      console.warn(`[wt-studio] refusing to signal pid ${t.pid} for ${worktreePath}: it is no longer the process Studio started (pid reused). Dropping the stale record.`);
     }
     // Also free any listener still holding one of this worktree's known ports —
     // a targeted per-port lookup rather than a full lsof-all-sockets discovery scan.
@@ -299,9 +408,17 @@ class Servers {
   }
 
   async restart(repo, worktreePath, opts = {}) {
-    await this.stop(repo, worktreePath);
-    await new Promise((r) => setTimeout(r, 800));
-    return this.start(repo, worktreePath, opts);
+    // A restart is a window with nothing listening by design — the stop, the 800 ms
+    // settle, and then start()'s own poll. The guard has to span the whole thing or
+    // a sweep landing in the gap reclaims the slot the restart intends to reuse.
+    // The nested _beginStart inside start() is why the counter is a count.
+    const feature = this.featureFor(worktreePath);
+    this._beginStart(feature);
+    try {
+      await this.stop(repo, worktreePath);
+      await new Promise((r) => setTimeout(r, 800));
+      return await this.start(repo, worktreePath, opts);
+    } finally { this._endStart(feature); }
   }
 
   // Incremental log tail, guarded to tracked log files only.

@@ -315,3 +315,33 @@ test('prunePaths keeps the entries the scan and the sessions still name', () => 
   assert.equal(countRealpaths(() => state.topology()), 0, 'a prune that removes nothing must not cost a rebuild');
   fs.rmSync(disk.root, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// A corrupt state file is preserved, not silently emptied
+// ---------------------------------------------------------------------------
+
+test('a corrupt sessions.json is kept aside instead of being replaced by an empty one', () => {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-corrupt-sessions-'));
+  const file = path.join(stateDir, 'sessions.json');
+  const original = '[{"id":"s_1","claudeSessionId":"claude-abc"'; // truncated mid-write
+  fs.writeFileSync(file, original);
+
+  const m = new SessionManager({ _stateDir: stateDir, web: { port: 0 }, claude: {} }, { name: 'stub' });
+  assert.equal(m.all().length, 0, 'boots empty rather than throwing');
+
+  assert.ok(!fs.existsSync(file), 'the unreadable file was moved out of the way, not left to be overwritten');
+  const kept = fs.readdirSync(stateDir).find((f) => f.startsWith('sessions.json.corrupt-'));
+  assert.ok(kept, `no preserved copy in ${fs.readdirSync(stateDir).join(', ')}`);
+  assert.equal(fs.readFileSync(path.join(stateDir, kept), 'utf8'), original,
+    'the claudeSessionId values are still recoverable by hand');
+});
+
+test('a corrupt servers.json is kept aside too', () => {
+  const { Servers } = require('../server/servers');
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-corrupt-servers-'));
+  const file = path.join(stateDir, 'servers.json');
+  fs.writeFileSync(file, '{"tracked":{');
+  const s = new Servers({ _stateDir: stateDir, web: { port: 0 }, start: {} });
+  assert.deepEqual(s.tracked, {});
+  assert.ok(fs.readdirSync(stateDir).some((f) => f.startsWith('servers.json.corrupt-')));
+});

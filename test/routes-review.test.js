@@ -218,3 +218,33 @@ test('selection() reads either the `hunks` array, the `hunks` scalar or `hunk`',
   assert.deepEqual(routes.selection({ hunk: 0 }), [0], 'index 0 is a real selection, not a missing one');
   assert.deepEqual(routes.selection({}), []);
 });
+
+// ---------------------------------------------------------------------------
+// ?sha= is untrusted input on its way to a git argv
+// ---------------------------------------------------------------------------
+
+test('GET /sessions/:id/diff refuses a sha that is really a git option, with a 400', async () => {
+  const { app, dir } = registered();
+  const victim = path.join(os.tmpdir(), `wts-route-victim-${process.pid}-${Date.now()}.txt`);
+  fs.rmSync(victim, { force: true });
+
+  const r = await app.call('get', '/api/v1/sessions/:id/diff', { params: { id: 's1' }, query: { sha: `--output=${victim}` } });
+
+  assert.equal(r.status, 400, 'a bad request, not a 500 and certainly not a 200');
+  assert.equal(fs.existsSync(victim), false, `a GET wrote ${victim}`);
+  fs.rmSync(victim, { force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('GET /sessions/:id/diff still defaults to the working tree and accepts a real sha', async () => {
+  const { app, dir } = registered();
+  const working = await app.call('get', '/api/v1/sessions/:id/diff', { params: { id: 's1' }, query: {} });
+  assert.equal(working.status, 200);
+  assert.equal(working.body.sha, 'uncommitted');
+
+  const sha = sh(dir, ['rev-parse', 'HEAD']).trim();
+  const commit = await app.call('get', '/api/v1/sessions/:id/diff', { params: { id: 's1' }, query: { sha } });
+  assert.equal(commit.status, 200);
+  assert.deepEqual(commit.body.files.map((f) => f.file), ['f.txt']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

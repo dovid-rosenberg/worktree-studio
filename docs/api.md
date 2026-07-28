@@ -611,15 +611,23 @@ run on their own offset ports and are therefore never in conflict.
 ```
 
 Re-POST with `{ group, stopConflicts: true }` to stop them (then a ~1.2 s
-settle) and continue. On success:
+settle) and continue. Then:
 
 ```jsonc
-{ "ok": true, "started": 2, "total": 3, "failures": [ { "repo": "fe", "error": "port 3030 already in use (pid 991)" } ] }
+{ "ok": false, "started": 2, "total": 3, "failures": [ { "repo": "fe", "error": "port 3030 already in use (pid 991)" } ] }
 ```
+
+`ok` is `true` only when **every** member that was going to start did —
+i.e. `failures` is empty. A group with nothing to start is `{ ok: true,
+started: 0, total: 0, failures: [] }`, which is a no-op rather than a failure.
+`started`/`failures` still carry the detail for a partial result.
 
 `409 { ok: false, error }` if a slot can't be allocated — checked for every
 member before any of them launches, so a partial stack is never started for lack
-of slots. Note `ok` is `true` even when some members failed; read `failures`.
+of slots.
+
+The `needsConfirm` response above keeps `ok: true`: nothing failed, the server is
+asking a question. Clients must check `needsConfirm` before `ok`.
 
 ### `POST /group/stop`
 
@@ -666,15 +674,31 @@ Otherwise the first member is adopted and the rest are attached to it via
 For each member: push the branch (`git push -u origin <branch>`), then open a PR
 with `gh pr create --fill`, falling back to `glab mr create --fill --yes`.
 
+A member whose push is rejected (no `origin`, no upstream, non-fast-forward) is
+reported as `{ repo, error: "git push failed: <git's own line>" }` and no PR is
+attempted for it — the branch isn't on the forge, so creation could only fail
+with a downstream symptom.
+
 ```jsonc
 { "ok": true, "results": [ { "repo": "api", "url": "https://github.com/…/pull/412" },
                            { "repo": "fe",  "error": "glab: not authenticated" } ] }
 ```
 
 Top-level `ok` is true if *any* member got a URL. Unlike `/sessions/:id/ci`,
-creation shells out whether or not the CLI was detected at startup; the reported
-`error` is the last provider's first stderr line, or `"gh/glab unavailable or
-failed"`.
+creation shells out whether or not the CLI was detected at startup.
+
+The reported `error` is the failure that actually explains the outcome, in this
+order:
+
+1. the first stderr line from the first **installed** provider that refused
+   (GitHub before GitLab — the order they're tried in);
+2. `"gh/glab unavailable or failed"` when an installed provider failed without
+   saying anything;
+3. `"no forge CLI installed — install gh (GitHub) or glab (GitLab)"` when
+   neither CLI exists on the machine.
+
+A provider whose CLI isn't installed exits with an empty stderr, and that
+silence never replaces the reason from one that ran.
 
 ---
 

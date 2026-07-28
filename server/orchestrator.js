@@ -50,7 +50,12 @@ function register(app, deps) {
     }));
     await refreshRunning();
     scheduleBroadcast();
-    res.json({ ok: true, started, total: toStart.length, failures });
+    // `ok` means what a client keying on it assumes: every member that was going to
+    // be started is up. It was hardcoded true, so a stack where all three members
+    // failed to bind answered `{ ok: true, started: 0, failures: [3 things] }` and
+    // a client that read only `ok` called total failure a success. Nothing to start
+    // is still ok — that is a no-op, not a failure.
+    res.json({ ok: failures.length === 0, started, total: toStart.length, failures });
   }));
 
   app.post('/group/stop', A(async (req, res) => {
