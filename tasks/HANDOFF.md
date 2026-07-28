@@ -34,9 +34,24 @@ Notable, because they're easy to lose track of:
 
 ## Resuming the ESM/TypeScript migration
 
-Branch `chore/esm-typescript`, worktree `.worktrees/esm-ts`, 6 commits, **63 of 71 server
-modules converted** — only 8 `.js` files left. The branch tip does **not** typecheck; that's
-expected mid-migration.
+Branch `chore/esm-typescript`, worktree `.worktrees/esm-ts`, **63 of 71 server modules
+converted**.
+
+**Status, precisely — I got this wrong twice, so read it carefully:**
+
+- `npx tsc --noEmit` → **0 errors project-wide**. The branch *does* typecheck.
+- `npm test` → **299 pass / 16 fail**, and only 299 of 542 tests even *ran*.
+
+Typecheck passing does not mean done. Two things are broken at runtime:
+
+1. **Five modules are still `.js`** — `server.js`, `state.js`, `transcript-routes.js`,
+   `multiplexer/index.js`, `multiplexer/tmux.js`. Under `"type": "module"` those are ESM
+   while still using `require`/`module.exports`.
+2. **Import specifiers were deliberately left alone.** Many files still
+   `import './config.js'` / `'./features.js'`, which no longer exist. That is what makes
+   whole test files fail to load, which is why only 299 tests ran.
+
+Finishing = convert those five modules + rewrite the stale specifiers.
 
 Two real bugs strict mode already caught in `orchestrator`, both preserved in `c17587f`:
 `/group/session` dereferenced an unknown-repo lookup unguarded (`TypeError` → 500 leaking an
@@ -60,8 +75,12 @@ a hand-edited `config.json` can carry one.
   verbatim). Wants `string | { cmd?: string; ports?: number[] }`. Its
   `[key: string]: unknown` index signature is also worth dropping — it survives `PartialDeep`
   and makes every consumer's access `unknown`-adjacent.
-- `Config._stateDir` is optional but is stamped on every loaded config; making it required
-  removes the single `!` assertion in `servers.ts`.
+- ~~`Config._stateDir` optional → required removes the `!` in `servers.ts`.~~ **Wrong — I
+  was mistaken.** `PartialDeep<T>` is `{ [K in keyof T]?: … }`, so it re-optionalizes *every*
+  key regardless of what `Config` declares, and every consumer takes `PartialDeep<Config>`.
+  The seam is `PartialDeep`, not the `?`. (`_token` and `_stateDir` were made required anyway
+  in `0f9470b` — `load()` is the only producer and always stamps both — but that does **not**
+  remove the assertions in modules taking a partial config.)
 
 ### Note: late work may still arrive
 
