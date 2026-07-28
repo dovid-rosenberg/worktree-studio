@@ -8,10 +8,18 @@
 
 const STORAGE_KEY = 'wts-theme'; // unchanged from the pre-port UI so a user's choice survives the switch
 
-export const theme = $state({ current: /** @type {'dark'|'light'} */ ('dark') });
+export type ThemeName = 'dark' | 'light';
+
+export interface TermPalette {
+  background: string;
+  foreground: string;
+  cursor: string;
+}
+
+export const theme = $state<{ current: ThemeName }>({ current: 'dark' });
 
 /** Read whatever app.html already painted so state and DOM start in agreement. */
-export function initTheme() {
+export function initTheme(): void {
   if (typeof document === 'undefined') return;
   const attr = document.documentElement.getAttribute('data-theme');
   // No attribute means no saved choice, and app.css's bare :root block is dark — so
@@ -21,12 +29,11 @@ export function initTheme() {
   theme.current = attr === 'light' ? 'light' : 'dark';
 }
 
-export function toggleTheme() {
+export function toggleTheme(): void {
   setTheme(theme.current === 'light' ? 'dark' : 'light');
 }
 
-/** @param {'dark'|'light'} next */
-export function setTheme(next) {
+export function setTheme(next: ThemeName): void {
   theme.current = next;
   document.documentElement.setAttribute('data-theme', next);
   try { localStorage.setItem(STORAGE_KEY, next); } catch { /* private mode — theme just won't persist */ }
@@ -35,7 +42,7 @@ export function setTheme(next) {
 // xterm can't read CSS custom properties, so the terminal palette is duplicated here as
 // literals. These are the same values style.css used for --term-bg / --brand; if the
 // tokens in app.css move, move these with them.
-const TERM_THEMES = {
+const TERM_THEMES: Record<ThemeName, TermPalette> = {
   dark: { background: '#0c0f14', foreground: '#cdd4de', cursor: '#e0733f' },
   light: { background: '#12151b', foreground: '#cdd4de', cursor: '#d05f30' },
 };
@@ -45,6 +52,6 @@ const TERM_THEMES = {
  * DOM) is what makes this reactive — every mounted Terminal re-themes on toggle. The old
  * code re-themed only the primary terminal, leaving a split pane on the previous palette.
  */
-export function termTheme() {
+export function termTheme(): TermPalette {
   return TERM_THEMES[theme.current] || TERM_THEMES.dark;
 }

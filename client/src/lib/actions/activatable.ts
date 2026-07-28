@@ -12,20 +12,22 @@
  *
  * Prefer a real <button> where the layout allows one — this is for the cases where it
  * doesn't (grid rows, tab chips with nested controls).
- *
- * @param {HTMLElement} node
- * @param {(e?: Event) => void} fn
  */
-export function activatable(node, fn) {
+export type ActivateHandler = (e?: Event) => void;
+
+export interface ActivatableAction {
+  update(next: ActivateHandler): void;
+  destroy(): void;
+}
+
+export function activatable(node: HTMLElement, fn: ActivateHandler): ActivatableAction {
   let handler = fn;
 
   node.setAttribute('tabindex', '0');
   if (!node.getAttribute('role')) node.setAttribute('role', 'button');
 
-  /** @param {Event} e */
-  const onClick = (e) => handler?.(e);
-  /** @param {KeyboardEvent} e */
-  const onKeydown = (e) => {
+  const onClick = (e: Event) => handler?.(e);
+  const onKeydown = (e: KeyboardEvent) => {
     if (e.target !== node) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -39,7 +41,7 @@ export function activatable(node, fn) {
   return {
     // Rebinding the callback rather than tearing down keeps focus on the node when a
     // re-render hands us a fresh closure — otherwise keyboard users lose their place.
-    update(/** @type {(e?: Event) => void} */ next) { handler = next; },
+    update(next: ActivateHandler) { handler = next; },
     destroy() {
       node.removeEventListener('click', onClick);
       node.removeEventListener('keydown', onKeydown);

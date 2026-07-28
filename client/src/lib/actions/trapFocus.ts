@@ -2,17 +2,23 @@
 const FOCUSABLE_SEL =
   'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-/**
- * @param {HTMLElement} container
- * @returns {HTMLElement[]}
- */
-export function focusablesIn(container) {
-  return /** @type {HTMLElement[]} */ ([...container.querySelectorAll(FOCUSABLE_SEL)]).filter(
+export function focusablesIn(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SEL)].filter(
     // offsetParent is null for display:none subtrees — a cheap visibility test that
     // keeps hidden tab panels out of the cycle. The activeElement exception covers
     // position:fixed elements, whose offsetParent is also null.
     (el) => el.offsetParent !== null || el === document.activeElement,
   );
+}
+
+export interface TrapFocusOptions {
+  enabled?: boolean;
+  restoreFocus?: boolean;
+}
+
+export interface TrapFocusAction {
+  update(next?: TrapFocusOptions): void;
+  destroy(): void;
 }
 
 /**
@@ -23,19 +29,15 @@ export function focusablesIn(container) {
  * The list is recomputed on every keypress rather than cached at setup, because overlay
  * contents change while open (issue lists load, fields appear) and a stale list would
  * strand focus on a removed node.
- *
- * @param {HTMLElement} node
- * @param {{ enabled?: boolean, restoreFocus?: boolean }} [opts]
  */
-export function trapFocus(node, opts = {}) {
+export function trapFocus(node: HTMLElement, opts: TrapFocusOptions = {}): TrapFocusAction {
   let enabled = opts.enabled !== false;
   const restoreFocus = opts.restoreFocus !== false;
   // Captured at mount so closing returns keyboard focus where it was — the pairing the
   // old code kept in `modalPrevFocus`, now owned by the overlay's own lifetime.
-  const prevFocus = /** @type {HTMLElement|null} */ (document.activeElement);
+  const prevFocus = document.activeElement as HTMLElement | null;
 
-  /** @param {KeyboardEvent} e */
-  const onKey = (e) => {
+  const onKey = (e: KeyboardEvent) => {
     if (!enabled || e.key !== 'Tab') return;
     const items = focusablesIn(node);
     if (!items.length) { e.preventDefault(); return; }
@@ -48,7 +50,7 @@ export function trapFocus(node, opts = {}) {
   node.addEventListener('keydown', onKey);
 
   return {
-    update(/** @type {{ enabled?: boolean }} */ next = {}) { enabled = next.enabled !== false; },
+    update(next: TrapFocusOptions = {}) { enabled = next.enabled !== false; },
     destroy() {
       node.removeEventListener('keydown', onKey);
       if (restoreFocus && prevFocus && document.contains(prevFocus)) {

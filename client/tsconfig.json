@@ -1,4 +1,5 @@
 {
+  // allowJs/checkJs stay until the last .js under src/ is converted, then go.
   "extends": "./.svelte-kit/tsconfig.json",
   "compilerOptions": {
     "allowJs": true,
