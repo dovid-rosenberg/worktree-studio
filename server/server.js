@@ -71,6 +71,10 @@ async function main() {
     try {
       runningCache = await servers.discoverRunning();
       servers.reconcileSlots(runningCache); // self-heal leaked/stale slots against reality
+      // Nothing else bounds a dev server that has been running for days without a
+      // restart: it appends to its log the whole time, and only a sweep is ever
+      // going to notice. One stat per tracked worktree (see Servers.trimLogs).
+      servers.trimLogs();
     } catch { return; }
     // Discovery feeds the topology half (each worktree's running/ports), so a new
     // or vanished server has to push one — but only when what lsof found actually

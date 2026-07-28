@@ -28,6 +28,19 @@ const PID_START_SKEW_MS = 10000;
 const DEFAULT_IDENTITY = createIdentity({});
 function featureFromPath(worktreePath) { return DEFAULT_IDENTITY.ofPath(worktreePath); }
 
+// Dev-server logs are appended to for the life of the worktree, so both their size
+// and what a single read of one may cost have to be bounded — and the read matters
+// more than the size. `logs()` runs on the event loop that also serves the terminal
+// WebSockets and the SSE fan-out, so a synchronous read of a vite/webpack log left
+// growing for days blocked all of it for seconds, or threw ERR_STRING_TOO_LONG once
+// the file passed ~512 MB. Three ceilings:
+//   MAX_LOG_BYTES   the file is trimmed back to KEEP_LOG_BYTES once it passes this
+//   KEEP_LOG_BYTES  how much history a trim keeps
+//   TAIL_MAX_BYTES  the most any single read may pull into memory
+const MAX_LOG_BYTES = 16 * 1024 * 1024;
+const KEEP_LOG_BYTES = 4 * 1024 * 1024;
+const TAIL_MAX_BYTES = 512 * 1024;
+
 // Read a byte range [start, end) from a file as UTF-8 (used for incremental log tails).
 function readRange(file, start, end) {
   const len = end - start;
@@ -35,6 +48,46 @@ function readRange(file, start, end) {
   const fd = fs.openSync(file, 'r');
   try { const buf = Buffer.alloc(len); const n = fs.readSync(fd, buf, 0, len, start); return buf.toString('utf8', 0, n); }
   finally { fs.closeSync(fd); }
+}
+
+// The last `lines` lines of a file, read backwards from the end and capped at
+// `maxBytes` — never the whole file. A first line the window clipped is dropped
+// rather than shown as a fragment, which also disposes of the half UTF-8 sequence
+// an arbitrary byte offset can land in the middle of.
+function readTail(file, lines, maxBytes = TAIL_MAX_BYTES) {
+  let size;
+  try { size = fs.statSync(file).size; } catch { return ''; }
+  const start = Math.max(0, size - maxBytes);
+  let text = readRange(file, start, size);
+  if (start > 0) { const nl = text.indexOf('\n'); text = nl >= 0 ? text.slice(nl + 1) : ''; }
+  return text.split('\n').slice(-lines).join('\n');
+}
+
+// Trim a log back to its last `keep` bytes once it passes `max`. Returns whether
+// it did anything.
+//
+// In place, deliberately — NOT rename-and-reopen. The dev server holds a descriptor
+// this daemon handed it on this exact inode, so renaming would only move the file it
+// keeps writing to and leave the new one empty forever. That descriptor was opened
+// 'a' (O_APPEND), which makes every write seek to the CURRENT end, so shrinking the
+// file under a running child is safe: it appends after the kept tail instead of
+// leaving a sparse hole. A write landing between the read and the truncate is lost —
+// acceptable for a log, and the alternative is unbounded growth.
+function trimLog(file, max = MAX_LOG_BYTES, keep = KEEP_LOG_BYTES) {
+  let size;
+  try { size = fs.statSync(file).size; } catch { return false; }
+  if (size <= max) return false;
+  let fd;
+  try { fd = fs.openSync(file, 'r+'); } catch { return false; }
+  try {
+    const buf = Buffer.alloc(keep);
+    const n = fs.readSync(fd, buf, 0, keep, size - keep);
+    const nl = buf.subarray(0, n).indexOf(0x0a); // resume on a line boundary
+    const from = nl >= 0 && nl + 1 < n ? nl + 1 : 0;
+    fs.writeSync(fd, buf, from, n - from, 0);
+    fs.ftruncateSync(fd, n - from);
+  } finally { fs.closeSync(fd); }
+  return true;
 }
 
 class Servers {
@@ -351,6 +404,7 @@ class Servers {
       // Re-point the worktree's FE config at this slot's sibling port before spawning.
       if (opts.patch) this.applyConfigPatch(worktreePath, opts.patch);
       const log = path.join(this.logDir, `${repo}__${path.basename(worktreePath)}.log`);
+      trimLog(log); // a relaunch must not inherit whatever the last run grew to
       const fd = fs.openSync(log, 'a');
       // Stamped either side of the spawn so the record can later be checked against
       // the process's real start time — that is what stops a recycled pid from
@@ -433,26 +487,43 @@ class Servers {
     } finally { this._endStart(feature); }
   }
 
+  // Bring every tracked log back under the size ceiling. One stat per tracked
+  // worktree, so it is cheap enough to hang off the periodic sweep — which is the
+  // only thing that bounds a dev server that has been running for days without a
+  // restart. Returns how many were trimmed.
+  trimLogs() {
+    let trimmed = 0;
+    for (const t of Object.values(this.tracked)) if (t && t.log && trimLog(t.log)) trimmed++;
+    return trimmed;
+  }
+
   // Incremental log tail, guarded to tracked log files only.
   //  - opts.offset omitted → return the tail (last `lines` lines) + current byte size as the next offset.
   //  - opts.offset a number → return only the bytes written after that offset.
-  // Always returns { offset, text, size } where `offset` is the byte position to pass next.
+  // Always returns { offset, text, size, skipped } where `offset` is the byte position
+  // to pass next and `skipped` is how many bytes the read cap dropped (0 normally).
   logs(worktreePath, opts = {}) {
     const incremental = typeof opts.offset === 'number' && Number.isFinite(opts.offset);
     const t = this.tracked[worktreePath];
     const log = t && t.log;
-    if (!log || !fs.existsSync(log)) return { offset: incremental ? opts.offset : 0, text: '', size: 0 };
+    const empty = { offset: incremental ? opts.offset : 0, text: '', size: 0, skipped: 0 };
+    if (!log || !fs.existsSync(log)) return empty;
     let size;
-    try { size = fs.statSync(log).size; } catch { return { offset: incremental ? opts.offset : 0, text: '', size: 0 }; }
+    try { size = fs.statSync(log).size; } catch { return empty; }
     if (incremental) {
       // a shrunken file means it was truncated/rotated — re-read from the start
       const start = opts.offset > size ? 0 : Math.max(0, opts.offset);
-      return { offset: size, text: readRange(log, start, size), size };
+      // A client that has been away — or a server that dumped a burst — must not be
+      // able to make us allocate the whole gap in one Buffer. Skip forward to the
+      // last TAIL_MAX_BYTES and report what that cost.
+      const from = Math.max(start, size - TAIL_MAX_BYTES);
+      return { offset: size, text: readRange(log, from, size), size, skipped: from - start };
     }
-    const lines = opts.lines || 300;
-    const text = fs.readFileSync(log, 'utf8').split('\n').slice(-lines).join('\n');
-    return { offset: size, text, size };
+    return { offset: size, text: readTail(log, opts.lines || 300), size, skipped: 0 };
   }
 }
 
-module.exports = { Servers, realpath, featureFromPath };
+module.exports = {
+  Servers, realpath, featureFromPath, trimLog, readTail,
+  LOG_LIMITS: { MAX_LOG_BYTES, KEEP_LOG_BYTES, TAIL_MAX_BYTES },
+};
