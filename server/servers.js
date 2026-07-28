@@ -352,12 +352,24 @@ class Servers {
       if (opts.patch) this.applyConfigPatch(worktreePath, opts.patch);
       const log = path.join(this.logDir, `${repo}__${path.basename(worktreePath)}.log`);
       const fd = fs.openSync(log, 'a');
-      fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);
       // Stamped either side of the spawn so the record can later be checked against
       // the process's real start time — that is what stops a recycled pid from
       // being signalled as though it were still this dev server.
       const startedAt = Date.now();
-      const child = spawn('bash', ['-lc', sc.cmd], { cwd: worktreePath, detached: true, stdio: ['ignore', fd, fd], env });
+      let child;
+      try {
+        fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);
+        child = spawn('bash', ['-lc', sc.cmd], { cwd: worktreePath, detached: true, stdio: ['ignore', fd, fd], env });
+      } finally {
+        // spawn() dups this descriptor into the child synchronously, so by the time
+        // it returns the parent's copy is dead weight — and the daemon outlives every
+        // dev server it launches. Leaving it open burned one descriptor per start()
+        // (and two per restart(), which is a stop plus a start), stacking with
+        // watch.js's fs.watch handles and the terminal PTYs toward EMFILE. Past that
+        // point arm() silently stops arming watchers and freshness quietly degrades
+        // to the safety-net timer, with nothing anywhere saying why.
+        fs.closeSync(fd);
+      }
       child.unref();
       this.tracked[worktreePath] = { pid: child.pid, repo, log, startedAt };
       this._save();
