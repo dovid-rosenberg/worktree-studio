@@ -1,36 +1,70 @@
 <script>
   /*
-   * The application header: brand, multiplexer badge, the Work/Fleet segment (with the
-   * waiting-count attention badge), and the global actions.
+   * The application header: brand, multiplexer badge, the fleet-wide summary, the
+   * Overview toggle (carrying the waiting-count attention badge), and global actions.
+   *
+   * The summary counts and the stack-wide buttons used to live in Fleet's own summary
+   * bar, which meant they were only visible while Fleet was. They belong here: they
+   * describe the whole fleet, not one view of it, and the numbers are the reason you
+   * would open Overview in the first place.
    *
    * The `actions` snippet is kept from the foundation version so a caller can inject
    * extra controls without this component learning about them.
    */
   import { theme, toggleTheme } from '$lib/theme.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
-  import { ui } from '$lib/stores/ui.svelte.js';
+  import { ui, featureActive, liveMembers } from '$lib/stores/ui.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
   import { notify } from '$lib/stores/notify.svelte.js';
+  import { restartStack, stopStack } from '$lib/ops.svelte.js';
 
   let { actions = undefined } = $props();
+
+  const feats = $derived(world.features);
+  const flat = $derived(feats.flatMap((/** @type {any} */ f) => liveMembers(f)));
+  const running = $derived(flat.filter((/** @type {any} */ m) => m.running).length);
+  const working = $derived(flat.filter((/** @type {any} */ m) => m.session && m.session.state === 'working').length);
+  const waiting = $derived(flat.filter((/** @type {any} */ m) => m.session && m.session.state === 'waiting').length);
+  const unpromoted = $derived(world.sessions.filter((/** @type {any} */ s) => !s.worktreePath).length);
+
+  const runningFeats = () => feats.filter((/** @type {any} */ f) => liveMembers(f).some((/** @type {any} */ m) => m.running));
+  const anyRunning = $derived(feats.some(featureActive));
 </script>
 
 <header class="topbar">
   <div class="brand"><span class="glyph">⎇</span> Worktree&nbsp;Studio</div>
   <span class="muxbadge" title="active multiplexer">mux: {world.mux}</span>
 
-  <div class="viewseg" role="group" aria-label="View">
-    <button class:on={ui.view === 'work'} aria-pressed={ui.view === 'work'} onclick={() => ui.setView('work')}>◧ Work</button>
-    <!-- data-n drives the ::after badge; 0 hides it (see the .attn rules). -->
-    <button
-      class="attn"
-      class:on={ui.view === 'fleet'}
-      aria-pressed={ui.view === 'fleet'}
-      data-n={notify.waitingCount}
-      title={notify.waitingCount ? `${notify.waitingCount} session(s) waiting for you` : 'Fleet'}
-      onclick={() => ui.setView('fleet')}
-    >▦ Fleet</button>
+  <!-- data-n drives the ::after badge; 0 hides it (see the .attn rules). -->
+  <button
+    class="btn ghost ovbtn attn"
+    class:on={ui.dockView === 'overview'}
+    aria-pressed={ui.dockView === 'overview'}
+    data-n={notify.waitingCount}
+    title={notify.waitingCount ? `${notify.waitingCount} session(s) waiting for you` : 'Overview (⌘\\)'}
+    onclick={() => ui.toggleOverview()}
+  >▦ Overview</button>
+
+  <button
+    class="btn ghost ovbtn"
+    class:on={ui.dockView === 'usage'}
+    aria-pressed={ui.dockView === 'usage'}
+    title="Token & cost telemetry across every session"
+    onclick={() => ui.toggleUsage()}
+  >◔ Insights</button>
+
+  <div class="counts" aria-label="Fleet summary">
+    <span class="c"><b>{feats.length}</b> features</span>
+    {#if unpromoted}<span class="c"><span class="pi">✦</span><b>{unpromoted}</b> unpromoted</span>{/if}
+    <span class="c"><span class="dot done"></span><b>{running}</b> running</span>
+    <span class="c"><span class="dot working"></span><b>{working}</b> working</span>
+    <span class="c"><span class="dot waiting"></span><b>{waiting}</b> waiting</span>
   </div>
+
+  {#if anyRunning}
+    <button class="btn ghost sm" onclick={() => runningFeats().forEach((/** @type {any} */ f) => restartStack(f.name))}>Restart all</button>
+    <button class="btn ghost sm" onclick={() => runningFeats().forEach((/** @type {any} */ f) => stopStack(f.name))}>Stop all</button>
+  {/if}
 
   <span class="spacer"></span>
   {@render actions?.()}
@@ -53,9 +87,13 @@
   .brand .glyph { color:var(--brand); font-size:17px; }
   .muxbadge { font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:2px 8px; }
 
-  .viewseg { display:flex; background:var(--elevated); border:1px solid var(--border); border-radius:9px; padding:2px; gap:2px; }
-  .viewseg button { font-family:var(--sans); font-size:12px; font-weight:600; border:0; background:transparent; color:var(--muted); padding:5px 13px; border-radius:7px; cursor:pointer; }
-  .viewseg button.on { background:var(--brand); color:var(--brand-ink); }
+  .ovbtn { font-weight:600; }
+  .ovbtn.on { background:var(--brand); border-color:var(--brand); color:var(--brand-ink); }
+
+  .counts { display:flex; align-items:center; gap:7px; flex-wrap:wrap; font-family:var(--mono); font-size:10.5px; color:var(--muted); }
+  .counts .c { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--border); border-radius:20px; padding:2px 9px; background:var(--elevated); }
+  .counts .c b { color:var(--ink); font-variant-numeric:tabular-nums; }
+  .counts .pi { font-size:9px; font-style:normal; }
 
   /* Attention badge: the number of sessions currently waiting. */
   .attn { position:relative; }

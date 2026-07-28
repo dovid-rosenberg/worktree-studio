@@ -17,13 +17,24 @@
   import LogsPanel from '$lib/components/dock/LogsPanel.svelte';
   import ReviewMount from '$lib/components/dock/ReviewMount.svelte';
   import InsightsMount from '$lib/components/dock/InsightsMount.svelte';
+  import FeaturePane from '$lib/components/dock/FeaturePane.svelte';
+  import Fleet from '$lib/components/fleet/Fleet.svelte';
+  import FleetInsights from '$lib/components/insights/FleetInsights.svelte';
   import { api } from '$lib/api.js';
   import { ui } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
 
   const session = $derived(ui.selected);
+  const feature = $derived(ui.selectedFeature);
   const isTerm = $derived(ui.dockView === 'term');
+  /*
+   * Overview is the old Fleet view, mounted here as a pane. It is the ONLY dock view that
+   * renders with nothing selected, which is what lets it double as the empty state — an
+   * overview is exactly what you want to see when you have not picked anything yet.
+   */
+  const isOverview = $derived(ui.dockView === 'overview');
+  const isUsage = $derived(ui.dockView === 'usage');
   const splitOn = $derived(!!session && ui.splitOn(session.id));
 
   /*
@@ -71,7 +82,13 @@
 </script>
 
 <section class="dock">
-  {#if !session}
+  {#if isOverview}
+    <Fleet />
+  {:else if isUsage}
+    <FleetInsights />
+  {:else if feature}
+    <FeaturePane {feature} />
+  {:else if !session}
     <div class="empty">
       <div class="empty-glyph">⎇</div>
       <h2>No session selected</h2>
@@ -80,7 +97,11 @@
         real Claude&nbsp;Code session on your CLAUDE.md, and you promote it to a worktree when
         it&rsquo;s real work.
       </p>
-      <button class="btn primary" onclick={() => overlays.openIntake()}>+ New session</button>
+      <div class="empty-cta">
+        <button class="btn primary" onclick={() => overlays.openIntake()}>+ New session</button>
+        <button class="btn" onclick={() => ui.setDockView('overview')}>▦ Overview</button>
+        <button class="btn" onclick={() => ui.setDockView('usage')}>◔ Insights</button>
+      </div>
     </div>
   {:else}
     <DockHead {session} />
@@ -112,7 +133,7 @@
   .empty-glyph { font-size:40px; color:var(--border-strong); }
   .empty h2 { margin:12px 0 6px; color:var(--ink); font-size:20px; }
   .empty p { font-size:14px; line-height:1.55; }
-  .empty .btn { margin-top:16px; }
+  .empty-cta { display:flex; gap:8px; justify-content:center; margin-top:16px; }
 
   .term-area { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
   /* The 2px gap showing --border is the divider; no extra element to keep aligned. */
