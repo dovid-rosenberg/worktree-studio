@@ -1691,6 +1691,14 @@ async function withPending(key, fn) {
   try { return await fn(); } finally { fleetPending.delete(key); if (view === 'fleet') renderFleet(); }
 }
 
+// Summarize a /group/start answer. `ok` is the server's verdict (false unless every
+// member came up), so the toast never reports a stack where nothing started as a
+// success — which is what "started 0/3" used to look like on the stop-and-switch path.
+function startResult(verb, r) {
+  const failed = (r.failures || []).length;
+  return `${verb} ${r.started}/${r.total}${failed ? ` (${failed} failed)` : ''}`;
+}
+
 function runStack(name) {
   return withPending(name, async () => {
     try {
@@ -1700,9 +1708,9 @@ function runStack(name) {
         const list = names.map((n) => `“${n}”`).join(', ');
         if (!(await uiConfirm(`${list} ${names.length > 1 ? 'are' : 'is'} already running in the same repo. Stop ${names.length > 1 ? 'them' : 'it'} and switch to “${name}”?`, { title: 'Stop & switch?', okLabel: 'Stop & switch' }))) return;
         const r2 = await api('POST', '/api/group/start', { group: name, stopConflicts: true });
-        toast(`Switched — started ${r2.started}/${r2.total}`);
+        toast(startResult('Switched — started', r2), !r2.ok);
       } else {
-        toast(`Started ${r.started}/${r.total}` + (r.failures && r.failures.length ? ` (${r.failures.length} failed)` : ''), r.failures && r.failures.length);
+        toast(startResult('Started', r), !r.ok);
       }
     } catch (e) { toast(e.message, true); }
   });

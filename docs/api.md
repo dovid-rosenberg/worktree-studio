@@ -611,15 +611,23 @@ run on their own offset ports and are therefore never in conflict.
 ```
 
 Re-POST with `{ group, stopConflicts: true }` to stop them (then a ~1.2 s
-settle) and continue. On success:
+settle) and continue. Then:
 
 ```jsonc
-{ "ok": true, "started": 2, "total": 3, "failures": [ { "repo": "fe", "error": "port 3030 already in use (pid 991)" } ] }
+{ "ok": false, "started": 2, "total": 3, "failures": [ { "repo": "fe", "error": "port 3030 already in use (pid 991)" } ] }
 ```
+
+`ok` is `true` only when **every** member that was going to start did —
+i.e. `failures` is empty. A group with nothing to start is `{ ok: true,
+started: 0, total: 0, failures: [] }`, which is a no-op rather than a failure.
+`started`/`failures` still carry the detail for a partial result.
 
 `409 { ok: false, error }` if a slot can't be allocated — checked for every
 member before any of them launches, so a partial stack is never started for lack
-of slots. Note `ok` is `true` even when some members failed; read `failures`.
+of slots.
+
+The `needsConfirm` response above keeps `ok: true`: nothing failed, the server is
+asking a question. Clients must check `needsConfirm` before `ok`.
 
 ### `POST /group/stop`
 

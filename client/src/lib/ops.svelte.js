@@ -202,6 +202,15 @@ export function startFeatureSession(f) {
   });
 }
 
+// Summarize a /group/start answer. `ok` is the server's verdict (false unless every
+// member came up), so the toast never reports a stack where nothing started as a
+// success — which is what "started 0/3" used to look like on the stop-and-switch path.
+/** @param {string} verb @param {any} r */
+function startResult(verb, r) {
+  const failed = (r.failures || []).length;
+  return `${verb} ${r.started}/${r.total}${failed ? ` (${failed} failed)` : ''}`;
+}
+
 /** @param {string} name */
 export function runStack(name) {
   return pending.run(name, async () => {
@@ -216,10 +225,9 @@ export function runStack(name) {
         );
         if (!ok) return;
         const r2 = await api('POST', '/api/group/start', { group: name, stopConflicts: true });
-        toast(`Switched — started ${r2.started}/${r2.total}`);
+        toast(startResult('Switched — started', r2), !r2.ok);
       } else {
-        const failed = (r.failures || []).length;
-        toast(`Started ${r.started}/${r.total}${failed ? ` (${failed} failed)` : ''}`, !!failed);
+        toast(startResult('Started', r), !r.ok);
       }
     } catch (e) { toast(/** @type {Error} */ (e).message, true); }
   });
