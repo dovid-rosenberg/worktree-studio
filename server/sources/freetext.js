@@ -1,6 +1,5 @@
-'use strict';
 // The zero-dependency origin: type a description, optionally give it a short name.
-module.exports = {
+export default {
   id: 'freetext',
   label: 'Free text',
   needsRepo: false,

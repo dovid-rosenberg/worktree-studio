@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Copy xterm's browser bundles out of node_modules into public/vendor so the
 // frontend can load them with plain <script>/<link> tags (no bundler).
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
-const root = path.join(__dirname, '..');
+const root = path.join(import.meta.dirname, '..');
 const out = path.join(root, 'public', 'vendor');
 fs.mkdirSync(out, { recursive: true });
 

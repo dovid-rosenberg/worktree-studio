@@ -1,4 +1,3 @@
-'use strict';
 // The review/hunk route module. Express itself isn't exercised here — a fake router
 // records what got mounted and the handlers are invoked directly, which is enough to
 // pin down the contract that matters: the route table is what it claims to be, the
@@ -9,13 +8,13 @@
 // onto the one router server.js mounts at both prefixes, so it cannot spell a prefix
 // at all. That the two prefixes really answer alike is proved end-to-end against a
 // live express app in api-routing.test.js.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const routes = require('../server/routes-review');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import * as routes from '../server/routes-review.js';
 
 function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 

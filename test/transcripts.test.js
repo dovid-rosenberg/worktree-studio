@@ -1,11 +1,10 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const transcripts = require('../server/transcripts');
-const pricing = require('../server/pricing');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as transcripts from '../server/transcripts.js';
+import * as pricing from '../server/pricing.js';
 
 // ---- fixtures ---------------------------------------------------------------
 

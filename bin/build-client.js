@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-'use strict';
 // Build the SvelteKit frontend the daemon serves (client/ → client/build).
 //
 // client/ is a separate npm project on purpose: its toolchain (vite, svelte, adapter-
@@ -13,11 +12,11 @@
 // npm run dev` (which is what that loop is for). server/webui.js refuses to boot with a
 // missing build and says which command produces it, so a stale-vs-absent build is never
 // silently a blank page.
-const { spawnSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { spawnSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
-const client = path.join(__dirname, '..', 'client');
+const client = path.join(import.meta.dirname, '..', 'client');
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function npmRun(args) {

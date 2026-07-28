@@ -1,15 +1,14 @@
-'use strict';
 // Dev-server control per worktree. Running state is DISCOVERED by mapping every
 // listening socket to the process's cwd → git worktree top-level (like
 // worktree-dash's core.sh), so it detects any server in any worktree — not only
 // ones on a configured port. Configured `start[repo]` is used only to launch.
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
-const { spawn } = require('child_process');
-const { run, readJsonState, writeJson, realpath, slug } = require('./util');
-const { deriveEnv, allocSlot, rewriteAllSiblingPorts } = require('./concurrency');
-const { createIdentity } = require('./identity');
+import fs from 'fs';
+import path from 'path';
+import crypto from 'crypto';
+import { spawn } from 'child_process';
+import { run, readJsonState, writeJson, realpath, slug } from './util.js';
+import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.js';
+import { createIdentity } from './identity.js';
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
@@ -524,7 +523,6 @@ class Servers {
   }
 }
 
-module.exports = {
-  Servers, realpath, featureFromPath, trimLog, readTail,
-  LOG_LIMITS: { MAX_LOG_BYTES, KEEP_LOG_BYTES, TAIL_MAX_BYTES },
-};
+const LOG_LIMITS = { MAX_LOG_BYTES, KEEP_LOG_BYTES, TAIL_MAX_BYTES };
+
+export { Servers, realpath, featureFromPath, trimLog, readTail, LOG_LIMITS };

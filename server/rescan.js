@@ -1,4 +1,3 @@
-'use strict';
 // Single-flight for the repo rescan — with a QUEUE, not a drop.
 //
 // server.js guarded the scan with `if (scanning) return;`, which discards the
@@ -38,4 +37,4 @@ function createRescan(scan) {
   };
 }
 
-module.exports = { createRescan };
+export { createRescan };

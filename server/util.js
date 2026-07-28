@@ -1,10 +1,9 @@
-'use strict';
 // Small shared helpers: shell/git exec, atomic JSON, tilde expansion, ids.
-const { execFile } = require('child_process');
-const crypto = require('crypto');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import { execFile, execFileSync } from 'child_process';
+import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const HOME = os.homedir();
 
@@ -59,7 +58,6 @@ async function gitFull(cwd, args, opts = {}) {
 
 function has(cmd) {
   // synchronous best-effort lookup used at startup.
-  const { execFileSync } = require('child_process');
   try {
     execFileSync('command', ['-v', cmd], { shell: '/bin/bash', stdio: 'ignore' });
     return true;
@@ -180,4 +178,4 @@ function shq(s) {
 // rejection to the error middleware itself, so the wrapper is gone and the policy it
 // enforced lives in exactly one place: crash.routeErrors(), mounted last in server.js.
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, DEFAULT_TIMEOUT_MS };
+export { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, DEFAULT_TIMEOUT_MS };

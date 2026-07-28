@@ -1,4 +1,3 @@
-'use strict';
 // Hunk-level staging for the working tree, on top of the pure model in ./diff.js.
 // Coexists with (does not replace) the file-level staging in review.commit().
 //
@@ -10,9 +9,9 @@
 // patch wouldn't match the index and git apply would (rightly) refuse. Taking the
 // index as the pre-image makes the partially-staged case just work, and is exactly
 // what `git add -p` / `git reset -p` do.
-const { spawn } = require('child_process');
-const { git, gitFull } = require('./util');
-const { parsePatch, formatFilePatch } = require('./diff');
+import { spawn } from 'child_process';
+import { git, gitFull } from './util.js';
+import { parsePatch, formatFilePatch } from './diff.js';
 
 // Canonical diff flags: force `a/`+`b/` prefixes and plain output so neither the user's
 // global git config (diff.mnemonicPrefix gives `c/`+`w/`, diff.noprefix gives none) nor
@@ -136,4 +135,4 @@ async function apply(worktreePath, { file, hunks, reverse = false, expect } = {}
 const stage = (worktreePath, opts) => apply(worktreePath, { ...opts, reverse: false });
 const unstage = (worktreePath, opts) => apply(worktreePath, { ...opts, reverse: true });
 
-module.exports = { fileHunks, stage, unstage, apply, unstagedDiff, stagedDiff, DIFF_FLAGS };
+export { fileHunks, stage, unstage, apply, unstagedDiff, stagedDiff, DIFF_FLAGS };

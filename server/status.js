@@ -1,11 +1,10 @@
-'use strict';
 // Claude Code hook integration. Generates a per-session `--settings` file whose
 // hooks POST lifecycle events to this server, and maps those events onto a
 // session state (working / waiting / idle / stopped). No global settings touched.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
 
-const REPORT = path.join(__dirname, '..', 'hooks', 'report.sh');
+const REPORT = path.join(import.meta.dirname, '..', 'hooks', 'report.sh');
 
 // event → { state, activity? }
 function mapEvent(event, payload) {
@@ -49,4 +48,4 @@ function settingsFile(stateDir, studioId, port, token) {
   return f;
 }
 
-module.exports = { mapEvent, buildSettings, settingsFile };
+export { mapEvent, buildSettings, settingsFile };

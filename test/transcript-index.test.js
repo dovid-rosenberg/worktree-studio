@@ -1,11 +1,10 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const transcripts = require('../server/transcripts');
-const { TranscriptIndex, summarize, ftsQuery, likePattern } = require('../server/transcript-index');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as transcripts from '../server/transcripts.js';
+import { TranscriptIndex, summarize, ftsQuery, likePattern } from '../server/transcript-index.js';
 
 // Each test gets its own fake ~/.claude/projects root and its own on-disk db, so the
 // incremental-offset behaviour is exercised against real files rather than mocks.

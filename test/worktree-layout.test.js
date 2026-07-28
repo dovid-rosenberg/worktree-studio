@@ -1,17 +1,17 @@
-'use strict';
 // worktree.create() against the three configurable layouts, plus the
 // copyAlways/copyPatterns split. Real git repos in a temp dir — the task's
 // "use server/worktree.js if a test needs a worktree" rule, so no `git worktree
 // add` is ever run by hand.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const worktree = require('../server/worktree');
-const layoutMod = require('../server/layout');
-const gitMod = require('../server/git');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import * as worktree from '../server/worktree.js';
+import * as layoutMod from '../server/layout.js';
+import * as gitMod from '../server/git.js';
+import * as config from '../server/config.js';
 
 function sh(cwd, cmd, args) { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }
 
@@ -192,7 +192,7 @@ test('copyAlways is not gated on gitignore (a tracked match is still copied)', a
 test('the shipped copyPatterns carry .env* and gitignored .vscode json', async () => {
   const base = tmp('wts-patterns-');
   const repo = repoWithLocalFiles(base);
-  const cfg = require('../server/config').defaults();
+  const cfg = config.defaults();
   const res = await worktree.create(repo, 'feature/a', 'feat-a', {
     fetch: false, ...worktree.worktreeCopyOpts(cfg, 'api'),
   });

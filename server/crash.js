@@ -1,4 +1,3 @@
-'use strict';
 // Crash policy: what happens when something throws. Process-level first
 // (install/guardListen), then the request-level counterpart (routeErrors) at the
 // bottom — the two interlock, and reading either without the other is how a route
@@ -147,4 +146,4 @@ function routeErrors({ log = console.error } = {}) {
   };
 }
 
-module.exports = { install, guardListen, routeErrors, isConnectionError, listenErrorMessage, CONNECTION_ERROR_CODES };
+export { install, guardListen, routeErrors, isConnectionError, listenErrorMessage, CONNECTION_ERROR_CODES };

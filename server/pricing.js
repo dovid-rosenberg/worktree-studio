@@ -1,4 +1,3 @@
-'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
 // MAINTAINED ARTIFACT — THIS TABLE GOES STALE.
 //
@@ -92,10 +91,11 @@ function round(usd) {
   return Math.round(usd * 1e6) / 1e6;
 }
 
-module.exports = {
+// Surfaced so the API can tell a UI how old the numbers are.
+export const PRICING_VERIFIED = '2026-07-27';
+export const ESTIMATE_NOTE = 'Costs are estimates derived from a maintained price table (server/pricing.js); transcripts record tokens, not billing.';
+
+export {
   PRICES, FAST_PRICES, CACHE_WRITE_5M, CACHE_WRITE_1H, CACHE_READ,
   normalizeModel, priceFor, isBillable, costOf, round,
-  // Surfaced so the API can tell a UI how old the numbers are.
-  PRICING_VERIFIED: '2026-07-27',
-  ESTIMATE_NOTE: 'Costs are estimates derived from a maintained price table (server/pricing.js); transcripts record tokens, not billing.',
 };

@@ -1,14 +1,13 @@
-'use strict';
 // The transcript reader. Claude Code appends a JSONL transcript per session to
 // ~/.claude/projects/<slugified-cwd>/<claudeSessionId>.jsonl. This module locates
 // the file for a Studio session, stream-parses it from a byte offset, and hands
 // normalized entries to the two consumers that care: the search index and the
 // token/cost telemetry. One reader, two features — the parsing quirks below are
 // non-obvious enough that duplicating them would guarantee drift.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const pricing = require('./pricing');
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as pricing from './pricing.js';
 
 const NL = 0x0a;
 const CR = 0x0d;
@@ -366,7 +365,7 @@ function excerpt(text, at, len, pad = 90) {
   return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}`;
 }
 
-module.exports = {
+export {
   projectsRoot, projectSlug, isSessionId, locate,
   scan, readTranscript, toEntry, normalizeUsage, contentText,
   aggregate, search, blankTotals, addUsage, usageKey, excerpt,

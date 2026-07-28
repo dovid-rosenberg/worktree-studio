@@ -1,4 +1,3 @@
-'use strict';
 // Asana tasks via the REST API (personal access token in config).
 function cfgOf(cfg) { return (cfg.sources && cfg.sources.asana) || {}; }
 
@@ -12,7 +11,7 @@ async function api(cfg, pathAndQuery) {
   return /** @type {any} */ (await res.json()).data;
 }
 
-module.exports = {
+export default {
   id: 'asana',
   label: 'Asana',
   needsRepo: false,

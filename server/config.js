@@ -1,12 +1,11 @@
-'use strict';
 // Loads (and seeds on first run) ~/.config/worktree-studio/config.json.
 // Reuses worktree-dash's config for baseDirs/start/editors when present so the
 // two feel like one world.
-const fs = require('fs');
-const path = require('path');
-const { HOME, expandTilde, readJson, writeJson } = require('./util');
-const security = require('./security');
-const { DEFAULT_COPY_ALWAYS } = require('./worktree');
+import fs from 'fs';
+import path from 'path';
+import { HOME, expandTilde, readJson, writeJson } from './util.js';
+import * as security from './security.js';
+import { DEFAULT_COPY_ALWAYS } from './worktree.js';
 
 const CONFIG_DIR = process.env.WT_STUDIO_CONFIG_DIR || path.join(HOME, '.config', 'worktree-studio');
 const CONFIG_FILE = process.env.WT_STUDIO_CONFIG || path.join(CONFIG_DIR, 'config.json');
@@ -260,4 +259,4 @@ function save(cfg) {
   writeJson(cfg._file || CONFIG_FILE, out);
 }
 
-module.exports = { load, save, defaults, migrate, validateConcurrency, CONFIG_FILE, CONFIG_DIR, STATE_DIR };
+export { load, save, defaults, migrate, validateConcurrency, CONFIG_FILE, CONFIG_DIR, STATE_DIR };

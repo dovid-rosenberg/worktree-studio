@@ -1,4 +1,3 @@
-'use strict';
 // Incremental search + telemetry index over the transcripts of sessions Studio
 // manages. Deliberately NOT an index of all of ~/.claude/projects (308MB of other
 // people's work) — only what's keyed off a session's claudeSessionId, so the index
@@ -8,17 +7,22 @@
 // incremental, the same trick servers.js uses to tail dev-server logs: we remember
 // where we stopped and only ever read the bytes appended since. A full re-read of a
 // 22MB transcript on every Stop hook would be the obvious wrong thing.
-const fs = require('fs');
-const path = require('path');
-const transcripts = require('./transcripts');
-const pricing = require('./pricing');
+import fs from 'fs';
+import path from 'path';
+import * as transcripts from './transcripts.js';
+import * as pricing from './pricing.js';
 
 // node:sqlite is experimental in Node 22 (it prints an ExperimentalWarning on first
-// require). If it or FTS5 is missing we degrade to the file-scan search in
+// load). If it or FTS5 is missing we degrade to the file-scan search in
 // transcripts.js rather than taking the whole feature down.
+//
+// process.getBuiltinModule, not `import`: a static import of a missing builtin is a
+// link-time failure that takes the whole module graph down, and `await import` would
+// make every importer of this file async for a value we need synchronously here.
 let sqlite = null;
 let loadError = null;
-try { sqlite = require('node:sqlite'); } catch (e) { loadError = e.message; }
+try { sqlite = process.getBuiltinModule('node:sqlite'); } catch (e) { loadError = e.message; }
+if (!sqlite && !loadError) loadError = 'not built into this node';
 
 function ftsAvailable(db) {
   try {
@@ -351,4 +355,6 @@ function summarize(rows) {
   };
 }
 
-module.exports = { TranscriptIndex, summarize, ftsQuery, likePattern, sqliteAvailable: () => !!sqlite };
+const sqliteAvailable = () => !!sqlite;
+
+export { TranscriptIndex, summarize, ftsQuery, likePattern, sqliteAvailable };

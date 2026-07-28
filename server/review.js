@@ -1,11 +1,10 @@
-'use strict';
 // Per-worktree review backend: the branch's diff vs its merge-base with the
 // default branch (committed delta + uncommitted working changes), single-file
 // diffs, and staged commits. All git via arg-arrays through git/gitFull.
-const fs = require('fs');
-const path = require('path');
-const { git, gitFull } = require('./util');
-const { parsePatch } = require('./diff');
+import fs from 'fs';
+import path from 'path';
+import { git, gitFull } from './util.js';
+import { parsePatch } from './diff.js';
 
 // A commit-ish that arrived in a query string is not a positional argument until it
 // has been proved to be one.
@@ -249,4 +248,4 @@ async function commit(worktreePath, message, { amend, paths } = {}) {
   return { ok: true, sha: await git(worktreePath, ['rev-parse', 'HEAD']) };
 }
 
-module.exports = { base, working, commits, commitDetail, commit, isValidSha };
+export { base, working, commits, commitDetail, commit, isValidSha };

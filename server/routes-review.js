@@ -1,4 +1,3 @@
-'use strict';
 // Routes for the structured diff model and hunk-level staging. Self-contained on
 // purpose: server.js wires this in with a single `register(api, deps)` call, so the
 // route table can grow here without touching it again.
@@ -7,8 +6,8 @@
 // calls) and /api/v1 (the versioned path new clients should use). Registering onto it
 // is what makes every route below answer identically under both prefixes — the module
 // never spells a prefix, so it cannot register a route under one and miss the other.
-const review = require('./review');
-const hunks = require('./hunks');
+import * as review from './review.js';
+import * as hunks from './hunks.js';
 
 // Resolve :id + ?repo (or body.repo) to the worktree the operation runs in. Returns
 // { entry } or { status, error } so each handler bails the same way.
@@ -91,4 +90,4 @@ function register(api, deps) {
   api.post('/sessions/:id/hunks/unstage', applyRoute('unstage'));
 }
 
-module.exports = { register, selection, resolveWorktree };
+export { register, selection, resolveWorktree };

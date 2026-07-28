@@ -1,4 +1,3 @@
-'use strict';
 // PR/CI status as pushed state.
 //
 // It used to be polled twice over. The browser re-fetched GET /sessions/:id/ci
@@ -41,7 +40,7 @@
 // forge's cache TTL, so however many triggers arrive, no worktree+branch pair can
 // be looked up more often than the 20 s cache already allowed. With nobody
 // subscribed the figure is zero.
-const { attention } = require('./watch');
+import { attention } from './watch.js';
 
 const DEFAULTS = {
   debounceMs: 500,       // coalesce a burst of triggers (a rescan storm, push then commit) into one sweep
@@ -205,4 +204,4 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
   };
 }
 
-module.exports = { createCiFeed, DEFAULTS };
+export { createCiFeed, DEFAULTS };

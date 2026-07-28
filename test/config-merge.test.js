@@ -1,4 +1,3 @@
-'use strict';
 // The safety property behind emptying `concurrency.repos` in defaults():
 // loading an EXISTING config must never lose or weaken what that install was
 // already running on.
@@ -10,19 +9,23 @@
 //
 // Every test here runs against a throwaway temp config. Nothing reads or writes
 // ~/.config/worktree-studio/config.json.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-studio-merge-'));
 process.env.WT_STUDIO_CONFIG_DIR = TMP;
 process.env.WT_STUDIO_CONFIG = path.join(TMP, 'config.json');
 process.env.WT_STUDIO_STATE = path.join(TMP, 'state');
 
-const config = require('../server/config');
-const { load, defaults, migrate } = config;
+// A DYNAMIC import, because a static one is hoisted above the three assignments
+// directly above it and config.js captures these three from the environment once, at
+// evaluation time. Under CommonJS the require ran here, in source order; under ESM
+// only `await import` still does, and getting this wrong points load() at the real
+// ~/.config/worktree-studio/config.json.
+const { load, defaults, migrate } = await import('../server/config.js');
 
 const FILE = process.env.WT_STUDIO_CONFIG;
 const writeConfig = (obj) => fs.writeFileSync(FILE, JSON.stringify(obj, null, 2));

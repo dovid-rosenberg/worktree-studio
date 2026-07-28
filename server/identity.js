@@ -1,4 +1,3 @@
-'use strict';
 // Feature identity — "which worktrees are the same feature?".
 //
 // A feature is a unit of work that owns one worktree in each of several repos.
@@ -25,9 +24,9 @@
 //             `fix/123-payment` and `feat/123-ui` both yield `123` and group
 //   manifest  explicit mapping, read from the EXISTING config.groups manual groups
 //             (see the note on MANIFEST below — this is not a second config surface)
-const path = require('path');
-const layoutMod = require('./layout');
-const { createRealpathCache } = require('./util');
+import path from 'path';
+import * as layoutMod from './layout.js';
+import { createRealpathCache } from './util.js';
 
 const STRATEGIES = ['basename', 'branch', 'manifest'];
 
@@ -198,4 +197,4 @@ function createIdentity(cfg = {}) {
   return { strategy, layout, of, ofPath, nameOf, reindex, warning };
 }
 
-module.exports = { createIdentity, compileBranchMatcher, firstCapture, STRATEGIES };
+export { createIdentity, compileBranchMatcher, firstCapture, STRATEGIES };

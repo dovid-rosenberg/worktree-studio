@@ -1,4 +1,3 @@
-'use strict';
 // The SSE fan-out. One stream, three named event types, because the state payload
 // (server/state.js, docs/api.md) has three very different change rates:
 //
@@ -33,11 +32,11 @@
 // omitted, the bus behaves exactly as it did with two events.
 /**
  * @param {object} deps
- * @param {() => import('./types').TopologyPayload} deps.topology
+ * @param {() => import('./types.ts').TopologyPayload} deps.topology
  *        builds the `topology` half on demand
- * @param {() => import('./types').SessionStatePayload} deps.sessionState
+ * @param {() => import('./types.ts').SessionStatePayload} deps.sessionState
  *        builds the `session-state` half on demand
- * @param {() => import('./types').CiPayload} [deps.ci]
+ * @param {() => import('./types.ts').CiPayload} [deps.ci]
  *        builds the `ci` half; omitted, the bus has two events
  * @param {number} [deps.debounceMs]
  */
@@ -48,9 +47,9 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   let ciPending = false;
 
   /**
-   * @template {import('./types').SseEventName} E
+   * @template {import('./types.ts').SseEventName} E
    * @param {E} event
-   * @param {import('./types').SseEvents[E]} data
+   * @param {import('./types.ts').SseEvents[E]} data
    */
   function frame(event, data) { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
   // A dead socket throws here; the request's close handler is what unsubscribes,
@@ -107,4 +106,4 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   return { subscribe, schedule, flush, clients };
 }
 
-module.exports = { createBroadcast };
+export { createBroadcast };

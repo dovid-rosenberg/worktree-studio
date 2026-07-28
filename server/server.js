@@ -1,30 +1,31 @@
-'use strict';
-const http = require('http');
-const express = require('express');
-const { WebSocketServer } = require('ws');
-
-const configMod = require('./config');
-const muxSelect = require('./multiplexer');
-const gitMod = require('./git');
-const watchMod = require('./watch');
-const worktree = require('./worktree');
+import http from 'http';
+import express from 'express';
+import { WebSocketServer } from 'ws';
+import * as muxSelect from './multiplexer/index.js';
+import * as gitMod from './git.js';
+import * as watchMod from './watch.js';
+import * as worktree from './worktree.js';
 const { worktreeCopyOpts } = worktree;
-const review = require('./review');
-const sources = require('./sources');
-const { SessionManager } = require('./sessions');
-const { Servers } = require('./servers');
-const { createIdentity } = require('./identity');
-const { createState } = require('./state');
-const { createBroadcast } = require('./broadcast');
-const { createForge } = require('./forge');
-const { createCiFeed } = require('./ci');
-const orchestrator = require('./orchestrator');
-const { createGuard } = require('./security');
-const { createTerminalHandler } = require('./term');
-const { createRescan } = require('./rescan');
-const webui = require('./webui');
-const crash = require('./crash');
-const { run, has, shq, slug } = require('./util');
+import * as review from './review.js';
+import * as sources from './sources/index.js';
+import { SessionManager } from './sessions.js';
+import { Servers } from './servers.js';
+import { createIdentity } from './identity.js';
+import { createState } from './state.js';
+import { createBroadcast } from './broadcast.js';
+import { createForge } from './forge.js';
+import { createCiFeed } from './ci.js';
+import * as orchestrator from './orchestrator.js';
+import { createGuard } from './security.js';
+import { createTerminalHandler } from './term.js';
+import { createRescan } from './rescan.js';
+import * as webui from './webui.js';
+import * as crash from './crash.js';
+import { run, has, shq, slug, expandTilde } from './util.js';
+import * as configMod from './config.js';
+import tmux from './multiplexer/tmux.js';
+import * as transcriptRoutes from './transcript-routes.js';
+import * as routesReview from './routes-review.js';
 
 async function main() {
   const cfg = configMod.load();
@@ -39,7 +40,7 @@ async function main() {
   // with it, servers.js keys concurrency slots with it and sessions.js records it
   // on each session, so none of the three can drift.
   const identity = createIdentity(cfg);
-  const manager = new SessionManager(cfg, mux || require('./multiplexer/tmux'), identity);
+  const manager = new SessionManager(cfg, mux || tmux, identity);
   const servers = new Servers(cfg, identity);
 
   // ---- repo scan cache ----
@@ -205,7 +206,6 @@ async function main() {
     }
     let rescanNeeded = false;
     if (Array.isArray(baseDirs)) {
-      const { expandTilde } = require('./util');
       cfg.baseDirs = baseDirs.map((s) => expandTilde(String(s).trim())).filter(Boolean);
       rescanNeeded = true;
     }
@@ -546,8 +546,8 @@ async function main() {
     res.json({ ok: true });
   });
 
-  require('./transcript-routes').register(api, { manager, cfg });
-  require('./routes-review').register(api, { manager, repos: () => repos, broadcast: scheduleBroadcast });
+  transcriptRoutes.register(api, { manager, cfg });
+  routesReview.register(api, { manager, repos: () => repos, broadcast: scheduleBroadcast });
 
   // ---- Claude Code hook receiver ----
   // Not under /api: the URL is baked into every session's generated settings file.

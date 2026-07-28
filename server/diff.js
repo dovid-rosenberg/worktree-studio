@@ -1,4 +1,3 @@
-'use strict';
 // Pure unified-diff model: parse a `git diff` patch into files → hunks → lines, with
 // aligned left/right rows for side-by-side rendering, and serialize a SUBSET of a
 // file's hunks back into a patch `git apply` accepts (that's what hunk staging is).
@@ -58,9 +57,9 @@ function stripPrefix(p) {
 // Rows reference `lines` BY INDEX so the same payload renders unified (walk `lines`) or
 // side-by-side (walk `rows`) without duplicating any text.
 /**
- * @param {Array<{ type: import('./types').DiffLineType }>} lines
+ * @param {Array<{ type: import('./types.ts').DiffLineType }>} lines
  *        only the line KINDS matter here — rows carry indexes, never text
- * @returns {import('./types').DiffRow[]}
+ * @returns {import('./types.ts').DiffRow[]}
  */
 function alignRows(lines) {
   const rows = [];
@@ -88,9 +87,9 @@ function alignRows(lines) {
  * @param {string[]} lines           the whole patch, split
  * @param {number} start             first body line
  * @param {number} end               exclusive bound (next file's block, or EOF)
- * @param {import('./types').DiffHunkHeader} hunk  the header this body belongs to;
+ * @param {import('./types.ts').DiffHunkHeader} hunk  the header this body belongs to;
  *        its counts are authoritative about how many lines to consume
- * @returns {{ lines: import('./types').DiffLine[], next: number }}
+ * @returns {{ lines: import('./types.ts').DiffLine[], next: number }}
  */
 function parseHunkBody(lines, start, end, hunk) {
   const out = [];
@@ -132,9 +131,9 @@ function parseHunkBody(lines, start, end, hunk) {
 
 // Parse one `diff --git` block: the raw header lines (kept verbatim for re-emission),
 // what kind of change it is, and its hunks.
-/** @returns {import('./types').DiffFile} */
+/** @returns {import('./types.ts').DiffFile} */
 function parseFile(lines, start, end) {
-  /** @type {import('./types').DiffFile} */
+  /** @type {import('./types.ts').DiffFile} */
   const file = {
     path: null, oldPath: null, newPath: null, status: 'modified',
     binary: false, oldMode: null, newMode: null, similarity: null,
@@ -180,8 +179,8 @@ function parseFile(lines, start, end) {
       i += 1;
       continue;
     }
-    /** @type {import('./types').DiffHunk} */
-    /** @type {import('./types').DiffHunkHeader} */
+    /** @type {import('./types.ts').DiffHunk} */
+    /** @type {import('./types.ts').DiffHunkHeader} */
     const head = {
       index: file.hunks.length,
       oldStart: parseInt(m[1], 10),
@@ -192,7 +191,7 @@ function parseFile(lines, start, end) {
       header: lines[i],
     };
     const body = parseHunkBody(lines, i + 1, end, head);
-    /** @type {import('./types').DiffHunk} */
+    /** @type {import('./types.ts').DiffHunk} */
     const hunk = {
       ...head,
       lines: body.lines,
@@ -215,7 +214,7 @@ function parseFile(lines, start, end) {
 // preamble (commit message, `git show` header) before the first `diff --git` is ignored.
 /**
  * @param {string} text  a `git diff` / `git show` patch, possibly multi-file
- * @returns {import('./types').DiffFile[]}
+ * @returns {import('./types.ts').DiffFile[]}
  */
 function parsePatch(text) {
   const lines = splitLines(text);
@@ -241,7 +240,7 @@ function formatHunkHeader(oldStart, oldLines, newStart, newLines, section) {
   return `@@ -${at(oldStart, oldLines)} +${at(newStart, newLines)} @@${section || ''}`;
 }
 
-/** @param {import('./types').DiffHunk} hunk @returns {string[]} */
+/** @param {import('./types.ts').DiffHunk} hunk @returns {string[]} */
 function hunkBodyLines(hunk) {
   const out = [];
   for (const l of hunk.lines) {
@@ -283,7 +282,7 @@ function normalizeSelection(selection, count) {
 // The header block (mode changes, rename from/to, index line) is copied verbatim: a
 // subset of a renamed file's hunks still has to carry the rename.
 /**
- * @param {import('./types').DiffFile} file
+ * @param {import('./types.ts').DiffFile} file
  * @param {number|string|Array<number|string>|null} [selection] which hunks to emit
  * @param {{ reverse?: boolean }} [opts]
  * @returns {string} a patch `git apply` accepts
@@ -310,4 +309,4 @@ function formatFilePatch(file, selection, opts = {}) {
   return `${out.join('\n')}\n`;
 }
 
-module.exports = { parsePatch, formatFilePatch, formatHunkHeader, alignRows, splitLines, stripPrefix, unquotePath, normalizeSelection };
+export { parsePatch, formatFilePatch, formatHunkHeader, alignRows, splitLines, stripPrefix, unquotePath, normalizeSelection };

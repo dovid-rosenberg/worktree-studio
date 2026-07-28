@@ -1,9 +1,8 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { deriveBranch, seedPrompt } = require('../server/sessions');
-const status = require('../server/status');
-const git = require('../server/git');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { deriveBranch, seedPrompt } from '../server/sessions.js';
+import * as status from '../server/status.js';
+import * as git from '../server/git.js';
 
 test('deriveBranch picks fix/ for bug-ish titles and feature/ otherwise', () => {
   // numeric source id becomes the branch prefix; no bug keyword → feature/

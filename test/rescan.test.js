@@ -1,4 +1,3 @@
-'use strict';
 // server/rescan.js: one scan at a time, but a request that lands mid-scan is
 // queued rather than discarded.
 //
@@ -6,9 +5,9 @@
 // server.js used to carry is reimplemented verbatim below and driven through the
 // same scenarios, so every assertion states what changed rather than restating
 // the new implementation.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { createRescan } = require('../server/rescan');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { createRescan } from '../server/rescan.js';
 
 // server/server.js before this change.
 function oldRescan(scan) {

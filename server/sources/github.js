@@ -1,10 +1,9 @@
-'use strict';
 // GitHub issues via the `gh` CLI (uses your existing gh auth; no token config).
-const { run, has } = require('../util');
+import { run, has } from '../util.js';
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
-module.exports = {
+export default {
   id: 'github',
   label: 'GitHub',
   needsRepo: true,

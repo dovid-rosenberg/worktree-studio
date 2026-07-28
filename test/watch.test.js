@@ -1,15 +1,14 @@
-'use strict';
 // Driven against real temp git repos and real fs.watch — the whole point of this
 // module is the behaviour of the filesystem under actual git commands, which a
 // mock would only re-state our assumptions about.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const watch = require('../server/watch');
-const worktree = require('../server/worktree');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import * as watch from '../server/watch.js';
+import * as worktree from '../server/worktree.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

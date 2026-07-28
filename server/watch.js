@@ -1,4 +1,3 @@
-'use strict';
 // Freshness without polling. Boot used to run three unconditional timers: a 15s
 // git rescan (a synchronous readdir walk of every baseDir plus ~4 git spawns per
 // repo), a 3s `lsof` sweep of every listening socket on the machine, and a 4s
@@ -37,9 +36,9 @@
 //     scan, not by waiting for an error that never arrives.
 //   * `{ recursive: true }` is a macOS/Windows feature that only reached Linux in
 //     Node 20, so every recursive arm falls back to a flat one on throw.
-const fs = require('fs');
-const path = require('path');
-const gitMod = require('./git');
+import fs from 'fs';
+import path from 'path';
+import * as gitMod from './git.js';
 
 const DEFAULTS = {
   tickMs: 2000, // scheduler heartbeat: decides what is due, spawns nothing itself
@@ -345,4 +344,4 @@ async function start(deps) {
   };
 }
 
-module.exports = { start, attention, DEFAULTS };
+export { start, attention, DEFAULTS };

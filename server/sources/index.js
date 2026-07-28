@@ -1,12 +1,11 @@
-'use strict';
 // Source adapters. Each returns the same seed shape:
 //   { source, id, title, body, url }
 // list(cfg, {repoPath, q}) → [{ id, title, subtitle }]  (for the picker)
 // seed(cfg, {repoPath, id, text }) → seed
-const freetext = require('./freetext');
-const github = require('./github');
-const gitlab = require('./gitlab');
-const asana = require('./asana');
+import freetext from './freetext.js';
+import github from './github.js';
+import gitlab from './gitlab.js';
+import asana from './asana.js';
 
 const ADAPTERS = { freetext, github, gitlab, asana };
 
@@ -38,4 +37,4 @@ async function seed(cfg, source, params) {
   return a.seed(cfg, params || {});
 }
 
-module.exports = { ADAPTERS, adapterFor, enabled, list, seed };
+export { ADAPTERS, adapterFor, enabled, list, seed };

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "One place to start, watch, and steer Claude Code sessions — pluggable intake, baked-in worktrees, embedded multiplexer terminals, hook-driven status, and resume-after-shutdown.",
-  "type": "commonjs",
+  "type": "module",
   "engines": {
     "node": ">=22"
   },

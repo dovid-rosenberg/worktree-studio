@@ -1,15 +1,14 @@
-'use strict';
 // The session manager: the origin is a real Claude Code process running inside
 // a multiplexer session. Create (seeded on CLAUDE.md, in the main repo) →
 // promote to a worktree (same session continues) → pop-out / tabs / restore.
-const { EventEmitter } = require('events');
-const fs = require('fs');
-const path = require('path');
-const { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } = require('./util');
-const status = require('./status');
-const worktree = require('./worktree');
-const layoutMod = require('./layout');
-const { createIdentity } = require('./identity');
+import { EventEmitter } from 'events';
+import fs from 'fs';
+import path from 'path';
+import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } from './util.js';
+import * as status from './status.js';
+import * as worktree from './worktree.js';
+import * as layoutMod from './layout.js';
+import { createIdentity } from './identity.js';
 const { worktreeCopyOpts } = worktree;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -61,7 +60,7 @@ class SessionManager extends EventEmitter {
   // by — otherwise `POST /group/pr { group: session.feature }` looks up a feature
   // that doesn't exist under any strategy but `basename`.
   /**
-   * @param {import('./types').PartialDeep<import('./types').Config>} cfg
+   * @param {import('./types.ts').PartialDeep<import('./types.ts').Config>} cfg
    * @param {any} mux           the multiplexer adapter (server/multiplexer)
    * @param {any} [identity]    a server/identity.js resolver; built from cfg if omitted
    */
@@ -80,9 +79,9 @@ class SessionManager extends EventEmitter {
     for (const s of readJsonState(this.file, []) || []) this.sessions.set(s.id, s);
   }
 
-  /** Every session, newest first. @returns {import('./types').Session[]} */
+  /** Every session, newest first. @returns {import('./types.ts').Session[]} */
   all() { return [...this.sessions.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); }
-  /** @param {string} id @returns {import('./types').Session|undefined} */
+  /** @param {string} id @returns {import('./types.ts').Session|undefined} */
   get(id) { return this.sessions.get(id); }
   _save() { writeJson(this.file, this.all()); }
   _touch(id) { this._save(); this.emit('change', { type: 'session', id }); }
@@ -108,7 +107,7 @@ class SessionManager extends EventEmitter {
   // resolves uncached, which is what a one-off lookup wants.
   /**
    * @param {(p: string) => string} [resolve]
-   * @returns {Map<string, import('./types').Session>} worktree path → session
+   * @returns {Map<string, import('./types.ts').Session>} worktree path → session
    */
   sessionIndex(resolve = realpath) {
     const index = new Map();
@@ -127,7 +126,7 @@ class SessionManager extends EventEmitter {
   // The session (if any) whose promoted/adopted worktree is this path — used to
   // surface agent state on a Fleet worktree row. For a single lookup; anything
   // resolving many paths at once should build one sessionIndex() and reuse it.
-  /** @param {string} worktreePath @returns {import('./types').Session|null} */
+  /** @param {string} worktreePath @returns {import('./types.ts').Session|null} */
   sessionForWorktree(worktreePath) {
     if (!worktreePath) return null;
     return this.sessionIndex().get(realpath(worktreePath)) || null;
@@ -151,7 +150,7 @@ class SessionManager extends EventEmitter {
   // (`123`, a manual group name), not a directory name. The session's own worktree
   // name is the authority; `s.feature` remains the last fallback so sessions
   // persisted before the two were told apart keep naming siblings exactly as before.
-  /** @param {import('./types').Session} s */
+  /** @param {import('./types.ts').Session} s */
   worktreeNameFor(s) {
     const primary = (s.repos || []).find((r) => r.primary);
     return s.worktree || (primary && primary.worktree) || s.suggestedName || s.feature;
@@ -177,7 +176,7 @@ class SessionManager extends EventEmitter {
     }
     // tell claude it can pull in another repo itself (single line — no newlines,
     // which would break the multiplexer layout)
-    const cli = require('path').join(__dirname, '..', 'bin', 'wt-studio.js');
+    const cli = path.join(import.meta.dirname, '..', 'bin', 'wt-studio.js');
     const note = `You're in a Worktree Studio session (feature "${session.feature}"). If this work needs changes in another repo, run: ${cli} add-repo <repo-name> — it creates a same-named worktree in that repo and grants you access. Repos live under ${(this.cfg.baseDirs || []).join(', ')}.`;
     parts.push('--append-system-prompt', shq(note));
     // Fresh launch → deliver the seed as claude's final positional (the prompt) arg.
@@ -264,7 +263,7 @@ class SessionManager extends EventEmitter {
   /**
    * @param {{ seed: any, repoPath: string, repoName: string,
    *           additionalRepos?: Array<{ repo: string, repoPath: string }> }} args
-   * @returns {Promise<import('./types').Session>}
+   * @returns {Promise<import('./types.ts').Session>}
    */
   async create({ seed, repoPath, repoName, additionalRepos }) {
     const id = makeId('s_');
@@ -319,7 +318,7 @@ class SessionManager extends EventEmitter {
    * session here"). `seed` is optional: without one the worktree name is the title.
    * @param {{ worktreePath: string, repoName: string, repoPath: string,
    *           branch?: string, wtname?: string, seed?: any }} args
-   * @returns {Promise<import('./types').Session|null>} null while an adopt of the
+   * @returns {Promise<import('./types.ts').Session|null>} null while an adopt of the
    *          same worktree is already in flight
    */
   async adopt({ worktreePath, repoName, repoPath, branch, wtname, seed }) {
@@ -334,7 +333,7 @@ class SessionManager extends EventEmitter {
   }
 
   async _doAdopt({ worktreePath, repoName, repoPath, branch, wtname, seed }) {
-    const s = seed || { source: 'freetext', title: wtname || require('path').basename(worktreePath), body: '', url: null };
+    const s = seed || { source: 'freetext', title: wtname || path.basename(worktreePath), body: '', url: null };
     const id = makeId('s_');
     const title = s.title;
     const muxName = muxNameFor(slug(wtname || title), id);
@@ -623,4 +622,4 @@ class SessionManager extends EventEmitter {
   }
 }
 
-module.exports = { SessionManager, deriveBranch, seedPrompt, muxNameFor };
+export { SessionManager, deriveBranch, seedPrompt, muxNameFor };

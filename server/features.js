@@ -1,4 +1,3 @@
-'use strict';
 // Feature/group computation — ported from worktree-dash core.sh (242–274).
 // A "feature" is a named unit owning one-or-more worktrees across repos:
 //   - manual groups: config.groups [{name, members:["repo/branch-or-wtname"]}]
@@ -12,7 +11,7 @@
 // file: grouping and concurrency-slot keying have to answer that question
 // identically, so they share one resolver. Omitting it keeps the historical
 // behavior (group by the worktree's directory name).
-const { createIdentity } = require('./identity');
+import { createIdentity } from './identity.js';
 
 const DEFAULT_IDENTITY = createIdentity({});
 
@@ -64,4 +63,4 @@ function memberRunning(group) {
   return (group.members || []).filter((m) => m && m.running).length;
 }
 
-module.exports = { computeFeatures, isLinked, resolveRef };
+export { computeFeatures, isLinked, resolveRef };

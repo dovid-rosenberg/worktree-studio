@@ -1,4 +1,3 @@
-'use strict';
 // The external calls that can hang, and the ceilings on them.
 //
 // A hang is not a slow call, so it is driven with a real child that never exits:
@@ -6,15 +5,15 @@
 // AND that the child is actually gone — a promise-level race would satisfy the
 // first and leave the process wedged forever, which is the whole reason the bound
 // has to be execFile's own `timeout`.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const { run, DEFAULT_TIMEOUT_MS } = require('../server/util');
-const { pushBranchToOrigin, pushFailureLine, createForge, TIMEOUTS } = require('../server/forge');
-const worktree = require('../server/worktree');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import { run, DEFAULT_TIMEOUT_MS } from '../server/util.js';
+import { pushBranchToOrigin, pushFailureLine, createForge, TIMEOUTS } from '../server/forge.js';
+import * as worktree from '../server/worktree.js';
 
 const REAL_GIT = execFileSync('/usr/bin/which', ['git']).toString().trim();
 

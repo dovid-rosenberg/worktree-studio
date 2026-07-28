@@ -1,4 +1,3 @@
-'use strict';
 // HTTP surface for transcript search + token/cost telemetry, plus the wiring that
 // keeps the index warm. Everything lives here so server.js needs exactly one line —
 // `require('./transcript-routes').register(api, { manager, cfg })` — which is what
@@ -6,11 +5,11 @@
 //
 // `api` is the ONE router server.js mounts at both /api and /api/v1, so every route
 // below is reachable under both prefixes without this module naming either of them.
-const path = require('path');
-const transcripts = require('./transcripts');
-const pricing = require('./pricing');
-const { STATE_DIR } = require('./config');
-const { TranscriptIndex, summarize } = require('./transcript-index');
+import path from 'path';
+import * as transcripts from './transcripts.js';
+import * as pricing from './pricing.js';
+import { STATE_DIR } from './config.js';
+import { TranscriptIndex, summarize } from './transcript-index.js';
 
 // What every cost-bearing response says about where its dollars came from.
 //
@@ -252,4 +251,4 @@ function register(api, deps = {}) {
   return { index, router: r };
 }
 
-module.exports = { register };
+export { register };

@@ -1,4 +1,3 @@
-'use strict';
 // The two gates in front of everything this server exposes. They stop different
 // attacks, and neither one alone is enough — which is why both exist.
 //
@@ -24,9 +23,9 @@
 // The two interlock: the token reaches the web UI by being injected into the HTML
 // we serve, and that is only safe because the Host gate means a rebinding page
 // never gets a response to read it out of.
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 const TOKEN_FILE = 'token';
 
@@ -189,4 +188,4 @@ function createGuard({ cfg, token }) {
   return { token, denyHost, denyOrigin, denyBrowser, denyToken, browser, authed };
 }
 
-module.exports = { loadToken, createGuard, splitHostPort, LOOPBACK };
+export { loadToken, createGuard, splitHostPort, LOOPBACK };

@@ -3,9 +3,9 @@
 //   wt-studio                 → start the server
 //   wt-studio add-repo <repo> → add a repo to THIS session's feature
 //                               (reads $WT_STUDIO_SESSION; for claude to call)
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
 
 const [, , cmd, ...args] = process.argv;
 
@@ -33,5 +33,5 @@ if (cmd === 'add-repo') {
     console.log(`Added ${repo} to this feature → ${wt}\nYou now have access to it (via /add-dir). Do that repo's changes in the worktree above.`);
   }).catch((e) => { console.error(`add-repo error: ${e.message}`); process.exit(1); });
 } else {
-  require('../server/server.js');
+  await import('../server/server.js');
 }

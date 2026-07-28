@@ -1,9 +1,8 @@
-'use strict';
 // Discover git repos under the configured base dirs, and describe each repo's
 // worktrees (branch, head, merged-into-default).
-const fs = require('fs');
-const path = require('path');
-const { git, gitFull } = require('./util');
+import fs from 'fs';
+import path from 'path';
+import { git, gitFull } from './util.js';
 
 // Walk baseDirs up to `depth` looking for directories that contain a .git.
 // Returns both the repos found and the plain container directories the walk passed
@@ -114,4 +113,4 @@ async function scan(baseDirs, depth) {
   return repos;
 }
 
-module.exports = { scan, describeRepo, findRepos, walkTree, defaultBranch, parseWorktrees, isLinkedWorktree };
+export { scan, describeRepo, findRepos, walkTree, defaultBranch, parseWorktrees, isLinkedWorktree };

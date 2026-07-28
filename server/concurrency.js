@@ -1,4 +1,3 @@
-'use strict';
 // Pure, side-effect-free helpers for running 2–3 features concurrently.
 // Each feature gets a "slot" (0,1,2…). Slot n offsets every dev-server port by
 // n*offsetStep and sets each per-slot env value (e.g. redis__db) to n. Slot 0 ==
@@ -8,7 +7,7 @@
 //   portEnv keys become env[KEY] = basePort + slot*offsetStep (and a port);
 //   slotEnv keys become env[KEY] = slot (e.g. redis__db — an index, not a port).
 /**
- * @param {import('./types').RepoConcurrency|null|undefined} repoConc
+ * @param {import('./types.ts').RepoConcurrency|null|undefined} repoConc
  * @param {number} slot
  * @param {number} offsetStep
  * @returns {{ env: Record<string,string>, ports: number[] }}
@@ -95,4 +94,4 @@ function rewriteAllSiblingPorts(text, siblingPortEnv, offsetStep, maxSlots, slot
   return out;
 }
 
-module.exports = { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts };
+export { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts };

@@ -1,4 +1,3 @@
-'use strict';
 // The unified state payload — every worktree decorated with its discovered dev
 // server and its driving session, grouped into features. One shape serves
 // /api/state, every SSE frame, SwiftBar and Alfred, so it is the contract other
@@ -11,16 +10,16 @@
 // the topology half only when the shape actually changes. buildState() merges
 // them for the callers that want the whole world at once: GET /state, SwiftBar,
 // Alfred, resolveGroup.
-const { computeFeatures } = require('./features');
-const { createRealpathCache } = require('./util');
-const sources = require('./sources');
+import { computeFeatures } from './features.js';
+import { createRealpathCache } from './util.js';
+import * as sources from './sources/index.js';
 
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference
 // would go stale the first time either one is rescanned.
 /**
  * @param {object} deps
- * @param {import('./types').PartialDeep<import('./types').Config>} deps.cfg
+ * @param {import('./types.ts').PartialDeep<import('./types.ts').Config>} deps.cfg
  *                                      only a handful of keys are read, each with
  *                                      a fallback
  * @param {any} deps.manager
@@ -46,7 +45,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
 
   // Repos, their worktrees (decorated with server + session), the features/groups
   // those worktrees roll up into, and the config a client renders its chrome from.
-  /** @returns {import('./types').TopologyPayload} */
+  /** @returns {import('./types.ts').TopologyPayload} */
   function topology() {
     const active = running();
     // One pass over the sessions, then a map lookup per worktree — not a scan of
@@ -96,7 +95,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
 
   // The sessions plus, per session, the dev-server state of every repo it owns
   // (its shared workspace) — the half that changes on every Claude hook.
-  /** @returns {import('./types').SessionStatePayload} */
+  /** @returns {import('./types.ts').SessionStatePayload} */
   function sessionState() {
     const active = running();
     const sessions = manager.all();
@@ -118,7 +117,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
 
   // Superset of worktree-dash's contract. Async because every caller awaits it and
   // the halves may need to do I/O later.
-  /** @returns {Promise<import('./types').StatePayload>} */
+  /** @returns {Promise<import('./types.ts').StatePayload>} */
   async function buildState() {
     return { ...topology(), ...sessionState() };
   }
@@ -139,15 +138,15 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
   // A member that is really on disk. A manual group can name a worktree that has
   // since been removed, and those arrive as { missing, ref } stubs.
   /**
-   * @param {import('./types').FeatureMember} m
-   * @returns {m is import('./types').Worktree}
+   * @param {import('./types.ts').FeatureMember} m
+   * @returns {m is import('./types.ts').Worktree}
    */
   function present(m) { return !!m && !m.missing; }
 
   // Resolve a feature/group by name from current state; drop missing members.
   /**
    * @param {string} name
-   * @returns {Promise<{ group: import('./types').ResolvedFeature|null, flat: import('./types').Worktree[] }>}
+   * @returns {Promise<{ group: import('./types.ts').ResolvedFeature|null, flat: import('./types.ts').Worktree[] }>}
    */
   async function resolveGroup(name) {
     const st = await buildState();
@@ -161,8 +160,8 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
   // but a concurrency-slotted repo runs on its own offset ports per feature, so
   // running it in another worktree is NOT a conflict (no stop & switch needed).
   /**
-   * @template {Pick<import('./types').Worktree, 'repo'|'path'|'running'>} W
-   * @param {Pick<import('./types').Worktree, 'repo'|'path'>} member
+   * @template {Pick<import('./types.ts').Worktree, 'repo'|'path'|'running'>} W
+   * @param {Pick<import('./types.ts').Worktree, 'repo'|'path'>} member
    * @param {W[]} flat  every worktree in every repo
    * @returns {W[]}
    */
@@ -174,4 +173,4 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
   return { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor };
 }
 
-module.exports = { createState };
+export { createState };

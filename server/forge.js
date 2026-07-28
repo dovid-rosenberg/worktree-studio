@@ -1,4 +1,3 @@
-'use strict';
 // Everything that talks to a code forge (GitHub via `gh`, GitLab via `glab`):
 // reading a branch's PR/MR + CI checks for the serverbar pill, and opening one
 // PR/MR per repo for a whole feature.
@@ -21,7 +20,7 @@
  * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<PrView|null>} view
  * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<{ ok: boolean, url?: string, stderr?: string }>} create
  */
-const { run, has } = require('./util');
+import { run, has } from './util.js';
 
 /** @type {NodeJS.ProcessEnv} */
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
@@ -261,7 +260,9 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   return { register, ciForRepo, openPullRequest, invalidate, installed };
 }
 
-module.exports = {
+const TIMEOUTS = { VIEW_TIMEOUT_MS, PUSH_TIMEOUT_MS, CREATE_TIMEOUT_MS };
+
+export {
   createForge, PROVIDERS, github, gitlab, ghChecks, glChecks, pushFailureLine, pushBranchToOrigin,
-  TIMEOUTS: { VIEW_TIMEOUT_MS, PUSH_TIMEOUT_MS, CREATE_TIMEOUT_MS },
+  TIMEOUTS,
 };

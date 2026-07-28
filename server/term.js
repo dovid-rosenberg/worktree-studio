@@ -1,11 +1,10 @@
-'use strict';
 // The terminal WebSocket: one browser socket ↔ one node-pty attached to the
 // session's multiplexer. `/ws/term?session=<id>[&pane=split]`.
 //
 // Split out of server.js the way the route modules are, because the ORDER of the
 // four steps below is the whole of this file and it has to be exercisable without
 // booting a daemon. `spawn` is injectable for exactly that reason.
-const pty = require('node-pty');
+import pty from 'node-pty';
 
 /**
  * @param {object} deps
@@ -63,4 +62,4 @@ function createTerminalHandler({ manager, spawn = pty.spawn }) {
   };
 }
 
-module.exports = { createTerminalHandler };
+export { createTerminalHandler };

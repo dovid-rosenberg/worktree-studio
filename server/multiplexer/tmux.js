@@ -1,12 +1,11 @@
-'use strict';
 // tmux driver for the multiplexer interface. Rock-solid, scriptable, clean 1:1
 // tab indexing, and a grouped-session pop-out that doesn't orphan the embedded
 // client. Runs on a dedicated socket with a chrome-free config (no status bar,
 // no borders) so the embedded terminal reads native.
-const fs = require('fs');
-const path = require('path');
-const { run } = require('../util');
-const { CONFIG_DIR } = require('../config');
+import fs from 'fs';
+import path from 'path';
+import { run } from '../util.js';
+import { CONFIG_DIR } from '../config.js';
 
 const SOCK = 'wt-studio';
 // CONFIG_DIR, not a second hand-rolled ~/.config/worktree-studio: that spelling
@@ -41,7 +40,7 @@ function persistCmd(cmd) {
   return cmd ? `${cmd}; exec ${process.env.SHELL || '/bin/bash'} -l` : `${process.env.SHELL || '/bin/bash'} -l`;
 }
 
-module.exports = {
+export default {
   name: 'tmux',
   env: ENV,
 

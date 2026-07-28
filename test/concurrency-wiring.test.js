@@ -1,16 +1,15 @@
-'use strict';
 // Integration wiring for running 2–3 features concurrently, on the `Servers` class:
 // the slot registry (allocSlotFor/releaseSlot), the derived launch env/ports/patch
 // descriptor (launchOpts), and the on-disk FE-config rewrite (applyConfigPatch).
 // The pure helpers in concurrency.js are covered separately in concurrency.test.js;
 // here we exercise how Servers wires them together. No child processes are spawned.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { Servers, featureFromPath } = require('../server/servers');
-const { validateConcurrency } = require('../server/config');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { Servers, featureFromPath } from '../server/servers.js';
+import { validateConcurrency } from '../server/config.js';
 
 // accept-blue's real port map + FE configPatch wiring — mirrors config.js defaults.
 const AB_PORT_ENV = {
@@ -468,7 +467,7 @@ test('isSlotted is true only for a configured repo while concurrency is enabled'
 // real sweep inside that window.
 // ---------------------------------------------------------------------------
 
-const net = require('net');
+import net from 'net';
 
 // A port nobody is using yet. Bound and released, so start()'s pre-check passes.
 function freePort() {
@@ -563,7 +562,7 @@ test('a restart holds the guard across the stop/settle gap, not just the start',
 // reached with no running check from DELETE /sessions/:id.
 // ---------------------------------------------------------------------------
 
-const { spawn } = require('child_process');
+import { spawn } from 'child_process';
 
 // A live process that is emphatically not a Studio dev server.
 function bystander() {

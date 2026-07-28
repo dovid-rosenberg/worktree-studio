@@ -1,12 +1,11 @@
-'use strict';
 // The SSE contract (server/broadcast.js, docs/api.md): two named event types with
 // very different rates, each a full replacement of its half of the state payload.
 // What has to hold is not "the frames got smaller" but "a client that applies
 // them ends up with exactly what a full rebuild would have given it" — including
 // a client that connects late, or reconnects mid-stream.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { createBroadcast } = require('../server/broadcast');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { createBroadcast } from '../server/broadcast.js';
 
 // A stand-in for the express response: records everything written to it.
 function fakeClient() {

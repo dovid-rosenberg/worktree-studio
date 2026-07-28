@@ -1,4 +1,3 @@
-'use strict';
 // Which frontend the daemon serves, and how the boot token gets into it.
 //
 // The served UI is the SvelteKit build in `client/build` (adapter-static, SPA mode):
@@ -12,11 +11,11 @@
 // so the document is served by a handler that substitutes it — never by the static
 // middleware, and never from disk with the real token baked in. `index: false` on the
 // static mount is what guarantees the un-injected file can't leak out the side door.
-const fs = require('fs');
-const path = require('path');
-const express = require('express');
+import fs from 'fs';
+import path from 'path';
+import express from 'express';
 
-const ROOT = path.join(__dirname, '..');
+const ROOT = path.join(import.meta.dirname, '..');
 const PLACEHOLDER = '__WTS_TOKEN__';
 
 const UIS = {
@@ -93,4 +92,4 @@ function mountFallback(app, { ui, token }) {
   });
 }
 
-module.exports = { resolve, mount, mountFallback, PLACEHOLDER, NAMES };
+export { resolve, mount, mountFallback, PLACEHOLDER, NAMES };

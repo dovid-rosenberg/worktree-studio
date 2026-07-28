@@ -1,7 +1,6 @@
-'use strict';
 // GitLab issues. Prefers the `glab` CLI when installed; otherwise falls back to
 // the REST API using a configured token + project path.
-const { run, has } = require('../util');
+import { run, has } from '../util.js';
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
@@ -16,7 +15,7 @@ async function rest(cfg, pathAndQuery) {
   return res.json();
 }
 
-module.exports = {
+export default {
   id: 'gitlab',
   label: 'GitLab',
   needsRepo: true,

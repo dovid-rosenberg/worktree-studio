@@ -1,18 +1,19 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
-// config.js captures CONFIG_FILE/STATE_DIR from env at require time, so point them
-// at a throwaway temp dir BEFORE requiring the module.
+// config.js captures CONFIG_FILE/STATE_DIR from env when it is evaluated, so point
+// them at a throwaway temp dir BEFORE loading the module.
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-studio-cfg-'));
 process.env.WT_STUDIO_CONFIG_DIR = TMP;
 process.env.WT_STUDIO_CONFIG = path.join(TMP, 'config.json');
 process.env.WT_STUDIO_STATE = path.join(TMP, 'state');
 
-const { load } = require('../server/config');
+// Dynamic on purpose: a static import is hoisted above the env assignments above,
+// which would aim load() at the real user config instead of TMP.
+const { load } = await import('../server/config.js');
 
 function writeConfig(obj) {
   fs.writeFileSync(process.env.WT_STUDIO_CONFIG, JSON.stringify(obj, null, 2));

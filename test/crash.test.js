@@ -1,4 +1,3 @@
-'use strict';
 // Crash policy (server/crash.js) + the thing it exists to prevent: a daemon whose
 // listen() failed staying alive with no HTTP server.
 //
@@ -6,14 +5,16 @@
 // real handler is armed and the test runner is never killed. The integration half
 // boots the REAL server against an occupied port, in a throwaway config/state dir,
 // and asserts it exits non-zero — that is the incident, reproduced.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const net = require('net');
-const os = require('os');
-const path = require('path');
-const { spawn } = require('child_process');
-const crash = require('../server/crash');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import net from 'net';
+import os from 'os';
+import path from 'path';
+import { spawn } from 'child_process';
+import * as crash from '../server/crash.js';
+import { EventEmitter } from 'events';
+import express from 'express';
 
 // Arm install() against fakes and return what it did.
 function armed() {
@@ -80,7 +81,6 @@ test('a client that vanished mid-write is survived, not fatal', () => {
 // ---------------------------------------------------------------------------
 
 test('guardListen turns a bind failure into an explained non-zero exit', () => {
-  const { EventEmitter } = require('events');
   const server = new EventEmitter();
   /** @type {string[]} */ const logs = []; /** @type {number[]} */ const exits = [];
   crash.guardListen(server, { host: '127.0.0.1', port: 4300 }, { log: (...a) => logs.push(String(a[0])), exit: (c) => exits.push(c) });
@@ -163,7 +163,6 @@ test('a non-Error throw does not become a second failure inside the handler', ()
 });
 
 test('a bare async handler that throws is a 500, and the process survives it', async () => {
-  const express = require('express');
   const app = express();
   // No wrapper. That is the assertion: express@5 awaits the handler itself.
   app.get('/api/boom', async () => { throw new Error('handler exploded'); });
@@ -208,7 +207,7 @@ test('a daemon that cannot bind its port exits non-zero instead of running on he
   // WRONG reason and the assertion below would report a confusing failure. This test is
   // about crash policy, not about which UI is served — so pin the part it doesn't care
   // about. If `public/` is ever removed, this needs a stub UI dir instead.
-  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'server.js')], {
+  const child = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'server', 'server.js')], {
     env: { ...process.env, WT_STUDIO_CONFIG: configFile, WT_STUDIO_STATE: stateDir, WTS_UI: 'legacy' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

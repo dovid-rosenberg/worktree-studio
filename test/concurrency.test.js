@@ -1,7 +1,6 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } = require('../server/concurrency');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } from '../server/concurrency.js';
 
 // accept-blue's real port map + redis__db slot key (mirrors config defaults).
 const AB = {

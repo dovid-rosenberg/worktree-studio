@@ -1,4 +1,3 @@
-'use strict';
 // Feature/group orchestration: the "run the whole stack" verbs the Fleet rail,
 // SwiftBar and Alfred drive. A feature is a set of same-named worktrees across
 // repos (see features.js); these routes act on all of its members at once —
@@ -12,8 +11,8 @@
 //     is down, so a leaked slot never blocks the next feature.
 //   - conflicts: another worktree of the same repo already running, which has to be
 //     stopped before this one can bind the same ports (unless the repo is slotted).
-const worktree = require('./worktree');
-const { run, shq } = require('./util');
+import * as worktree from './worktree.js';
+import { run, shq } from './util.js';
 
 // `app` here is the API router — server.js mounts it at both /api and /api/v1.
 function register(app, deps) {
@@ -154,4 +153,4 @@ function register(app, deps) {
   });
 }
 
-module.exports = { register };
+export { register };

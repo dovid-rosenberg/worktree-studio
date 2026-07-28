@@ -1,14 +1,13 @@
-'use strict';
 // Native replacement for the `wt` script — baked in so the app owns worktree
 // creation end to end. Creates the worktree off the repo's default branch at
 // whatever path server/layout.js says (default `<repo>/.worktrees/<name>`) and
 // copies in the bits a plain `git worktree add` drops: editor scratch files
 // (`copyAlways`, e.g. JetBrains run configs) plus the gitignored local config
 // and .env files (`copyPatterns`).
-const fs = require('fs');
-const path = require('path');
-const { git, gitFull, slug } = require('./util');
-const layoutMod = require('./layout');
+import fs from 'fs';
+import path from 'path';
+import { git, gitFull, slug } from './util.js';
+import * as layoutMod from './layout.js';
 
 // Expand a shell-style pattern (e.g. "config/*-config.js", ".env.*.local")
 // relative to base. Supports `*` (any chars within one path segment). Segments
@@ -204,7 +203,7 @@ async function remove(repoPath, worktreePath, opts = {}) {
   return { ok: true, branchDeleted };
 }
 
-module.exports = {
+export {
   create, remove, populate, branchExists, defaultBase,
   expandPattern, worktreeCopyOpts, DEFAULT_COPY_ALWAYS, FETCH_TIMEOUT_MS,
 };

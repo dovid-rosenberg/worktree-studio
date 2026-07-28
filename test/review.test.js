@@ -1,11 +1,10 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const review = require('../server/review');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import * as review from '../server/review.js';
 
 function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 

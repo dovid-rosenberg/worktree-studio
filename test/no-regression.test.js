@@ -1,4 +1,3 @@
-'use strict';
 // The one test that has to hold: with the owner's CURRENT config — a config that
 // names none of the new keys — nothing about feature grouping, concurrency slot
 // keying or worktree creation changes.
@@ -11,15 +10,17 @@
 //
 // The config literal is a COPY of the owner's config.json shape, checked in here.
 // Nothing in this file reads or writes ~/.config/worktree-studio.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const path = require('path');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import path from 'path';
+import os from 'os';
+import fs from 'fs';
 
-const { createIdentity } = require('../server/identity');
-const layoutMod = require('../server/layout');
-const { computeFeatures } = require('../server/features');
-const { Servers, featureFromPath } = require('../server/servers');
-const worktree = require('../server/worktree');
+import { createIdentity } from '../server/identity.js';
+import * as layoutMod from '../server/layout.js';
+import { computeFeatures } from '../server/features.js';
+import { Servers, featureFromPath } from '../server/servers.js';
+import * as worktree from '../server/worktree.js';
 
 // ---------------------------------------------------------- the old code ----
 
@@ -195,7 +196,6 @@ test("the owner's copyPatterns still reach create(), and run configs are still c
 // ------------------------------------------------- concurrency slot registry --
 
 test('the Servers slot registry keys on the same feature names as before', () => {
-  const os = require('os'); const fs = require('fs');
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-noreg-'));
   const cfg = {
     ...OWNER_CONFIG,
@@ -224,7 +224,6 @@ test('the Servers slot registry keys on the same feature names as before', () =>
 });
 
 test('launch ports for a slotted repo are unchanged at slot 0', () => {
-  const os = require('os'); const fs = require('fs');
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-noreg2-'));
   const cfg = {
     ...OWNER_CONFIG,

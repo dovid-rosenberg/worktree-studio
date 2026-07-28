@@ -1,4 +1,3 @@
-'use strict';
 // Where a repo's worktrees live on disk — pure, side-effect-free.
 //
 // Studio was written around one convention: `<repo>/.worktrees/<name>`. That
@@ -14,8 +13,8 @@
 // Only `nested` puts worktrees inside the repo, so only `nested` needs the
 // checkout dir to be gitignored — the other two are outside the working tree and
 // git never sees them.
-const path = require('path');
-const { expandTilde } = require('./util');
+import path from 'path';
+import { expandTilde } from './util.js';
 
 const MODES = ['nested', 'sibling', 'external'];
 const DEFAULT_DIR = '.worktrees';
@@ -81,4 +80,4 @@ function nameFromPath(layout, worktreePath) {
   return path.basename(p);
 }
 
-module.exports = { resolve, containerFor, destFor, ignorePath, nameFromPath, MODES, DEFAULT_DIR };
+export { resolve, containerFor, destFor, ignorePath, nameFromPath, MODES, DEFAULT_DIR };
