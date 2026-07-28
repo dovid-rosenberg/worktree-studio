@@ -53,7 +53,7 @@ dashboard with a single page at **http://127.0.0.1:7788**.
 
 ```bash
 cd ~/worktree-studio
-npm install          # runs postinstall: fixes node-pty perms + vendors xterm
+npm install          # runs postinstall: fixes node-pty perms + builds the client
 npm start            # → http://127.0.0.1:7788
 ```
 
@@ -458,12 +458,10 @@ Kill the old server first: `lsof -ti :7788 | xargs kill`, then `npm start`. (mac
   (the tmux driver behind a small interface — the seam for a future ConPTY/Windows driver).
 - **Frontend** — SvelteKit (`client/`), built by `adapter-static` to `client/build` and
   served by the daemon itself (`server/webui.ts`); `npm install` builds it, `npm start`
-  does not. State arrives via SSE; terminals over WebSocket. The previous vanilla-JS UI
-  (`public/app.js` + vendored xterm, no build step) is still in the tree — start with
-  `WTS_UI=legacy` to serve it instead. Only one of the two owns `/`.
+  does not. State arrives via SSE; terminals over WebSocket.
 - **Multiplexer** — tmux only, socket `-L wt-studio`, sessions `wts-<name>-<id>`; grouped
-  sessions (`-popout`, `-split`) give independent panes.
-- **Tests** — `node --test test/*.test.js`.
+  sessions (`-split`) give independent panes.
+- **Tests** — `node --test test/*.test.ts`.
 
 ---
 

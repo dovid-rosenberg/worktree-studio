@@ -95,7 +95,7 @@ function defaults(): ShippedConfig {
       gitlab: { enabled: false, host: 'https://gitlab.com', token: '' },
       asana: { enabled: false, token: '', workspace: '' },
     },
-    // attention notifications when a session changes state (see public/app.js)
+    // attention notifications when a session changes state (see stores/notify.svelte.ts)
     notify: { waiting: true, sound: true, idle: false },
     // Run 2–3 features at once: each feature gets a slot (0,1,2…); slot n offsets
     // every dev-server port by n*offsetStep and sets each slotEnv key to n. Slot 0
