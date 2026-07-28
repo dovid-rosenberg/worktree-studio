@@ -18,7 +18,6 @@
   import ReviewMount from '$lib/components/dock/ReviewMount.svelte';
   import InsightsMount from '$lib/components/dock/InsightsMount.svelte';
   import FeaturePane from '$lib/components/dock/FeaturePane.svelte';
-  import Fleet from '$lib/components/fleet/Fleet.svelte';
   import FleetInsights from '$lib/components/insights/FleetInsights.svelte';
   import { api } from '$lib/api.js';
   import { ui } from '$lib/stores/ui.svelte.js';
@@ -29,11 +28,10 @@
   const feature = $derived(ui.selectedFeature);
   const isTerm = $derived(ui.dockView === 'term');
   /*
-   * Overview is the old Fleet view, mounted here as a pane. It is the ONLY dock view that
-   * renders with nothing selected, which is what lets it double as the empty state — an
-   * overview is exactly what you want to see when you have not picked anything yet.
+   * Insights is the one dock view that renders with nothing selected: it is about the
+   * whole fleet, not the selection. (Overview used to be the other; it was the rail
+   * drawn wide, so it went when the rail became one honest list.)
    */
-  const isOverview = $derived(ui.dockView === 'overview');
   const isUsage = $derived(ui.dockView === 'usage');
   const splitOn = $derived(!!session && ui.splitOn(session.id));
 
@@ -82,12 +80,18 @@
 </script>
 
 <section class="dock">
-  {#if isOverview}
-    <Fleet />
-  {:else if isUsage}
+  {#if isUsage}
     <FleetInsights />
   {:else if feature}
     <FeaturePane {feature} />
+  {:else if ui.selectionPending}
+    <!-- Selected, but the frame carrying it has not landed. Saying "no session" here
+         is what made starting an agent look like a no-op. -->
+    <div class="empty">
+      <div class="empty-glyph">⎇</div>
+      <h2>Starting the session…</h2>
+      <p>Waiting for the daemon to report it. This is usually instant.</p>
+    </div>
   {:else if !session}
     <div class="empty">
       <div class="empty-glyph">⎇</div>
@@ -99,7 +103,6 @@
       </p>
       <div class="empty-cta">
         <button class="btn primary" onclick={() => overlays.openIntake()}>+ New session</button>
-        <button class="btn" onclick={() => ui.setDockView('overview')}>▦ Overview</button>
         <button class="btn" onclick={() => ui.setDockView('usage')}>◔ Insights</button>
       </div>
     </div>

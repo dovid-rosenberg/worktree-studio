@@ -1,10 +1,20 @@
 <script lang="ts">
-  import type { Feature, Worktree } from '../../../../../server/types';
+  import type { Feature } from '../../../../../server/types';
   /*
    * One FEATURE in the rail — the unit the rail is keyed on.
    *
-   * The card is a pure readout: name, status pills, member chips. It carries no buttons
-   * at all, and its height therefore never changes. That is the point. The earlier
+   * The card is a pure readout: name, state, member chips. It carries no buttons at all,
+   * and its height therefore never changes.
+   *
+   * TWO SIGNALS, NOT SIX. It used to carry a state dot, an `agent · <state>` pill with a
+   * SECOND dot encoding the same value eight pixels away, a `⇅ servers · stopped` pill, a
+   * dot per member repo, a merged badge, a slot badge and a green left edge — about six
+   * glyphs a card, so seven cards meant scanning forty to find the one waiting agent.
+   *
+   * Now: the dot is agent state, the green left edge is "dev servers up", and everything
+   * else appears only when it is NOT the default. `servers · stopped` and `agent · idle`
+   * were the two most common labels on screen and both said nothing was happening —
+   * absence says that for free, and it lets `waiting` stand out instead of queue up. That is the point. The earlier
    * version revealed quick actions on hover, which grew the card and reflowed every row
    * beneath it — so moving the pointer down the rail made the list jump under the cursor
    * and the row you were aiming at moved before you clicked. Every action that used to
@@ -24,8 +34,13 @@
     sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name,
   );
 
-  /** @param {any} m */
-  const memberState = (m: Worktree) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
+  /**
+   * An agent state worth a label. `idle` is the resting state and `stopped` is covered
+   * by the dimmed dot, so neither earns a pill — only working/waiting do, which is what
+   * makes `waiting` findable.
+   */
+  const notable = $derived(!!sess && sess.state !== 'idle' && sess.state !== 'stopped');
+
 </script>
 
 <div class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
@@ -45,24 +60,21 @@
       {/if}
     </div>
 
-    <div class="l2">
-      {#if sess}
-        <span class="pill agent {sess.state}" title="Agent — the Claude session">
-          <span class="dot {sess.state}"></span>{sess.state}
-        </span>
-      {:else}
-        <span class="noagent">no agent</span>
-      {/if}
-      <span class="pill srv {anyRunning ? 'done' : 'idle'}" title="Dev servers">
-        <span class="pi">⇅</span>{anyRunning ? 'running' : 'stopped'}
-      </span>
-      {#if ms.length > 1}<span class="nrepos">{ms.length} repos</span>{/if}
-    </div>
+    <!-- Only what is not the default. An idle agent and stopped servers say nothing;
+         their absence says it without spending a row of attention on it. -->
+    {#if notable || ms.length > 1}
+      <div class="l2">
+        {#if sess && notable}
+          <span class="pill agent {sess.state}" title="Agent — the Claude session">{sess.state}</span>
+        {/if}
+        {#if !sess}<span class="noagent">no agent</span>{/if}
+        {#if ms.length > 1}<span class="nrepos">{ms.length} repos</span>{/if}
+      </div>
+    {/if}
 
     <div class="l3">
       {#each ms as m (m.path)}
         <span class="mchip">
-          <span class="dot {memberState(m)}" title={memberState(m)}></span>
           <span class="r">{m.repo}</span>
           <span class="br">{m.branch || m.wtname}</span>
           {#if (m.ports || []).length}

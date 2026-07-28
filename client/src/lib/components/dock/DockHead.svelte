@@ -1,19 +1,21 @@
 <script lang="ts">
   import type { Session } from '../../../../../server/types';
   /*
-   * The dock header: state dot, title, source link, repo chips, and the per-session
-   * action buttons. Rebuilt-in-place rather than re-innerHTML'd, so a button that has
-   * keyboard focus keeps it while the session ticks between working and waiting.
+   * The dock header: IDENTITY ONLY — state dot, title, source link, repo chips, state.
+   *
+   * It used to carry ＋repo, Promote, Open in editor, Rename, Resume/Deactivate and
+   * Delete as well. Every one of those also lives in the ActionBar, ~600px below, and
+   * two of them were worded differently in the two places (`Resume` vs `↻ Resume`) —
+   * so the same verb appeared twice on one screen and looked like two verbs.
+   *
+   * The rule this settles: the top says WHAT you are looking at, the bottom DOES
+   * something to it. (The tab strip stays on top for the same reason — its controls
+   * switch views, they do not act on the selection.)
    */
   import { labelForSource } from '$lib/stores/ui.svelte.js';
-  import {
-    activateSession, addRepoToSession, closeSession, deactivateSession,
-    openEditor, promote, renameSession,
-  } from '$lib/ops.svelte.js';
 
   let { session }: { session: Session } = $props();
 
-  const promoted = $derived(!!session.worktreePath);
   /** Before promote there is one implicit chip for the primary repo. */
   const repoChips = $derived(
     session.repos && session.repos.length
@@ -21,18 +23,7 @@
       : [{ repo: session.repoName, primary: true, worktreePath: session.worktreePath }],
   );
 
-  // One busy flag per action that fires a request — app.js's guardBtn(), as state.
-  let busyPromote = $state(false);
-  let busyActive = $state(false);
 
-  /**
-   * @param {(v: boolean) => void} set
-   * @param {() => Promise<any>} fn
-   */
-  async function guard(set: (v: boolean) => void, fn: () => Promise<unknown>) {
-    set(true);
-    try { await fn(); } finally { set(false); }
-  }
 </script>
 
 <div class="dock-head">
@@ -56,39 +47,6 @@
 
   <span class="pill {session.state}">{session.state}</span>
 
-  <span class="dock-actions">
-    <button class="btn sm" title="Add another repo to this feature" onclick={() => addRepoToSession(session)}>＋ repo</button>
-
-    {#if !promoted}
-      <button class="btn sm primary" disabled={busyPromote} onclick={() => guard((v) => (busyPromote = v), () => promote(session))}>
-        ⤴ Promote to worktree
-      </button>
-    {:else if session.worktreePath}
-      <!-- Branch on the field, not on a derived boolean: only the field narrows it. -->
-      {@const wt = session.worktreePath}
-      <button class="btn sm" onclick={() => openEditor(wt)}>Open in editor</button>
-    {/if}
-
-    <button class="btn sm ghost" title="Rename" aria-label="Rename" onclick={() => renameSession(session)}>✐</button>
-
-    {#if session.active === false}
-      <button class="btn sm" disabled={busyActive} onclick={() => guard((v) => (busyActive = v), () => activateSession(session))}>Resume</button>
-    {:else}
-      <button
-        class="btn sm ghost"
-        title="Stop the process but keep the session (resumable)"
-        disabled={busyActive}
-        onclick={() => guard((v) => (busyActive = v), () => deactivateSession(session))}
-      >Deactivate</button>
-    {/if}
-
-    <button
-      class="btn sm ghost"
-      title="Delete session (kills the multiplexer session)"
-      aria-label="Delete session"
-      onclick={() => closeSession(session)}
-    >🗑</button>
-  </span>
 </div>
 
 <style>

@@ -50,7 +50,7 @@
     if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { ui.goToSession(cur.id); ui.dockView = 'changes'; });
     if (cur) add('◔', 'Session insights', '', () => { ui.goToSession(cur.id); ui.dockView = 'insights'; });
     if (cur && cur.worktreePath) add('▶', 'Run stack', '⌘R', () => startSessionServers(cur));
-    add('▦', 'Toggle the Overview pane', '⌘\\', () => ui.toggleOverview());
+    add('◔', 'Toggle Insights', '⌘\\', () => ui.toggleUsage());
     if (cur) {
       if (cur.active === false) add('↻', 'Resume current', '', () => activateSession(cur));
       else add('⏻', 'Deactivate current', '', () => deactivateSession(cur));

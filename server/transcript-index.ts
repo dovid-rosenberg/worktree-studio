@@ -369,6 +369,25 @@ class TranscriptIndex {
   }
 
   // Drop everything for a session (its Studio session was closed).
+  /**
+   * What the archive knows about a session that no longer exists.
+   *
+   * Thin on purpose: the index stores transcript rows, not session records, so the only
+   * identity it can honestly reconstruct is the id and the branch its messages carried.
+   * Better a row labelled by its branch than a spend figure that silently disappears
+   * when the worktree is deleted.
+   */
+  archivedMeta(sessionId: string): { id: string; title: string; branch?: string } {
+    const db = this._handle();
+    const row = db
+      ? db.prepare('SELECT git_branch FROM messages WHERE session_id = ? AND git_branch IS NOT NULL ORDER BY ts_ms DESC LIMIT 1').get(sessionId) as { git_branch?: string } | undefined
+      : undefined;
+    const branch = row?.git_branch || undefined;
+    return { id: sessionId, title: branch || sessionId, branch };
+  }
+
+  /** Purge one session's rows. No longer called on session removal — see the note in
+   *  transcript-routes.ts: telemetry outlives the worktree. Kept for a real purge. */
   forget(sessionId: string): void {
     const db = this._handle();
     if (!db) return;

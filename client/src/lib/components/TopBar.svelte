@@ -33,23 +33,15 @@
 
 <header class="topbar">
   <div class="brand"><span class="glyph">⎇</span> Worktree&nbsp;Studio</div>
-  <span class="muxbadge" title="active multiplexer">mux: {world.mux}</span>
-
-  <!-- data-n drives the ::after badge; 0 hides it (see the .attn rules). -->
+  <!-- data-n drives the ::after badge; 0 hides it (see the .attn rules). The waiting
+       count rides on Insights now that Overview is gone — it is the only app-level view
+       left, so it is where an attention badge can live without inventing a home. -->
   <button
     class="btn ghost ovbtn attn"
-    class:on={ui.dockView === 'overview'}
-    aria-pressed={ui.dockView === 'overview'}
-    data-n={notify.waitingCount}
-    title={notify.waitingCount ? `${notify.waitingCount} session(s) waiting for you` : 'Overview (⌘\\)'}
-    onclick={() => ui.toggleOverview()}
-  >▦ Overview</button>
-
-  <button
-    class="btn ghost ovbtn"
     class:on={ui.dockView === 'usage'}
     aria-pressed={ui.dockView === 'usage'}
-    title="Token & cost telemetry across every session"
+    data-n={notify.waitingCount}
+    title={notify.waitingCount ? `${notify.waitingCount} session(s) waiting for you` : 'Insights (⌘\\)'}
     onclick={() => ui.toggleUsage()}
   >◔ Insights</button>
 
@@ -85,7 +77,6 @@
   .topbar { display:flex; align-items:center; gap:12px; row-gap:8px; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; }
   .brand { font-weight:700; font-size:15px; letter-spacing:-.01em; display:flex; align-items:center; gap:7px; }
   .brand .glyph { color:var(--brand); font-size:17px; }
-  .muxbadge { font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:2px 8px; }
 
   .ovbtn { font-weight:600; }
   .ovbtn.on { background:var(--brand); border-color:var(--brand); color:var(--brand-ink); }

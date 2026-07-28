@@ -39,6 +39,15 @@ export type LiveMember = Worktree;
  * One ⌘1–9 target. `id` is null for a feature with no agent — there is no session to
  * jump to, so the caller selects the feature by name instead.
  */
+/**
+ * One row of the rail, whatever kind of thing it is. `active` is the single sort key:
+ * a live agent, or a running dev server.
+ */
+export type RailRow =
+  | { kind: 'agent'; key: string; name: string; session: Session; active: boolean }
+  | { kind: 'mainserver'; key: string; name: string; worktree: Worktree; active: boolean }
+  | { kind: 'feature'; key: string; name: string; feature: Feature; active: boolean };
+
 export interface RailEntry {
   kind: 'session' | 'feature';
   id: string | null;
@@ -57,8 +66,8 @@ const RAIL_DEFAULT = 320;
  * The app-level views are the two that render with nothing selected. Everything else
  * in DockView is a panel of the selected session.
  */
-export type DockView = 'term' | 'changes' | 'logs' | 'insights' | 'overview' | 'usage';
-const APP_VIEWS: DockView[] = ['overview', 'usage'];
+export type DockView = 'term' | 'changes' | 'logs' | 'insights' | 'usage';
+const APP_VIEWS: DockView[] = ['usage'];
 
 function savedDock(): DockView {
   try {
@@ -150,7 +159,7 @@ class UI {
   /** Features after the repo filter, in Fleet's order. Whole features, never split. */
   visibleFeatures = $derived(sortFeatures(world.features.filter(this.#featureMatches)));
 
-  /** Features with at least one dev server up. Deliberately ALSO listed under worktrees. */
+  /** Features with at least one dev server up. */
   serverFeatures = $derived(
     this.visibleFeatures.filter((f) => liveMembers(f).some((m) => m.running)),
   );
@@ -181,6 +190,43 @@ class UI {
   })());
 
   /**
+   * THE rail: one flat list, active first, then everything else.
+   *
+   * It used to be four sections — servers-running, main servers, agents, worktrees —
+   * which rendered a running feature TWICE and gave the list four `position:sticky`
+   * headers that collided in one scroller. The sections were also the wrong cut: a
+   * bucket keyed on "running" mixes two unrelated facts (dev servers up, agent state),
+   * so a *waiting* agent — the one row that actually wants you — would sit among stale
+   * worktrees from last month.
+   *
+   * So: no buckets. `featureActive` sorts anything with a live agent or a running
+   * server to the top, which is where a waiting agent belongs, and `dividerAt` marks
+   * where the quiet ones begin. One row per thing, always.
+   */
+  railRows = $derived<RailRow[]>((() => {
+    const rows: RailRow[] = [
+      ...this.visibleAgents.map((s): RailRow => ({
+        kind: 'agent', key: `s:${s.id}`, name: s.title, session: s,
+        active: s.state !== 'stopped',
+      })),
+      ...this.visibleMainServers.map((w): RailRow => ({
+        kind: 'mainserver', key: `w:${w.path}`, name: w.repo, worktree: w, active: true,
+      })),
+      ...this.visibleFeatures.map((f): RailRow => ({
+        kind: 'feature', key: `f:${f.name}`, name: f.name, feature: f, active: featureActive(f),
+      })),
+    ];
+    // Active first, then alphabetical — the comparator the rail has always used, now
+    // applied across every kind of row rather than within each section.
+    return rows.sort((a, b) => (Number(b.active) - Number(a.active)) || a.name.localeCompare(b.name));
+  })());
+
+  /** Index of the first quiet row, or -1 when everything is active (or nothing is). */
+  dividerAt = $derived(
+    this.railRows.some((r) => r.active) ? this.railRows.findIndex((r) => !r.active) : -1,
+  );
+
+  /**
    * What ⌘1–9 picks, in the order the rail actually draws it.
    *
    * This used to be agents-then-features while the rail drew servers-running, main
@@ -189,19 +235,15 @@ class UI {
    * worse than no shortcut. It is built from the same sections the rail renders, with
    * the servers-running repeat de-duplicated so a feature never occupies two numbers.
    */
-  railOrder = $derived<RailEntry[]>((() => {
-    const out: RailEntry[] = [];
-    const seen = new Set<string>();
-    const feature = (f: Feature) => {
-      if (seen.has(f.name)) return;
-      seen.add(f.name);
-      out.push({ kind: 'feature', id: f.session ? f.session.id : null, name: f.name });
-    };
-    this.serverFeatures.forEach(feature);
-    for (const s of this.visibleAgents) out.push({ kind: 'session', id: s.id, name: s.title });
-    this.visibleFeatures.forEach(feature);
-    return out;
-  })());
+  railOrder = $derived<RailEntry[]>(
+    this.railRows
+      .filter((r) => r.kind !== 'mainserver') // nothing to select: it owns no session
+      .map((r) => ({
+        kind: r.kind === 'agent' ? ('session' as const) : ('feature' as const),
+        id: r.kind === 'agent' ? r.session!.id : (r.feature?.session?.id ?? null),
+        name: r.name,
+      })),
+  );
 
   /** Repo names offered by the filter: every member repo, plus unpromoted sessions' repos. */
   repoNames = $derived([...new Set([
@@ -211,6 +253,17 @@ class UI {
 
   /** True when nothing at all is selected — the dock shows its empty state. */
   nothingSelected = $derived(!this.selected && !this.selectedFeature);
+
+  /**
+   * A session has been selected but has not arrived in the world yet.
+   *
+   * Selecting happens the moment the create/start call returns; the session only enters
+   * `world.sessions` when the next `session-state` frame lands. In that window
+   * `ui.selected` is null, and the dock used to render "No session selected" — so
+   * starting an agent looked like it had done nothing, and the user clicked the rail to
+   * "fix" it. It is a pending state, not an empty one.
+   */
+  selectionPending = $derived(!!this.selectedId && !this.selected);
 
   /** True while an app-level view (Overview / Insights) owns the dock. */
   appView = $derived(APP_VIEWS.includes(this.dockView));
@@ -222,13 +275,14 @@ class UI {
     try { localStorage.setItem(DOCK_KEY, APP_VIEWS.includes(v) ? v : 'term'); } catch { /* private mode */ }
   }
 
-  /** ⌘\ — Overview is a pane you toggle, not a mode you get stuck in. */
-  toggleOverview(): void {
-    this.setDockView(this.dockView === 'overview' ? 'term' : 'overview');
-  }
-
-  /** Fleet-wide token/cost telemetry, as a peer of Overview. */
+  /**
+   * Fleet-wide token/cost telemetry. Entering it CLEARS the selection: Insights is about
+   * every session that ever ran, not the one you happen to have open, and leaving a
+   * selection standing left the ActionBar offering Stop stack / Delete feature for
+   * something no longer on screen.
+   */
   toggleUsage(): void {
+    if (this.dockView !== 'usage') { this.selectedId = null; this.selectedFeatureName = null; }
     this.setDockView(this.dockView === 'usage' ? 'term' : 'usage');
   }
 
