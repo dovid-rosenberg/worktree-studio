@@ -1,40 +1,39 @@
 <script>
   /*
-   * MOUNT POINT — the Changes / review panel.
+   * The Changes / review panel, mounted into the dock.
    *
-   * The review panel (commits, side-by-side diff, hunk staging) is built separately and
-   * lives in `$lib/components/review/`. The shell must not import its internals while
-   * it is in flight, so the wiring is isolated to this one file: at integration, delete
-   * the placeholder markup below and replace it with
+   * This file stays a seam rather than a direct import in Dock.svelte: the shell and the
+   * review panel were built on separate branches, so exactly one file knows the panel's
+   * shape. Everything the panel needs it fetches itself from `sessionId`.
    *
-   *     import Changes from '$lib/components/review/Changes.svelte';
-   *     …
-   *     <Changes {session} />
-   *
-   * Contract this mount guarantees:
-   *  - It is rendered only while `ui.dockView === 'changes'`, and only for a session
-   *    with a `worktreePath` (the ✎ Changes tab is hidden otherwise).
+   * Contract the dock guarantees:
+   *  - Rendered only while `ui.dockView === 'changes'`, and only for a session with a
+   *    `worktreePath` (the ✎ Changes tab is hidden otherwise).
    *  - `session` is the live, stitched session object — it updates in place as frames
-   *    arrive; the panel is not remounted on a state change.
+   *    arrive, so the panel is not remounted on a state change.
    *  - The panel owns the full remaining height of the dock, above the server bar.
-   *  - `onchangescount` lets the panel push the uncommitted-file count back up so the
-   *    tab badge stays in sync without the shell fetching commits a second time.
+   *
+   * `{#key sessionId}` rather than `{#key session}`: ReviewPanel loads commits on mount
+   * and holds its own selection, so switching sessions must start it over — but a
+   * `session-state` frame for the SAME session must not. `session` is a fresh object on
+   * every frame (the store derives it), so keying on the object would remount the panel
+   * several times a second and throw away the user's selected commit.
    */
-  // `onchangescount` is unused by the placeholder and consumed by the real panel; it is
-  // declared here so the prop contract lives with the mount rather than in a comment.
-  let { session, onchangescount } = $props();
-  const label = $derived(session?.title ?? '');
+  import ReviewPanel from '$lib/components/review/ReviewPanel.svelte';
+
+  /**
+   * `onchangescount` is accepted and unused: ReviewPanel exposes no such callback, and
+   * Dock.svelte already fetches the badge count itself. Kept in the signature so the
+   * dock's call site isn't silently dropping a prop.
+   * @type {{ session?: any, onchangescount?: (n: number) => void }}
+   */
+  let { session } = $props();
+
+  const sessionId = $derived(session?.id ?? null);
 </script>
 
-<div class="panel-mount">
-  <div class="mount-note">
-    <b>✎ Changes</b>
-    <span>The review panel mounts here{label ? ` for “${label}”` : ''}.</span>
-  </div>
-</div>
-
-<style>
-  .panel-mount { flex:1; min-height:0; display:flex; background:var(--bg); }
-  .mount-note { margin:auto; text-align:center; color:var(--faint); font-family:var(--mono); font-size:12px; display:flex; flex-direction:column; gap:8px; }
-  .mount-note b { color:var(--muted); font-size:13px; }
-</style>
+{#if sessionId}
+  {#key sessionId}
+    <ReviewPanel {sessionId} />
+  {/key}
+{/if}

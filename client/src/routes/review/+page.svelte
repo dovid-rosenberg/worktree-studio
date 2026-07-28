@@ -13,6 +13,7 @@
    */
   import { onMount } from 'svelte';
   import ReviewPanel from '$lib/components/review/ReviewPanel.svelte';
+  import { api } from '$lib/api.js';
   import { toggleTheme, theme } from '$lib/theme.svelte.js';
 
   let sessions = $state(/** @type {{ id:string, title:string, worktreePath?:string, repos?:{repo:string}[] }[]} */ ([]));
@@ -23,9 +24,9 @@
 
   onMount(async () => {
     try {
-      const res = await fetch('/api/v1/state');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const st = await res.json();
+      // Through the shared helper, not a bare fetch: /api/v1/state is behind the boot
+      // token like every other route, and a bare fetch here 401'd against a real daemon.
+      const st = await api('GET', '/api/v1/state');
       // Only promoted sessions have a worktree, and only those have anything to review.
       sessions = (st.sessions || []).filter((/** @type {any} */ s) => s.worktreePath);
       const want = new URLSearchParams(location.search).get('session');

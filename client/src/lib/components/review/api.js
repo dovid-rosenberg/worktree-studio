@@ -9,6 +9,8 @@
  *   POST /sessions/:id/hunks/stage | /unstage      { repo, file, hunks, expect }
  */
 
+import { TOKEN } from '$lib/api.js';
+
 /**
  * @typedef {{ type:'context'|'add'|'del', text:string, oldLine:number|null, newLine:number|null,
  *             noNewline?:boolean, bare?:boolean }} DiffLine
@@ -32,21 +34,17 @@
 const api = (/** @type {string} */ id) => `/api/v1/sessions/${encodeURIComponent(id)}`;
 
 /**
- * The daemon's boot token, when there is one.
+ * The daemon's boot token, from the one module that resolves it.
  *
- * `feat/security-hardening` puts an Origin/Host allowlist and a boot token in front of
- * every `/api` route, and the token reaches the browser as `window.WTS_TOKEN`,
- * substituted into the served HTML by the daemon (see `public/app.js` on that branch —
- * same convention, deliberately, rather than a second one invented here).
- *
- * That work is NOT on this branch, so today this reads undefined and sends nothing,
- * which is exactly right against a daemon with no auth. It is here so the panel does not
- * start 401-ing the day the two merge. Read per request, not captured at module load,
- * because the shell may set it after this module is evaluated.
+ * This panel keeps its own request/response plumbing (its routes and its error shape
+ * are its own), but NOT its own answer to auth: resolving the token means knowing that
+ * the injected value may still be the un-substituted placeholder and that dev gets it
+ * from Vite instead. Two copies of that means one of them is wrong — and it was: this
+ * file read `globalThis.WTS_TOKEN` with neither guard, so in dev it sent the literal
+ * placeholder and every call 401'd.
  */
 function authHeaders() {
-  const token = /** @type {any} */ (globalThis).WTS_TOKEN;
-  return typeof token === 'string' && token ? { 'x-wts-token': token } : undefined;
+  return TOKEN ? { 'x-wts-token': TOKEN } : undefined;
 }
 
 /**
