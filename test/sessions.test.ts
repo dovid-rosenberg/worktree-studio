@@ -453,7 +453,7 @@ function restorable(m: SessionManager, ids: string[]): void {
   ids.forEach((id, i) => m.sessions.set(id, session({
     id, title: id, repoName: 'api', repoPath: dir, home: dir, feature: id,
     repos: [sessionRepo({ repo: 'api', repoPath: dir, primary: true })],
-    muxName: `mux-${id}`, tabs: [{ title: 'claude' }],
+    muxName: `mux-${id}`, tabs: [{ id: '0', title: 'claude' }],
     state: 'idle', active: true, createdAt: ids.length - i,
   })));
 }

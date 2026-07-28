@@ -365,8 +365,16 @@ async function main() {
     res.json(await manager.addTab(req.params.id, req.body || {}));
   });
 
+  // `tab` is the multiplexer window id; `index` is the legacy positional form, kept so
+  // an older client keeps working. The manager resolves either.
   api.post('/sessions/:id/select-tab', async (req, res) => {
-    res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
+    const b = req.body || {};
+    res.json(await manager.selectTab(req.params.id, b.tab ?? b.index ?? 0));
+  });
+
+  api.post('/sessions/:id/rename-tab', async (req, res) => {
+    const b = req.body || {};
+    res.json(await manager.renameTab(req.params.id, b.tab ?? b.index ?? 0, b.title));
   });
 
   // The split pane is a standalone `-split` session with its own tabs. These operate on
@@ -396,7 +404,8 @@ async function main() {
   });
 
   api.post('/sessions/:id/close-tab', async (req, res) => {
-    res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
+    const b = req.body || {};
+    res.json(await manager.closeTab(req.params.id, b.tab ?? b.index ?? 0));
   });
 
   // Start / stop ALL dev servers of a session's shared workspace (every repo it owns).

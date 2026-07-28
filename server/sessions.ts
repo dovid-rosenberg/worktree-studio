@@ -13,7 +13,7 @@ import type { HookPayload } from './status.ts';
 import type { WorktreeCreateResult } from './worktree.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Identity, IdentityInput } from './identity.ts';
-import type { Config, PartialDeep, Session, SourceSeed } from './types.ts';
+import type { Config, PartialDeep, Session, SourceSeed, SessionTab } from './types.ts';
 const { worktreeCopyOpts } = worktree;
 
 // ---- the collaborators, typed by what this file asks of them ----------------
@@ -37,9 +37,19 @@ export interface MuxNewTabOptions {
   cmd?: string;
 }
 
+/**
+ * The id a seeded tab carries until the first `_syncTabs` replaces it with the
+ * multiplexer's real window id. It deliberately cannot collide with one: tmux window
+ * ids are always `@N`. A tab still wearing this has never been reconciled, so
+ * `#tabAt` falls through to the positional lookup for it and nothing else.
+ */
+export const PENDING_TAB = 'pending';
+
 export interface MuxNewTabResult {
   ok: boolean;
   error?: string;
+  /** The window id the driver assigned — what the tab is addressed by from now on. */
+  id?: string;
 }
 
 /** One multiplexer window, as `listTabs()` reports it. */
@@ -70,8 +80,9 @@ export interface SessionMux {
   paneCommand(name: string, target?: string): Promise<string>;
   newTab(name: string, opts?: MuxNewTabOptions): Promise<MuxNewTabResult>;
   listTabs(name: string): Promise<MuxTab[]>;
-  selectTab(name: string, id: number): Promise<boolean>;
-  closeTab(name: string, id: number): Promise<boolean>;
+  selectTab(name: string, id: string | number): Promise<boolean>;
+  closeTab(name: string, id: string | number): Promise<boolean>;
+  renameTab(name: string, id: string | number, title: string): Promise<boolean>;
   /**
    * Create the standalone `<name>-split` session the embedded second pane attaches
    * to. Not called from this file — server.ts's `/sessions/:id/split/*` routes reach
@@ -447,7 +458,7 @@ class SessionManager extends EventEmitter {
       claudeSessionId: null,
       state: 'idle',
       activity: 'starting…',
-      tabs: [{ title: 'claude' }],
+      tabs: [{ id: PENDING_TAB, title: 'claude' }],
       seed: collapse(seedPrompt(seed)), // single-line seed, delivered as claude's launch arg
       active: true,
       createdAt: Date.now(),
@@ -459,6 +470,7 @@ class SessionManager extends EventEmitter {
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
+    else await this._syncTabs(session); // trade the placeholder id for the real window id
     this._touch(id);
     return session;
   }
@@ -497,7 +509,7 @@ class SessionManager extends EventEmitter {
       pendingRepos: [],
       suggestedBranch: branch || null, suggestedName: wtname || slug(title),
       muxName, claudeSessionId: null, state: 'idle', activity: 'starting…',
-      tabs: [{ title: 'claude' }], seed: seed ? collapse(seedPrompt(seed)) : null, active: true,
+      tabs: [{ id: PENDING_TAB, title: 'claude' }], seed: seed ? collapse(seedPrompt(seed)) : null, active: true,
       createdAt: Date.now(), promotedAt: Date.now(), adopted: true,
     };
     this._writeHookSettings(session);
@@ -505,6 +517,7 @@ class SessionManager extends EventEmitter {
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
+    else await this._syncTabs(session); // trade the placeholder id for the real window id
     this._touch(id);
     return session;
   }
@@ -573,29 +586,62 @@ class SessionManager extends EventEmitter {
     if (!s) return { ok: false, error: 'no such session' };
     const cwd = s.worktreePath || s.repoPath;
     const r = await this.mux.newTab(s.muxName, { title: title || 'shell', cwd, cmd });
-    if (r.ok) { s.tabs.push({ title: title || 'shell' }); this._touch(id); }
+    // Only record a tab the multiplexer actually gave us an id for; without one we
+    // cannot address it later, and a positional entry is exactly the bug this avoids.
+    if (r.ok && r.id) { s.tabs.push({ id: r.id, title: title || 'shell' }); this._touch(id); }
+    else if (r.ok) await this._syncTabs(s);
     return r;
   }
 
-  async selectTab(id: string, index: number) {
+  /** Resolve a tab reference — an id, or a legacy array index — to a live tab. */
+  #tabAt(s: Session, ref: string | number): SessionTab | undefined {
+    const tabs = s.tabs || [];
+    const byId = tabs.find((t) => t.id === String(ref));
+    if (byId) return byId;
+    const n = Number(ref);
+    return Number.isInteger(n) && n >= 0 && n < tabs.length ? tabs[n] : undefined;
+  }
+
+  async selectTab(id: string, ref: string | number) {
     const s = this.get(id);
     if (!s) return { ok: false };
-    const ok = await this.mux.selectTab(s.muxName, index);
+    const tab = this.#tabAt(s, ref);
+    if (!tab) return { ok: false, error: 'no such tab' };
+    const ok = await this.mux.selectTab(s.muxName, tab.id);
     return { ok };
   }
 
-  async closeTab(id: string, index: number) {
+  async renameTab(id: string, ref: string | number, title: string) {
+    const s = this.get(id);
+    if (!s) return { ok: false, error: 'no such session' };
+    const tab = this.#tabAt(s, ref);
+    if (!tab) return { ok: false, error: 'no such tab' };
+    const clean = String(title || '').trim().slice(0, 40);
+    if (!clean) return { ok: false, error: 'a tab needs a name' };
+    if (!(await this.mux.renameTab(s.muxName, tab.id, clean))) {
+      return { ok: false, error: 'the multiplexer did not rename that tab' };
+    }
+    tab.title = clean;
+    this._touch(id);
+    return { ok: true, title: clean };
+  }
+
+  async closeTab(id: string, ref: string | number) {
     const s = this.get(id);
     if (!s) return { ok: false };
     if ((s.tabs || []).length <= 1) return { ok: false, error: 'can’t close the only tab' };
+    const tab = this.#tabAt(s, ref);
+    if (!tab) return { ok: false, error: 'no such tab' };
     // closeTab() returns whether tmux actually killed the window, and that answer was
     // being discarded: a failed kill-window (a stale index, a session tmux no longer
     // has) still spliced the tab out of our list, so the strip claimed a tab was gone
     // while it was still there — and every index after it then pointed at the wrong
     // window. Only mirror a close that happened.
-    const ok = await this.mux.closeTab(s.muxName, index);
+    const ok = await this.mux.closeTab(s.muxName, tab.id);
     if (!ok) return { ok: false, error: 'the multiplexer did not close that tab' };
-    (s.tabs || []).splice(index, 1);
+    // Re-read rather than splice: `renumber-windows on` means every surviving window
+    // may have a NEW index now, so the stored ids are stale the instant this returns.
+    await this._syncTabs(s);
     this._touch(id);
     return { ok: true };
   }
@@ -690,8 +736,12 @@ class SessionManager extends EventEmitter {
       const live = await this.mux.listTabs(s.muxName);
       if (!live.length) return;
       const prev = s.tabs || [];
-      // keep our stored titles by position; fall back to the live window name
-      s.tabs = live.map((w, i) => ({ title: (prev[i] && prev[i].title) || w.title }));
+      // Match stored titles to live windows BY ID, never by position. tmux renumbers on
+      // close, so a positional match relabels the survivors: close the middle of
+      // [claude, api, web] and 'api' would land on the window that is now web — a tab
+      // naming a terminal that is not the one it selects.
+      const byId = new Map(prev.filter((t) => t.id).map((t) => [t.id, t.title]));
+      s.tabs = live.map((w) => ({ id: w.id, title: byId.get(w.id) || w.title }));
     } catch { /* leave tabs as-is if the mux can't be queried */ }
   }
 
@@ -744,7 +794,7 @@ class SessionManager extends EventEmitter {
         await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
         // restore recreates only the primary claude window — drop any stale extra
         // tabs so the tab strip matches the windows that actually exist.
-        s.tabs = [{ title: 'claude' }];
+        s.tabs = [{ id: PENDING_TAB, title: 'claude' }];
         s.state = 'idle';
         s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
         // self-heal a promote whose /cd never landed (normally a no-op here).
