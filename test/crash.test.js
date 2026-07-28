@@ -1,4 +1,4 @@
-// Crash policy (server/crash.js) + the thing it exists to prevent: a daemon whose
+// Crash policy (server/crash.ts) + the thing it exists to prevent: a daemon whose
 // listen() failed staying alive with no HTTP server.
 //
 // The unit half drives the classification through injected process hooks, so no
@@ -29,7 +29,7 @@ function armed() {
   return { handlers, logs, exits };
 }
 
-// A Node-style error: the `code` is the only thing crash.js classifies on.
+// A Node-style error: the `code` is the only thing crash.ts classifies on.
 function err(code, message = 'boom') {
   return Object.assign(new Error(message), { code });
 }
@@ -207,7 +207,7 @@ test('a daemon that cannot bind its port exits non-zero instead of running on he
   // WRONG reason and the assertion below would report a confusing failure. This test is
   // about crash policy, not about which UI is served — so pin the part it doesn't care
   // about. If `public/` is ever removed, this needs a stub UI dir instead.
-  const child = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'server', 'server.js')], {
+  const child = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'server', 'server.ts')], {
     env: { ...process.env, WT_STUDIO_CONFIG: configFile, WT_STUDIO_STATE: stateDir, WTS_UI: 'legacy' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

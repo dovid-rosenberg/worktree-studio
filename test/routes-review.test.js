@@ -5,7 +5,7 @@
 // caller's problem) rather than a 500.
 //
 // The /api + /api/v1 equivalence is NOT asserted here any more: the module registers
-// onto the one router server.js mounts at both prefixes, so it cannot spell a prefix
+// onto the one router server.ts mounts at both prefixes, so it cannot spell a prefix
 // at all. That the two prefixes really answer alike is proved end-to-end against a
 // live express app in api-routing.test.js.
 import { test } from 'node:test';

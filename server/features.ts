@@ -7,7 +7,7 @@
 // Main checkouts (wtname === repo) are never features. Each member is the full
 // worktree object (with running/ports/session/etc) or a {missing,ref} stub.
 //
-// What makes two worktrees "the same feature" is server/identity.js, not this
+// What makes two worktrees "the same feature" is server/identity.ts, not this
 // file: grouping and concurrency-slot keying have to answer that question
 // identically, so they share one resolver. Omitting it keeps the historical
 // behavior (group by the worktree's directory name).
@@ -16,7 +16,7 @@ import type { Identity } from './identity.ts';
 import type { Feature, FeatureMember, GroupConfig, Worktree } from './types.ts';
 
 /**
- * A feature as this module builds it. `session` is absent because only state.js
+ * A feature as this module builds it. `session` is absent because only state.ts
  * knows the live sessions; it picks the driving one out of `members` and stamps it
  * on (along with `slot`) straight after calling computeFeatures.
  */
@@ -35,7 +35,7 @@ function resolveRef(worktrees: Worktree[], ref: string): FeatureMember {
 }
 
 // worktrees: flat array of worktree objects (all repos). manualGroups: config.groups.
-// identity: a server/identity.js resolver; defaults to the `basename` strategy.
+// identity: a server/identity.ts resolver; defaults to the `basename` strategy.
 function computeFeatures(
   worktrees: Worktree[],
   manualGroups: GroupConfig[] = [],

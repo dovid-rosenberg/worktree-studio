@@ -1,4 +1,4 @@
-// Hunk staging against real repos (server/hunks.js). The pure model is covered in
+// Hunk staging against real repos (server/hunks.ts). The pure model is covered in
 // test/diff.test.js; what matters here is that git accepts what we generate — so the
 // assertions are mostly "what does `git diff --cached` say afterwards", plus a
 // round-trip check (parse git's own diff → re-serialize → `git apply --check`) run over

@@ -18,23 +18,23 @@ import fs from 'fs';
 
 import { createIdentity } from '../server/identity.ts';
 import * as layoutMod from '../server/layout.ts';
-import { computeFeatures } from '../server/features.js';
-import { Servers, featureFromPath } from '../server/servers.js';
+import { computeFeatures } from '../server/features.ts';
+import { Servers, featureFromPath } from '../server/servers.ts';
 import * as worktree from '../server/worktree.ts';
 
 // ---------------------------------------------------------- the old code ----
 
-// server/servers.js before this change.
+// server/servers.ts before this change.
 function oldFeatureFromPath(worktreePath) {
   const parts = String(worktreePath || '').split(path.sep);
   const i = parts.lastIndexOf('.worktrees');
   return (i >= 0 && parts[i + 1]) ? parts[i + 1] : path.basename(worktreePath || '');
 }
 
-// server/features.js before this change: the grouping key was the bare wtname.
+// server/features.ts before this change: the grouping key was the bare wtname.
 const oldGroupKey = (w) => w.wtname;
 
-// server/worktree.js before this change.
+// server/worktree.ts before this change.
 const oldDest = (repoPath, wtName) => path.join(repoPath, '.worktrees', wtName);
 
 // -------------------------------------------------- the owner's config shape --
@@ -53,7 +53,7 @@ const OWNER_CONFIG = {
     Fleet: { open: 'open -na Fleet --args {path}' },
   },
   defaultEditor: 'WebStorm',
-  copyPatterns: { default: ['.env', '.env.local', '.env.*.local', 'config/*-config.js'] },
+  copyPatterns: { default: ['.env', '.env.local', '.env.*.local', 'config/*-config.ts'] },
   start: {
     'accept-blue': { cmd: 'node app.js', ports: [1231, 1232, 1233, 1239, 1999] },
     'merchant-v3': { cmd: 'npm run dev', ports: [3030] },

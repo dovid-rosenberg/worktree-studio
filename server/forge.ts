@@ -35,7 +35,7 @@ export interface Provider {
 const ENV: NodeJS.ProcessEnv = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
 // gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
-// on the client any more (server/ci.js pushes instead), but the cache still bounds
+// on the client any more (server/ci.ts pushes instead), but the cache still bounds
 // what a burst of triggers plus an on-demand GET /sessions/:id/ci can cost, and it
 // is what makes the two paths share one answer. Value: { at, data }.
 const CI_TTL = 20000;
@@ -158,7 +158,12 @@ const PROVIDERS: Provider[] = [github, gitlab];
 export interface PrMember {
   repo: string;
   path: string;
-  branch: string;
+  /**
+   * Null on a DETACHED worktree, which is a real row in a resolved feature —
+   * `Worktree.branch` is `string | null` for exactly that case. openPullRequest()
+   * refuses those rather than letting a null reach a git argv.
+   */
+  branch: string | null;
 }
 
 /**
@@ -182,6 +187,10 @@ export interface PrResult {
 // Push a member's branch to origin. Split out (and injectable via createForge) so
 // the push half of openPullRequest can be driven without a remote.
 function pushBranchToOrigin(member: PrMember, env?: NodeJS.ProcessEnv, timeoutMs = PUSH_TIMEOUT_MS): Promise<PushResult> {
+  // openPullRequest() refuses a detached member before it gets here, but this is
+  // exported and injectable, so it does not lean on its one caller: a null branch is
+  // a failed push, not a TypeError out of execFile's argv check.
+  if (!member.branch) return Promise.resolve({ code: 1, stdout: '', stderr: 'no branch — the worktree is detached' });
   return run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env, timeout: timeoutMs });
 }
 
@@ -214,7 +223,7 @@ interface SessionLookup {
   get: (id: string) => { repos?: SessionRepo[] } | undefined;
 }
 
-/** `resolveGroup` (server/state.js), typed by what POST /group/pr reads of it. */
+/** `resolveGroup` (server/state.ts), typed by what POST /group/pr reads of it. */
 type ResolveGroup = (name: string) => Promise<{ group?: { members: PrMember[] } | null }>;
 
 interface ForgeDeps {
@@ -236,7 +245,7 @@ interface CreateFailure {
 // `providers` / `isInstalled` are injectable so tests can drive the provider contract
 // on a machine without gh or glab. CLI presence is probed once, at startup, exactly
 // as before — a `has()` per request would shell out on every poll.
-// `onChanged` is how the push side (server/ci.js) hears that *this* module just did
+// `onChanged` is how the push side (server/ci.ts) hears that *this* module just did
 // something that changes a branch's PR state — opening one. Everything else that can
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
 function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), pushBranch = pushBranchToOrigin, onChanged = () => {} }: ForgeDeps = {}) {
@@ -292,6 +301,12 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
 
   // Push the branch, then open a PR/MR with the first provider that accepts it.
   async function openPullRequest(member: PrMember, env?: NodeJS.ProcessEnv): Promise<PrResult> {
+    // A detached worktree has no branch to push or open a PR from. Without this the
+    // null rode into `git push -u origin <branch>`, and execFile rejects a non-string
+    // argv entry with a TypeError — a 500 out of the route, and (because /group/pr
+    // loops members serially) one that takes every later member of the feature with
+    // it. Report it as this member's own failure, which is the shape the loop expects.
+    if (!member.branch) return { repo: member.repo, error: 'no branch — the worktree is detached' };
     // The push result used to be discarded. It can't be: a rejected push (no
     // `origin`, no upstream, non-fast-forward) means the branch the PR would be
     // opened from is not on the forge, so `gh pr create` fails too — with a
@@ -311,7 +326,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
     return { repo: member.repo, error: failureReason(failures) };
   }
 
-  // `app` here is the API router — server.js mounts it at both /api and /api/v1.
+  // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
   function register(app: Router, deps: Pick<ForgeDeps, 'manager' | 'resolveGroup'> = {}) {
     // Each route needs its collaborator, and the one createForge() call that has
     // them is the same one whose register() mounts the routes — so a route reached

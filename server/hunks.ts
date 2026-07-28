@@ -1,4 +1,4 @@
-// Hunk-level staging for the working tree, on top of the pure model in ./diff.js.
+// Hunk-level staging for the working tree, on top of the pure model in ./diff.ts.
 // Coexists with (does not replace) the file-level staging in review.commit().
 //
 // The one decision that makes this correct: hunks are taken from the diffs whose

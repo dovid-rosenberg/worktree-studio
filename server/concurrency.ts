@@ -37,7 +37,7 @@ function allocSlot(usedSlots: Set<number> | number[] | null | undefined, maxSlot
 // rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) → `text` with
 // every `localhost:<basePort + k*offsetStep>` (for k in 0..maxSlots-1) rewritten to
 // `localhost:<newPort>`. Used to re-point a per-worktree FE config (gitignored
-// `src/config.js`) at the accept-blue merchant port for its slot.
+// `src/config.ts`) at the accept-blue merchant port for its slot.
 //   - Only touches ports in this family (base, base+step, …); everything else is left
 //     byte-for-byte — including other numbers and unrelated `localhost:<port>`s.
 //   - The `localhost:` anchor + a trailing non-digit guard mean `localhost:1239` never

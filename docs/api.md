@@ -157,12 +157,12 @@ status changes over minutes. Folding it in would re-serialize an unchanged
 payload thousands of times an hour and would put a slow, hang-prone `gh`/`glab`
 lookup on the path of the hottest broadcast in the server.
 
-The server decides when to refresh (`server/ci.js`), and **only while at least
+The server decides when to refresh (`server/ci.ts`), and **only while at least
 one SSE client is subscribed** — with nobody streaming, no forge CLI is spawned
 at all. A refresh is triggered by:
 
 - a git rescan, which is how a **commit**, a **push** and a **branch switch**
-  reach the server (`server/watch.js` watches `.git/refs` and `HEAD`);
+  reach the server (`server/watch.ts` watches `.git/refs` and `HEAD`);
 - `POST /sessions/:id/commit`;
 - `POST /group/pr` opening a PR/MR (which also drops the cached "no PR");
 - a client subscribing to `/events`;
@@ -188,7 +188,7 @@ connection alive.
 
 ## The state payload
 
-The single document returned by `GET /state`. Built in `server/state.js` from
+The single document returned by `GET /state`. Built in `server/state.ts` from
 two halves — a *topology* half (`mux` …`groups`) and a *session-state* half
 (`sessions`, `servers`) — which `GET /events` streams separately, at their own
 rates, as the first two named events above. (The stream's third event, `ci`, is
@@ -499,7 +499,7 @@ mainline commits. `uncommitted` summarises the working tree as
 
 The routes above answer "what changed" as raw patches. These four answer it as a
 *model* — files → hunks → lines, with left/right rows already aligned — and let a
-client stage or unstage one hunk at a time. `server/routes-review.js`.
+client stage or unstage one hunk at a time. `server/routes-review.ts`.
 
 | Route                                | Returns                                                            |
 | ------------------------------------ | ------------------------------------------------------------------ |
@@ -834,12 +834,12 @@ silence never replaces the reason from one that ran.
 
 Claude Code appends a JSONL transcript per session to
 `~/.claude/projects/<slugified-cwd>/<claudeSessionId>.jsonl`. These routes search
-it and cost it. `server/transcript-routes.js`.
+it and cost it. `server/transcript-routes.ts`.
 
 Two things to know before reading the shapes:
 
 - **Transcripts record tokens, never money.** Every dollar figure here is derived
-  from a maintained price table (`server/pricing.js`) and is an **estimate**.
+  from a maintained price table (`server/pricing.ts`) and is an **estimate**.
   Responses that carry a cost also carry `costIsEstimate: true` and a `pricing`
   block saying how old the table is.
 - **The index is optional, but the fallback is not uniform.** Storage is

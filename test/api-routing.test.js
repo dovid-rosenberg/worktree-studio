@@ -1,5 +1,5 @@
 // The route-module convention and the API versioning that rides on it: feature
-// modules call register(app, deps) against ONE router, and server.js mounts that
+// modules call register(app, deps) against ONE router, and server.ts mounts that
 // router at both /api/v1 (versioned) and /api (the unversioned aliases SwiftBar,
 // Alfred and the current web UI call). Every route must answer identically under
 // both prefixes — that equivalence is what those clients depend on.
@@ -12,16 +12,16 @@ import express from 'express';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import * as orchestrator from '../server/orchestrator.js';
+import * as orchestrator from '../server/orchestrator.ts';
 import { createForge } from '../server/forge.ts';
 import { createIdentity } from '../server/identity.ts';
 import * as crash from '../server/crash.ts';
 import * as pricing from '../server/pricing.ts';
 import { EventEmitter } from 'node:events';
 import * as routesReview from '../server/routes-review.ts';
-import * as transcriptRoutes from '../server/transcript-routes.js';
+import * as transcriptRoutes from '../server/transcript-routes.ts';
 
-// server.js mounts this last, after every route. The route modules used to carry their
+// server.ts mounts this last, after every route. The route modules used to carry their
 // own async wrapper, so a harness that omitted it still got JSON out of a throwing
 // handler; now the error policy belongs to the app, and a miniature that leaves it out
 // is testing a wiring the daemon does not have. Silent, because the deliberately
@@ -233,7 +233,7 @@ test('the needsConfirm answer stays ok:true — the server is asking, not failin
 //
 // routes-review and transcript-routes used to mount themselves — one by looping a
 // PREFIXES array against the raw app, one by app.use()-ing its own sub-router at each
-// prefix. Both now register onto the router server.js mounts twice, which is the only
+// prefix. Both now register onto the router server.ts mounts twice, which is the only
 // one of the three idioms that is automatically correct. These tests are the proof
 // that the equivalence survived the change, end to end through express.
 
@@ -294,15 +294,15 @@ test('the transcript routes answer identically under /api and /api/v1', async ()
 // The cache-billing multipliers are PUBLISHED, not re-typed by the client
 // ---------------------------------------------------------------------------
 //
-// server/pricing.js exported CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ, nothing
+// server/pricing.ts exported CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ, nothing
 // imported them, and no endpoint published them — so the insights UI hardcoded a copy.
 // Change one and the API's dollars move while the client's "billed weight" chart keeps
 // the old ratios, and the same screen answers "where did the money go" two ways.
 //
-// These tests fail if the numbers stop coming from pricing.js, which is the only way
+// These tests fail if the numbers stop coming from pricing.ts, which is the only way
 // the duplication can come back.
 
-test('/transcripts/status publishes the cache multipliers straight from pricing.js', async () => {
+test('/transcripts/status publishes the cache multipliers straight from pricing.ts', async () => {
   const { app, cleanup } = routeModules();
   try {
     await serving(app, async (get) => {

@@ -7,7 +7,7 @@
 // a revert. Exactly one of them owns `/`: resolve() picks a single root, and both the
 // document handler and the static mount are built from that one choice.
 //
-// The token can only reach the tab through the document we hand it (see security.js),
+// The token can only reach the tab through the document we hand it (see security.ts),
 // so the document is served by a handler that substitutes it — never by the static
 // middleware, and never from disk with the real token baked in. `index: false` on the
 // static mount is what guarantees the un-injected file can't leak out the side door.

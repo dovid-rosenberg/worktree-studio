@@ -1,4 +1,4 @@
-// server/layout.js — where worktrees live. The default must reproduce the
+// server/layout.ts — where worktrees live. The default must reproduce the
 // `.worktrees/<name>` convention that used to be a literal in four files.
 import { test } from 'node:test';
 import assert from 'node:assert';

@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// config.js captures CONFIG_FILE/STATE_DIR from env when it is evaluated, so point
+// config.ts captures CONFIG_FILE/STATE_DIR from env when it is evaluated, so point
 // them at a throwaway temp dir BEFORE loading the module.
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-studio-cfg-'));
 process.env.WT_STUDIO_CONFIG_DIR = TMP;
@@ -13,18 +13,18 @@ process.env.WT_STUDIO_STATE = path.join(TMP, 'state');
 
 // Dynamic on purpose: a static import is hoisted above the env assignments above,
 // which would aim load() at the real user config instead of TMP.
-const { load } = await import('../server/config.js');
+const { load } = await import('../server/config.ts');
 
 function writeConfig(obj) {
   fs.writeFileSync(process.env.WT_STUDIO_CONFIG, JSON.stringify(obj, null, 2));
 }
 
 // The shipped default patterns that must always be present after load().
-const SHIPPED = ['src/config.js', 'src/config/config.js'];
+const SHIPPED = ['src/config.ts', 'src/config/config.ts'];
 
 test('load() unions shipped default copyPatterns into an existing (stale) copyPatterns.default', () => {
   // Old on-disk config: has copyPatterns but WITHOUT the newer FE paths.
-  writeConfig({ copyPatterns: { default: ['.env', 'config/*-config.js', 'my-custom.txt'] } });
+  writeConfig({ copyPatterns: { default: ['.env', 'config/*-config.ts', 'my-custom.txt'] } });
   const cfg = load();
   // user's own patterns survive
   assert.ok(cfg.copyPatterns.default.includes('my-custom.txt'));

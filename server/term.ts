@@ -1,7 +1,7 @@
 // The terminal WebSocket: one browser socket ↔ one node-pty attached to the
 // session's multiplexer. `/ws/term?session=<id>[&pane=split]`.
 //
-// Split out of server.js the way the route modules are, because the ORDER of the
+// Split out of server.ts the way the route modules are, because the ORDER of the
 // four steps below is the whole of this file and it has to be exercisable without
 // booting a daemon. `spawn` is injectable for exactly that reason.
 import pty from 'node-pty';
@@ -32,7 +32,8 @@ interface TerminalMux {
  * surface a test double has to stand in for is exactly that and no more.
  */
 interface TerminalManager {
-  get(id: string): TerminalSession | null;
+  /** `undefined` as well as `null`: the real one is a Map lookup, as server/routes-review.ts also allows for. */
+  get(id: string): TerminalSession | null | undefined;
   mux: TerminalMux;
 }
 

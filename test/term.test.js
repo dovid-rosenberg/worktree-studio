@@ -1,4 +1,4 @@
-// server/term.js: the terminal WebSocket's resource ordering.
+// server/term.ts: the terminal WebSocket's resource ordering.
 //
 // The thing under test is a race, so ensureSplit is a promise this file resolves
 // by hand — that is what lets the socket close at the exact moment the real bug

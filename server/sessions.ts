@@ -10,6 +10,7 @@ import * as worktree from './worktree.ts';
 import * as layoutMod from './layout.ts';
 import { createIdentity } from './identity.ts';
 import type { HookPayload } from './status.ts';
+import type { WorktreeCreateResult } from './worktree.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Identity, IdentityInput } from './identity.ts';
 import type { Config, PartialDeep, Session, SourceSeed } from './types.ts';
@@ -50,8 +51,8 @@ export interface MuxTab {
 
 /**
  * The multiplexer driver, typed by the members this file calls and no more — the
- * same reason server/term.js declares its own two-member `TerminalMux`. The
- * concrete driver is server/multiplexer/tmux.js; naming the surface rather than
+ * same reason server/term.ts declares its own two-member `TerminalMux`. The
+ * concrete driver is server/multiplexer/tmux.ts; naming the surface rather than
  * importing the driver is what lets a test stand a double in its place, and what
  * a driver gets checked against.
  */
@@ -72,6 +73,25 @@ export interface SessionMux {
   selectTab(name: string, id: number): Promise<boolean>;
   closeTab(name: string, id: number): Promise<boolean>;
   popoutCommand(name: string): string;
+  /**
+   * Create the standalone `<name>-split` session the embedded second pane attaches
+   * to. Not called from this file — server.ts's `/sessions/:id/split/*` routes reach
+   * it through `manager.mux`, which is the only handle on the driver they have.
+   */
+  ensureSplit(name: string, opts?: { cwd?: string }): Promise<void>;
+  /**
+   * The command node-pty runs to attach a client. Also not called here: server/term.ts
+   * reaches it through `manager.mux` for the same reason, and declares its own
+   * two-member `TerminalMux` to say so.
+   */
+  attachSpawn(name: string, opts?: { popout?: boolean; group?: string }): MuxAttachSpec;
+}
+
+/** What `attachSpawn` hands back for node-pty to run. */
+export interface MuxAttachSpec {
+  file: string;
+  args: string[];
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -106,7 +126,30 @@ export interface SessionAttachArgs {
   wtname?: string | null;
 }
 
-/** A Claude Code hook body: server/status.js's view plus the id SessionStart carries. */
+/**
+ * What `promote()` answers.
+ *
+ * Four outcomes share one shape rather than a discriminated union, because the route
+ * reads two independent flags off it: `needsConfirm` is a 200 that asks again (a dirty
+ * main checkout), `ok` decides 200-vs-400, and a failed `worktree.create()` is returned
+ * verbatim so the caller keeps the name and path it was going to use.
+ */
+export interface PromoteResult {
+  ok: boolean;
+  error?: string;
+  /** A dirty main checkout: not a failure, a question. The client re-prompts with `confirm`. */
+  needsConfirm?: boolean;
+  /** The uncommitted paths that raised `needsConfirm`. */
+  dirty?: string[];
+  session?: Session;
+  worktree?: WorktreeCreateResult;
+  /** Carried through from a failed `worktree.create()`. */
+  path?: string;
+  name?: string;
+  branch?: string;
+}
+
+/** A Claude Code hook body: server/status.ts's view plus the id SessionStart carries. */
 export interface HookBody extends HookPayload {
   session_id?: string;
 }
@@ -161,11 +204,11 @@ class SessionManager extends EventEmitter {
    * the path under test makes; a path that reaches past its double throws exactly
    * as it did before this file carried types, which is what the `!`s below say.
    */
-  mux: Partial<SessionMux>;
+  mux: SessionMux;
   identity: Identity;
   layout: ResolvedLayout;
   /**
-   * server/config.js stamps `_stateDir` onto every config before anything else
+   * server/config.ts stamps `_stateDir` onto every config before anything else
    * sees one, so it is always there; the type says otherwise only because every
    * consumer takes the config as PartialDeep, which describes what a hand-built
    * cfg may omit rather than what a loaded one carries. Narrowed once, here.
@@ -175,16 +218,16 @@ class SessionManager extends EventEmitter {
   sessions: Map<string, Session>;
   _adopting: Set<string>;
 
-  // `identity` is the shared server/identity.js resolver (server.js builds one and
-  // hands the same instance to state.js/servers.js). A session stores the feature
-  // IDENTITY it belongs to, and that has to be the same answer features.js groups
+  // `identity` is the shared server/identity.ts resolver (server.ts builds one and
+  // hands the same instance to state.ts/servers.ts). A session stores the feature
+  // IDENTITY it belongs to, and that has to be the same answer features.ts groups
   // by — otherwise `POST /group/pr { group: session.feature }` looks up a feature
   // that doesn't exist under any strategy but `basename`.
   /**
    * @param mux         the multiplexer adapter (server/multiplexer)
-   * @param identity    a server/identity.js resolver; built from cfg if omitted
+   * @param identity    a server/identity.ts resolver; built from cfg if omitted
    */
-  constructor(cfg: PartialDeep<Config>, mux: Partial<SessionMux>, identity?: Identity) {
+  constructor(cfg: PartialDeep<Config>, mux: SessionMux, identity?: Identity) {
     super();
     this.cfg = cfg;
     this.mux = mux;
@@ -252,7 +295,7 @@ class SessionManager extends EventEmitter {
   }
 
   // The feature identity of a worktree this session owns — the value that has to
-  // match a name in state.js's features/groups list. Delegated to the one resolver
+  // match a name in state.ts's features/groups list. Delegated to the one resolver
   // so a session and the Fleet rail can never disagree about which feature a
   // worktree is part of.
   /** @returns the feature identity, under the configured strategy */
@@ -261,7 +304,7 @@ class SessionManager extends EventEmitter {
   }
 
   // The NAME a worktree of this session should be given on disk. Deliberately NOT
-  // `s.feature`: naming and grouping are different questions (server/identity.js),
+  // `s.feature`: naming and grouping are different questions (server/identity.ts),
   // and under the `branch`/`manifest` strategies the identity is a grouping key
   // (`123`, a manual group name), not a directory name. The session's own worktree
   // name is the authority; `s.feature` remains the last fallback so sessions
@@ -315,7 +358,7 @@ class SessionManager extends EventEmitter {
       const st = session && session.state;
       const midTurn = st && st !== 'idle' && st !== 'waiting';
       if (midTurn && i < delays.length - 1) continue; // busy → back off and retry
-      await this.mux.sendText!(muxName, text);
+      await this.mux.sendText(muxName, text);
       return { ok: true };
     }
     // Never saw claude → don't type into a shell; surface it so the UI can prompt.
@@ -415,7 +458,7 @@ class SessionManager extends EventEmitter {
     this.sessions.set(id, session);
 
     const cmd = this.claudeCmd(session);
-    const r = await this.mux.ensure!(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
+    const r = await this.mux.ensure(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
     this._touch(id);
     return session;
@@ -448,7 +491,7 @@ class SessionManager extends EventEmitter {
       repoName, repoPath, home: worktreePath, // launch/transcript dir (claude runs here) — so --resume finds it
       worktree: wtname ?? null, worktreePath, branch: branch || null,
       // The identity the worktree ALREADY has under the configured strategy — this
-      // worktree exists on disk and features.js is grouping it right now, so the
+      // worktree exists on disk and features.ts is grouping it right now, so the
       // session has to record the same answer, not a slug of its own devising.
       feature: this.featureOf({ repo: repoName, wtname: wtname ?? undefined, branch, path: worktreePath }),
       repos: [{ repo: repoName, repoPath, worktree: wtname ?? null, worktreePath, branch: branch || null, primary: true }],
@@ -461,7 +504,7 @@ class SessionManager extends EventEmitter {
     this._writeHookSettings(session);
     this.sessions.set(id, session);
     const cmd = this.claudeCmd(session);
-    const r = await this.mux.ensure!(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
+    const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
     this._touch(id);
     return session;
@@ -477,7 +520,7 @@ class SessionManager extends EventEmitter {
     } catch { return []; }
   }
 
-  async promote(id: string, { branch, name, confirm }: { branch?: string; name?: string; confirm?: boolean } = {}) {
+  async promote(id: string, { branch, name, confirm }: { branch?: string; name?: string; confirm?: boolean } = {}): Promise<PromoteResult> {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
     if (s.worktreePath) return { ok: false, error: 'already promoted' };
@@ -513,7 +556,7 @@ class SessionManager extends EventEmitter {
     if (primary) { primary.worktree = res.name; primary.worktreePath = res.path; primary.branch = res.branch; }
     // rename the mux session to the worktree (best-effort; harmless if unsupported)
     const newMux = `wts-${res.name}`.slice(0, 60);
-    if (await this.mux.rename!(s.muxName, newMux)) s.muxName = newMux;
+    if (await this.mux.rename(s.muxName, newMux)) s.muxName = newMux;
     // move the running session into the worktree — relocates cwd AND transcript,
     // so resume is seamless from here on (gated on claude being ready)
     await this._anchorInWorktree(s);
@@ -530,7 +573,7 @@ class SessionManager extends EventEmitter {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
     const cwd = s.worktreePath || s.repoPath;
-    const r = await this.mux.newTab!(s.muxName, { title: title || 'shell', cwd, cmd });
+    const r = await this.mux.newTab(s.muxName, { title: title || 'shell', cwd, cmd });
     if (r.ok) { s.tabs.push({ title: title || 'shell' }); this._touch(id); }
     return r;
   }
@@ -538,7 +581,7 @@ class SessionManager extends EventEmitter {
   async selectTab(id: string, index: number) {
     const s = this.get(id);
     if (!s) return { ok: false };
-    const ok = await this.mux.selectTab!(s.muxName, index);
+    const ok = await this.mux.selectTab(s.muxName, index);
     return { ok };
   }
 
@@ -551,7 +594,7 @@ class SessionManager extends EventEmitter {
     // has) still spliced the tab out of our list, so the strip claimed a tab was gone
     // while it was still there — and every index after it then pointed at the wrong
     // window. Only mirror a close that happened.
-    const ok = await this.mux.closeTab!(s.muxName, index);
+    const ok = await this.mux.closeTab(s.muxName, index);
     if (!ok) return { ok: false, error: 'the multiplexer did not close that tab' };
     (s.tabs || []).splice(index, 1);
     this._touch(id);
@@ -561,13 +604,13 @@ class SessionManager extends EventEmitter {
   popout(id: string): string | null {
     const s = this.get(id);
     if (!s) return null;
-    return this.mux.popoutCommand!(s.muxName);
+    return this.mux.popoutCommand(s.muxName);
   }
 
   async close(id: string, { kill = true }: { kill?: boolean } = {}) {
     const s = this.get(id);
     if (!s) return { ok: false };
-    if (kill) await this.mux.kill!(s.muxName);
+    if (kill) await this.mux.kill(s.muxName);
     // clean up the per-session hook settings file (best-effort)
     if (s.settingsFile) { try { fs.unlinkSync(s.settingsFile); } catch { /* */ } }
     this.sessions.delete(id);
@@ -610,7 +653,7 @@ class SessionManager extends EventEmitter {
   async deactivate(id: string) {
     const s = this.get(id);
     if (!s) return { ok: false };
-    await this.mux.kill!(s.muxName);
+    await this.mux.kill(s.muxName);
     s.active = false;
     s.state = 'stopped';
     s.activity = 'deactivated';
@@ -639,7 +682,7 @@ class SessionManager extends EventEmitter {
     // where the promote-time /cd never landed.
     let cwd = s.home || s.repoPath;
     if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
-    const r = await this.mux.ensure!(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+    const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
     s.active = true;
     s.state = 'idle';
     s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
@@ -651,7 +694,7 @@ class SessionManager extends EventEmitter {
   // Reconcile a session's tab strip with the tmux windows that actually exist.
   async _syncTabs(s: Session): Promise<void> {
     try {
-      const live = await this.mux.listTabs!(s.muxName);
+      const live = await this.mux.listTabs(s.muxName);
       if (!live.length) return;
       const prev = s.tabs || [];
       // keep our stored titles by position; fall back to the live window name
@@ -668,7 +711,7 @@ class SessionManager extends EventEmitter {
     for (const s of this.sessions.values()) {
       if (!s.muxName || s.active === false || s.state === 'stopped') continue;
       let alive = true;
-      try { alive = await this.mux.hasSession!(s.muxName); } catch { alive = true; }
+      try { alive = await this.mux.hasSession(s.muxName); } catch { alive = true; }
       if (alive) continue;
       s.state = 'stopped';
       s.active = false;
@@ -691,7 +734,7 @@ class SessionManager extends EventEmitter {
       if (!s.muxName) continue;
       if (s.active === false) continue;
       try {
-        if (await this.mux.hasSession!(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
+        if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
         // A promoted session whose worktree is gone can't be resumed meaningfully —
         // flag it rather than launch a dead pane and claim success.
         if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
@@ -705,7 +748,7 @@ class SessionManager extends EventEmitter {
         // Promoted sessions already have home = worktree (moved at promote time).
         let cwd = s.home || s.repoPath;
         if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
-        await this.mux.ensure!(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+        await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
         // restore recreates only the primary claude window — drop any stale extra
         // tabs so the tab strip matches the windows that actually exist.
         s.tabs = [{ title: 'claude' }];

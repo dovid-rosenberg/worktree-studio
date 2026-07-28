@@ -5,7 +5,7 @@
 // with the repo count and burns exactly as much while nobody is looking at the
 // dashboard as while somebody is — the first thing you notice on battery.
 //
-// This module owns all of that instead, and server.js wires it in one line:
+// This module owns all of that instead, and server.ts wires it in one line:
 //   1. filesystem watches on the paths a repo scan actually derives from, so a
 //      worktree add/remove or a commit lands in ~a quarter second rather than up
 //      to 15s, at no steady-state cost;
@@ -308,7 +308,7 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
   }
 
   // Exactly one scan in flight. Anything that arrives mid-scan collapses into a
-  // single follow-up rather than queueing per event (mirrors server.js's own
+  // single follow-up rather than queueing per event (mirrors server.ts's own
   // `scanning` guard, but re-runs afterwards instead of dropping the request).
   async function runScan(): Promise<void> {
     if (stopped) return;

@@ -4,7 +4,7 @@
 //
 // No git calls live here on purpose: everything is a string in / structure out, so the
 // nasty cases (no trailing newline, CRLF, renames, binary, mode-only, hunk-offset
-// recomputation) are testable from fixture patches without a repo. server/hunks.js is
+// recomputation) are testable from fixture patches without a repo. server/hunks.ts is
 // the thin git layer on top.
 //
 // The serializer is byte-exact: formatFilePatch(file) with every hunk selected

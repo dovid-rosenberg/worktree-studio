@@ -271,7 +271,7 @@ async function workingDetail(worktreePath: string): Promise<{ files: ReviewFile[
   return { files };
 }
 
-// The structured side-by-side model for one file's diff (see server/diff.js): hunks with
+// The structured side-by-side model for one file's diff (see server/diff.ts): hunks with
 // aligned left/right rows and line numbers on both sides, so a client can render either
 // layout without re-parsing the text. `diff` stays alongside it — the raw patch is still
 // what git speaks, and dropping it would break anything that renders the text directly.

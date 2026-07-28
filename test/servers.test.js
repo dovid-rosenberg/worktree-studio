@@ -1,4 +1,4 @@
-// server/servers.js's own resources: the descriptor it hands a launched dev
+// server/servers.ts's own resources: the descriptor it hands a launched dev
 // server, and the log file it keeps appending to for the worktree's life.
 //
 // Both are things the daemon holds for as long as it runs, so they are asserted
@@ -8,7 +8,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Servers, trimLog, LOG_LIMITS } from '../server/servers.js';
+import { Servers, trimLog, LOG_LIMITS } from '../server/servers.ts';
 
 function servers(extra = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-servers-'));

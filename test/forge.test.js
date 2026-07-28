@@ -1,4 +1,4 @@
-// The forge boundary (server/forge.js): the check-tally tables that drive the CI
+// The forge boundary (server/forge.ts): the check-tally tables that drive the CI
 // pill, and the provider contract — GitHub first, GitLab as the fallback, cached,
 // and never throwing out of a lookup. Providers are injected, so no gh/glab and no
 // network are involved.

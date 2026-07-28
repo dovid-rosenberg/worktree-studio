@@ -82,7 +82,7 @@ function priceFor(model: string | null | undefined, speed?: string | null): Mode
 
 function isBillable(model: string | null | undefined): boolean { return !UNBILLED.has(normalizeModel(model)); }
 
-// usage: the normalized shape from transcripts.js
+// usage: the normalized shape from transcripts.ts
 // ({ input, output, cacheWrite5m, cacheWrite1h, cacheRead }).
 // Returns { usd, priced }. `priced:false` means we counted the tokens but have no
 // rate for this model — callers must not treat usd:0 and usd:null alike.
@@ -113,7 +113,7 @@ function round(usd: number | null | undefined): number | null {
 
 // Surfaced so the API can tell a UI how old the numbers are.
 export const PRICING_VERIFIED = '2026-07-27';
-export const ESTIMATE_NOTE = 'Costs are estimates derived from a maintained price table (server/pricing.js); transcripts record tokens, not billing.';
+export const ESTIMATE_NOTE = 'Costs are estimates derived from a maintained price table (server/pricing.ts); transcripts record tokens, not billing.';
 
 export {
   PRICES, FAST_PRICES, CACHE_WRITE_5M, CACHE_WRITE_1H, CACHE_READ,

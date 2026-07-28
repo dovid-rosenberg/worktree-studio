@@ -1,4 +1,4 @@
-// The SSE contract (server/broadcast.js, docs/api.md): two named event types with
+// The SSE contract (server/broadcast.ts, docs/api.md): two named event types with
 // very different rates, each a full replacement of its half of the state payload.
 // What has to hold is not "the frames got smaller" but "a client that applies
 // them ends up with exactly what a full rebuild would have given it" — including
@@ -24,14 +24,14 @@ function parse(text) {
   }).filter(Boolean);
 }
 
-// A mutable world producing the same two halves state.js does — including the
+// A mutable world producing the same two halves state.ts does — including the
 // trimmed session copy topology() embeds in every worktree row and feature, built
 // from the sessions as they are AT BUILD TIME. That embedding is the reason a
 // client has to re-project: between two topology frames those copies age.
 //
 // The halves are deliberate MINIATURES — the fields these tests exercise and no
 // others — so the builders are declared loosely on purpose. The full payload shape
-// is state.js's contract (server/types.ts), and state.test.js is what holds it.
+// is state.ts's contract (server/types.ts), and state.test.js is what holds it.
 /** @returns {{ w: any, topology: () => any, sessionState: () => any, buildState: () => any }} */
 function world() {
   /** @type {{ worktrees: any[], sessions: any[], servers: any }} */

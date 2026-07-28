@@ -306,7 +306,7 @@ Everything is also overridable by environment variables using nconf’s `__` nes
 
 ## Command-line interface
 
-Installed as `wt-studio` (`bin/wt-studio.js`):
+Installed as `wt-studio` (`bin/wt-studio.ts`):
 
 ```bash
 wt-studio                    # start the server (same as npm start)
@@ -451,13 +451,13 @@ Kill the old server first: `lsof -ti :7788 | xargs kill`, then `npm start`. (mac
 ## Architecture
 
 - **Backend** — Node + Express + `ws` + `node-pty`. Key modules:
-  `server/server.js` (HTTP/WS/routes), `server/sessions.js` (session lifecycle, promote,
-  resume), `server/servers.js` (dev-server discovery/start/stop, slots), `server/review.js`
-  (diff/commit), `server/features.js` (grouping), `server/config.js` (config + defaults),
-  `server/concurrency.js` (slot math + config patching), `server/multiplexer/tmux.js`
+  `server/server.ts` (HTTP/WS/routes), `server/sessions.ts` (session lifecycle, promote,
+  resume), `server/servers.ts` (dev-server discovery/start/stop, slots), `server/review.ts`
+  (diff/commit), `server/features.ts` (grouping), `server/config.ts` (config + defaults),
+  `server/concurrency.ts` (slot math + config patching), `server/multiplexer/tmux.ts`
   (the tmux driver behind a small interface — the seam for a future ConPTY/Windows driver).
 - **Frontend** — SvelteKit (`client/`), built by `adapter-static` to `client/build` and
-  served by the daemon itself (`server/webui.js`); `npm install` builds it, `npm start`
+  served by the daemon itself (`server/webui.ts`); `npm install` builds it, `npm start`
   does not. State arrives via SSE; terminals over WebSocket. The previous vanilla-JS UI
   (`public/app.js` + vendored xterm, no build step) is still in the tree — start with
   `WTS_UI=legacy` to serve it instead. Only one of the two owns `/`.

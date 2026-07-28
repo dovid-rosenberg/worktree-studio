@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { computeFeatures, resolveRef } from '../server/features.js';
+import { computeFeatures, resolveRef } from '../server/features.ts';
 
 // helper worktree
 function wt(repo, wtname, branch, extra = {}) {

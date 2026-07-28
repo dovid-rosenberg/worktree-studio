@@ -189,7 +189,7 @@ test('app.html carries the placeholder exactly once', () => {
 
 test('the built client, when present, is servable and holds no token', () => {
   const index = path.join(import.meta.dirname, '..', 'client', 'build', 'index.html');
-  if (!fs.existsSync(index)) return; // not built in this checkout — bin/build-client.js makes it
+  if (!fs.existsSync(index)) return; // not built in this checkout — bin/build-client.ts makes it
   const html = fs.readFileSync(index, 'utf8');
   assert.equal(html.split(webui.PLACEHOLDER).length - 1, 1, 'exactly one placeholder');
   assert.ok(!/WTS_TOKEN = "[0-9a-f]{32,}"/.test(html), 'no real token baked into the build');

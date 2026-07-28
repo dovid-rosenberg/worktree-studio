@@ -37,7 +37,7 @@ const adapter: SourceAdapter = {
   },
   async list(cfg) {
     const a = cfgOf(cfg);
-    // `workspace` is set here because isEnabled() demands it, and sources/index.js runs
+    // `workspace` is set here because isEnabled() demands it, and sources/index.ts runs
     // that gate before it reaches either of these two calls.
     const tasks = await api<AsanaTask[]>(cfg, `/tasks?assignee=me&workspace=${encodeURIComponent(a.workspace!)}&completed_since=now&opt_fields=name,permalink_url&limit=30`);
     return tasks.map((t) => ({ id: t.gid, title: t.name, subtitle: 'Asana task' }));

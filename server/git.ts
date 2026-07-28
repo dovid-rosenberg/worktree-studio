@@ -32,7 +32,7 @@ export interface ScannedRepo {
 // Walk baseDirs up to `depth` looking for directories that contain a .git.
 // Returns both the repos found and the plain container directories the walk passed
 // through — those are exactly the places a *new* repo can show up, which is what
-// the filesystem watcher (server/watch.js) needs to arm itself on.
+// the filesystem watcher (server/watch.ts) needs to arm itself on.
 // A linked worktree also has a `.git` — a FILE reading `gitdir: …/.git/worktrees/<name>`
 // rather than a directory. It is not a repo of its own; it is already reported by
 // `git worktree list` in the repo it belongs to. The nested layout hides worktrees

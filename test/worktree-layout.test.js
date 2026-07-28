@@ -1,6 +1,6 @@
 // worktree.create() against the three configurable layouts, plus the
 // copyAlways/copyPatterns split. Real git repos in a temp dir — the task's
-// "use server/worktree.js if a test needs a worktree" rule, so no `git worktree
+// "use server/worktree.ts if a test needs a worktree" rule, so no `git worktree
 // add` is ever run by hand.
 import { test } from 'node:test';
 import assert from 'node:assert';
@@ -11,7 +11,7 @@ import { execFileSync } from 'child_process';
 import * as worktree from '../server/worktree.ts';
 import * as layoutMod from '../server/layout.ts';
 import * as gitMod from '../server/git.ts';
-import * as config from '../server/config.js';
+import * as config from '../server/config.ts';
 
 function sh(cwd, cmd, args) { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }
 
@@ -148,7 +148,7 @@ test('scan() still reports an out-of-repo worktree through its repo', async () =
 // ------------------------------------------------- copyAlways / copyPatterns
 
 function repoWithLocalFiles(base) {
-  const repo = repoIn(base, 'api', '.worktrees/\n.env\n.env.local\n.vscode/\nconfig/*-config.js\n');
+  const repo = repoIn(base, 'api', '.worktrees/\n.env\n.env.local\n.vscode/\nconfig/*-config.ts\n');
   fs.writeFileSync(path.join(repo, '.env'), 'A=1\n');
   fs.writeFileSync(path.join(repo, '.env.local'), 'B=2\n');
   fs.mkdirSync(path.join(repo, '.vscode'));

@@ -1,4 +1,4 @@
-// The pure diff model (server/diff.js): parsing, side-by-side row alignment, and
+// The pure diff model (server/diff.ts): parsing, side-by-side row alignment, and
 // serializing a subset of a file's hunks. No git here on purpose — every case below is
 // a fixture patch, which is why the awkward ones (no trailing newline, CRLF, renames,
 // binary, mode-only, offset recomputation) are cheap to pin down. test/hunks.test.js

@@ -8,10 +8,10 @@
     "node": ">=22"
   },
   "bin": {
-    "wt-studio": "bin/wt-studio.js"
+    "wt-studio": "bin/wt-studio.ts"
   },
   "scripts": {
-    "start": "node server/server.js",
+    "start": "node server/server.ts",
     "build": "node bin/build-client.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck && node --test test/*.test.js",

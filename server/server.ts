@@ -1,31 +1,73 @@
 import http from 'http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import * as muxSelect from './multiplexer/index.js';
+import * as muxSelect from './multiplexer/index.ts';
 import * as gitMod from './git.ts';
 import * as watchMod from './watch.ts';
 import * as worktree from './worktree.ts';
 const { worktreeCopyOpts } = worktree;
 import * as review from './review.ts';
 import * as sources from './sources/index.ts';
-import { SessionManager } from './sessions.js';
-import { Servers } from './servers.js';
+import { SessionManager } from './sessions.ts';
+import { Servers } from './servers.ts';
 import { createIdentity } from './identity.ts';
-import { createState } from './state.js';
+import { createState } from './state.ts';
 import { createBroadcast } from './broadcast.ts';
 import { createForge } from './forge.ts';
-import { createCiFeed } from './ci.js';
-import * as orchestrator from './orchestrator.js';
+import { createCiFeed } from './ci.ts';
+import * as orchestrator from './orchestrator.ts';
 import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
 import { run, has, shq, slug, expandTilde } from './util.ts';
-import * as configMod from './config.js';
-import tmux from './multiplexer/tmux.js';
-import * as transcriptRoutes from './transcript-routes.js';
+import * as configMod from './config.ts';
+import tmux from './multiplexer/tmux.ts';
+import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
+import type { Request } from 'express';
+import type { ScannedRepo } from './git.ts';
+import type { RunningServer } from './servers.ts';
+import type { EditorConfig, GroupConfig, SessionRepo, StartConfig } from './types.ts';
+
+/**
+ * One value off a query string. Express hands back a string, an array (`?a=1&a=2`)
+ * or a nested object (`?a[b]=1`), and an array or object reaching a git argv is a
+ * TypeError rather than a 400 — so every read below goes through `qs()`.
+ */
+type QueryValue = Request['query'][string];
+const qs = (v: QueryValue): string => {
+  const x = Array.isArray(v) ? v[0] : v;
+  return x === undefined || x === null ? '' : String(x);
+};
+
+/** A thrown value's message. `catch` binds `unknown`, and not everything thrown is an Error. */
+const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** A plain object, as opposed to null or an array — what every JSON-body check means. */
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * A session repo that has been promoted. Everything that starts, stops or slots a
+ * dev server needs the worktree path, and `SessionRepo.worktreePath` is null until
+ * promote() runs — so the filter that drops the unpromoted ones says so in the type.
+ */
+type PromotedRepo = SessionRepo & { worktreePath: string };
+const promoted = (r: SessionRepo): r is PromotedRepo => !!r.worktreePath;
+
+/** The POST /settings body. Every field is `unknown` until it has been checked. */
+interface SettingsBody {
+  sources?: unknown;
+  baseDirs?: unknown;
+  notify?: unknown;
+  start?: unknown;
+  editors?: unknown;
+  defaultEditor?: unknown;
+  groups?: unknown;
+}
 
 async function main() {
   const cfg = configMod.load();
@@ -36,17 +78,17 @@ async function main() {
     console.log(`[wt-studio] multiplexer: ${mux.name}`);
   }
 
-  // One feature-identity resolver for the whole process: state.js groups worktrees
-  // with it, servers.js keys concurrency slots with it and sessions.js records it
+  // One feature-identity resolver for the whole process: state.ts groups worktrees
+  // with it, servers.ts keys concurrency slots with it and sessions.ts records it
   // on each session, so none of the three can drift.
   const identity = createIdentity(cfg);
   const manager = new SessionManager(cfg, mux || tmux, identity);
   const servers = new Servers(cfg, identity);
 
   // ---- repo scan cache ----
-  let repos = [];
+  let repos: ScannedRepo[] = [];
   // One scan at a time, and a request that arrives mid-scan is QUEUED rather than
-  // dropped — see server/rescan.js for the caller (POST /api/settings changing
+  // dropped — see server/rescan.ts for the caller (POST /api/settings changing
   // baseDirs) that nothing on the filesystem would ever have re-triggered.
   const rescan = createRescan(async () => {
     try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
@@ -55,7 +97,7 @@ async function main() {
     identity.reindex(repos);
     prunePaths();        // the fresh scan is what says which worktrees still exist
     broadcastTopology(); // the scan IS the topology
-    // A scan is also the server's only notice that git moved. watch.js arms
+    // A scan is also the server's only notice that git moved. watch.ts arms
     // fs.watch on `.git/refs` (recursive), so a commit writes refs/heads/<branch>,
     // a push writes refs/remotes/origin/<branch>, and a branch switch writes HEAD —
     // each lands here. Those are precisely the three local events that change what
@@ -87,14 +129,14 @@ async function main() {
     broadcastTopology();
   }
 
-  // The state payload lives in state.js; both caches above are handed over as
+  // The state payload lives in state.ts; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
   const { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor } = createState({
     cfg, manager, servers, mux, identity, repos: () => repos, running: () => runningCache,
   });
 
   // ---- SSE live state ----
-  // Two named event types with very different rates (see broadcast.js).
+  // Two named event types with very different rates (see broadcast.ts).
   // scheduleBroadcast() sends the small session half only — that is what every
   // Claude hook gets. broadcastTopology() adds the slow half and is called by the
   // handful of things that can actually change the repo → worktree shape (a git
@@ -124,7 +166,7 @@ async function main() {
   // ---- express ----
   const app = express();
 
-  // Everything below sits behind the Host/Origin allowlist — see security.js for
+  // Everything below sits behind the Host/Origin allowlist — see security.ts for
   // what each gate stops. It runs before the body parsers so a rejected request is
   // never given the chance to make us buffer 8 MB of its JSON.
   const guard = createGuard({ cfg, token: cfg._token });
@@ -136,12 +178,12 @@ async function main() {
   // The browser tab cannot be handed a header before it exists, so the boot token is
   // injected into the one document we hand it. That is safe precisely because of the
   // gate above: a cross-origin page cannot read this response body, and a rebinding
-  // page is refused before there is a body to read. See webui.js for which UI this is
+  // page is refused before there is a body to read. See webui.ts for which UI this is
   // and what WTS_UI does; its SPA fallback is mounted after every route below.
   // A UI that isn't on disk is a boot failure, not a 404 the user has to reverse-
   // engineer: say what is missing and how to get it, and stop.
-  let ui;
-  try { ui = webui.resolve(); } catch (e) { console.error(`[wt-studio] ${e.message}`); process.exit(1); }
+  let ui: webui.ResolvedUi;
+  try { ui = webui.resolve(); } catch (e) { console.error(`[wt-studio] ${msg(e)}`); process.exit(1); }
   console.log(`[wt-studio] serving the ${ui.label}`);
   webui.mount(app, { ui, token: cfg._token });
 
@@ -196,12 +238,19 @@ async function main() {
     });
   });
   api.post('/settings', async (req, res) => {
-    const { sources: srcs, baseDirs, notify, start, editors, defaultEditor, groups } = req.body || {};
-    if (srcs) {
+    // Every field is `unknown`: a JSON body can carry anything, so nothing here is a
+    // string, an object or an array until it has been checked — the same rule
+    // server/orchestrator.ts's GroupBody follows.
+    const body: SettingsBody = req.body || {};
+    const { sources: srcs, baseDirs, notify, start, editors, defaultEditor, groups } = body;
+    if (isRecord(srcs)) {
       cfg.sources = cfg.sources || {};
-      for (const k of Object.keys(srcs)) cfg.sources[k] = { ...(cfg.sources[k] || {}), ...srcs[k] };
+      for (const k of Object.keys(srcs)) {
+        const prev = cfg.sources[k];
+        cfg.sources[k] = { ...(isRecord(prev) ? prev : {}), ...(isRecord(srcs[k]) ? srcs[k] : {}) };
+      }
     }
-    if (notify && typeof notify === 'object') {
+    if (isRecord(notify)) {
       cfg.notify = { ...(cfg.notify || {}), ...notify };
     }
     let rescanNeeded = false;
@@ -210,37 +259,40 @@ async function main() {
       rescanNeeded = true;
     }
     // Dev-server launch config { "<repo>": { cmd, ports:[…] } } — full replace, drop blank rows.
-    if (start && typeof start === 'object' && !Array.isArray(start)) {
-      const coercePorts = (v) => (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\s,]+/))
-        .map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0);
-      const clean = {};
+    if (isRecord(start)) {
+      const coercePorts = (v: unknown): number[] =>
+        (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\s,]+/))
+          .map((x) => parseInt(String(x), 10)).filter((n) => Number.isInteger(n) && n > 0);
+      const clean: Record<string, StartConfig> = {};
       for (const [repo, v] of Object.entries(start)) {
         const name = String(repo).trim();
-        const cmd = v && typeof v === 'object' ? String(v.cmd || '').trim() : '';
+        const cmd = isRecord(v) ? String(v.cmd || '').trim() : '';
         if (!name || !cmd) continue;
-        clean[name] = { cmd, ports: coercePorts(v.ports) };
+        clean[name] = { cmd, ports: coercePorts(isRecord(v) ? v.ports : undefined) };
       }
       cfg.start = clean;
       rescanNeeded = true;
     }
     // Editors { "<name>": { open, openGroup? } } — full replace, drop blank rows.
-    if (editors && typeof editors === 'object' && !Array.isArray(editors)) {
-      const clean = {};
+    if (isRecord(editors)) {
+      const clean: Record<string, EditorConfig> = {};
       for (const [nm, v] of Object.entries(editors)) {
         const name = String(nm).trim();
-        const open = v && typeof v === 'object' ? String(v.open || '').trim() : '';
+        const open = isRecord(v) ? String(v.open || '').trim() : '';
         if (!name || !open) continue;
-        clean[name] = { open };
-        if (v.openGroup && String(v.openGroup).trim()) clean[name].openGroup = String(v.openGroup).trim();
+        const row: EditorConfig = { open };
+        const openGroup = isRecord(v) && v.openGroup ? String(v.openGroup).trim() : '';
+        if (openGroup) row.openGroup = openGroup;
+        clean[name] = row;
       }
       cfg.editors = clean;
     }
     if (typeof defaultEditor === 'string' && defaultEditor.trim()) cfg.defaultEditor = defaultEditor.trim();
     // Manual feature groups [{ name, members:[…] }] — full replace, drop blank rows.
     if (Array.isArray(groups)) {
-      cfg.groups = groups.map((g) => ({
-        name: String((g && g.name) || '').trim(),
-        members: Array.isArray(g && g.members) ? g.members.map((m) => String(m).trim()).filter(Boolean) : [],
+      cfg.groups = groups.map((g): GroupConfig => ({
+        name: String((isRecord(g) && g.name) || '').trim(),
+        members: isRecord(g) && Array.isArray(g.members) ? g.members.map((m) => String(m).trim()).filter(Boolean) : [],
       })).filter((g) => g.name && g.members.length);
       rescanNeeded = true;
     }
@@ -274,12 +326,13 @@ async function main() {
       const repoObj = repos.find((r) => r.name === repo);
       if (!repoObj) return res.status(400).json({ error: `unknown repo '${repo}'` });
       const seed = await sources.seed(cfg, source || 'freetext', { repoPath: repoObj.path, id: sourceId, text, name });
-      const extra = (additionalRepos || [])
-        .map((rn) => repos.find((r) => r.name === rn)).filter(Boolean)
+      const extra = (Array.isArray(additionalRepos) ? additionalRepos : [])
+        .map((rn: unknown) => repos.find((r) => r.name === rn))
+        .filter((r): r is ScannedRepo => !!r)
         .map((r) => ({ repo: r.name, repoPath: r.path }));
       const session = await manager.create({ seed, repoPath: repoObj.path, repoName: repoObj.name, additionalRepos: extra });
       res.json(session);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) { res.status(500).json({ error: msg(e) }); }
   });
 
   api.post('/sessions/:id/rename', async (req, res) => {
@@ -350,8 +403,8 @@ async function main() {
   api.post('/sessions/:id/servers/start', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
-    const toStart = (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo));
-    // Key the slot on the per-worktree feature identity (server/identity.js) — the
+    const toStart = (s.repos || []).filter(promoted).filter((x) => servers.startCfg(x.repo));
+    // Key the slot on the per-worktree feature identity (server/identity.ts) — the
     // one canonical key used everywhere. A session's repos resolve to the same
     // identity → one slot.
     for (const r of toStart) {
@@ -370,7 +423,7 @@ async function main() {
   api.post('/sessions/:id/servers/stop', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
-    const owned = (s.repos || []).filter((x) => x.worktreePath);
+    const owned = (s.repos || []).filter(promoted);
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath)); // whole stack stopped → free the feature's slot
     await refreshRunning();
@@ -392,13 +445,19 @@ async function main() {
     // orphan cleanup: stop each owned worktree's dev servers + release its slot, else a
     // running server is orphaned and its concurrency slot leaks.
     const s = manager.get(req.params.id);
-    const owned = s ? (s.repos || []).filter((r) => r.worktreePath) : [];
+    const owned: PromotedRepo[] = s ? (s.repos || []).filter(promoted) : [];
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
     for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath));
     if (owned.length) { await refreshRunning(); broadcastTopology(); }
     res.json(out);
   });
+
+  // A repo's default branch, or 'main' when the scan cache doesn't know it — the same
+  // fallback server/routes-review.ts uses, and the one git.ts already guarantees for
+  // a repo it HAS scanned. Only a repo absent from the cache reaches the literal.
+  const defaultBranchOf = (name: string): string =>
+    repos.find((r) => r.name === name)?.defaultBranch || 'main';
 
   // ---- review (commits, per-commit diffs & commit) ----
   // The branch's commits per repo (+ an uncommitted summary), and one commit's inline
@@ -409,8 +468,7 @@ async function main() {
     const out = [];
     for (const entry of (s.repos || [])) {
       if (!entry.worktreePath) continue;
-      const repoObj = repos.find((r) => r.name === entry.repo);
-      const def = repoObj && repoObj.defaultBranch;
+      const def = defaultBranchOf(entry.repo);
       const { base, commits } = await review.commits(entry.worktreePath, def);
       const wc = await review.working(entry.worktreePath);
       const uncommitted = {
@@ -426,14 +484,13 @@ async function main() {
   api.get('/sessions/:id/commit-detail', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
-    const entry = (s.repos || []).find((r) => r.repo === req.query.repo);
+    const entry = (s.repos || []).find((r) => r.repo === qs(req.query.repo));
     if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
-    const repoObj = repos.find((r) => r.name === entry.repo);
-    const sha = req.query.sha || 'uncommitted';
-    // Same boundary check as routes-review.js: `sha` reaches a git argv, so it has
-    // to be an object name and not an option (see server/review.js).
+    const sha = qs(req.query.sha) || 'uncommitted';
+    // Same boundary check as routes-review.ts: `sha` reaches a git argv, so it has
+    // to be an object name and not an option (see server/review.ts).
     if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
-    res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, sha));
+    res.json(await review.commitDetail(entry.worktreePath, defaultBranchOf(entry.repo), sha));
   });
 
   api.post('/sessions/:id/commit', async (req, res) => {
@@ -510,7 +567,7 @@ async function main() {
   });
   api.get('/servers/logs', (req, res) => {
     const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
-    res.json(servers.logs(req.query.worktreePath, { offset }));
+    res.json(servers.logs(qs(req.query.worktreePath), { offset }));
   });
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
@@ -559,7 +616,7 @@ async function main() {
   // and self-clearing (activate/restore rewrites the file and sets the flag).
   app.post('/hook/:event', (req, res) => {
     // `?wts=a&wts=b` (or `?wts[x]=y`) hands express an array/object, not a string —
-    // same hazard transcript-routes.js collapses for its query params. Here it made
+    // same hazard transcript-routes.ts collapses for its query params. Here it made
     // the lookup miss and the hook get dropped in silence. Collapse to the first
     // value, which is what a client sending one session id meant.
     const raw = req.query.wts;
@@ -593,8 +650,8 @@ async function main() {
   // any site and a read/write shell in the user's tmux.
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
-    let url;
-    try { url = new URL(req.url, 'http://localhost'); } catch { socket.destroy(); return; }
+    let url: URL;
+    try { url = new URL(req.url || '', 'http://localhost'); } catch { socket.destroy(); return; }
     if (url.pathname !== '/ws/term') { socket.destroy(); return; }
     const deny = guard.denyBrowser(req) || guard.denyToken(req, url.searchParams.get('token'));
     if (deny) {
@@ -610,7 +667,7 @@ async function main() {
   wss.on('connection', createTerminalHandler({ manager }));
 
   // ---- boot ----
-  // Crash policy lives in server/crash.js: fatal by default, with one narrow
+  // Crash policy lives in server/crash.ts: fatal by default, with one narrow
   // exemption for errors confined to an already-dead client socket.
   crash.install();
   // A failed bind has to kill the process. Without this the 'error' event has no

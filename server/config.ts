@@ -62,7 +62,7 @@ function defaults(): ShippedConfig {
     //   sibling  <repo>/../<name>
     //   external <root>/<repo>/<name>           root is required
     worktrees: { layout: 'nested', dir: '.worktrees', root: '' },
-    // What makes two worktrees in different repos "the same feature" (server/identity.js).
+    // What makes two worktrees in different repos "the same feature" (server/identity.ts).
     //   basename  same directory name (the historical convention)
     //   branch    same capture group of `branchPattern` applied to the branch name
     //   manifest  listed together in `groups` below
@@ -74,7 +74,7 @@ function defaults(): ShippedConfig {
     copyPatterns: {
       default: [
         '.env', '.env.local', '.env.*.local', '.env*',
-        'config/*-config.js', 'src/config.js', 'src/config/config.js',
+        'config/*-config.ts', 'src/config.ts', 'src/config/config.ts',
         '.vscode/*.json',
       ],
     },
@@ -144,15 +144,15 @@ const LEGACY_CONCURRENCY = (): ConcurrencyConfig => ({
     // per-port key is wrong — every referenced accept-blue port moves by slot*step).
     'merchant-v3': {
       portEnv: { WTS_FE_PORT: 3030 }, // vite; localhost:1239 (merchant)
-      configPatch: { file: 'src/config.js', siblingRepo: 'accept-blue' },
+      configPatch: { file: 'src/config.ts', siblingRepo: 'accept-blue' },
     },
     'ab-iso-fe': {
       portEnv: { WTS_FE_PORT: 9000 }, // webpack-dev-server; iso 1232 + merchant 1239
-      configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
+      configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' },
     },
     'ab-su': {
       portEnv: { WTS_FE_PORT: 8000 }, // vite; su 1231 + merchant 1239 + iso 1232
-      configPatch: { file: 'src/config/config.js', siblingRepo: 'accept-blue' },
+      configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' },
     },
   },
 });
@@ -290,7 +290,7 @@ function load(): Config {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   // The boot token lives beside the state, not in config.json — config.json is a file
   // the user opens and edits (SwiftBar even has an "Edit config…" item). `_`-prefixed
-  // keys are stripped by save(), so it can ride on cfg and reach sessions.js/status.js
+  // keys are stripped by save(), so it can ride on cfg and reach sessions.ts/status.ts
   // without a second plumbing path.
   cfg._token = security.loadToken(STATE_DIR);
   validateConcurrency(cfg);

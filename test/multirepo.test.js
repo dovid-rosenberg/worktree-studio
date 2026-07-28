@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { SessionManager } from '../server/sessions.js';
+import { SessionManager } from '../server/sessions.ts';
 
 function tempRepo(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wts-${name}-`));

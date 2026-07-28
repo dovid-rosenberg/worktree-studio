@@ -151,12 +151,12 @@ that cannot set a header (`EventSource` and the terminal WebSocket).
   build can never write a token into `build/`.
 
 The dev proxy also rewrites `Host` and `Origin` to the daemon's own address. Without
-that, `server/security.js` refuses every dev request with `403 forbidden host` — the
+that, `server/security.ts` refuses every dev request with `403 forbidden host` — the
 allowlist is keyed to the daemon's bind port, and the dev server is on another one.
 
 ## Serving the build from the daemon — done
 
-This is the UI the daemon serves. `server/webui.js` owns all of it:
+This is the UI the daemon serves. `server/webui.ts` owns all of it:
 
 - `resolve()` picks **one** root — `client/build`, or `public/` when `WTS_UI=legacy` —
   and proves its `index.html` exists. Missing, the daemon refuses to boot and names the
@@ -179,8 +179,8 @@ placeholder appears exactly once in `app.html` and a test pins that, but a singl
 `build/` — Vite only defines one for `serve`.
 
 **The build has to exist before the daemon starts.** `npm install` builds it
-(`postinstall` → `bin/build-client.js`, which installs `client/`'s toolchain first if it
-has to); `npm start` is still a bare `node server/server.js`, with no build step and no
+(`postinstall` → `bin/build-client.ts`, which installs `client/`'s toolchain first if it
+has to); `npm start` is still a bare `node server/server.ts`, with no build step and no
 network. The build does not track edits to `client/src`: rerun `npm run build` from the
 repo root, or use `npm run dev` here.
 
@@ -233,7 +233,7 @@ Changing `sessionId`/`pane`/`tab` retargets in place — the socket is replaced 
 buffer reset, but the xterm instance and its renderer are reused, so the parent does not
 need a `{#key}` wrapper to force a remount.
 
-### Wire protocol (unchanged — see `wss.on('connection')` in `server/server.js`)
+### Wire protocol (unchanged — see `wss.on('connection')` in `server/server.ts`)
 
 ```
 GET /ws/term?session=<id>[&pane=split][&tab=<i>]&cols=<n>&rows=<n>
@@ -274,7 +274,7 @@ its own state and takes no store, so the shell can mount it with one prop. Devel
 
 ### Two layouts, one payload
 
-The daemon returns a structured diff on every file (`f.parsed`, see `server/diff.js`), so
+The daemon returns a structured diff on every file (`f.parsed`, see `server/diff.ts`), so
 neither layout re-parses patch text:
 
 | layout | walks | line numbers |

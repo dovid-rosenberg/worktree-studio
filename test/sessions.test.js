@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { SessionManager } from '../server/sessions.js';
+import { SessionManager } from '../server/sessions.ts';
 import { shq } from '../server/util.ts';
 
 function tempRepo(name) {
@@ -20,7 +20,7 @@ function tempRepo(name) {
 }
 
 // `cfgExtra` lets a test pick a featureIdentity strategy; the manager builds its
-// own resolver from cfg exactly as it does when server.js hands it the shared one.
+// own resolver from cfg exactly as it does when server.ts hands it the shared one.
 function manager(cfgExtra = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-'));
   const cfg = { _stateDir: stateDir, _file: path.join(stateDir, 'config.json'), web: { port: 0 }, claude: { cmd: 'claude' }, baseDirs: [], copyPatterns: {}, ...cfgExtra };
@@ -352,13 +352,13 @@ test('adopt sets home to the worktree launch dir (so resume resolves the convers
 // session.feature is the feature IDENTITY, not the worktree name
 //
 // `POST /group/pr { group: session.feature }` (public/app.js) resolves that value
-// against the feature names state.js computes with server/identity.js. Under
+// against the feature names state.ts computes with server/identity.ts. Under
 // `basename` the identity and the worktree name coincide, which is why storing the
 // name was latent; under `branch`/`manifest` they differ and the lookup 404s.
 // ---------------------------------------------------------------------------
 import { createIdentity } from '../server/identity.ts';
-import tmux from '../server/multiplexer/tmux.js';
-import { computeFeatures } from '../server/features.js';
+import tmux from '../server/multiplexer/tmux.ts';
+import { computeFeatures } from '../server/features.ts';
 
 // Group `fix/4821-payments` and `feat/4821-ui` both onto the ticket number 4821.
 const BY_TICKET = { featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat|feature)/(\\d+)' } };

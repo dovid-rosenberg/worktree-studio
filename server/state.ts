@@ -6,32 +6,86 @@
 // It is assembled from two halves on purpose. `topology()` is the slow-moving
 // shape (repos → worktrees → features) and `sessionState()` is the live
 // per-session slice. The SSE stream broadcasts them as two named event types at
-// their own rates (server/broadcast.js) — the session half on every Claude hook,
+// their own rates (server/broadcast.ts) — the session half on every Claude hook,
 // the topology half only when the shape actually changes. buildState() merges
 // them for the callers that want the whole world at once: GET /state, SwiftBar,
 // Alfred, resolveGroup.
-import { computeFeatures } from './features.js';
+import { computeFeatures } from './features.ts';
+import type { ComputedFeature } from './features.ts';
 import { createRealpathCache } from './util.ts';
 import * as sources from './sources/index.ts';
+import type { SessionManager } from './sessions.ts';
+import type { Servers, RunningServer } from './servers.ts';
+import type { Identity } from './identity.ts';
+import type { ScannedRepo } from './git.ts';
+import type {
+  Config, EmbeddedSession, Feature, FeatureMember, PartialDeep, ResolvedFeature,
+  SessionServers, SessionStatePayload, StatePayload, TopologyPayload, Worktree,
+} from './types.ts';
+
+// Drop the undefined-valued keys from a dictionary read off a PartialDeep config.
+//
+// `PartialDeep` maps `?` over every key, and for a `Record<string, V>` that means
+// the index signature itself becomes `V | undefined` — so a dictionary read off a
+// config is not directly assignable to the payload's `Record<string, V>`. This is
+// what the payload actually puts on the wire either way: JSON.stringify omits an
+// undefined value, so filtering here is the shape the client already receives,
+// stated rather than asserted.
+function definedValues<V>(dict: Record<string, V | undefined> | undefined): Record<string, V> {
+  const out: Record<string, V> = {};
+  for (const [k, v] of Object.entries(dict || {})) if (v !== undefined) out[k] = v;
+  return out;
+}
+
+/** The multiplexer, typed by the one member the payload reads. */
+export interface StateMux {
+  name: string;
+}
+
+/**
+ * A row `conflictsFor()` can judge. `running` is OPTIONAL because the callers that
+ * hand it a list do not all promise the field: server/orchestrator.ts types its
+ * members by what its own routes read, and an absent `running` is simply not
+ * running — which is what the truthiness test below already meant.
+ */
+export interface ConflictCandidate {
+  repo: string;
+  path: string;
+  running?: boolean;
+}
+
+export interface StateDeps {
+  /** Only a handful of keys are read, each with a fallback. */
+  cfg: PartialDeep<Config>;
+  manager: SessionManager;
+  servers: Servers;
+  /** null when no multiplexer was found — the payload reports 'none'. */
+  mux: StateMux | null;
+  /** The repo scan cache, re-read per call. */
+  repos: () => ScannedRepo[];
+  /** The lsof discovery map, re-read per call. */
+  running: () => Map<string, RunningServer>;
+  /**
+   * Defaults to `servers.identity` — the two must agree, so sharing one resolver
+   * is the point.
+   */
+  identity?: Identity | null;
+}
+
+export interface State {
+  buildState(): Promise<StatePayload>;
+  topology(): TopologyPayload;
+  sessionState(): SessionStatePayload;
+  prunePaths(): void;
+  resolveGroup(name: string): Promise<{ group: ResolvedFeature | null; flat: Worktree[] }>;
+  conflictsFor<W extends ConflictCandidate>(member: Pick<Worktree, 'repo' | 'path'>, flat: W[]): W[];
+}
 
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference
 // would go stale the first time either one is rescanned.
-/**
- * @param {object} deps
- * @param {import('./types.ts').PartialDeep<import('./types.ts').Config>} deps.cfg
- *                                      only a handful of keys are read, each with
- *                                      a fallback
- * @param {any} deps.manager
- * @param {any} deps.servers
- * @param {any} deps.mux
- * @param {() => any[]} deps.repos      the repo scan cache, re-read per call
- * @param {() => any} deps.running      the lsof discovery map, re-read per call
- * @param {any} [deps.identity]         defaults to servers.identity — the two must
- *                                      agree, so sharing one resolver is the point
- */
-function createState({ cfg, manager, servers, mux, repos, running, identity }) {
-  // The feature-identity resolver is shared with servers.js on purpose: the
+function createState({ cfg, manager, servers, mux, repos, running, identity }: StateDeps): State {
+  // The feature-identity resolver is shared with servers.ts on purpose: the
   // grouping below and the concurrency slot key must be the same answer.
   const ident = identity || servers.identity;
   // Both halves compare worktree paths that reach us from three different sources
@@ -39,26 +93,32 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
   // symlinks first. One cache serves both halves; prunePaths() invalidates it.
   const paths = createRealpathCache();
 
-  function baseDirOf(repoPath) {
+  function baseDirOf(repoPath: string): string {
     return (cfg.baseDirs || []).find((b) => repoPath.startsWith(b)) || '';
+  }
+
+  // A member that is on disk AND driven by a session. A manual group can name a
+  // worktree that has since been removed, and those arrive as { missing, ref }
+  // stubs with no `session` to read at all.
+  function hasSession(m: FeatureMember): m is Worktree & { session: EmbeddedSession } {
+    return !!m && !m.missing && !!m.session;
   }
 
   // Repos, their worktrees (decorated with server + session), the features/groups
   // those worktrees roll up into, and the config a client renders its chrome from.
-  /** @returns {import('./types.ts').TopologyPayload} */
-  function topology() {
+  function topology(): TopologyPayload {
     const active = running();
     // One pass over the sessions, then a map lookup per worktree — not a scan of
     // every session per worktree.
     const sessionsByPath = manager.sessionIndex(paths.resolve);
-    const reposOut = [];
-    const flat = [];
+    const reposOut: TopologyPayload['repos'] = [];
+    const flat: Worktree[] = [];
     for (const repo of repos()) {
-      const wts = [];
+      const wts: Worktree[] = [];
       for (const w of repo.worktrees) {
         const dec = servers.decorate({ path: w.path, repo: repo.name }, active);
         const sess = w.isMain ? null : (sessionsByPath.get(paths.resolve(w.path)) || null);
-        const wt = {
+        const wt: Worktree = {
           repo: repo.name, wtname: w.name, branch: w.branch, path: w.path,
           isMain: w.isMain, detached: w.detached, merged: w.merged,
           baseBranch: repo.defaultBranch, baseDir: baseDirOf(repo.path),
@@ -73,35 +133,40 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
     const { features, groups } = computeFeatures(flat, cfg.groups || [], ident);
     // one session per feature: surface the single driving session on the feature,
     // plus its concurrency slot (0,1,2…) when one is allocated — powers the Fleet badge.
-    for (const f of [...features, ...groups]) {
-      const m = (f.members || []).find((x) => x && x.session);
-      f.session = m ? m.session : null;
-      if (servers.slots.has(f.name)) f.slot = servers.slots.get(f.name);
-    }
+    // computeFeatures() deliberately returns `ComputedFeature` (a Feature minus
+    // `session`) — attaching it is this function's job, and the split is what keeps
+    // features.ts unaware of sessions.
+    const withSession = (f: ComputedFeature): Feature => {
+      const m = (f.members || []).find(hasSession);
+      const out: Feature = { ...f, session: m ? m.session : null };
+      const slot = servers.slots.get(f.name);
+      if (slot !== undefined) out.slot = slot;
+      return out;
+    };
     return {
       mux: mux ? mux.name : 'none',
-      config: { port: cfg.web.port, configFile: cfg._file },
+      config: { port: cfg.web?.port ?? 0, configFile: cfg._file || '' },
       runningTotal: flat.filter((w) => w.running).length,
-      baseDirs: cfg.baseDirs,
+      baseDirs: cfg.baseDirs || [],
       editors: Object.keys(cfg.editors || {}),
-      defaultEditor: cfg.defaultEditor,
+      defaultEditor: cfg.defaultEditor || '',
       webRepos: cfg.webRepos || [],
-      runConfigs: cfg.runConfigs || {},
+      runConfigs: definedValues(cfg.runConfigs),
       sources: sources.enabled(cfg),
       repos: reposOut,
-      features, groups,
+      features: features.map(withSession),
+      groups: groups.map(withSession),
     };
   }
 
   // The sessions plus, per session, the dev-server state of every repo it owns
   // (its shared workspace) — the half that changes on every Claude hook.
-  /** @returns {import('./types.ts').SessionStatePayload} */
-  function sessionState() {
+  function sessionState(): SessionStatePayload {
     const active = running();
     const sessions = manager.all();
-    const serversById = {};
+    const serversById: SessionServers = {};
     for (const s of sessions) {
-      const owned = (s.repos || []).filter((r) => r.worktreePath);
+      const owned = (s.repos || []).filter((r): r is typeof r & { worktreePath: string } => !!r.worktreePath);
       const list = owned.length ? owned : (s.worktreePath ? [{ repo: s.repoName, worktreePath: s.worktreePath }] : []);
       if (list.length) {
         serversById[s.id] = {
@@ -117,8 +182,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
 
   // Superset of worktree-dash's contract. Async because every caller awaits it and
   // the halves may need to do I/O later.
-  /** @returns {Promise<import('./types.ts').StatePayload>} */
-  async function buildState() {
+  async function buildState(): Promise<StatePayload> {
     return { ...topology(), ...sessionState() };
   }
 
@@ -126,29 +190,21 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
   // on which worktrees exist and the session list on which paths are driven, so a
   // path that neither still names is exactly the signal a cached resolution needs:
   // a worktree removed now and recreated later must not resolve through its old
-  // entry. server.js calls this after every rescan — the 15 s timer and every
+  // entry. server.ts calls this after every rescan — the 15 s timer and every
   // worktree mutation — so invalidation happens whether or not anyone is
   // listening on SSE, and never depends on who asked for a path recently.
-  function prunePaths() {
-    const live = new Set(manager.sessionIndex((p) => p).keys()); // raw, unresolved
+  function prunePaths(): void {
+    const live = new Set<string>(manager.sessionIndex((p: string) => p).keys()); // raw, unresolved
     for (const repo of repos()) for (const w of repo.worktrees) live.add(w.path);
     paths.retain(live);
   }
 
   // A member that is really on disk. A manual group can name a worktree that has
   // since been removed, and those arrive as { missing, ref } stubs.
-  /**
-   * @param {import('./types.ts').FeatureMember} m
-   * @returns {m is import('./types.ts').Worktree}
-   */
-  function present(m) { return !!m && !m.missing; }
+  function present(m: FeatureMember): m is Worktree { return !!m && !m.missing; }
 
   // Resolve a feature/group by name from current state; drop missing members.
-  /**
-   * @param {string} name
-   * @returns {Promise<{ group: import('./types.ts').ResolvedFeature|null, flat: import('./types.ts').Worktree[] }>}
-   */
-  async function resolveGroup(name) {
+  async function resolveGroup(name: string): Promise<{ group: ResolvedFeature | null; flat: Worktree[] }> {
     const st = await buildState();
     const g = (st.features || []).find((x) => x.name === name) || (st.groups || []).find((x) => x.name === name);
     if (!g) return { group: null, flat: [] };
@@ -159,13 +215,8 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }) {
   // running worktrees in the same repo at a different path (must stop to switch) —
   // but a concurrency-slotted repo runs on its own offset ports per feature, so
   // running it in another worktree is NOT a conflict (no stop & switch needed).
-  /**
-   * @template {Pick<import('./types.ts').Worktree, 'repo'|'path'|'running'>} W
-   * @param {Pick<import('./types.ts').Worktree, 'repo'|'path'>} member
-   * @param {W[]} flat  every worktree in every repo
-   * @returns {W[]}
-   */
-  function conflictsFor(member, flat) {
+  /** @param flat  every worktree in every repo */
+  function conflictsFor<W extends ConflictCandidate>(member: Pick<Worktree, 'repo' | 'path'>, flat: W[]): W[] {
     if (servers.isSlotted(member.repo)) return [];
     return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);
   }

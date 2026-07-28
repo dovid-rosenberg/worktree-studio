@@ -3,11 +3,80 @@
 // client. Runs on a dedicated socket with a chrome-free config (no status bar,
 // no borders) so the embedded terminal reads native.
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { run } from '../util.ts';
-import { CONFIG_DIR } from '../config.js';
+import type { RunResult } from '../util.ts';
+import { CONFIG_DIR } from '../config.ts';
+
+/** The command `attachSpawn` hands back for node-pty to run. */
+export interface AttachSpec {
+  file: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+}
+
+export interface TmuxLaunchOptions {
+  cwd?: string;
+  cmd?: string;
+  env?: Record<string, string>;
+}
+
+export interface TmuxEnsureResult {
+  created: boolean;
+  error?: string;
+}
+
+export interface TmuxNewTabOptions {
+  title?: string;
+  cwd?: string;
+  cmd?: string;
+}
+
+export interface TmuxNewTabResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** One tmux window, as `listTabs()` reports it. */
+export interface TmuxTab {
+  id: string;
+  title: string;
+  active: boolean;
+}
+
+/**
+ * The driver's full surface. Consumers deliberately declare narrower shapes —
+ * `SessionMux` in server/sessions.ts, `TerminalMux` in server/term.ts — so a test
+ * double stands in for only what its consumer calls; this interface is what those
+ * get checked against, and what gives `this` a type inside the object literal.
+ */
+export interface TmuxDriver {
+  name: string;
+  env: NodeJS.ProcessEnv;
+  available(): Promise<boolean>;
+  hasSession(name: string): Promise<boolean>;
+  ensure(name: string, opts?: TmuxLaunchOptions): Promise<TmuxEnsureResult>;
+  attachSpawn(name: string, opts?: { popout?: boolean; group?: string }): AttachSpec;
+  ensureSplit(name: string, opts?: { cwd?: string }): Promise<void>;
+  newTab(name: string, opts?: TmuxNewTabOptions): Promise<TmuxNewTabResult>;
+  listTabs(name: string): Promise<TmuxTab[]>;
+  capture(name: string, target?: string): Promise<string>;
+  sendText(name: string, text: string, target?: string): Promise<RunResult>;
+  paneCommand(name: string, target?: string): Promise<string>;
+  selectTab(name: string, id: string | number): Promise<boolean>;
+  closeTab(name: string, id: string | number): Promise<boolean>;
+  rename(oldName: string, newName: string): Promise<boolean>;
+  kill(name: string): Promise<boolean>;
+  popoutCommand(name: string): string;
+}
 
 const SOCK = 'wt-studio';
+// tmux's `-c` needs a real directory. `process.env.HOME` is the spelling this has
+// always used, but it is `string | undefined`; os.homedir() falls back to the passwd
+// entry, so an unset HOME degrades to the user's actual home instead of handing
+// execFile an undefined arg.
+const HOME = process.env.HOME || os.homedir();
 // CONFIG_DIR, not a second hand-rolled ~/.config/worktree-studio: that spelling
 // ignored WT_STUDIO_CONFIG_DIR, so setting the env var moved config.json and left
 // tmux.conf behind in the default location.
@@ -32,15 +101,15 @@ const CONF = path.join(CONFIG_DIR, 'tmux.conf');
   } catch { /* */ }
 })();
 
-const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
-function T(args) { return run('tmux', ['-L', SOCK, '-f', CONF, ...args], { env: ENV }); }
+const ENV: NodeJS.ProcessEnv = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+function T(args: string[]): Promise<RunResult> { return run('tmux', ['-L', SOCK, '-f', CONF, ...args], { env: ENV }); }
 
 // Wrap a command so the pane survives the command exiting (drops to a shell).
-function persistCmd(cmd) {
+function persistCmd(cmd?: string): string {
   return cmd ? `${cmd}; exec ${process.env.SHELL || '/bin/bash'} -l` : `${process.env.SHELL || '/bin/bash'} -l`;
 }
 
-export default {
+const tmux: TmuxDriver = {
   name: 'tmux',
   env: ENV,
 
@@ -50,15 +119,14 @@ export default {
     return (await T(['has-session', '-t', `=${name}`])).code === 0;
   },
 
-  /** @param {string} name @param {{ cwd?: string, cmd?: string, env?: Record<string, any> }} [opts] */
   async ensure(name, { cwd, cmd, env } = {}) {
     if (await this.hasSession(name)) return { created: false };
     // Pass env in new-session itself (-e KEY=VAL, tmux ≥3.2) so window 0's shell —
     // and the claude launched into it — inherits it. set-environment AFTER new-session
     // is too late: window 0 already spawned without the vars.
-    const envArgs = [];
+    const envArgs: string[] = [];
     if (env) for (const [k, v] of Object.entries(env)) envArgs.push('-e', `${k}=${String(v)}`);
-    const r = await T(['new-session', '-d', '-s', name, '-n', 'claude', '-x', '220', '-y', '50', '-c', cwd || process.env.HOME, ...envArgs]);
+    const r = await T(['new-session', '-d', '-s', name, '-n', 'claude', '-x', '220', '-y', '50', '-c', cwd || HOME, ...envArgs]);
     if (r.code !== 0) return { created: false, error: r.stderr.trim() };
     await T(['set-option', '-t', name, 'remain-on-exit', 'off']);
     await T(['send-keys', '-t', `${name}:0`, '--', persistCmd(cmd), 'Enter']);
@@ -73,7 +141,6 @@ export default {
   //    "another terminal" in the same worktree, with its own independent tabs, so
   //    nothing mirrors the primary. Call ensureSplit(name, {cwd}) first.
   //  - default: attach the embedded primary client to the session.
-  /** @param {string} name @param {{ popout?: boolean, group?: string }} [opts] */
   attachSpawn(name, { popout = false, group } = {}) {
     const base = ['-L', SOCK];
     if (popout) {
@@ -88,16 +155,14 @@ export default {
   // Ensure the standalone `-split` session exists with its own shell window. It is
   // independent of the primary (not grouped): its own tabs, no shared windows. Tab
   // ops (newTab/selectTab/closeTab/listTabs) target `${name}-split` and just work.
-  /** @param {string} name @param {{ cwd?: string }} [opts] */
   async ensureSplit(name, { cwd } = {}) {
     if (await this.hasSession(`${name}-split`)) return;
-    await T(['new-session', '-d', '-s', `${name}-split`, '-n', 'shell', '-x', '220', '-y', '50', '-c', cwd || process.env.HOME]);
+    await T(['new-session', '-d', '-s', `${name}-split`, '-n', 'shell', '-x', '220', '-y', '50', '-c', cwd || HOME]);
     await T(['set-option', '-t', `${name}-split`, 'remain-on-exit', 'off']);
   },
 
-  /** @param {string} name @param {{ title?: string, cwd?: string, cmd?: string }} [opts] */
   async newTab(name, { title, cwd, cmd } = {}) {
-    const r = await T(['new-window', '-t', name, '-n', title || 'shell', '-c', cwd || process.env.HOME]);
+    const r = await T(['new-window', '-t', name, '-n', title || 'shell', '-c', cwd || HOME]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() };
     // new-window selects the new window → send the command to the session's active window
     if (cmd) await T(['send-keys', '-t', name, '--', persistCmd(cmd), 'Enter']);
@@ -158,3 +223,5 @@ export default {
     return `tmux -L ${SOCK} new-session -A -s ${name}-popout -t ${name}`;
   },
 };
+
+export default tmux;

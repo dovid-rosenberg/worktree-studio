@@ -1,6 +1,6 @@
 // Native replacement for the `wt` script — baked in so the app owns worktree
 // creation end to end. Creates the worktree off the repo's default branch at
-// whatever path server/layout.js says (default `<repo>/.worktrees/<name>`) and
+// whatever path server/layout.ts says (default `<repo>/.worktrees/<name>`) and
 // copies in the bits a plain `git worktree add` drops: editor scratch files
 // (`copyAlways`, e.g. JetBrains run configs) plus the gitignored local config
 // and .env files (`copyPatterns`).
@@ -29,7 +29,7 @@ export interface WorktreeCreateOptions extends Partial<WorktreeCopyOpts> {
   /** false skips the pre-add fetch */
   fetch?: boolean;
   fetchTimeoutMs?: number;
-  /** a server/layout.js descriptor; defaults to nested `.worktrees` */
+  /** a server/layout.ts descriptor; defaults to nested `.worktrees` */
   layout?: ResolvedLayout;
 }
 
@@ -65,7 +65,7 @@ export type WorktreeRemoveResult =
   | { ok: true; branchDeleted: boolean }
   | { ok: false; error: string };
 
-// Expand a shell-style pattern (e.g. "config/*-config.js", ".env.*.local")
+// Expand a shell-style pattern (e.g. "config/*-config.ts", ".env.*.local")
 // relative to base. Supports `*` (any chars within one path segment). Segments
 // are matched literally when they contain no `*`.
 function expandPattern(base: string, pattern: string): string[] {

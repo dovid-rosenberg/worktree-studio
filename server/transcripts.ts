@@ -463,7 +463,7 @@ export interface SearchHit {
 }
 
 // Case-insensitive substring search straight off the file. The sqlite/FTS5 index in
-// transcript-index.js is the fast path; this exists so search still works before a
+// transcript-index.ts is the fast path; this exists so search still works before a
 // session has been indexed (and so the reader is testable without sqlite).
 async function search(file: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
   const q = String(opts.query || '').toLowerCase();

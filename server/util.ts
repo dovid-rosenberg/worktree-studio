@@ -24,7 +24,7 @@ function expandTilde(p: string): string {
 // It has to be execFile's own `timeout`, which KILLS the child; a promise-level
 // race would resolve the caller and leave the process wedged forever. This is the
 // last line of defence — the network-bound callers set their own, tighter, bound
-// (see server/forge.js and server/worktree.js).
+// (see server/forge.ts and server/worktree.ts).
 const DEFAULT_TIMEOUT_MS = 120000;
 
 /** What every shell-out in the app hands back. Non-zero exit is data, not an error. */
@@ -189,9 +189,9 @@ function shq(s: unknown): string {
 
 // There used to be an `A(fn, tag)` wrapper here that every route handler was passed
 // through, because express@4 does not await a handler — a rejected promise became an
-// unhandled rejection rather than a 500, and since server/crash.js makes those fatal,
+// unhandled rejection rather than a 500, and since server/crash.ts makes those fatal,
 // one handler somebody forgot to wrap would kill the daemon. express@5 forwards a
 // rejection to the error middleware itself, so the wrapper is gone and the policy it
-// enforced lives in exactly one place: crash.routeErrors(), mounted last in server.js.
+// enforced lives in exactly one place: crash.routeErrors(), mounted last in server.ts.
 
 export { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, DEFAULT_TIMEOUT_MS };

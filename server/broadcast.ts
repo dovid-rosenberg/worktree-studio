@@ -1,5 +1,5 @@
 // The SSE fan-out. One stream, three named event types, because the state payload
-// (server/state.js, docs/api.md) has three very different change rates:
+// (server/state.ts, docs/api.md) has three very different change rates:
 //
 //   topology       repos → worktrees → features/groups, plus the config a client
 //                  renders its chrome from. Changes when git is rescanned (15 s),
@@ -8,7 +8,7 @@
 //   session-state  { sessions, servers } — the half a Claude Code hook touches.
 //                  Every tool call in every session lands here, so it has to stay
 //                  small: it is the only thing most broadcasts send.
-//   ci             { ci } — each session's PR/MR + checks (server/ci.js). Its own
+//   ci             { ci } — each session's PR/MR + checks (server/ci.ts). Its own
 //                  event precisely BECAUSE session-state is the hook half: CI moves
 //                  on the order of minutes, so riding along with every tool call
 //                  would re-send an unchanged payload thousands of times. It is
@@ -87,7 +87,7 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }: Broadc
   // Coalesce a burst into one flush. `topology: true` marks the slow half dirty
   // too — hook traffic must NOT pass it, which is the whole point of the split:
   // a tool call should never trigger a rebuild of every repo's worktree list.
-  // `ci: true` is the same deal for the CI half, raised only by server/ci.js when
+  // `ci: true` is the same deal for the CI half, raised only by server/ci.ts when
   // a sweep found something different.
   function schedule({ topology: withTopology = false, ci: withCi = false }: BroadcastDirty = {}) {
     if (withTopology) topologyPending = true;

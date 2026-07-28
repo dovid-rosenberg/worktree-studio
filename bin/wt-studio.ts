@@ -7,6 +7,13 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 
+/** The slice of POST /sessions/:id/add-repo's answer this CLI prints. */
+interface AddRepoResponse {
+  ok?: boolean;
+  error?: string;
+  worktree?: { path: string };
+}
+
 const [, , cmd, ...args] = process.argv;
 
 if (cmd === 'add-repo') {
@@ -27,11 +34,13 @@ if (cmd === 'add-repo') {
   fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/add-repo`, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-wts-token': token }, body,
   }).then(async (r) => {
-    const data = /** @type {any} */ (await r.json().catch(() => ({})));
+    const data = await r.json().catch(() => ({})) as AddRepoResponse;
     if (!r.ok || data.ok === false) { console.error(`add-repo failed: ${data.error || r.statusText}`); process.exit(1); }
     const wt = data.worktree ? data.worktree.path : '(already added)';
     console.log(`Added ${repo} to this feature → ${wt}\nYou now have access to it (via /add-dir). Do that repo's changes in the worktree above.`);
-  }).catch((e) => { console.error(`add-repo error: ${e.message}`); process.exit(1); });
+  }).catch((e: unknown) => { console.error(`add-repo error: ${e instanceof Error ? e.message : e}`); process.exit(1); });
 } else {
-  await import('../server/server.js');
+  // A dynamic import, not a static one: this branch is the ONLY thing that may boot
+  // the daemon, and a static import at the top would run main() for `add-repo` too.
+  await import('../server/server.ts');
 }

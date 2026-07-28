@@ -1,7 +1,7 @@
 // PR/CI status as pushed state.
 //
 // It used to be polled twice over. The browser re-fetched GET /sessions/:id/ci
-// every 30 s for whichever session happened to be selected, and server/forge.js
+// every 30 s for whichever session happened to be selected, and server/forge.ts
 // cached each gh/glab lookup for 20 s so that polling could not hammer the CLIs —
 // two layers of polling compensating for each other, both running whether or not
 // the answer had changed, and neither able to tell the user anything sooner than
@@ -29,7 +29,7 @@
 // subscribe — they poll /state and, for CI, ask GET /sessions/:id/ci directly and
 // get an on-demand answer — so counting their polls as attention would spawn `gh`
 // for an audience that will never receive the result. That is exactly
-// watch.js's attention({ streams }) with its poll arm left dormant (`seen()` is
+// watch.ts's attention({ streams }) with its poll arm left dormant (`seen()` is
 // never called), which is what this uses: one helper, one meaning of "someone is
 // looking", two different definitions of "someone".
 //

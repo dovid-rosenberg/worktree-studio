@@ -9,8 +9,8 @@
 //
 // Two callers derive identity, and they MUST agree or a feature grouped one way
 // and slotted another would collide on ports:
-//   - features.js computeFeatures() groups worktree OBJECTS (it has repo/branch/wtname)
-//   - servers.js/orchestrator.js key a concurrency slot from a PATH alone
+//   - features.ts computeFeatures() groups worktree OBJECTS (it has repo/branch/wtname)
+//   - servers.ts/orchestrator.ts key a concurrency slot from a PATH alone
 // Both go through one resolver here. `of(worktree)` is the real implementation;
 // `ofPath(path)` looks the path up in an index fed from the repo scan and calls
 // `of` with the worktree it found — so the path form is the object form, not a
@@ -67,7 +67,7 @@ export interface IdentityScanRepo {
 export type BranchMatcher = { re: RegExp; error?: undefined } | { re?: undefined; error: string };
 
 /**
- * The resolver `createIdentity` returns. state.js, servers.js and sessions.js all
+ * The resolver `createIdentity` returns. state.ts, servers.ts and sessions.ts all
  * hold one; this is the whole of what they may call.
  */
 export interface Identity {
@@ -199,7 +199,7 @@ function createIdentity(cfg: PartialDeep<Config> = {}): Identity {
   // path → { repo, wtname, branch }, fed from the repo scan. Only built for the
   // strategies that need more than the path itself, so the default costs nothing.
   const index = new Map<string, IdentityInput>();
-  // The shared memo (util.js), not a local Map. Its rules are exactly the ones this
+  // The shared memo (util.ts), not a local Map. Its rules are exactly the ones this
   // index needs and the hand-rolled version got wrong: a FAILED resolution is never
   // cached, and entries are retained against the caller's live path list.
   // Caching the fallback was a real bug — a worktree indexed before its symlink
@@ -247,7 +247,7 @@ function createIdentity(cfg: PartialDeep<Config> = {}): Identity {
     return layoutMod.nameFromPath(layout, p);
   }
 
-  // Feed the index from a git scan (server/git.js `scan()` output: repos, each
+  // Feed the index from a git scan (server/git.ts `scan()` output: repos, each
   // with .name and .worktrees[{ path, name, branch }]). Called after every rescan
   // so a worktree created, renamed or removed since boot resolves correctly.
   // A no-op under `basename`, which never consults the index.

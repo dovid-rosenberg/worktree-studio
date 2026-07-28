@@ -1,12 +1,12 @@
 // Feature/group orchestration: the "run the whole stack" verbs the Fleet rail,
 // SwiftBar and Alfred drive. A feature is a set of same-named worktrees across
-// repos (see features.js); these routes act on all of its members at once —
+// repos (see features.ts); these routes act on all of its members at once —
 // start / stop / restart the dev servers, open them in an editor, close or delete
 // the feature, and start the one session that drives it.
 //
 // Two things every verb here has to get right:
 //   - concurrency slots: a slot is keyed on the member's OWN feature identity
-//     (servers.featureFor → server/identity.js, the same resolver features.js
+//     (servers.featureFor → server/identity.ts, the same resolver features.ts
 //     groups with), allocated before any launch and released once the whole stack
 //     is down, so a leaked slot never blocks the next feature.
 //   - conflicts: another worktree of the same repo already running, which has to be
@@ -16,9 +16,9 @@ import * as worktree from './worktree.ts';
 import { run, shq } from './util.ts';
 
 // The collaborators below are typed by the surface these routes touch, not by the
-// concrete objects server.js hands over — the same rule server/routes-review.ts
+// concrete objects server.ts hands over — the same rule server/routes-review.ts
 // follows. It is what lets test/api-routing.test.js drive every verb with a recording
-// fake, and it is also the only option while server/state.js is still untyped.
+// fake, and it is also the only option while server/state.ts is still untyped.
 
 /**
  * One worktree row: a member of the resolved feature, or an entry in the flat list
@@ -79,8 +79,11 @@ interface OrchestratorDeps {
   servers: Servers;
   manager: Manager;
   repos: () => RepoRef[];
-  /** `name` is untrusted — it arrives straight off the wire and is only compared. */
-  resolveGroup: (name: unknown) => Promise<{ group: ResolvedGroup | null; flat: Member[] }>;
+  /**
+   * `name` arrives straight off the wire, so every call site coerces it with
+   * String() first — the resolver only ever compares it against a feature name.
+   */
+  resolveGroup: (name: string) => Promise<{ group: ResolvedGroup | null; flat: Member[] }>;
   conflictsFor: (member: Member, flat: Member[]) => Member[];
   refreshRunning: () => Promise<unknown>;
   scheduleBroadcast: () => void;
@@ -98,13 +101,13 @@ interface GroupBody {
   deleteBranches?: unknown;
 }
 
-// `app` here is the API router — server.js mounts it at both /api and /api/v1.
+// `app` here is the API router — server.ts mounts it at both /api and /api/v1.
 function register(app: Router, deps: OrchestratorDeps): void {
   const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast, rescan } = deps;
 
   app.post('/group/start', async (req, res) => {
     const { group, stopConflicts }: GroupBody = req.body || {};
-    const { group: g, flat } = await resolveGroup(group);
+    const { group: g, flat } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const toStart = g.members.filter((m) => !m.running && m.canStart);
     const conflicts: Member[] = [];
@@ -143,7 +146,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/stop', async (req, res) => {
     const { group }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(group);
+    const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
     for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
@@ -154,7 +157,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/restart', async (req, res) => {
     const { group }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(group);
+    const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const toRestart = g.members.filter((m) => m.running || m.canStart);
     for (const m of toRestart) {
@@ -169,7 +172,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/open', async (req, res) => {
     const { group, editor }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(group);
+    const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     // String(): `editor` is whatever the body carried — it can be an array, an object,
     // a number. A property access coerces the key exactly this way already, so naming
@@ -188,7 +191,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
   app.post('/group/close', async (req, res) => {
-    const { group: g } = await resolveGroup(req.body && req.body.group);
+    const { group: g } = await resolveGroup(String((req.body && req.body.group) ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     for (const m of g.members) {
       if (m.running) await servers.stop(m.repo, m.path);
@@ -202,7 +205,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
   // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
   app.post('/group/delete', async (req, res) => {
     const { group, deleteBranches }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(group);
+    const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const results: Array<{ repo: string; ok: boolean; error?: string }> = [];
     for (const m of g.members) {
@@ -221,7 +224,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
   app.post('/group/session', async (req, res) => {
-    const { group: g } = await resolveGroup(req.body && req.body.group);
+    const { group: g } = await resolveGroup(String((req.body && req.body.group) ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const members = g.members;
     if (!members.length) return res.status(400).json({ error: 'feature has no members' });

@@ -159,7 +159,7 @@ function routeErrors({ log = console.error }: Pick<Io, 'log'> = {}) {
     // it to express's default handler, which destroys the socket instead.
     if (res.headersSent) return next(err);
     // originalUrl, not url, and without the query string — same reasons as
-    // security.js's refusal log: the query carries the boot token.
+    // security.ts's refusal log: the query carries the boot token.
     const where = `${req.method} ${String(req.originalUrl || req.url || '').split('?')[0]}`;
     log(`[wt-studio] ${where}`, err);
     // A body parser refusing a malformed or oversized body sets its own status, and

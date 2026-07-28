@@ -137,7 +137,7 @@ The concurrency slot key often has nothing but a path. They used to derive it
 separately, so a feature could be grouped one way and slotted another — two
 worktrees of one feature getting two slots, and their dev servers colliding.
 
-`server/identity.js` is now the only answer. `of(worktree)` is the
+`server/identity.ts` is now the only answer. `of(worktree)` is the
 implementation; `ofPath(path)` looks the path up in an index rebuilt from every
 repo scan and calls `of()` with the worktree it finds. The path form *is* the
 object form. On an index miss it degrades to the layout name — exactly what the

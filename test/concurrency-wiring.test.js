@@ -1,17 +1,17 @@
 // Integration wiring for running 2–3 features concurrently, on the `Servers` class:
 // the slot registry (allocSlotFor/releaseSlot), the derived launch env/ports/patch
 // descriptor (launchOpts), and the on-disk FE-config rewrite (applyConfigPatch).
-// The pure helpers in concurrency.js are covered separately in concurrency.test.js;
+// The pure helpers in concurrency.ts are covered separately in concurrency.test.js;
 // here we exercise how Servers wires them together. No child processes are spawned.
 import { test } from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Servers, featureFromPath } from '../server/servers.js';
-import { validateConcurrency } from '../server/config.js';
+import { Servers, featureFromPath } from '../server/servers.ts';
+import { validateConcurrency } from '../server/config.ts';
 
-// accept-blue's real port map + FE configPatch wiring — mirrors config.js defaults.
+// accept-blue's real port map + FE configPatch wiring — mirrors config.ts defaults.
 const AB_PORT_ENV = {
   api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999,
 };
@@ -24,7 +24,7 @@ function concurrency(overrides = {}) {
       'accept-blue': { portEnv: { ...AB_PORT_ENV }, slotEnv: ['redis__db'] },
       'merchant-v3': {
         portEnv: { WTS_FE_PORT: 3030 },
-        configPatch: { file: 'src/config.js', siblingRepo: 'accept-blue' },
+        configPatch: { file: 'src/config.ts', siblingRepo: 'accept-blue' },
       },
     },
     ...overrides,
@@ -146,7 +146,7 @@ test('launchOpts for a repo with a configPatch returns a patch descriptor resolv
   s.allocSlotFor('feat-a'); // 0
   s.allocSlotFor('feat-b'); // 1
   const opts = s.launchOpts('merchant-v3', 'feat-b'); // slot 1
-  assert.equal(opts.patch.file, 'src/config.js');
+  assert.equal(opts.patch.file, 'src/config.ts');
   assert.deepEqual(opts.patch.siblingPortEnv, AB_PORT_ENV, "resolves to accept-blue's portEnv");
   assert.equal(opts.patch.slot, 1, "patch slot matches the feature's slot");
   // its own env is the FE port shifted by its slot
@@ -178,8 +178,8 @@ const FE_CONFIG = [
 
 test('applyConfigPatch at slot 2 rewrites every sibling localhost:port +200 and leaves other text untouched', () => {
   const s = servers();
-  const { dir, file } = worktreeWithConfig('src/config.js', FE_CONFIG);
-  s.applyConfigPatch(dir, { file: 'src/config.js', siblingPortEnv: AB_PORT_ENV, slot: 2 });
+  const { dir, file } = worktreeWithConfig('src/config.ts', FE_CONFIG);
+  s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 });
   const expected = [
     "export default {",
     "  suURL: 'http://localhost:1431/su/api/v1',",
@@ -194,15 +194,15 @@ test('applyConfigPatch at slot 2 rewrites every sibling localhost:port +200 and 
 
 test('applyConfigPatch at slot 0 leaves the file byte-for-byte unchanged', () => {
   const s = servers();
-  const { dir, file } = worktreeWithConfig('src/config.js', FE_CONFIG);
-  s.applyConfigPatch(dir, { file: 'src/config.js', siblingPortEnv: AB_PORT_ENV, slot: 0 });
+  const { dir, file } = worktreeWithConfig('src/config.ts', FE_CONFIG);
+  s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 0 });
   assert.equal(fs.readFileSync(file, 'utf8'), FE_CONFIG);
 });
 
 test('applyConfigPatch is idempotent (running the same patch twice yields the same result)', () => {
   const s = servers();
-  const { dir, file } = worktreeWithConfig('src/config.js', FE_CONFIG);
-  const patch = { file: 'src/config.js', siblingPortEnv: AB_PORT_ENV, slot: 2 };
+  const { dir, file } = worktreeWithConfig('src/config.ts', FE_CONFIG);
+  const patch = { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 };
   s.applyConfigPatch(dir, patch);
   const once = fs.readFileSync(file, 'utf8');
   s.applyConfigPatch(dir, patch);
@@ -212,8 +212,8 @@ test('applyConfigPatch is idempotent (running the same patch twice yields the sa
 test('applyConfigPatch is a no-op (no throw) when the config file is absent', () => {
   const s = servers();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-wt-'));
-  assert.doesNotThrow(() => s.applyConfigPatch(dir, { file: 'src/config.js', siblingPortEnv: AB_PORT_ENV, slot: 2 }));
-  assert.ok(!fs.existsSync(path.join(dir, 'src/config.js')), 'no file was created');
+  assert.doesNotThrow(() => s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 }));
+  assert.ok(!fs.existsSync(path.join(dir, 'src/config.ts')), 'no file was created');
 });
 
 test('applyConfigPatch is a no-op when the patch descriptor is missing a file', () => {
@@ -458,7 +458,7 @@ test('isSlotted is true only for a configured repo while concurrency is enabled'
 // ---------------------------------------------------------------------------
 // The slot-reclaim race: a launch that outlasts one sweep
 //
-// start() polls up to ~8 s for ports to bind; server.js sweeps reconcileSlots()
+// start() polls up to ~8 s for ports to bind; server.ts sweeps reconcileSlots()
 // every ~3 s. A feature that is slow to come up is, to a sweep, indistinguishable
 // from a dead one — so its slot used to be reclaimed mid-launch and handed to
 // another feature, which then bound the very ports the first one was about to.

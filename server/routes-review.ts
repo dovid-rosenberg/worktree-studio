@@ -1,8 +1,8 @@
 // Routes for the structured diff model and hunk-level staging. Self-contained on
-// purpose: server.js wires this in with a single `register(api, deps)` call, so the
+// purpose: server.ts wires this in with a single `register(api, deps)` call, so the
 // route table can grow here without touching it again.
 //
-// `api` is the ONE router server.js mounts at both /api (what the current client
+// `api` is the ONE router server.ts mounts at both /api (what the current client
 // calls) and /api/v1 (the versioned path new clients should use). Registering onto it
 // is what makes every route below answer identically under both prefixes — the module
 // never spells a prefix, so it cannot register a route under one and miss the other.
@@ -11,10 +11,10 @@ import * as review from './review.ts';
 import * as hunks from './hunks.ts';
 
 // The injected collaborators are typed by the surface these routes touch, not by the
-// classes server.js happens to hand over: `manager` is one lookup and a session is two
+// classes server.ts happens to hand over: `manager` is one lookup and a session is two
 // fields. That keeps the module testable with a hand-rolled fake — which is how
 // test/routes-review.test.js drives it — and it is also the only option while
-// server/sessions.js is still untyped.
+// server/sessions.ts is still untyped.
 
 /** A session's repo, as far as these routes are concerned. */
 interface ReviewRepo {
@@ -81,7 +81,7 @@ function selection(body: { hunks?: HunkIndex | HunkIndex[]; hunk?: HunkIndex }):
 }
 
 // register(api, deps) — deps: { manager, repos, broadcast? }. `repos` may be the scan
-// cache array or a getter for it; server.js rebuilds that array on every rescan, so it
+// cache array or a getter for it; server.ts rebuilds that array on every rescan, so it
 // passes a getter and this module never holds a stale reference.
 function register(api: Router, deps: ReviewDeps): void {
   const { repos } = deps || {};
@@ -107,7 +107,7 @@ function register(api: Router, deps: ReviewDeps): void {
     // first, exactly like `?file=` below.
     const sha = String(req.query.sha ?? '') || 'uncommitted';
     // Reject at the boundary, so a `sha` that is really a git option never reaches
-    // an argv (see review.js). A bad request is a 400, not a 500.
+    // an argv (see review.ts). A bad request is a 400, not a 500.
     if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
     const detail = await review.commitDetail(r.entry.worktreePath, defaultBranchOf(r.entry.repo), sha);
     res.json({ repo: r.entry.repo, worktreePath: r.entry.worktreePath, sha, files: detail.files });

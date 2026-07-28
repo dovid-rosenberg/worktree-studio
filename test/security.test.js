@@ -20,13 +20,13 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import { makeId, shortId } from '../server/util.ts';
-import { muxNameFor, SessionManager } from '../server/sessions.js';
+import { muxNameFor, SessionManager } from '../server/sessions.ts';
 import { loadToken, createGuard, splitHostPort } from '../server/security.ts';
 import * as status from '../server/status.ts';
 
 const TOKEN = 'a'.repeat(64);
 
-// A miniature of server.js's wiring: same middleware order, same upgrade handler,
+// A miniature of server.ts's wiring: same middleware order, same upgrade handler,
 // with the pty replaced by an echo of what the socket was allowed to reach.
 /** @param {{ port?: number }} [opts] */
 function harness({ port } = {}) {
@@ -42,7 +42,7 @@ function harness({ port } = {}) {
   app.use('/api/v1', api);
   api.get('/state', (req, res) => res.json({ ok: true, sessions: [] }));
 
-  // Same shape as server.js's hook receiver, including the grandfather clause.
+  // Same shape as server.ts's hook receiver, including the grandfather clause.
   const sessions = new Map([
     ['s_new', { id: 's_new', hookAuth: true }],   // settings file written with a token
     ['s_legacy', { id: 's_legacy' }],             // launched before the token existed

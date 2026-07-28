@@ -4,7 +4,7 @@
 // stays small, fast, and always relevant.
 //
 // Storage is node:sqlite (built into Node 22, zero new deps). Indexing is byte-offset
-// incremental, the same trick servers.js uses to tail dev-server logs: we remember
+// incremental, the same trick servers.ts uses to tail dev-server logs: we remember
 // where we stopped and only ever read the bytes appended since. A full re-read of a
 // 22MB transcript on every Stop hook would be the obvious wrong thing.
 import fs from 'fs';
@@ -17,7 +17,7 @@ import type { UsageByModel } from './types.ts';
 
 // node:sqlite is experimental in Node 22 (it prints an ExperimentalWarning on first
 // load). If it or FTS5 is missing we degrade to the file-scan search in
-// transcripts.js rather than taking the whole feature down.
+// transcripts.ts rather than taking the whole feature down.
 //
 // process.getBuiltinModule, not `import`: a static import of a missing builtin is a
 // link-time failure that takes the whole module graph down, and `await import` would

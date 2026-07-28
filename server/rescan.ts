@@ -1,8 +1,8 @@
 // Single-flight for the repo rescan — with a QUEUE, not a drop.
 //
-// server.js guarded the scan with `if (scanning) return;`, which discards the
+// server.ts guarded the scan with `if (scanning) return;`, which discards the
 // request outright. Most droppers self-heal, because the mutation the caller had
-// just made also wrote something under `.git/worktrees/…` and server/watch.js
+// just made also wrote something under `.git/worktrees/…` and server/watch.ts
 // fires on that a moment later. POST /api/settings does not: changing `baseDirs`
 // sets rescanNeeded, `await rescan()` returned instantly whenever a background
 // scan happened to be in flight, and nothing on the filesystem is ever going to
@@ -18,7 +18,7 @@
 //     An already-running scan may have read the disk before their change landed,
 //     so joining it would answer with a view that predates them.
 // Everyone who asks mid-scan therefore shares ONE follow-up and waits for it —
-// the same collapse-into-a-single-rerun that server/watch.js already does for its
+// the same collapse-into-a-single-rerun that server/watch.ts already does for its
 // own triggers.
 function createRescan<T>(scan: () => T | PromiseLike<T>): () => Promise<T> {
   let inFlight: Promise<T> | null = null; // the scan running right now

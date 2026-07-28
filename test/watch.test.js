@@ -207,7 +207,7 @@ test('rescans never overlap; events arriving mid-scan collapse into one follow-u
   }
   await waitFor(() => done >= 1 && live === 0, { label: 'the scans to drain' });
   await sleep(500);
-  // The hard guarantee: server.js's `scanning` guard drops overlapping calls, so a
+  // The hard guarantee: server.ts's `scanning` guard drops overlapping calls, so a
   // second scan must never be issued while one is in flight.
   assert.equal(maxLive, 1, `never more than one scan in flight, saw ${maxLive}`);
   // …and every event that landed during a scan collapsed into a single follow-up

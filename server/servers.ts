@@ -16,7 +16,7 @@ import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, Worktree 
 /**
  * The config `Servers` reads.
  *
- * `PartialDeep<Config>` for everything it reads defensively (server.js hands it a
+ * `PartialDeep<Config>` for everything it reads defensively (server.ts hands it a
  * whole config, every test hands it three keys), plus `concurrency` in its real
  * shape: the entries of `concurrency.repos` go straight to server/concurrency.ts,
  * which reads `portEnv[key]` as a number rather than re-checking each one.
@@ -133,7 +133,7 @@ const PID_START_SKEW_MS = 10000;
 // the callers that have nothing but a path and no resolver to hand; it answers
 // with the default (`basename` strategy, `.worktrees` layout) convention. A
 // Servers instance uses ITS OWN configured resolver (`this.identity`) instead, so
-// slot keys always match the grouping in server/features.js.
+// slot keys always match the grouping in server/features.ts.
 const DEFAULT_IDENTITY = createIdentity({});
 function featureFromPath(worktreePath: string): string { return DEFAULT_IDENTITY.ofPath(worktreePath); }
 
@@ -212,14 +212,14 @@ class Servers {
   _pidInfoCache: Map<string, PidInfo>;
   _starting: Map<string, number>;
 
-  // `identity` is the shared server/identity.js resolver (server.js builds one and
-  // hands the same instance to state.js/orchestrator.js). Passing it is what makes
+  // `identity` is the shared server/identity.ts resolver (server.ts builds one and
+  // hands the same instance to state.ts/orchestrator.ts). Passing it is what makes
   // "which feature is this worktree?" one answer instead of two.
   constructor(cfg: ServersConfig, identity?: Identity | null) {
     this.cfg = cfg;
     this.identity = identity || createIdentity(cfg);
     this.selfPort = (cfg.web && cfg.web.port) || 0;
-    // config.js stamps `_stateDir` onto every config it loads and every caller passes
+    // config.ts stamps `_stateDir` onto every config it loads and every caller passes
     // one; a config without it never reached this line, because path.join() threw on it.
     const stateDir = cfg._stateDir!;
     this.logDir = path.join(stateDir, 'logs');
@@ -229,7 +229,7 @@ class Servers {
     fs.mkdirSync(this.lockDir, { recursive: true });
     // servers.json shape: { tracked: { worktreePath → { pid, repo, log } }, slots: { feature → slot } }.
     // Back-compat: an old flat file (just the tracked object) still loads as `tracked`.
-    // readJsonState: a corrupt servers.json is kept aside, not overwritten (see util.js).
+    // readJsonState: a corrupt servers.json is kept aside, not overwritten (see util.ts).
     const saved = readJsonState<SavedServers>(this.file, {});
     this.tracked = (saved.tracked || saved) as TrackedMap; // worktreePath → { pid, repo, log }
     // featureName → slot (concurrency: one slot per feature, shared by its repos). Persisted
@@ -255,7 +255,7 @@ class Servers {
   // The feature a worktree path belongs to, under the configured identity
   // strategy. Every slot key in the app goes through here or through
   // `identity.of()` on the equivalent worktree object — the two agree by
-  // construction (server/identity.js).
+  // construction (server/identity.ts).
   featureFor(worktreePath: string): string { return this.identity.ofPath(worktreePath); }
 
   // ---- concurrency: per-feature slot allocation + derived launch env ----
@@ -556,7 +556,7 @@ class Servers {
         // it returns the parent's copy is dead weight — and the daemon outlives every
         // dev server it launches. Leaving it open burned one descriptor per start()
         // (and two per restart(), which is a stop plus a start), stacking with
-        // watch.js's fs.watch handles and the terminal PTYs toward EMFILE. Past that
+        // watch.ts's fs.watch handles and the terminal PTYs toward EMFILE. Past that
         // point arm() silently stops arming watchers and freshness quietly degrades
         // to the safety-net timer, with nothing anywhere saying why.
         fs.closeSync(fd);

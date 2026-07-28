@@ -2,7 +2,7 @@
 //
 // Four consumers read these shapes and none of them share a process with the
 // server: the SvelteKit client, the SwiftBar menubar plugin, the Alfred workflow
-// and bin/wt-studio.js. docs/api.md describes the same contract in prose; where
+// and bin/wt-studio.ts. docs/api.md describes the same contract in prose; where
 // the two disagree, this file follows the code, because the code is what answers
 // the request.
 //
@@ -40,14 +40,14 @@ export type PartialDeep<T> =
     : T extends object ? { [K in keyof T]?: PartialDeep<T[K]> }
       : T;
 
-/** Where a repo's worktrees live on disk (server/layout.js). */
+/** Where a repo's worktrees live on disk (server/layout.ts). */
 export interface WorktreeLayout {
   layout: 'nested' | 'sibling' | 'external';
   dir: string;
   root: string;
 }
 
-/** What makes two worktrees in different repos "the same feature" (server/identity.js). */
+/** What makes two worktrees in different repos "the same feature" (server/identity.ts). */
 export interface FeatureIdentityConfig {
   strategy: 'basename' | 'branch' | 'manifest';
   branchPattern: string;
@@ -60,11 +60,31 @@ export interface GroupConfig {
   members: string[];
 }
 
-/** One repo's dev-server launch config. */
-export interface StartConfig {
-  cmd?: string;
-  ports?: number[];
-  [key: string]: unknown;
+/**
+ * One repo's dev-server launch config.
+ *
+ * The bare-string form is worktree-dash compatibility: `start[repo] = "npm run dev"`.
+ * config.ts copies `dash.start` across verbatim, so a config written by worktree-dash
+ * arrives in that shape and servers.startCfg() reads it as `{ cmd, ports: [] }`.
+ *
+ * `cmd` is optional on the object form because a hand-edited config.json can carry a
+ * `ports`-only row. That is not launchable, and startCfg() answers null for it —
+ * stating it here is what keeps `canStart` from advertising a command that isn't there.
+ */
+export type StartConfig = string | { cmd?: string; ports?: number[] };
+
+/**
+ * How to open a path in one editor.
+ *
+ * `openGroup` is optional and shipped: server/orchestrator.ts reads it to open a
+ * whole feature at once, POST /settings persists it, and docs/api.md documents it.
+ * An editor without one falls back to running `open` per member.
+ */
+export interface EditorConfig {
+  /** Shell command with `{path}` substituted. */
+  open: string;
+  /** Shell command opening several paths at once; `{paths}` is the substitution. */
+  openGroup?: string;
 }
 
 /** An imported editor run/test config. */
@@ -143,7 +163,7 @@ export interface WatchPacing {
 }
 
 /**
- * config.json as server/config.js hands it to everything else.
+ * config.json as server/config.ts hands it to everything else.
  *
  * `_file` and `_stateDir` are stamped on at load time and are not written back;
  * the leading underscore is the marker that they describe the file rather than
@@ -154,7 +174,7 @@ export interface Config {
   scanDepth: number;
   web: { port: number; host: string };
   claude: { cmd: string };
-  editors: Record<string, { open: string }>;
+  editors: Record<string, EditorConfig>;
   defaultEditor: string;
   worktrees: WorktreeLayout;
   featureIdentity: FeatureIdentityConfig;
@@ -181,7 +201,7 @@ export interface Config {
   _file?: string;
   /**
    * Where the state directory is. REQUIRED, unlike `_file`: load() stamps it
-   * unconditionally and every reader (servers.js, sessions.js, transcript-routes.js)
+   * unconditionally and every reader (servers.ts, sessions.ts, transcript-routes.ts)
    * joins a path onto it, so an absent one is a `path.join(undefined, …)` throw
    * rather than a degraded mode. `_file` stays optional because save() has an
    * explicit fallback for it and nothing here has one for this.
@@ -190,7 +210,7 @@ export interface Config {
   /**
    * The boot token. Never written back to config.json.
    *
-   * REQUIRED for the same reason, and one more: security.js `createGuard` takes a
+   * REQUIRED for the same reason, and one more: security.ts `createGuard` takes a
    * `token: string`, and an undefined one would make the guard fail closed and 401
    * every request — including the hook posts a live session depends on — with no
    * error anywhere. load() always assigns `security.loadToken()`, which always
@@ -235,7 +255,7 @@ export interface Session {
   worktree: string | null;
   worktreePath: string | null;
   branch: string | null;
-  /** The feature identity, resolved by server/identity.js — NOT the worktree name. */
+  /** The feature identity, resolved by server/identity.ts — NOT the worktree name. */
   feature: string;
   repos: SessionRepo[];
   /** Repos chosen up front, added at promote time. */
@@ -297,7 +317,7 @@ export interface Worktree {
   isMain: boolean;
   detached: boolean;
   merged: boolean;
-  /** The owning repo's defaultBranch, repeated. Never null — git.js falls back to 'main'. */
+  /** The owning repo's defaultBranch, repeated. Never null — git.ts falls back to 'main'. */
   baseBranch: string;
   /** The scanned baseDir this repo sits under, or '' when none matched. */
   baseDir: string;
@@ -474,7 +494,7 @@ export interface SseEvents {
 
 export type SseEventName = keyof SseEvents;
 
-// ---- the diff model (server/diff.js) ----------------------------------------
+// ---- the diff model (server/diff.ts) ----------------------------------------
 
 export type DiffLineType = 'context' | 'add' | 'del';
 
@@ -702,7 +722,7 @@ export interface SourceParams {
 }
 
 /**
- * One intake source adapter, as server/sources/index.js drives it: the picker calls
+ * One intake source adapter, as server/sources/index.ts drives it: the picker calls
  * `isEnabled` then `list`, and opening a session calls `seed`.
  *
  * The adapters are independent modules whose only tie to each other is this shape,
