@@ -28,6 +28,14 @@ const CI_TTL = 20000;
 // is exactly how every other failure already degrades.
 const VIEW_TIMEOUT_MS = 20000;
 
+// The same argument, applied to the half that WRITES — which is where it actually
+// bites. A lookup that hangs costs a stale pill; a hung `git push` or `gh pr
+// create` hangs POST /group/pr itself, and that route loops a feature's members
+// SERIALLY, so one wedged member takes the whole feature down with it. A push
+// uploads objects, so it gets more room than a pure API call does.
+const PUSH_TIMEOUT_MS = 120000;
+const CREATE_TIMEOUT_MS = 60000;
+
 // Tally a GitHub statusCheckRollup (mixed CheckRun / StatusContext nodes) into
 // { passed, running, failed, total }. Neutral/skipped count toward total only.
 function ghChecks(rollup) {
@@ -63,7 +71,7 @@ const github = {
     return { hasPR: true, provider: 'github', number: j.number, url: j.url, state: j.state, checks: ghChecks(j.statusCheckRollup) };
   },
   async create(branch, cwd, env) {
-    const r = await run('gh', ['pr', 'create', '--fill', '--head', branch], { cwd, env });
+    const r = await run('gh', ['pr', 'create', '--fill', '--head', branch], { cwd, env, timeout: CREATE_TIMEOUT_MS });
     if (r.code !== 0) return { ok: false, stderr: r.stderr };
     // gh prints progress lines before the URL — the PR link is the last line.
     return { ok: true, url: r.stdout.trim().split('\n').pop() };
@@ -81,7 +89,7 @@ const gitlab = {
     return { hasPR: true, provider: 'gitlab', number: j.iid, url: j.web_url, state: j.state, checks: glChecks(pipe.status) };
   },
   async create(branch, cwd, env) {
-    const r = await run('glab', ['mr', 'create', '--fill', '--yes'], { cwd, env });
+    const r = await run('glab', ['mr', 'create', '--fill', '--yes'], { cwd, env, timeout: CREATE_TIMEOUT_MS });
     if (r.code !== 0) return { ok: false, stderr: r.stderr };
     // glab's output is prose; pull the first URL out of it.
     return { ok: true, url: (r.stdout.match(/https?:\/\/\S+/) || ['created'])[0] };
@@ -92,8 +100,8 @@ const PROVIDERS = [github, gitlab];
 
 // Push a member's branch to origin. Split out (and injectable via createForge) so
 // the push half of openPullRequest can be driven without a remote.
-function pushBranchToOrigin(member, env) {
-  return run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env });
+function pushBranchToOrigin(member, env, timeoutMs = PUSH_TIMEOUT_MS) {
+  return run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env, timeout: timeoutMs });
 }
 
 // The one line of a failed `git push` worth showing. git interleaves progress
@@ -101,6 +109,10 @@ function pushBranchToOrigin(member, env) {
 // rarely first — so pick the first line that IS one, rather than blindly taking
 // line 1 and showing the user a remote URL as an error message.
 function pushFailureLine(r) {
+  // A child killed on its timeout exits with no code and usually says nothing at
+  // all, so the generic fallback below would report "git push exited 1" for the one
+  // failure the user can actually do something about.
+  if (r.timedOut) return 'git push timed out — no answer from origin';
   const lines = `${r.stderr || ''}\n${r.stdout || ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
   return lines.find((l) => /^(?:error|fatal|remote)\b/i.test(l) || l.startsWith('!')) || lines[0] || `git push exited ${r.code}`;
 }
@@ -220,4 +232,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   return { register, ciForRepo, openPullRequest, invalidate, installed };
 }
 
-module.exports = { createForge, PROVIDERS, github, gitlab, ghChecks, glChecks, pushFailureLine };
+module.exports = {
+  createForge, PROVIDERS, github, gitlab, ghChecks, glChecks, pushFailureLine, pushBranchToOrigin,
+  TIMEOUTS: { VIEW_TIMEOUT_MS, PUSH_TIMEOUT_MS, CREATE_TIMEOUT_MS },
+};

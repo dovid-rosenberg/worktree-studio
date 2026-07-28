@@ -2,7 +2,6 @@
 const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
-const pty = require('node-pty');
 
 const configMod = require('./config');
 const muxSelect = require('./multiplexer');
@@ -21,6 +20,8 @@ const { createForge } = require('./forge');
 const { createCiFeed } = require('./ci');
 const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
+const { createTerminalHandler } = require('./term');
+const { createRescan } = require('./rescan');
 const webui = require('./webui');
 const crash = require('./crash');
 const { run, has, shq, slug, A } = require('./util');
@@ -43,15 +44,14 @@ async function main() {
 
   // ---- repo scan cache ----
   let repos = [];
-  let scanning = false;
-  async function rescan() {
-    if (scanning) return;
-    scanning = true;
+  // One scan at a time, and a request that arrives mid-scan is QUEUED rather than
+  // dropped — see server/rescan.js for the caller (POST /api/settings changing
+  // baseDirs) that nothing on the filesystem would ever have re-triggered.
+  const rescan = createRescan(async () => {
     try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
     // The scan is the only thing that knows each worktree's branch, and the
     // branch/manifest identity strategies need it to answer from a path alone.
     identity.reindex(repos);
-    scanning = false;
     prunePaths();        // the fresh scan is what says which worktrees still exist
     broadcastTopology(); // the scan IS the topology
     // A scan is also the server's only notice that git moved. watch.js arms
@@ -61,7 +61,7 @@ async function main() {
     // `gh pr view` would answer, so this is the CI feed's main trigger. Fire and
     // forget: the feed debounces, floors and gates it, and nothing here waits.
     ciFeed.poke({ force: true });
-  }
+  });
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
   // every SSE broadcast (which fires per Claude hook → per tool call).
@@ -72,6 +72,11 @@ async function main() {
       runningCache = await servers.discoverRunning();
       servers.reconcileSlots(runningCache); // self-heal leaked/stale slots against reality
     } catch { return; }
+    // Nothing else bounds a dev server that has been running for days without a
+    // restart: it appends to its log the whole time, and only a sweep is ever going
+    // to notice. One stat per tracked worktree (see Servers.trimLogs). Outside the
+    // guard above so a failure here can't masquerade as a failed lsof discovery.
+    servers.trimLogs();
     // Discovery feeds the topology half (each worktree's running/ports), so a new
     // or vanished server has to push one — but only when what lsof found actually
     // changed, or this 3 s timer would re-send the slow half 20 times a minute.
@@ -591,34 +596,7 @@ async function main() {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
-  wss.on('connection', async (ws, req) => {
-    const url = new URL(req.url, 'http://localhost');
-    const id = url.searchParams.get('session');
-    const pane = url.searchParams.get('pane');
-    const cols = Number(url.searchParams.get('cols')) || 100;
-    const rows = Number(url.searchParams.get('rows')) || 30;
-    const s = manager.get(id);
-    if (!s) { ws.close(); return; }
-    // The split pane attaches to the standalone `-split` session — a separate terminal
-    // in the same worktree with its own tabs. Ensure it exists before the pty attaches.
-    if (pane === 'split') { try { await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath }); } catch { /* */ } }
-    const spec = manager.mux.attachSpawn(s.muxName, pane === 'split' ? { group: 'split' } : {});
-    const term = pty.spawn(spec.file, spec.args, {
-      name: 'xterm-256color', cols, rows, cwd: s.worktreePath || s.repoPath, env: spec.env || process.env,
-    });
-    term.onData((d) => { try { ws.send(d); } catch { /* */ } });
-    term.onExit(() => { try { ws.close(); } catch { /* */ } });
-    ws.on('message', (data, isBinary) => {
-      if (isBinary) { term.write(data.toString('utf8')); return; }
-      const txt = data.toString('utf8');
-      try {
-        const msg = JSON.parse(txt);
-        if (msg.type === 'resize') { term.resize(Math.max(2, msg.cols | 0), Math.max(2, msg.rows | 0)); return; }
-        if (msg.type === 'input') { term.write(msg.data); return; }
-      } catch { term.write(txt); }
-    });
-    ws.on('close', () => { try { term.kill(); } catch { /* */ } });
-  });
+  wss.on('connection', createTerminalHandler({ manager }));
 
   // ---- boot ----
   // Crash policy lives in server/crash.js: fatal by default, with one narrow
@@ -634,7 +612,14 @@ async function main() {
     console.warn(`[wt-studio] dropped stale tracked pid ${d.pid} for ${d.worktreePath}`);
   }
   await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
-  const restored = await manager.restore().catch(() => 0);
+  // restore() guards each session on its own, so a rejection here means the whole
+  // pass went down and NOTHING was relaunched. Discarding the error left that state
+  // indistinguishable from "there were no sessions to restore", since the success
+  // line below only prints on a non-zero count.
+  const restored = await manager.restore().catch((e) => {
+    console.error(`[wt-studio] session restore failed — no sessions were relaunched: ${e.message}`, e);
+    return 0;
+  });
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 
   server.listen(cfg.web.port, cfg.web.host, () => {

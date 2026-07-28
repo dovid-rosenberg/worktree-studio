@@ -432,3 +432,49 @@ test('a session persisted before worktree name and identity were told apart stil
   assert.ok(fs.existsSync(path.join(repoB, '.worktrees', 'legacy-feat')), 'falls back to the stored feature exactly as before');
   fs.rmSync(repoB, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// restore()
+// ---------------------------------------------------------------------------
+
+// Three restorable sessions in a known order (all() sorts newest-first).
+function restorable(m, ids) {
+  ids.forEach((id, i) => m.sessions.set(id, {
+    id, title: id, repoName: 'api', repoPath: m.cfg._stateDir, home: m.cfg._stateDir,
+    worktree: null, worktreePath: null, branch: null, feature: id,
+    repos: [{ repo: 'api', repoPath: m.cfg._stateDir, primary: true }],
+    muxName: `mux-${id}`, tabs: [{ title: 'claude' }], claudeSessionId: null,
+    state: 'idle', active: true, createdAt: ids.length - i,
+  }));
+}
+
+test('restore() carries on past a session it cannot relaunch, and still saves', async () => {
+  const m = manager();
+  restorable(m, ['a', 'b', 'c']);
+  const launched = [];
+  m.mux.ensure = async (name) => { launched.push(name); return {}; };
+  // _writeHookSettings is a mkdirSync + writeFileSync — an EACCES or a full disk
+  // throws right here, which is the failure this guard exists for.
+  const real = m._writeHookSettings.bind(m);
+  m._writeHookSettings = (s) => { if (s.id === 'b') throw new Error('EACCES: permission denied'); return real(s); };
+
+  const n = await m.restore();
+
+  assert.equal(n, 2, 'the two healthy sessions were relaunched');
+  assert.deepEqual(launched, ['mux-a', 'mux-c'], 'the session AFTER the failure was still reached');
+  assert.equal(m.get('b').state, 'stopped');
+  assert.match(m.get('b').activity, /restore failed: EACCES/, 'the failure is recorded on the session itself');
+  assert.equal(m.get('c').activity, 'restarted');
+  // _save() must still run, or the on-disk state keeps claiming everything is fine.
+  const saved = JSON.parse(fs.readFileSync(m.file, 'utf8'));
+  assert.equal(saved.find((s) => s.id === 'b').state, 'stopped');
+  assert.equal(saved.find((s) => s.id === 'c').activity, 'restarted');
+});
+
+test('restore() reports a count that a caller can distinguish from failure', async () => {
+  const m = manager();
+  restorable(m, ['a']);
+  assert.equal(await m.restore(), 1);
+  const empty = manager();
+  assert.equal(await empty.restore(), 0, 'no sessions is still 0 — the difference has to come from the throw');
+});
