@@ -10,12 +10,7 @@ const path = require('path');
 const transcripts = require('./transcripts');
 const pricing = require('./pricing');
 const { STATE_DIR } = require('./config');
-const { taggedA } = require('./util');
 const { TranscriptIndex, summarize } = require('./transcript-index');
-
-// The shared wrapper (server/util.js), tagged so a transcript route's 500 is
-// identifiable in a log full of route failures.
-const A = taggedA('transcripts');
 
 // What every cost-bearing response says about where its dollars came from.
 //
@@ -118,20 +113,20 @@ function register(api, deps = {}) {
 
   const r = api;
 
-  r.get('/transcripts/status', A(async (req, res) => {
+  r.get('/transcripts/status', async (req, res) => {
     res.json({ ...index.status(), pricing: pricingBlock() });
-  }));
+  });
 
   // Which transcript a session maps to, and whether we can see it. Useful on its own
   // when a session's numbers look empty — it says WHY.
-  r.get('/sessions/:id/transcript', A(async (req, res) => {
+  r.get('/sessions/:id/transcript', async (req, res) => {
     const s = need(req, res); if (!s) return;
     const loc = transcripts.locate(s, {});
     res.json({ session: meta(s), claudeSessionId: s.claudeSessionId, ...loc, projectsRoot: transcripts.projectsRoot({}) });
-  }));
+  });
 
   // ---- search ----
-  r.get('/transcripts/search', A(async (req, res) => {
+  r.get('/transcripts/search', async (req, res) => {
     const q = str(req.query.q, null) ?? str(req.query.query, '');
     if (!q.trim()) return res.json({ query: '', hits: [], total: 0, backend: index.status().backend });
     const sessionId = str(req.query.session, null) ?? str(req.query.sessionId, null);
@@ -163,9 +158,9 @@ function register(api, deps = {}) {
     });
     for (const h of out.hits) { const s = manager.get(h.sessionId); if (s) h.session = meta(s); }
     res.json(out);
-  }));
+  });
 
-  r.get('/sessions/:id/transcript/search', A(async (req, res) => {
+  r.get('/sessions/:id/transcript/search', async (req, res) => {
     const s = need(req, res); if (!s) return;
     await fresh(s);
     const q = str(req.query.q, null) ?? str(req.query.query, '');
@@ -176,13 +171,13 @@ function register(api, deps = {}) {
       return res.json({ query: q, backend: 'file-scan', session: meta(s), hits, total: hits.length });
     }
     res.json({ ...index.search(q, { sessionId: s.id, limit: one(req.query.limit), order: str(req.query.order, 'rank') }), session: meta(s) });
-  }));
+  });
 
   // ---- telemetry ----
   // Carries the same `pricing` block as the fleet endpoint: a client that mounts one
   // session's telemetry on its own must still learn the cache multipliers, or its
   // billed-weight chart falls back to whatever it last knew.
-  r.get('/sessions/:id/transcript/usage', A(async (req, res) => {
+  r.get('/sessions/:id/transcript/usage', async (req, res) => {
     const s = need(req, res); if (!s) return;
     await fresh(s);
     if (index.ready) {
@@ -194,12 +189,12 @@ function register(api, deps = {}) {
     if (!loc.found) return res.json({ session: meta(s), source: 'none', reason: loc.reason, ...summarize([]), pricing: pricingBlock() });
     const agg = await transcripts.aggregate(loc.file);
     res.json({ session: meta(s), source: 'transcript', ...agg, pricing: pricingBlock() });
-  }));
+  });
 
   // Everything at once: per session, rolled up per feature, plus a grand total.
   // Feature is the identity that ties a feature's worktrees together across repos,
   // so it is the unit worth costing.
-  r.get('/transcripts/usage', A(async (req, res) => {
+  r.get('/transcripts/usage', async (req, res) => {
     const sessions = manager.all();
     if (req.query.refresh === '1') { for (const s of sessions) await fresh(s); }
 
@@ -243,16 +238,16 @@ function register(api, deps = {}) {
       pricing: pricingBlock(),
       backend: index.status().backend,
     });
-  }));
+  });
 
-  r.post('/transcripts/reindex', A(async (req, res) => {
+  r.post('/transcripts/reindex', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const full = body.full === true || req.query.full === '1';
     const targets = body.session ? [manager.get(body.session)].filter(Boolean) : manager.all();
     const results = [];
     for (const s of targets) results.push({ session: s.id, ...(await index.index(s, { full })) });
     res.json({ ok: true, full, results, status: index.status() });
-  }));
+  });
 
   return { index, router: r };
 }

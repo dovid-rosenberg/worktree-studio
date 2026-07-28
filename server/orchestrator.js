@@ -13,13 +13,13 @@
 //   - conflicts: another worktree of the same repo already running, which has to be
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 const worktree = require('./worktree');
-const { run, shq, A } = require('./util');
+const { run, shq } = require('./util');
 
 // `app` here is the API router — server.js mounts it at both /api and /api/v1.
 function register(app, deps) {
   const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast, rescan } = deps;
 
-  app.post('/group/start', A(async (req, res) => {
+  app.post('/group/start', async (req, res) => {
     const { group, stopConflicts } = req.body || {};
     const { group: g, flat } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
@@ -56,9 +56,9 @@ function register(app, deps) {
     // a client that read only `ok` called total failure a success. Nothing to start
     // is still ok — that is a no-op, not a failure.
     res.json({ ok: failures.length === 0, started, total: toStart.length, failures });
-  }));
+  });
 
-  app.post('/group/stop', A(async (req, res) => {
+  app.post('/group/stop', async (req, res) => {
     const { group } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
@@ -67,9 +67,9 @@ function register(app, deps) {
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
-  }));
+  });
 
-  app.post('/group/restart', A(async (req, res) => {
+  app.post('/group/restart', async (req, res) => {
     const { group } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
@@ -82,9 +82,9 @@ function register(app, deps) {
     await refreshRunning();
     scheduleBroadcast();
     res.json({ ok: true });
-  }));
+  });
 
-  app.post('/group/open', A(async (req, res) => {
+  app.post('/group/open', async (req, res) => {
     const { group, editor } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
@@ -98,10 +98,10 @@ function register(app, deps) {
     if (ed.openGroup) { await run('bash', ['-lc', ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]); }
     else { for (const p of paths) await run('bash', ['-lc', ed.open.split('{path}').join(shq(p))]); }
     res.json({ ok: true });
-  }));
+  });
 
   // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
-  app.post('/group/close', A(async (req, res) => {
+  app.post('/group/close', async (req, res) => {
     const { group: g } = await resolveGroup(req.body && req.body.group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     for (const m of g.members) {
@@ -111,10 +111,10 @@ function register(app, deps) {
     for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
     scheduleBroadcast();
     res.json({ ok: true });
-  }));
+  });
 
   // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
-  app.post('/group/delete', A(async (req, res) => {
+  app.post('/group/delete', async (req, res) => {
     const { group, deleteBranches } = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
@@ -130,11 +130,11 @@ function register(app, deps) {
     for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // feature removed → free its slot
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
-  }));
+  });
 
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
-  app.post('/group/session', A(async (req, res) => {
+  app.post('/group/session', async (req, res) => {
     const { group: g } = await resolveGroup(req.body && req.body.group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const members = g.members;
@@ -151,7 +151,7 @@ function register(app, deps) {
     }
     scheduleBroadcast();
     res.json({ ok: true, session });
-  }));
+  });
 }
 
 module.exports = { register };

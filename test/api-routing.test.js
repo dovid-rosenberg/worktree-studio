@@ -16,6 +16,14 @@ const path = require('path');
 const orchestrator = require('../server/orchestrator');
 const { createForge } = require('../server/forge');
 const { createIdentity } = require('../server/identity');
+const crash = require('../server/crash');
+
+// server.js mounts this last, after every route. The route modules used to carry their
+// own async wrapper, so a harness that omitted it still got JSON out of a throwing
+// handler; now the error policy belongs to the app, and a miniature that leaves it out
+// is testing a wiring the daemon does not have. Silent, because the deliberately
+// minimal fakes below make some routes throw on purpose.
+const mountErrors = (app) => app.use(crash.routeErrors({ log: () => {} }));
 
 // The real (default) feature-identity resolver — slot keys come from it in
 // production, so the fake derives them the same way rather than hardcoding one.
@@ -55,6 +63,7 @@ function harness({ group, flat = [], conflicts = [], allocError = null, startErr
   app.use('/api/v1', api);
   orchestrator.register(api, deps);
   createForge({ manager: deps.manager, resolveGroup: deps.resolveGroup, providers: [] }).register(api);
+  mountErrors(app);
   return { app, calls };
 }
 
@@ -234,6 +243,7 @@ function routeModules() {
   // A throwaway state dir, so the real ~/.local/state index is never opened.
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-routing-'));
   const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+  mountErrors(app);
   return { app, index, cleanup: () => { index.close(); fs.rmSync(stateDir, { recursive: true, force: true }); } };
 }
 

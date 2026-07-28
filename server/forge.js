@@ -10,7 +10,7 @@
 //   create → { ok:true, url } or { ok:false, stderr }
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
-const { run, has, A } = require('./util');
+const { run, has } = require('./util');
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
@@ -200,7 +200,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
     const mgr = deps.manager || manager;
     const resolve = deps.resolveGroup || resolveGroup;
 
-    app.get('/sessions/:id/ci', A(async (req, res) => {
+    app.get('/sessions/:id/ci', async (req, res) => {
       const s = mgr.get(req.params.id);
       if (!s) return res.status(404).json({ error: 'no such session' });
       const entries = (s.repos || []).filter((r) => r.worktreePath && r.branch);
@@ -213,10 +213,10 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
         catch { return { repo: entry.repo, hasPR: false }; }
       }));
       res.json({ repos });
-    }));
+    });
 
     // Open a PR (gh) / MR (glab) for each of a feature's branches.
-    app.post('/group/pr', A(async (req, res) => {
+    app.post('/group/pr', async (req, res) => {
       const { group: g } = await resolve(req.body && req.body.group);
       if (!g) return res.status(404).json({ error: 'no such feature' });
       const results = [];
@@ -226,7 +226,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
       // pill appears without waiting out the TTL.
       if (results.some((r) => r.url)) { invalidate(); try { onChanged(); } catch { /* the feed must never break the route */ } }
       res.json({ ok: results.some((r) => r.url), results });
-    }));
+    });
   }
 
   return { register, ciForRepo, openPullRequest, invalidate, installed };

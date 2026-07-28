@@ -1,5 +1,8 @@
 'use strict';
-// Process-level crash policy.
+// Crash policy: what happens when something throws. Process-level first
+// (install/guardListen), then the request-level counterpart (routeErrors) at the
+// bottom — the two interlock, and reading either without the other is how a route
+// failure ends up classified as a fatal one.
 //
 // Studio used to install `process.on('uncaughtException', log)` and
 // `process.on('unhandledRejection', log)` — a blanket "log it and keep going".
@@ -98,4 +101,39 @@ function guardListen(server, { host, port } = {}, { log = console.error, exit = 
   });
 }
 
-module.exports = { install, guardListen, isConnectionError, listenErrorMessage, CONNECTION_ERROR_CODES };
+/**
+ * The request-level half of the policy above, as express error middleware.
+ *
+ * install() makes an unhandled rejection fatal — Node's own default, and the right
+ * default for state nobody reasoned about. But a route handler that throws is NOT
+ * that: its blast radius is one request, and the caller is owed an answer. express@5
+ * is what makes the distinction expressible — it awaits handlers and forwards a
+ * rejection here, where express@4 let it escape to the process. That is why the
+ * per-handler `A()` wrapper this replaces could be deleted rather than re-homed:
+ * with express@4 a handler somebody forgot to wrap was a daemon-killer, and now
+ * there is nothing to forget.
+ *
+ * Mount it LAST — after every route including the SPA fallback — or the layers
+ * registered after it are outside the net.
+ */
+function routeErrors({ log = console.error } = {}) {
+  // Four arity, or express registers this as an ordinary middleware and never
+  // hands it an error.
+  return (err, req, res, next) => {
+    // Headers already out (an SSE stream, a half-written document): there is no
+    // status left to set, and appending JSON to a body in flight corrupts it. Hand
+    // it to express's default handler, which destroys the socket instead.
+    if (res.headersSent) return next(err);
+    // originalUrl, not url, and without the query string — same reasons as
+    // security.js's refusal log: the query carries the boot token.
+    const where = `${req.method} ${String(req.originalUrl || req.url || '').split('?')[0]}`;
+    log(`[wt-studio] ${where}`, err);
+    // A body parser refusing a malformed or oversized body sets its own status, and
+    // a 400/413 is something the caller can act on — unlike the 500 that an escaped
+    // throw is. Only an error naming no status is an unhandled exception.
+    const status = Number(err && (err.status || err.statusCode));
+    res.status(status >= 400 && status <= 599 ? status : 500).json({ error: err && err.message });
+  };
+}
+
+module.exports = { install, guardListen, routeErrors, isConnectionError, listenErrorMessage, CONNECTION_ERROR_CODES };
