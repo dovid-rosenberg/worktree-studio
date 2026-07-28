@@ -283,3 +283,30 @@ touched. A config created from today's defaults always has the key (with an empt
 
 If you do not want that block, delete `concurrency.repos` from your config after
 the first load, or set it to `{}`.
+
+---
+
+## Known limitation of the non-default identity strategies
+
+A session records the worktree name it was created with as `session.feature`
+(`sessions.json`), and a few things read it:
+
+- the "Open PR for this feature" button in the web UI (`POST /group/pr`),
+- the worktree name `wt-studio add-repo` gives the sibling worktree it creates,
+- the branch name used when a session has none (`feature/<feature>`),
+- the transcript search grouping key.
+
+Under the default `basename` strategy that string *is* the feature identity, so
+all four are correct. Under `branch` or `manifest` it is the worktree's
+directory name while the feature is named something else, so **"Open PR for this
+feature" will not find the feature** for a session started before you switched
+strategies, or for any session whose worktree name differs from its feature name.
+
+Grouping, concurrency slots, `/group/start` · `/stop` · `/restart` · `/open` ·
+`/close` · `/delete` · `/session`, the Fleet rail, SwiftBar and Alfred all read
+the computed feature list and are correct under every strategy. Only the
+session's own stored label lags, and only for the PR button.
+
+Reconciling `session.feature` with the resolved identity would change how
+worktrees are *named* as well as grouped, so it is deliberately left alone here
+rather than folded into a change whose whole point is that defaults do not move.
