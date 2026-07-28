@@ -57,7 +57,7 @@ export interface TmuxDriver {
   available(): Promise<boolean>;
   hasSession(name: string): Promise<boolean>;
   ensure(name: string, opts?: TmuxLaunchOptions): Promise<TmuxEnsureResult>;
-  attachSpawn(name: string, opts?: { popout?: boolean; group?: string }): AttachSpec;
+  attachSpawn(name: string, opts?: { group?: string }): AttachSpec;
   ensureSplit(name: string, opts?: { cwd?: string }): Promise<void>;
   newTab(name: string, opts?: TmuxNewTabOptions): Promise<TmuxNewTabResult>;
   listTabs(name: string): Promise<TmuxTab[]>;
@@ -68,7 +68,6 @@ export interface TmuxDriver {
   closeTab(name: string, id: string | number): Promise<boolean>;
   rename(oldName: string, newName: string): Promise<boolean>;
   kill(name: string): Promise<boolean>;
-  popoutCommand(name: string): string;
 }
 
 const SOCK = 'wt-studio';
@@ -158,18 +157,13 @@ const tmux: TmuxDriver = {
   },
 
   // For node-pty: attach an interactive client to the session.
-  //  - popout: a GROUPED session (`-t name`) — a native window mirroring the same
-  //    live session, which is exactly what "pop out to a terminal" should do.
   //  - split: attach the embedded second pane to the `-split` session — a SEPARATE,
   //    standalone tmux session (not grouped) with its own window list. It's just
   //    "another terminal" in the same worktree, with its own independent tabs, so
   //    nothing mirrors the primary. Call ensureSplit(name, {cwd}) first.
   //  - default: attach the embedded primary client to the session.
-  attachSpawn(name, { popout = false, group } = {}) {
+  attachSpawn(name, { group } = {}) {
     const base = ['-L', SOCK];
-    if (popout) {
-      return { file: 'tmux', args: [...base, 'new-session', '-A', '-s', `${name}-popout`, '-t', name], env: ENV };
-    }
     if (group === 'split') {
       return { file: 'tmux', args: [...base, 'attach-session', '-t', `${name}-split`], env: ENV };
     }
@@ -236,16 +230,12 @@ const tmux: TmuxDriver = {
 
   async kill(name) {
     await T(['kill-session', '-t', `=${name}`]);
+    // still killed: sessions created before pop-out was removed may have one alive
     await T(['kill-session', '-t', `=${name}-popout`]);
     await T(['kill-session', '-t', `=${name}-split`]);
     return true;
   },
 
-  // shell command a native terminal runs to attach — a grouped session, so closing
-  // the native window never disconnects the embedded client.
-  popoutCommand(name) {
-    return `tmux -L ${SOCK} new-session -A -s ${name}-popout -t ${name}`;
-  },
 };
 
 export default tmux;

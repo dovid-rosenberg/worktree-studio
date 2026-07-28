@@ -184,7 +184,6 @@ export interface Config {
   webRepos: string[];
   groups: GroupConfig[];
   runConfigs: Record<string, RunConfig[]>;
-  popout: { terminal: string };
   sources: {
     github?: { enabled: boolean };
     // `project` is read by the REST fallback in sources/gitlab.ts and gated on by its

@@ -72,7 +72,6 @@ export interface SessionMux {
   listTabs(name: string): Promise<MuxTab[]>;
   selectTab(name: string, id: number): Promise<boolean>;
   closeTab(name: string, id: number): Promise<boolean>;
-  popoutCommand(name: string): string;
   /**
    * Create the standalone `<name>-split` session the embedded second pane attaches
    * to. Not called from this file — server.ts's `/sessions/:id/split/*` routes reach
@@ -84,7 +83,7 @@ export interface SessionMux {
    * reaches it through `manager.mux` for the same reason, and declares its own
    * two-member `TerminalMux` to say so.
    */
-  attachSpawn(name: string, opts?: { popout?: boolean; group?: string }): MuxAttachSpec;
+  attachSpawn(name: string, opts?: { group?: string }): MuxAttachSpec;
 }
 
 /** What `attachSpawn` hands back for node-pty to run. */
@@ -599,12 +598,6 @@ class SessionManager extends EventEmitter {
     (s.tabs || []).splice(index, 1);
     this._touch(id);
     return { ok: true };
-  }
-
-  popout(id: string): string | null {
-    const s = this.get(id);
-    if (!s) return null;
-    return this.mux.popoutCommand(s.muxName);
   }
 
   async close(id: string, { kill = true }: { kill?: boolean } = {}) {

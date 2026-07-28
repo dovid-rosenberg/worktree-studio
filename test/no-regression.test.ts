@@ -61,7 +61,6 @@ const OWNER_CONFIG = {
     'merchant-v3': { cmd: 'npm run dev', ports: [3030] },
     'ab-iso-fe': 'npm start',
   },
-  popout: { terminal: 'Terminal' },
   sources: { github: { enabled: true }, gitlab: { enabled: false }, asana: { enabled: false } },
 };
 

@@ -9,7 +9,7 @@
    */
   import { activatable } from '$lib/actions/activatable.js';
   import { ui } from '$lib/stores/ui.svelte.js';
-  import { addTab, closeTab, popout, selectTab } from '$lib/ops.svelte.js';
+  import { addTab, closeTab, selectTab } from '$lib/ops.svelte.js';
 
   let {
     session,
@@ -22,7 +22,6 @@
   const splitOn = $derived(ui.splitOn(session.id));
 
   let busyAdd = $state(false);
-  let busyPop = $state(false);
 </script>
 
 <div class="tabstrip" role="tablist" aria-label="Session panels">
@@ -85,13 +84,6 @@
     }}
   ><span class="newtab">＋</span></span>
 
-  <button
-    class="btn xs popout"
-    aria-label="Pop out"
-    disabled={busyPop}
-    onclick={async () => { busyPop = true; try { await popout(session); } finally { busyPop = false; } }}
-  >Pop out ⧉</button>
-
   <!-- ⊟ Split — a second live terminal beside the primary. Only meaningful in the term
        view, so it only appears there (as in app.js). -->
   {#if ui.dockView === 'term'}
@@ -113,7 +105,6 @@
   .cbadge { font-family:var(--mono); font-size:9.5px; font-weight:700; background:var(--brand); color:var(--brand-ink); border-radius:999px; padding:0 5px; min-width:15px; text-align:center; }
   .tabclose { color:var(--faint); margin-left:2px; font-size:10px; padding:0 2px; border-radius:3px; }
   .tabclose:hover { color:var(--ink); background:var(--border); }
-  .popout { margin-left:auto; }
   .split-toggle { margin-left:6px; }
   .split-toggle.on { border-color:var(--brand); color:var(--brand); }
 </style>
