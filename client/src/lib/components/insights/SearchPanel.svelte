@@ -292,8 +292,7 @@
     {:else if loading && !hits.length}
       Searching…
     {:else if ran && !hits.length}
-      <span>No matches for {#each terms as t, i (i)}<code>{t}</code>{#if i < terms.length - 1}<span class="and"> and </span>{/if}{/each}</span>
-      {#if scopedSession}<span> in {scopedSession.title}.</span>{:else}.{/if}
+      <span>No matches for {#each terms as t, i (i)}<code>{t}</code>{#if i < terms.length - 1}<span class="and"> and </span>{/if}{/each}{#if scopedSession} in {scopedSession.title}{/if}.</span>
     {:else if ran}
       {#if capped}First {hits.length}{:else}{hits.length}{/if}
       {hits.length === 1 ? 'match' : 'matches'}

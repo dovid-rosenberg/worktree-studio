@@ -200,11 +200,12 @@
           onselect={selectRow}
           emptyLabel="No sessions are indexed yet."
         />
-        <p class="cardfoot">
-          <i class="viz-swatch brand"></i> selected
-          <i class="viz-swatch deemph"></i> the rest
-          — bar length is estimated cost, nothing else.
-        </p>
+        <!-- No legend swatches here on purpose. This is a single series, so a legend
+             would only restate the title — and the token mix beside it is already
+             spending three categorical hues. Two colour keys side by side invite the
+             reader to map one chart's orange onto the other's. The highlighted row
+             carries the selection, which the row background states as well. -->
+        <p class="cardfoot">Bar length is estimated cost, nothing else. The highlighted row is the one detailed on the right.</p>
       </div>
 
       <div class="card detailcard">
@@ -277,10 +278,8 @@
   .cardfoot {
     margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--border);
     font-family: var(--mono); font-size: 10px; color: var(--faint);
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    line-height: 1.5;
   }
-  .cardfoot .viz-swatch { margin-left: 4px; }
-  .cardfoot .viz-swatch:first-child { margin-left: 0; }
 
   .foot { border-top: 1px solid var(--border); padding-top: 11px; }
 </style>
