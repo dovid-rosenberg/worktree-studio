@@ -43,10 +43,32 @@ Two real bugs strict mode already caught in `orchestrator`, both preserved in `c
 internal message, while the loop three lines below already guarded the identical lookup), and
 `/group/delete` read the `WorktreeRemoveResult` union unnarrowed.
 
-One gap flagged but not fixed: `types.ts` declares `Config.editors` as
-`Record<string, { open: string }>`, but `openGroup` is a real shipped key — read in
-`orchestrator`, written by `server.js`, documented in `docs/api.md`, exercised in
-`test/no-regression.test.js`. Wants `{ open: string; openGroup?: string }`.
+A third bug, in `servers.startCfg()` (`1383a94`): a `start` entry of the object form with
+`ports` but no `cmd` produced `{ cmd: undefined, ports: [...] }`, which is **truthy** — so
+`decorate()` advertised `canStart: true` for a repo that cannot start, and `start()` reached
+`spawn('bash', ['-lc', undefined])`, throwing a `TypeError` out of an async route handler
+(500) instead of returning `{ ok: false, error }`. `POST /settings` drops cmd-less rows, but
+a hand-edited `config.json` can carry one.
+
+### `types.ts` gaps flagged but deliberately not fixed
+
+- `Config.editors` is `Record<string, { open: string }>`, but **`openGroup` is a real shipped
+  key** — read in `orchestrator`, written by `server.js`, documented in `docs/api.md`,
+  exercised in `test/no-regression.test.js`. Wants `{ open: string; openGroup?: string }`.
+- `StartConfig` **does not model the string form**, though `servers.ts` supports
+  `start[repo] = "npm run dev"` (worktree-dash compat; `config.js` copies `dash.start`
+  verbatim). Wants `string | { cmd?: string; ports?: number[] }`. Its
+  `[key: string]: unknown` index signature is also worth dropping — it survives `PartialDeep`
+  and makes every consumer's access `unknown`-adjacent.
+- `Config._stateDir` is optional but is stamped on every loaded config; making it required
+  removes the single `!` assertion in `servers.ts`.
+
+### Note: late work may still arrive
+
+The migration agent had spawned child agents. Several finished **after** it was stopped and
+their work was committed here in `c17587f` and `1383a94`. If more land, they'll appear as
+uncommitted changes in this worktree — check with `git -C .worktrees/esm-ts status` before
+resuming, and commit anything found rather than assuming the tree is where you left it.
 
 ```
 cd .worktrees/esm-ts
