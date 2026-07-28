@@ -80,9 +80,14 @@ function mount(app, { ui, token }) {
 // Mount this AFTER every API route: it answers any GET, so anything registered later is
 // unreachable. /api and /ws are skipped anyway, because an unknown API path must stay a
 // 404 for SwiftBar, Alfred and the CLI rather than becoming 200 text/html.
-// express@4 is what this repo pins, so '*' is the right pattern (express@5: '/*splat').
+//
+// express@5 (path-to-regexp v8) dropped bare '*' as a path. The braces matter: '/*splat'
+// alone matches one-or-more segments and so does NOT match '/', while '/{*splat}' makes
+// the wildcard optional and is the exact equivalent of express@4's '*'. mount() claims
+// '/' above, so today the difference is invisible — but a fallback that silently stops
+// covering '/' the moment it is mounted without mount() is a trap, not a saving.
 function mountFallback(app, { ui, token }) {
-  app.get('*', (req, res, next) => {
+  app.get('/{*splat}', (req, res, next) => {
     if (req.path === '/api' || req.path.startsWith('/api/') || req.path.startsWith('/ws/')) return next();
     return sendIndex(ui, token, res);
   });
