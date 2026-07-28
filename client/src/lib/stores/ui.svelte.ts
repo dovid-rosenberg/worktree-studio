@@ -181,13 +181,27 @@ class UI {
   })());
 
   /**
-   * What ⌘1–9 picks, in the order the rail draws it. Agents first (they are the things
-   * awaiting a decision), then every feature.
+   * What ⌘1–9 picks, in the order the rail actually draws it.
+   *
+   * This used to be agents-then-features while the rail drew servers-running, main
+   * servers, agents, then features — so with one running feature, ⌘1 hit the fourth
+   * card on screen. A shortcut that selects something other than what you counted is
+   * worse than no shortcut. It is built from the same sections the rail renders, with
+   * the servers-running repeat de-duplicated so a feature never occupies two numbers.
    */
-  railOrder = $derived<RailEntry[]>([
-    ...this.visibleAgents.map((s) => ({ kind: 'session' as const, id: s.id, name: s.title })),
-    ...this.visibleFeatures.map((f) => ({ kind: 'feature' as const, id: f.session ? f.session.id : null, name: f.name })),
-  ]);
+  railOrder = $derived<RailEntry[]>((() => {
+    const out: RailEntry[] = [];
+    const seen = new Set<string>();
+    const feature = (f: Feature) => {
+      if (seen.has(f.name)) return;
+      seen.add(f.name);
+      out.push({ kind: 'feature', id: f.session ? f.session.id : null, name: f.name });
+    };
+    this.serverFeatures.forEach(feature);
+    for (const s of this.visibleAgents) out.push({ kind: 'session', id: s.id, name: s.title });
+    this.visibleFeatures.forEach(feature);
+    return out;
+  })());
 
   /** Repo names offered by the filter: every member repo, plus unpromoted sessions' repos. */
   repoNames = $derived([...new Set([

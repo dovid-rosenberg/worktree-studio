@@ -30,9 +30,10 @@
   --scroll-thumb-hover:#4d5867;
   --scroll-track:transparent;
 
-  /* The terminal chrome is dark in BOTH themes — a light-on-white terminal reads as a
-     different app. style.css expressed this as a `.term-wrap` override; naming it here
-     lets the Terminal component and its CSS agree on one value. */
+  /* The terminal follows the theme. It used to be dark in both — the reasoning was
+     that a light-on-white terminal reads as a different app — but that left light mode
+     with a dark slab in the middle of it, which reads worse. Naming the pair here lets
+     the Terminal component, its wrapper CSS and the xterm options agree on one value. */
   --term-bg:#0c0f14;
   --term-fg:#cdd4de;
   --term-cursor: var(--brand);
@@ -45,7 +46,8 @@
   --brand:#d05f30; --brand-ink:#ffffff; --brand-soft:#f7e4da;
   --add:#1a7f37; --add-bg:#e6f4ea; --del:#cf222e; --del-bg:#fbe9e9;
   --shadow:0 1px 2px rgba(20,22,28,.06),0 8px 24px -12px rgba(20,22,28,.18);
-  --term-bg:#12151b;
+  --term-bg:#fbfaf7;
+  --term-fg:#1f232b;
   --scroll-thumb:#c9c1b4;
   --scroll-thumb-hover:#ada596;
   --scroll-track:transparent;
