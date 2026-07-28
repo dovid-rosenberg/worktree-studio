@@ -24,7 +24,7 @@ const { createTerminalHandler } = require('./term');
 const { createRescan } = require('./rescan');
 const webui = require('./webui');
 const crash = require('./crash');
-const { run, has, shq, slug, A } = require('./util');
+const { run, has, shq, slug } = require('./util');
 
 async function main() {
   const cfg = configMod.load();
@@ -161,7 +161,7 @@ async function main() {
 
   // attention.seen(): SwiftBar and Alfred poll this route instead of subscribing to
   // /api/events, so a poll is what tells the watcher someone is still looking.
-  api.get('/state', A(async (req, res) => { attention.seen(); res.json(await buildState()); }));
+  api.get('/state', async (req, res) => { attention.seen(); res.json(await buildState()); });
 
   api.get('/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -179,7 +179,7 @@ async function main() {
   });
 
   // ---- settings / connections ----
-  api.get('/settings', A(async (req, res) => {
+  api.get('/settings', async (req, res) => {
     const gh = await run('gh', ['auth', 'status'], {});
     res.json({
       sources: cfg.sources || {},
@@ -193,8 +193,8 @@ async function main() {
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
     });
-  }));
-  api.post('/settings', A(async (req, res) => {
+  });
+  api.post('/settings', async (req, res) => {
     const { sources: srcs, baseDirs, notify, start, editors, defaultEditor, groups } = req.body || {};
     if (srcs) {
       cfg.sources = cfg.sources || {};
@@ -257,18 +257,18 @@ async function main() {
       groups: cfg.groups,
       enabled: sources.enabled(cfg),
     });
-  }));
+  });
 
   // ---- sources ----
   api.get('/sources', (req, res) => res.json(sources.enabled(cfg)));
-  api.get('/sources/:source/items', A(async (req, res) => {
+  api.get('/sources/:source/items', async (req, res) => {
     const repo = repos.find((r) => r.name === req.query.repo);
     const out = await sources.list(cfg, req.params.source, { repoPath: repo && repo.path, q: req.query.q });
     res.json(out);
-  }));
+  });
 
   // ---- sessions ----
-  api.post('/sessions', A(async (req, res) => {
+  api.post('/sessions', async (req, res) => {
     try {
       const { source, sourceId, text, name, repo, additionalRepos } = req.body || {};
       const repoObj = repos.find((r) => r.name === repo);
@@ -280,74 +280,74 @@ async function main() {
       const session = await manager.create({ seed, repoPath: repoObj.path, repoName: repoObj.name, additionalRepos: extra });
       res.json(session);
     } catch (e) { res.status(500).json({ error: e.message }); }
-  }));
+  });
 
-  api.post('/sessions/:id/rename', A(async (req, res) => {
+  api.post('/sessions/:id/rename', async (req, res) => {
     res.json(await manager.rename(req.params.id, (req.body && req.body.title) || ''));
-  }));
-  api.post('/sessions/:id/deactivate', A(async (req, res) => { res.json(await manager.deactivate(req.params.id)); }));
-  api.post('/sessions/:id/activate', A(async (req, res) => { res.json(await manager.activate(req.params.id)); }));
+  });
+  api.post('/sessions/:id/deactivate', async (req, res) => { res.json(await manager.deactivate(req.params.id)); });
+  api.post('/sessions/:id/activate', async (req, res) => { res.json(await manager.activate(req.params.id)); });
 
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
-  api.post('/sessions/:id/add-repo', A(async (req, res) => {
+  api.post('/sessions/:id/add-repo', async (req, res) => {
     const repoObj = repos.find((r) => r.name === (req.body && req.body.repo));
     if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body && req.body.repo}'` });
     const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the sibling worktree so the feature updates immediately
     res.json(out);
-  }));
+  });
 
-  api.post('/sessions/:id/promote', A(async (req, res) => {
+  api.post('/sessions/:id/promote', async (req, res) => {
     const out = await manager.promote(req.params.id, req.body || {});
     // Dirty-main warning: 200 (not 400) so the client can read needsConfirm and re-prompt.
     if (out.needsConfirm) return res.json(out);
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the new worktree(s) so features update immediately
     res.json(out);
-  }));
+  });
 
-  api.post('/sessions/:id/tabs', A(async (req, res) => {
+  api.post('/sessions/:id/tabs', async (req, res) => {
     res.json(await manager.addTab(req.params.id, req.body || {}));
-  }));
+  });
 
-  api.post('/sessions/:id/select-tab', A(async (req, res) => {
+  api.post('/sessions/:id/select-tab', async (req, res) => {
     res.json(await manager.selectTab(req.params.id, (req.body && req.body.index) || 0));
-  }));
+  });
 
   // The split pane is a standalone `-split` session with its own tabs. These operate on
   // it directly through the mux (tmux is the source of truth for its window list).
-  api.get('/sessions/:id/split/tabs', A(async (req, res) => {
+  api.get('/sessions/:id/split/tabs', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
     res.json({ tabs: await manager.mux.listTabs(`${s.muxName}-split`) });
-  }));
-  api.post('/sessions/:id/split/tabs', A(async (req, res) => {
+  });
+  api.post('/sessions/:id/split/tabs', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
     const r = await manager.mux.newTab(`${s.muxName}-split`, { title: (req.body && req.body.title) || 'shell', cwd: s.worktreePath || s.repoPath });
     res.json(r);
-  }));
-  api.post('/sessions/:id/split/select-tab', A(async (req, res) => {
+  });
+  api.post('/sessions/:id/split/select-tab', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     res.json({ ok: await manager.mux.selectTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
-  }));
-  api.post('/sessions/:id/split/close-tab', A(async (req, res) => {
+  });
+  api.post('/sessions/:id/split/close-tab', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     res.json({ ok: await manager.mux.closeTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
-  }));
+  });
 
-  api.post('/sessions/:id/close-tab', A(async (req, res) => {
+  api.post('/sessions/:id/close-tab', async (req, res) => {
     res.json(await manager.closeTab(req.params.id, (req.body && req.body.index) || 0));
-  }));
+  });
 
   // Start / stop ALL dev servers of a session's shared workspace (every repo it owns).
-  api.post('/sessions/:id/servers/start', A(async (req, res) => {
+  api.post('/sessions/:id/servers/start', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const toStart = (s.repos || []).filter((x) => x.worktreePath && servers.startCfg(x.repo));
@@ -366,8 +366,8 @@ async function main() {
     await refreshRunning();
     broadcastTopology();
     res.json({ ok: results.some((r) => r.ok), results });
-  }));
-  api.post('/sessions/:id/servers/stop', A(async (req, res) => {
+  });
+  api.post('/sessions/:id/servers/stop', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const owned = (s.repos || []).filter((x) => x.worktreePath);
@@ -376,18 +376,18 @@ async function main() {
     await refreshRunning();
     broadcastTopology();
     res.json({ ok: true });
-  }));
+  });
 
-  api.post('/sessions/:id/popout', A(async (req, res) => {
+  api.post('/sessions/:id/popout', async (req, res) => {
     const cmd = manager.popout(req.params.id);
     if (!cmd) return res.status(404).json({ error: 'no such session' });
     // open a native Terminal window attached to the same mux session
     const script = `tell application "Terminal" to do script ${JSON.stringify(cmd)}\ntell application "Terminal" to activate`;
     await run('osascript', ['-e', script]);
     res.json({ ok: true, cmd });
-  }));
+  });
 
-  api.delete('/sessions/:id', A(async (req, res) => {
+  api.delete('/sessions/:id', async (req, res) => {
     // Capture the session BEFORE close (close deletes it). Mirror /api/group/delete's
     // orphan cleanup: stop each owned worktree's dev servers + release its slot, else a
     // running server is orphaned and its concurrency slot leaks.
@@ -398,12 +398,12 @@ async function main() {
     for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath));
     if (owned.length) { await refreshRunning(); broadcastTopology(); }
     res.json(out);
-  }));
+  });
 
   // ---- review (commits, per-commit diffs & commit) ----
   // The branch's commits per repo (+ an uncommitted summary), and one commit's inline
   // per-file diffs on demand.
-  api.get('/sessions/:id/commits', A(async (req, res) => {
+  api.get('/sessions/:id/commits', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const out = [];
@@ -421,9 +421,9 @@ async function main() {
       out.push({ repo: entry.repo, worktreePath: entry.worktreePath, branch: entry.branch, base, defaultBranch: def, commits, uncommitted });
     }
     res.json({ repos: out });
-  }));
+  });
 
-  api.get('/sessions/:id/commit-detail', A(async (req, res) => {
+  api.get('/sessions/:id/commit-detail', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const entry = (s.repos || []).find((r) => r.repo === req.query.repo);
@@ -434,9 +434,9 @@ async function main() {
     // to be an object name and not an option (see server/review.js).
     if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
     res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, sha));
-  }));
+  });
 
-  api.post('/sessions/:id/commit', A(async (req, res) => {
+  api.post('/sessions/:id/commit', async (req, res) => {
     const s = manager.get(req.params.id);
     const { repo, message, paths, amend } = req.body || {};
     if (!s) return res.status(400).json({ error: 'no such session' });
@@ -449,10 +449,10 @@ async function main() {
     // already know. Poke directly rather than wait to be told what we just did.
     if (out.ok) { broadcastTopology(); ciFeed.poke({ force: true }); }
     res.json(out);
-  }));
+  });
 
   // ---- worktrees (manual) ----
-  api.post('/worktrees', A(async (req, res) => {
+  api.post('/worktrees', async (req, res) => {
     const { repo, branch, name } = req.body || {};
     if (!branch && !name) return res.status(400).json({ error: 'branch or name is required' });
     const repoObj = repos.find((r) => r.name === repo);
@@ -466,19 +466,19 @@ async function main() {
     });
     await rescan();
     res.json(out);
-  }));
+  });
 
-  api.delete('/worktrees', A(async (req, res) => {
+  api.delete('/worktrees', async (req, res) => {
     const { repo, worktreePath, branch, deleteBranch } = req.body || {};
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
     const out = await worktree.remove(repoObj.path, worktreePath, { branch, deleteBranch });
     await rescan();
     res.json(out);
-  }));
+  });
 
   // ---- dev servers ----
-  api.post('/servers/start', A(async (req, res) => {
+  api.post('/servers/start', async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature);
@@ -487,8 +487,8 @@ async function main() {
     await refreshRunning();
     broadcastTopology();
     res.json(out);
-  }));
-  api.post('/servers/stop', A(async (req, res) => {
+  });
+  api.post('/servers/stop', async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.stop(repo, worktreePath);
     await refreshRunning();
@@ -497,8 +497,8 @@ async function main() {
     if (![...runningCache.keys()].some((p) => servers.featureFor(p) === feature)) servers.releaseSlot(feature);
     broadcastTopology();
     res.json(out);
-  }));
-  api.post('/servers/restart', A(async (req, res) => {
+  });
+  api.post('/servers/restart', async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
@@ -507,7 +507,7 @@ async function main() {
     await refreshRunning();
     broadcastTopology();
     res.json(out);
-  }));
+  });
   api.get('/servers/logs', (req, res) => {
     const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
     res.json(servers.logs(req.query.worktreePath, { offset }));
@@ -523,7 +523,7 @@ async function main() {
   forge.register(api);
 
   // Start a session in an existing worktree (Fleet: "Start session here")
-  api.post('/worktrees/adopt', A(async (req, res) => {
+  api.post('/worktrees/adopt', async (req, res) => {
     const { repo, worktreePath, branch, wtname } = req.body || {};
     if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
     const repoObj = repos.find((r) => r.name === repo);
@@ -532,10 +532,10 @@ async function main() {
     if (!s) s = manager.sessionForWorktree(worktreePath); // an adopt was already in flight
     broadcastTopology();
     res.json(s || { error: 'session is already being opened' });
-  }));
+  });
 
   // ---- editor open ----
-  api.post('/open', A(async (req, res) => {
+  api.post('/open', async (req, res) => {
     const { path: p, editor } = req.body || {};
     const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
@@ -544,7 +544,7 @@ async function main() {
     const cmd = ed.open.split('{path}').join(shq(p));
     await run('bash', ['-lc', cmd]);
     res.json({ ok: true });
-  }));
+  });
 
   require('./transcript-routes').register(api, { manager, cfg });
   require('./routes-review').register(api, { manager, repos: () => repos, broadcast: scheduleBroadcast });
@@ -571,6 +571,12 @@ async function main() {
   // Client-side routes (/review, /search, /usage) reach the daemon on a deep link or a
   // reload, and the daemon knows nothing about them. Last, so it shadows no route above.
   webui.mountFallback(app, { ui, token: cfg._token });
+
+  // Truly last: the net every route above falls into. express@5 awaits handlers, so a
+  // handler that throws — or a body parser that refuses a body — lands here and gets an
+  // answer, instead of escaping as the unhandled rejection crash.install() treats as
+  // fatal. This is why no handler above needs a wrapper around it.
+  app.use(crash.routeErrors());
 
   // ---- HTTP + WS ----
   const server = http.createServer(app);

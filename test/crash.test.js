@@ -98,6 +98,92 @@ test('listenErrorMessage names the remedy for each bind failure and ignores the 
 });
 
 // ---------------------------------------------------------------------------
+// routeErrors — the request-level half
+// ---------------------------------------------------------------------------
+//
+// This is the whole point of the express@5 upgrade. Under express@4 a rejected
+// handler escaped to the process, and the rule above makes that FATAL — so every
+// handler had to be hand-wrapped in `A()` and one omission killed the daemon.
+// express@5 forwards the rejection here instead. These tests are what stops the
+// wrapper's removal from being a regression.
+
+// Drive the middleware directly with fakes, the way armed() does for install().
+function through(err, { headersSent = false } = {}) {
+  const logs = [];
+  const sent = { status: null, body: null, nexted: undefined };
+  const res = {
+    headersSent,
+    status(c) { sent.status = c; return this; },
+    json(b) { sent.body = b; return this; },
+  };
+  const req = { method: 'GET', originalUrl: '/api/v1/state?token=deadbeef' };
+  crash.routeErrors({ log: (...a) => logs.push(a.map(String).join(' ')) })(
+    err, req, res, (e) => { sent.nexted = e; },
+  );
+  return { ...sent, logs };
+}
+
+test('an escaped throw is a 500 carrying the error message — the documented shape', () => {
+  const r = through(new Error('git exploded'));
+  assert.equal(r.status, 500);
+  assert.deepEqual(r.body, { error: 'git exploded' });
+  assert.equal(r.nexted, undefined, 'the error is answered here, not passed on');
+});
+
+test('a body parser refusal keeps its own status — a malformed body is the caller\'s bug', () => {
+  const bad = Object.assign(new SyntaxError('Unexpected token }'), { status: 400 });
+  const big = Object.assign(new Error('request entity too large'), { statusCode: 413 });
+  assert.equal(through(bad).status, 400, 'not a 500 — the request was malformed, not the server');
+  assert.equal(through(big).status, 413);
+  // Anything outside the HTTP error range is a value we did not set and must not trust.
+  assert.equal(through(Object.assign(new Error('x'), { status: 200 })).status, 500);
+  assert.equal(through(Object.assign(new Error('x'), { status: 'nope' })).status, 500);
+});
+
+test('an error after the headers are out is handed on, never appended to the body', () => {
+  const e = new Error('threw mid-stream');
+  const r = through(e, { headersSent: true });
+  assert.equal(r.status, null, 'an SSE stream must not get JSON stapled to it');
+  assert.equal(r.body, null);
+  assert.equal(r.nexted, e, 'express\'s default handler destroys the socket instead');
+});
+
+test('the failure log names the route but never the query string — that is where the token is', () => {
+  const line = through(new Error('boom')).logs.join('\n');
+  assert.ok(line.includes('GET /api/v1/state'), line);
+  assert.ok(!line.includes('deadbeef'), 'the boot token rides in ?token= and must not be logged');
+});
+
+test('a non-Error throw does not become a second failure inside the handler', () => {
+  // `null.message` is a TypeError raised *while* answering — which is exactly the
+  // unhandled rejection this middleware exists to prevent.
+  for (const thrown of [null, undefined, 'a string was thrown']) {
+    const r = through(thrown);
+    assert.equal(r.status, 500, String(thrown));
+  }
+});
+
+test('a bare async handler that throws is a 500, and the process survives it', async () => {
+  const express = require('express');
+  const app = express();
+  // No wrapper. That is the assertion: express@5 awaits the handler itself.
+  app.get('/api/boom', async () => { throw new Error('handler exploded'); });
+  app.use(crash.routeErrors({ log: () => {} }));
+
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  try {
+    const r = await fetch(`http://127.0.0.1:${server.address().port}/api/boom`);
+    assert.equal(r.status, 500);
+    assert.deepEqual(await r.json(), { error: 'handler exploded' });
+  } finally { server.close(); }
+
+  // The rejection was consumed by express, so it never reached the process handler
+  // install() arms — which would have exited. Reaching this line is that proof.
+  assert.ok(true);
+});
+
+// ---------------------------------------------------------------------------
 // the incident itself: a real daemon, a taken port
 // ---------------------------------------------------------------------------
 

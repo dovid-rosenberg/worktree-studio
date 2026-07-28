@@ -9,7 +9,6 @@
 // never spells a prefix, so it cannot register a route under one and miss the other.
 const review = require('./review');
 const hunks = require('./hunks');
-const { A } = require('./util');
 
 // Resolve :id + ?repo (or body.repo) to the worktree the operation runs in. Returns
 // { entry } or { status, error } so each handler bails the same way.
@@ -43,13 +42,11 @@ function register(api, deps) {
     const hit = list.find((r) => r.name === name);
     return hit && hit.defaultBranch;
   };
-  const get = (p, fn) => api.get(p, A(fn));
-  const post = (p, fn) => api.post(p, A(fn));
 
   // The structured per-file diff for one commit, or for the working tree when
   // sha=uncommitted (the default). Each file carries the raw patch AND the parsed
   // model — hunks, aligned rows, line numbers on both sides.
-  get('/sessions/:id/diff', async (req, res) => {
+  api.get('/sessions/:id/diff', async (req, res) => {
     const r = resolveWorktree(deps, req, req.query.repo);
     if (r.error) return res.status(r.status).json({ error: r.error });
     // `?sha=a&sha=b` parses to an ARRAY, and an array reaching isValidSha/execFile is
@@ -66,7 +63,7 @@ function register(api, deps) {
   // Both sides of one working file, split the way staging needs them: `unstaged` hunks
   // can be staged, `staged` hunks can be unstaged. Hunk indexes in the two POSTs below
   // refer to the matching side of THIS payload.
-  get('/sessions/:id/hunks', async (req, res) => {
+  api.get('/sessions/:id/hunks', async (req, res) => {
     const r = resolveWorktree(deps, req, req.query.repo);
     if (r.error) return res.status(r.status).json({ error: r.error });
     if (!req.query.file) return res.status(400).json({ error: 'file is required' });
@@ -90,8 +87,8 @@ function register(api, deps) {
     broadcast();
     res.json(out);
   };
-  post('/sessions/:id/hunks/stage', applyRoute('stage'));
-  post('/sessions/:id/hunks/unstage', applyRoute('unstage'));
+  api.post('/sessions/:id/hunks/stage', applyRoute('stage'));
+  api.post('/sessions/:id/hunks/unstage', applyRoute('unstage'));
 }
 
 module.exports = { register, selection, resolveWorktree };
