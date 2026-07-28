@@ -14,7 +14,7 @@
   // <details> for anyone who wants them.
   /**
    * @type {{
-   *   pricing?: { verifiedAt: string, note: string }|null,
+   *   pricing?: import('./types.js').PricingBlock|null,
    *   unpricedModels?: string[],
    *   compact?: boolean,
    *   line?: boolean,

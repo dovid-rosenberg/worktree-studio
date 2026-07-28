@@ -81,6 +81,7 @@
  *   costIsEstimate?: boolean,
  *   unpricedModels: string[],
  *   indexed?: boolean,
+ *   pricing?: PricingBlock,
  * }} Usage
  */
 
@@ -96,12 +97,25 @@
 /** @typedef {Tokens & { costUsd: number|null, unpricedModels: string[] }} Totals */
 
 /**
+ * The `pricing` block every cost-bearing response carries.
+ *
+ * `cacheMultipliers` is the one part the client cannot derive and must not duplicate:
+ * the API prices a MODEL, never a token class, so a UI showing "which class cost the
+ * money" needs to know what multiple of the input rate each class bills at. It comes
+ * from server/pricing.js — see pricing.svelte.js.
+ * @typedef {Object} PricingBlock
+ * @property {string} verifiedAt          ISO date the price table was last checked
+ * @property {string} note
+ * @property {{ input: number, cacheWrite5m: number, cacheWrite1h: number, cacheRead: number }} [cacheMultipliers]
+ */
+
+/**
  * @typedef {{
  *   sessions: Usage[],
  *   features: FeatureUsage[],
  *   totals: Totals,
  *   costIsEstimate: boolean,
- *   pricing?: { verifiedAt: string, note: string },
+ *   pricing?: PricingBlock,
  *   backend?: string,
  * }} FleetUsage
  */
@@ -115,7 +129,7 @@
  * @property {string|null} [error]
  * @property {number} sessions
  * @property {number} messages
- * @property {{ verifiedAt: string, note: string }} [pricing]
+ * @property {PricingBlock} [pricing]
  */
 
 /**

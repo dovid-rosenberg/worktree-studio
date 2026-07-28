@@ -179,18 +179,21 @@ function register(api, deps = {}) {
   }));
 
   // ---- telemetry ----
+  // Carries the same `pricing` block as the fleet endpoint: a client that mounts one
+  // session's telemetry on its own must still learn the cache multipliers, or its
+  // billed-weight chart falls back to whatever it last knew.
   r.get('/sessions/:id/transcript/usage', A(async (req, res) => {
     const s = need(req, res); if (!s) return;
     await fresh(s);
     if (index.ready) {
       const rows = index.usageRows(s.id);
-      if (rows.length) return res.json({ session: meta(s), source: 'index', ...summarize(rows), costIsEstimate: true });
+      if (rows.length) return res.json({ session: meta(s), source: 'index', ...summarize(rows), costIsEstimate: true, pricing: pricingBlock() });
     }
     // Not indexed (or no sqlite) → read the transcript directly.
     const loc = transcripts.locate(s, {});
-    if (!loc.found) return res.json({ session: meta(s), source: 'none', reason: loc.reason, ...summarize([]) });
+    if (!loc.found) return res.json({ session: meta(s), source: 'none', reason: loc.reason, ...summarize([]), pricing: pricingBlock() });
     const agg = await transcripts.aggregate(loc.file);
-    res.json({ session: meta(s), source: 'transcript', ...agg });
+    res.json({ session: meta(s), source: 'transcript', ...agg, pricing: pricingBlock() });
   }));
 
   // Everything at once: per session, rolled up per feature, plus a grand total.

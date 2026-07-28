@@ -1,9 +1,12 @@
 // Formatting + the one piece of arithmetic the insights UI does on its own.
 //
 // Everything here is presentation. The single exception is `billedWeight()`, which
-// exists because the API prices a *model*, never a token class — see the comment on
-// BILLING_MULTIPLIER below for why the UI needs its own answer to "where did the
-// money go" and what makes that answer exact rather than a guess.
+// exists because the API prices a *model*, never a token class — see the billing
+// weight section below for why the UI needs its own answer to "where did the money
+// go" and what makes that answer exact rather than a guess. The multipliers it needs
+// come from the server; pricing.svelte.js holds them.
+
+import { billingMultipliers } from './pricing.svelte.js';
 
 /** Thousands-separated exact count: 576324491 → "576,324,491". @param {number} n */
 export function exactTokens(n) {
@@ -138,16 +141,10 @@ export function shortModel(model) {
 // therefore excluded from the weighting and reported alongside it rather than
 // silently folded in at an invented rate.
 //
-// Mirrors CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ in server/pricing.js. These
-// are pricing *structure*, not prices, so they move far less often than the rate
-// table — but they are still duplicated here, and the server does not currently
-// publish them. See the note in /transcripts/status's `pricing` block.
-export const BILLING_MULTIPLIER = {
-  input: 1,
-  cacheWrite5m: 1.25,
-  cacheWrite1h: 2,
-  cacheRead: 0.1,
-};
+// The multipliers come from the server (`pricing.cacheMultipliers`), not from a copy
+// kept here — see pricing.svelte.js for what went wrong when they were written down
+// twice. Reading the live object rather than destructuring it is what makes a chart
+// re-derive when a response installs new values.
 
 /** The four input-family classes, in fixed display order. Order is the color key. */
 export const INPUT_CLASSES = [
@@ -165,10 +162,10 @@ export const INPUT_CLASSES = [
 export function billedWeight(u) {
   if (!u) return 0;
   return (
-    (u.input || 0) * BILLING_MULTIPLIER.input +
-    (u.cacheWrite5m || 0) * BILLING_MULTIPLIER.cacheWrite5m +
-    (u.cacheWrite1h || 0) * BILLING_MULTIPLIER.cacheWrite1h +
-    (u.cacheRead || 0) * BILLING_MULTIPLIER.cacheRead
+    (u.input || 0) * billingMultipliers.input +
+    (u.cacheWrite5m || 0) * billingMultipliers.cacheWrite5m +
+    (u.cacheWrite1h || 0) * billingMultipliers.cacheWrite1h +
+    (u.cacheRead || 0) * billingMultipliers.cacheRead
   );
 }
 
@@ -177,11 +174,11 @@ export function billedWeight(u) {
 export function weightByClass(u) {
   if (!u) return { input: 0, cacheWrite: 0, cacheRead: 0 };
   return {
-    input: (u.input || 0) * BILLING_MULTIPLIER.input,
+    input: (u.input || 0) * billingMultipliers.input,
     cacheWrite:
-      (u.cacheWrite5m || 0) * BILLING_MULTIPLIER.cacheWrite5m +
-      (u.cacheWrite1h || 0) * BILLING_MULTIPLIER.cacheWrite1h,
-    cacheRead: (u.cacheRead || 0) * BILLING_MULTIPLIER.cacheRead,
+      (u.cacheWrite5m || 0) * billingMultipliers.cacheWrite5m +
+      (u.cacheWrite1h || 0) * billingMultipliers.cacheWrite1h,
+    cacheRead: (u.cacheRead || 0) * billingMultipliers.cacheRead,
   };
 }
 
@@ -212,6 +209,6 @@ export function totalTokens(u) {
 export function writeMultiplier(u) {
   const w5 = u?.cacheWrite5m || 0;
   const w1 = u?.cacheWrite1h || 0;
-  if (!w5 && !w1) return BILLING_MULTIPLIER.cacheWrite1h;
-  return (w5 * BILLING_MULTIPLIER.cacheWrite5m + w1 * BILLING_MULTIPLIER.cacheWrite1h) / (w5 + w1);
+  if (!w5 && !w1) return billingMultipliers.cacheWrite1h;
+  return (w5 * billingMultipliers.cacheWrite5m + w1 * billingMultipliers.cacheWrite1h) / (w5 + w1);
 }

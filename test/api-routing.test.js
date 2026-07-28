@@ -272,3 +272,44 @@ test('the transcript routes answer identically under /api and /api/v1', async ()
     });
   } finally { cleanup(); }
 });
+
+// ---------------------------------------------------------------------------
+// The cache-billing multipliers are PUBLISHED, not re-typed by the client
+// ---------------------------------------------------------------------------
+//
+// server/pricing.js exported CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ, nothing
+// imported them, and no endpoint published them — so the insights UI hardcoded a copy.
+// Change one and the API's dollars move while the client's "billed weight" chart keeps
+// the old ratios, and the same screen answers "where did the money go" two ways.
+//
+// These tests fail if the numbers stop coming from pricing.js, which is the only way
+// the duplication can come back.
+
+test('/transcripts/status publishes the cache multipliers straight from pricing.js', async () => {
+  const pricing = require('../server/pricing');
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      const { status, body } = await bothPrefixes(get, '/transcripts/status');
+      assert.equal(status, 200);
+      assert.deepEqual(body.pricing.cacheMultipliers, {
+        input: 1, // stated, not implied, so a client can consume the map wholesale
+        cacheWrite5m: pricing.CACHE_WRITE_5M,
+        cacheWrite1h: pricing.CACHE_WRITE_1H,
+        cacheRead: pricing.CACHE_READ,
+      });
+      assert.equal(body.pricing.verifiedAt, pricing.PRICING_VERIFIED);
+    });
+  } finally { cleanup(); }
+});
+
+test('every cost-bearing response carries the same pricing block', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      const status = (await bothPrefixes(get, '/transcripts/status')).body.pricing;
+      const fleet = (await bothPrefixes(get, '/transcripts/usage')).body.pricing;
+      assert.deepEqual(fleet, status, 'the fleet rollup must not quote different multipliers');
+    });
+  } finally { cleanup(); }
+});
