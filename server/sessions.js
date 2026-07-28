@@ -531,34 +531,47 @@ class SessionManager extends EventEmitter {
   }
 
   // Recreate every persisted session after a restart, resuming the conversation.
+  //
+  // Each session is relaunched inside its own guard, because one that cannot be
+  // relaunched says nothing about the next one. Without it a single throw took out
+  // the whole pass: `_writeHookSettings` is a mkdirSync + writeFileSync, so one
+  // EACCES or ENOSPC escaped the loop, every LATER session was silently never
+  // relaunched, and `_save()` never ran either — leaving the on-disk state claiming
+  // they were fine. A session that fails is marked and reported; the pass goes on.
   async restore() {
     let n = 0;
     for (const s of this.all()) {
       if (!s.muxName) continue;
       if (s.active === false) continue;
-      if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
-      // A promoted session whose worktree is gone can't be resumed meaningfully —
-      // flag it rather than launch a dead pane and claim success.
-      if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
-        s.state = 'stopped'; s.activity = 'worktree missing';
-        continue;
+      try {
+        if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
+        // A promoted session whose worktree is gone can't be resumed meaningfully —
+        // flag it rather than launch a dead pane and claim success.
+        if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
+          s.state = 'stopped'; s.activity = 'worktree missing';
+          continue;
+        }
+        // Refresh the hook settings file to the current install path/port before relaunch.
+        this._writeHookSettings(s);
+        const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
+        // Resume from the transcript's home dir so --resume finds the conversation.
+        // Promoted sessions already have home = worktree (moved at promote time).
+        let cwd = s.home || s.repoPath;
+        if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
+        await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+        // restore recreates only the primary claude window — drop any stale extra
+        // tabs so the tab strip matches the windows that actually exist.
+        s.tabs = [{ title: 'claude' }];
+        s.state = 'idle';
+        s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
+        // self-heal a promote whose /cd never landed (normally a no-op here).
+        this._anchorInWorktree(s).catch(() => {});
+        n++;
+      } catch (e) {
+        s.state = 'stopped';
+        s.activity = `restore failed: ${e.message}`;
+        console.error(`[wt-studio] could not restore session ${s.id} (${s.title || 'untitled'}): ${e.message}`);
       }
-      // Refresh the hook settings file to the current install path/port before relaunch.
-      this._writeHookSettings(s);
-      const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
-      // Resume from the transcript's home dir so --resume finds the conversation.
-      // Promoted sessions already have home = worktree (moved at promote time).
-      let cwd = s.home || s.repoPath;
-      if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
-      await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
-      // restore recreates only the primary claude window — drop any stale extra
-      // tabs so the tab strip matches the windows that actually exist.
-      s.tabs = [{ title: 'claude' }];
-      s.state = 'idle';
-      s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
-      // self-heal a promote whose /cd never landed (normally a no-op here).
-      this._anchorInWorktree(s).catch(() => {});
-      n++;
     }
     this._save();
     this.emit('change', { type: 'restore', count: n });

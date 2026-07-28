@@ -607,7 +607,14 @@ async function main() {
     console.warn(`[wt-studio] dropped stale tracked pid ${d.pid} for ${d.worktreePath}`);
   }
   await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
-  const restored = await manager.restore().catch(() => 0);
+  // restore() guards each session on its own, so a rejection here means the whole
+  // pass went down and NOTHING was relaunched. Discarding the error left that state
+  // indistinguishable from "there were no sessions to restore", since the success
+  // line below only prints on a non-zero count.
+  const restored = await manager.restore().catch((e) => {
+    console.error(`[wt-studio] session restore failed — no sessions were relaunched: ${e.message}`, e);
+    return 0;
+  });
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 
   server.listen(cfg.web.port, cfg.web.host, () => {
