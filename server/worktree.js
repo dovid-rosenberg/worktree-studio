@@ -56,6 +56,14 @@ async function isIgnored(repoPath, rel) {
 // An explicit empty array turns it off.
 const DEFAULT_COPY_ALWAYS = ['.idea/runConfigurations/*.xml'];
 
+// The only network round-trip in a worktree create, and a best-effort one: it just
+// makes the base ref fresher, and a repo with no `origin` at all already skips
+// straight past it. Left unbounded it was enough to hang POST /api/worktrees,
+// /promote and /add-repo forever — the child never reaped, the route never
+// answered — on a dropped VPN or a credential helper prompting on a stdin nobody
+// is going to answer. Bound it and carry on with the refs that are already local.
+const FETCH_TIMEOUT_MS = 60000;
+
 // The copy options `create()` wants, read out of a loaded config: a per-repo
 // override under `copyPatterns`/`copyAlways` wins over `.default`. An absent
 // `copyAlways` key (a config written before it existed, or a hand-built test cfg)
@@ -122,7 +130,7 @@ async function defaultBase(repoPath) {
  * Create a worktree. Returns { ok, path, branch, name, base, created, copied, warnings, error }.
  * @param {string} branch  branch name (created off default base if it doesn't exist)
  * @param {string} name    worktree dir name (defaults from branch)
- * @param {object} opts    { unique, fetch, copyPatterns, copyAlways, layout }
+ * @param {object} opts    { unique, fetch, fetchTimeoutMs, copyPatterns, copyAlways, layout }
  *                         layout: a server/layout.js descriptor; defaults to nested `.worktrees`
  */
 async function create(repoPath, branch, name, opts = {}) {
@@ -160,7 +168,7 @@ async function create(repoPath, branch, name, opts = {}) {
   // layouts point outside the repo, where nothing has made the parent yet).
   fs.mkdirSync(path.dirname(dest), { recursive: true });
 
-  if (opts.fetch !== false) await gitFull(repoPath, ['fetch', '--prune', 'origin']);
+  if (opts.fetch !== false) await gitFull(repoPath, ['fetch', '--prune', 'origin'], { timeout: opts.fetchTimeoutMs || FETCH_TIMEOUT_MS });
 
   let created = false;
   let base = null;
@@ -191,5 +199,5 @@ async function remove(repoPath, worktreePath, opts = {}) {
 
 module.exports = {
   create, remove, populate, branchExists, defaultBase,
-  expandPattern, worktreeCopyOpts, DEFAULT_COPY_ALWAYS,
+  expandPattern, worktreeCopyOpts, DEFAULT_COPY_ALWAYS, FETCH_TIMEOUT_MS,
 };

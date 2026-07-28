@@ -15,15 +15,32 @@ function expandTilde(p) {
   return p;
 }
 
+// Backstop ceiling on any child process. Nothing this app shells out to is meant
+// to take two minutes, and a call that does has not "gone slow" — it has hung: a
+// credential helper prompting on a stdin nobody is ever going to answer, a fetch
+// over a VPN that dropped mid-handshake. With no ceiling the promise never
+// settles, so the route never responds AND the child is never reaped.
+//
+// It has to be execFile's own `timeout`, which KILLS the child; a promise-level
+// race would resolve the caller and leave the process wedged forever. This is the
+// last line of defence — the network-bound callers set their own, tighter, bound
+// (see server/forge.js and server/worktree.js).
+const DEFAULT_TIMEOUT_MS = 120000;
+
 // Promise wrapper around execFile with a generous buffer. Never throws on a
-// non-zero exit — returns { code, stdout, stderr } so callers decide.
+// non-zero exit — returns { code, stdout, stderr, timedOut } so callers decide.
 function run(cmd, args = [], opts = {}) {
+  const { timeout = DEFAULT_TIMEOUT_MS, ...rest } = opts;
   return new Promise((resolve) => {
-    execFile(cmd, args, { maxBuffer: 32 * 1024 * 1024, ...opts }, (err, stdout, stderr) => {
+    execFile(cmd, args, { maxBuffer: 32 * 1024 * 1024, timeout, ...rest }, (err, stdout, stderr) => {
       resolve({
         code: err && typeof err.code === 'number' ? err.code : err ? 1 : 0,
         stdout: (stdout || '').toString(),
         stderr: (stderr || '').toString(),
+        // A child killed on the timeout exits with no code and usually no stderr at
+        // all, so without this flag "hung and killed" is indistinguishable from any
+        // other failure — and it is the one failure the user can actually act on.
+        timedOut: !!(err && err.killed),
         error: err || null,
       });
     });
@@ -36,8 +53,8 @@ async function git(cwd, args) {
   return r.code === 0 ? r.stdout.trim() : '';
 }
 
-async function gitFull(cwd, args) {
-  return run('git', ['-C', cwd, ...args]);
+async function gitFull(cwd, args, opts = {}) {
+  return run('git', ['-C', cwd, ...args], opts);
 }
 
 function has(cmd) {
@@ -164,4 +181,4 @@ const A = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
   if (!res.headersSent) res.status(500).json({ error: e.message });
 });
 
-module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A };
+module.exports = { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, A, DEFAULT_TIMEOUT_MS };
