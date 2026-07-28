@@ -1,17 +1,16 @@
-'use strict';
-// Hunk staging against real repos (server/hunks.js). The pure model is covered in
+// Hunk staging against real repos (server/hunks.ts). The pure model is covered in
 // test/diff.test.js; what matters here is that git accepts what we generate — so the
 // assertions are mostly "what does `git diff --cached` say afterwards", plus a
 // round-trip check (parse git's own diff → re-serialize → `git apply --check`) run over
 // every awkward file shape.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
-const hunks = require('../server/hunks');
-const { parsePatch, formatFilePatch } = require('../server/diff');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync, spawnSync } from 'child_process';
+import * as hunks from '../server/hunks.ts';
+import { parsePatch, formatFilePatch } from '../server/diff.ts';
 
 function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 

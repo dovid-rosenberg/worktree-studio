@@ -1,13 +1,12 @@
-'use strict';
-// server/term.js: the terminal WebSocket's resource ordering.
+// server/term.ts: the terminal WebSocket's resource ordering.
 //
 // The thing under test is a race, so ensureSplit is a promise this file resolves
 // by hand — that is what lets the socket close at the exact moment the real bug
 // needed (during the tmux round-trips, before any pty exists).
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { EventEmitter } = require('events');
-const { createTerminalHandler } = require('../server/term');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { EventEmitter } from 'events';
+import { createTerminalHandler } from '../server/term.ts';
 
 // Just enough of a `ws`: close() emits 'close', exactly as the real one does when
 // the browser goes away.

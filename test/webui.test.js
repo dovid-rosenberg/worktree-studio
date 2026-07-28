@@ -1,4 +1,3 @@
-'use strict';
 // Serving the frontend: which UI owns `/`, that every document goes through the token
 // injector (including the SPA fallback a deep link lands on), that a missing build is a
 // clear boot error rather than a blank page, and that the fallback cannot swallow the
@@ -6,13 +5,13 @@
 //
 // Exercised through a real express app on an ephemeral port against fixture trees, so
 // nothing here depends on client/build having been built.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const express = require('express');
-const webui = require('../server/webui');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import express from 'express';
+import * as webui from '../server/webui.ts';
 
 const TOKEN = 'a'.repeat(64);
 
@@ -184,13 +183,13 @@ test('app.html carries the placeholder exactly once', () => {
   // adapter-static copies app.html to build/index.html verbatim, so this file is where
   // the "exactly once" invariant actually lives. It is asserted here rather than on the
   // build because the build is generated and not in git.
-  const src = fs.readFileSync(path.join(__dirname, '..', 'client', 'src', 'app.html'), 'utf8');
+  const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'client', 'src', 'app.html'), 'utf8');
   assert.equal(src.split(webui.PLACEHOLDER).length - 1, 1);
 });
 
 test('the built client, when present, is servable and holds no token', () => {
-  const index = path.join(__dirname, '..', 'client', 'build', 'index.html');
-  if (!fs.existsSync(index)) return; // not built in this checkout — bin/build-client.js makes it
+  const index = path.join(import.meta.dirname, '..', 'client', 'build', 'index.html');
+  if (!fs.existsSync(index)) return; // not built in this checkout — bin/build-client.ts makes it
   const html = fs.readFileSync(index, 'utf8');
   assert.equal(html.split(webui.PLACEHOLDER).length - 1, 1, 'exactly one placeholder');
   assert.ok(!/WTS_TOKEN = "[0-9a-f]{32,}"/.test(html), 'no real token baked into the build');

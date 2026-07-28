@@ -1,15 +1,14 @@
-'use strict';
-// The forge boundary (server/forge.js): the check-tally tables that drive the CI
+// The forge boundary (server/forge.ts): the check-tally tables that drive the CI
 // pill, and the provider contract — GitHub first, GitLab as the fallback, cached,
 // and never throwing out of a lookup. Providers are injected, so no gh/glab and no
 // network are involved.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const express = require('express');
-const { createForge, ghChecks, glChecks, PROVIDERS } = require('../server/forge');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import express from 'express';
+import { createForge, ghChecks, glChecks, PROVIDERS, pushFailureLine } from '../server/forge.ts';
 
 // A worktree path that is deliberately NOT a git repo — used to drive the real
 // `git push` failure path end to end.
@@ -18,8 +17,8 @@ const NOT_A_REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-forge-'));
 // A stand-in provider whose view/create are scripted per call.
 /**
  * @param {string} id
- * @param {Partial<import('../server/forge').Provider>} [impl]
- * @returns {import('../server/forge').Provider}
+ * @param {Partial<import('../server/forge.ts').Provider>} [impl]
+ * @returns {import('../server/forge.ts').Provider}
  */
 function provider(id, { view = async () => null, create = async () => ({ ok: false, stderr: '' }) } = {}) {
   return { id, cli: id, view, create };
@@ -350,7 +349,6 @@ test('POST /group/pr reports a push failure as the failure', async () => {
 });
 
 test('pushFailureLine picks the complaint out of git\'s progress noise', () => {
-  const { pushFailureLine } = require('../server/forge');
   assert.equal(pushFailureLine({ stderr: 'To github.com:a/b.git\nerror: failed to push some refs\n' }), 'error: failed to push some refs');
   assert.equal(pushFailureLine({ stderr: "fatal: 'origin' does not appear to be a git repository" }), "fatal: 'origin' does not appear to be a git repository");
   assert.equal(pushFailureLine({ stderr: 'remote: Permission to a/b.git denied' }), 'remote: Permission to a/b.git denied');

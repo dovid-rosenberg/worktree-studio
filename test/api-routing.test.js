@@ -1,24 +1,27 @@
-'use strict';
 // The route-module convention and the API versioning that rides on it: feature
-// modules call register(app, deps) against ONE router, and server.js mounts that
+// modules call register(app, deps) against ONE router, and server.ts mounts that
 // router at both /api/v1 (versioned) and /api (the unversioned aliases SwiftBar,
 // Alfred and the current web UI call). Every route must answer identically under
 // both prefixes — that equivalence is what those clients depend on.
 //
 // Exercised through a real express app on an ephemeral port, with fake deps, so
 // nothing is spawned and no git/lsof runs.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const express = require('express');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const orchestrator = require('../server/orchestrator');
-const { createForge } = require('../server/forge');
-const { createIdentity } = require('../server/identity');
-const crash = require('../server/crash');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import express from 'express';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import * as orchestrator from '../server/orchestrator.ts';
+import { createForge } from '../server/forge.ts';
+import { createIdentity } from '../server/identity.ts';
+import * as crash from '../server/crash.ts';
+import * as pricing from '../server/pricing.ts';
+import { EventEmitter } from 'node:events';
+import * as routesReview from '../server/routes-review.ts';
+import * as transcriptRoutes from '../server/transcript-routes.ts';
 
-// server.js mounts this last, after every route. The route modules used to carry their
+// server.ts mounts this last, after every route. The route modules used to carry their
 // own async wrapper, so a harness that omitted it still got JSON out of a throwing
 // handler; now the error policy belongs to the app, and a miniature that leaves it out
 // is testing a wiring the daemon does not have. Silent, because the deliberately
@@ -230,7 +233,7 @@ test('the needsConfirm answer stays ok:true — the server is asking, not failin
 //
 // routes-review and transcript-routes used to mount themselves — one by looping a
 // PREFIXES array against the raw app, one by app.use()-ing its own sub-router at each
-// prefix. Both now register onto the router server.js mounts twice, which is the only
+// prefix. Both now register onto the router server.ts mounts twice, which is the only
 // one of the three idioms that is automatically correct. These tests are the proof
 // that the equivalence survived the change, end to end through express.
 
@@ -243,10 +246,10 @@ function routeModules() {
   app.use('/api', api);
   app.use('/api/v1', api);
   const manager = { get: () => null, all: () => [], on: () => {} };
-  require('../server/routes-review').register(api, { manager, repos: () => [] });
+  routesReview.register(api, { manager, repos: () => [] });
   // A throwaway state dir, so the real ~/.local/state index is never opened.
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-routing-'));
-  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+  const { index } = transcriptRoutes.register(api, { manager, cfg: { _stateDir: stateDir } });
   mountErrors(app);
   return { app, index, cleanup: () => { index.close(); fs.rmSync(stateDir, { recursive: true, force: true }); } };
 }
@@ -291,16 +294,15 @@ test('the transcript routes answer identically under /api and /api/v1', async ()
 // The cache-billing multipliers are PUBLISHED, not re-typed by the client
 // ---------------------------------------------------------------------------
 //
-// server/pricing.js exported CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ, nothing
+// server/pricing.ts exported CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ, nothing
 // imported them, and no endpoint published them — so the insights UI hardcoded a copy.
 // Change one and the API's dollars move while the client's "billed weight" chart keeps
 // the old ratios, and the same screen answers "where did the money go" two ways.
 //
-// These tests fail if the numbers stop coming from pricing.js, which is the only way
+// These tests fail if the numbers stop coming from pricing.ts, which is the only way
 // the duplication can come back.
 
-test('/transcripts/status publishes the cache multipliers straight from pricing.js', async () => {
-  const pricing = require('../server/pricing');
+test('/transcripts/status publishes the cache multipliers straight from pricing.ts', async () => {
   const { app, cleanup } = routeModules();
   try {
     await serving(app, async (get) => {
@@ -368,7 +370,6 @@ test('repeated transcript query params are collapsed, not passed through as arra
 // the single follow-up pass that pass is owed.
 
 test('a burst of Stop hooks collapses into one follow-up index pass', async () => {
-  const { EventEmitter } = require('node:events');
   const manager = /** @type {any} */ (new EventEmitter());
   const session = { id: 's1' };
   manager.get = (id) => (id === 's1' ? session : null);
@@ -378,7 +379,7 @@ test('a burst of Stop hooks collapses into one follow-up index pass', async () =
   const api = express.Router();
   app.use('/api', api);
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
-  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+  const { index } = transcriptRoutes.register(api, { manager, cfg: { _stateDir: stateDir } });
 
   const calls = [];
   let release;
@@ -400,7 +401,6 @@ test('a burst of Stop hooks collapses into one follow-up index pass', async () =
 });
 
 test('a hook for an event that is not a reindex trigger enqueues nothing', async () => {
-  const { EventEmitter } = require('node:events');
   const manager = /** @type {any} */ (new EventEmitter());
   manager.get = () => ({ id: 's1' });
   manager.all = () => [];
@@ -408,7 +408,7 @@ test('a hook for an event that is not a reindex trigger enqueues nothing', async
   const api = express.Router();
   app.use('/api', api);
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-queue-'));
-  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+  const { index } = transcriptRoutes.register(api, { manager, cfg: { _stateDir: stateDir } });
 
   const calls = [];
   index.index = /** @type {any} */ (async (/** @type {any} */ s) => { calls.push(s.id); return { ok: true }; });

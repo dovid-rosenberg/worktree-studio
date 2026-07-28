@@ -1,7 +1,6 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { computeFeatures, resolveRef } = require('../server/features');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { computeFeatures, resolveRef } from '../server/features.ts';
 
 // helper worktree
 function wt(repo, wtname, branch, extra = {}) {

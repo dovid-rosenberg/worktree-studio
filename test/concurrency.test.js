@@ -1,7 +1,6 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } = require('../server/concurrency');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } from '../server/concurrency.ts';
 
 // accept-blue's real port map + redis__db slot key (mirrors config defaults).
 const AB = {
@@ -64,7 +63,7 @@ test('allocSlot accepts an array of used slots', () => {
   assert.equal(allocSlot([0, 1], 3), 2);
 });
 
-// rewriteSiblingPort — re-point the FE's gitignored src/config.js at a slot's BE merchant port.
+// rewriteSiblingPort — re-point the FE's gitignored src/config.ts at a slot's BE merchant port.
 // merchant base port is 1239, offsetStep 100, maxSlots 3 (family: 1239, 1339, 1439).
 const FE_CONFIG = [
   "export default {",

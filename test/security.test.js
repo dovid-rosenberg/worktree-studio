@@ -1,4 +1,3 @@
-'use strict';
 // The three controls in front of the server, exercised against a real HTTP server
 // and a real WebSocket upgrade on an ephemeral port — the checks live in the
 // transport layer, so testing them any further from it would prove nothing.
@@ -11,23 +10,23 @@
 //             applying. The Host header still names the attacker's domain.
 //   token   — everything that is not a browser at all, where Origin is absent and
 //             therefore cannot be the check.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const http = require('http');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const express = require('express');
-const { WebSocketServer } = require('ws');
-const WebSocket = require('ws');
-
-const { loadToken, createGuard, splitHostPort } = require('../server/security');
-const { makeId, shortId } = require('../server/util');
-const { muxNameFor } = require('../server/sessions');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import http from 'http';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import express from 'express';
+import { WebSocketServer } from 'ws';
+import WebSocket from 'ws';
+import { makeId, shortId } from '../server/util.ts';
+import { muxNameFor, SessionManager } from '../server/sessions.ts';
+import { loadToken, createGuard, splitHostPort } from '../server/security.ts';
+import * as status from '../server/status.ts';
 
 const TOKEN = 'a'.repeat(64);
 
-// A miniature of server.js's wiring: same middleware order, same upgrade handler,
+// A miniature of server.ts's wiring: same middleware order, same upgrade handler,
 // with the pty replaced by an echo of what the socket was allowed to reach.
 /** @param {{ port?: number }} [opts] */
 function harness({ port } = {}) {
@@ -43,7 +42,7 @@ function harness({ port } = {}) {
   app.use('/api/v1', api);
   api.get('/state', (req, res) => res.json({ ok: true, sessions: [] }));
 
-  // Same shape as server.js's hook receiver, including the grandfather clause.
+  // Same shape as server.ts's hook receiver, including the grandfather clause.
   const sessions = new Map([
     ['s_new', { id: 's_new', hookAuth: true }],   // settings file written with a token
     ['s_legacy', { id: 's_legacy' }],             // launched before the token existed
@@ -291,7 +290,6 @@ test('the hook receiver takes the token, and grandfathers only pre-token session
 });
 
 test('buildSettings bakes the token into every hook URL', () => {
-  const status = require('../server/status');
   const withTok = status.buildSettings('s_1', 7788, 'tok-123');
   for (const ev of Object.keys(withTok.hooks)) {
     const cmd = withTok.hooks[ev][0].hooks[0].command;
@@ -302,7 +300,6 @@ test('buildSettings bakes the token into every hook URL', () => {
 });
 
 test('a session written through the manager records that its hooks are authed', () => {
-  const { SessionManager } = require('../server/sessions');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-hookauth-'));
   const mgr = new SessionManager({ _stateDir: dir, web: { port: 7788 }, _token: 'tok-123' }, {});
   const s = { id: 's_x' };

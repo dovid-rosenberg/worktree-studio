@@ -1,15 +1,14 @@
-'use strict';
 // Driven against real temp git repos and real fs.watch — the whole point of this
 // module is the behaviour of the filesystem under actual git commands, which a
 // mock would only re-state our assumptions about.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const watch = require('../server/watch');
-const worktree = require('../server/worktree');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import * as watch from '../server/watch.ts';
+import * as worktree from '../server/worktree.ts';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -208,7 +207,7 @@ test('rescans never overlap; events arriving mid-scan collapse into one follow-u
   }
   await waitFor(() => done >= 1 && live === 0, { label: 'the scans to drain' });
   await sleep(500);
-  // The hard guarantee: server.js's `scanning` guard drops overlapping calls, so a
+  // The hard guarantee: server.ts's `scanning` guard drops overlapping calls, so a
   // second scan must never be issued while one is in flight.
   assert.equal(maxLive, 1, `never more than one scan in flight, saw ${maxLive}`);
   // …and every event that landed during a scan collapsed into a single follow-up

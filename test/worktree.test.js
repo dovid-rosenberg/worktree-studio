@@ -1,11 +1,10 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const worktree = require('../server/worktree');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import * as worktree from '../server/worktree.ts';
 
 function sh(cwd, cmd, args) { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }
 
@@ -16,10 +15,10 @@ function tempRepo() {
   sh(dir, 'git', ['config', 'user.name', 't']);
   fs.writeFileSync(path.join(dir, 'README.md'), '# repo\n');
   // a gitignored local config + run config that must be carried into worktrees
-  fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n.worktrees/\nconfig/*-config.js\n');
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.env\n.worktrees/\nconfig/*-config.ts\n');
   fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1\n');
   fs.mkdirSync(path.join(dir, 'config'));
-  fs.writeFileSync(path.join(dir, 'config', 'dev-config.js'), 'module.exports={};\n');
+  fs.writeFileSync(path.join(dir, 'config', 'dev-config.ts'), 'module.exports={};\n');
   fs.mkdirSync(path.join(dir, '.idea', 'runConfigurations'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.idea', 'runConfigurations', 'start.xml'), '<component/>\n');
   sh(dir, 'git', ['add', 'README.md', '.gitignore']);
@@ -31,12 +30,12 @@ test('create() makes a worktree and carries gitignored run configs + local files
   const repo = tempRepo();
   const res = await worktree.create(repo, 'feature/foo', 'feature-foo', {
     fetch: false,
-    copyPatterns: ['.env', 'config/*-config.js'],
+    copyPatterns: ['.env', 'config/*-config.ts'],
   });
   assert.equal(res.ok, true, res.error);
   assert.ok(fs.existsSync(res.path), 'worktree dir exists');
   assert.ok(fs.existsSync(path.join(res.path, '.env')), '.env copied');
-  assert.ok(fs.existsSync(path.join(res.path, 'config', 'dev-config.js')), 'dev-config.js copied');
+  assert.ok(fs.existsSync(path.join(res.path, 'config', 'dev-config.ts')), 'dev-config.ts copied');
   assert.ok(fs.existsSync(path.join(res.path, '.idea', 'runConfigurations', 'start.xml')), 'run config copied');
   assert.equal(res.copied.runConfigs, 1);
   assert.equal(res.copied.files, 2);

@@ -1,15 +1,14 @@
-'use strict';
-// server/servers.js's own resources: the descriptor it hands a launched dev
+// server/servers.ts's own resources: the descriptor it hands a launched dev
 // server, and the log file it keeps appending to for the worktree's life.
 //
 // Both are things the daemon holds for as long as it runs, so they are asserted
 // against the process's real descriptor table rather than against a mock.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { Servers, trimLog, LOG_LIMITS } = require('../server/servers');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { Servers, trimLog, LOG_LIMITS } from '../server/servers.ts';
 
 function servers(extra = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-servers-'));

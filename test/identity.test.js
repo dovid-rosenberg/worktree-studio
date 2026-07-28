@@ -1,20 +1,19 @@
-'use strict';
-// server/identity.js — the pluggable "which worktrees are the same feature?"
+// server/identity.ts — the pluggable "which worktrees are the same feature?"
 // strategy. The properties that matter most here are (a) `basename` is
 // byte-identical to the old behavior and (b) of() and ofPath() never disagree,
 // because a feature grouped one way and slotted another collides on ports.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { createIdentity, compileBranchMatcher, firstCapture } = require('../server/identity');
-const { computeFeatures } = require('../server/features');
-const { featureFromPath } = require('../server/servers');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { createIdentity, compileBranchMatcher, firstCapture } from '../server/identity.ts';
+import { computeFeatures } from '../server/features.ts';
+import { featureFromPath } from '../server/servers.ts';
 
 const wt = (repo, wtname, branch) => ({ repo, wtname, branch, path: `/r/${repo}/.worktrees/${wtname}`, running: false });
 
-// A scan-shaped repo list, as server/git.js emits it (worktrees carry `name`).
+// A scan-shaped repo list, as server/git.ts emits it (worktrees carry `name`).
 const scan = (worktrees) => {
   const byRepo = new Map();
   for (const w of worktrees) {

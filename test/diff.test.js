@@ -1,12 +1,11 @@
-'use strict';
-// The pure diff model (server/diff.js): parsing, side-by-side row alignment, and
+// The pure diff model (server/diff.ts): parsing, side-by-side row alignment, and
 // serializing a subset of a file's hunks. No git here on purpose — every case below is
 // a fixture patch, which is why the awkward ones (no trailing newline, CRLF, renames,
 // binary, mode-only, offset recomputation) are cheap to pin down. test/hunks.test.js
 // then proves the same patches survive a real `git apply`.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { parsePatch, formatFilePatch, alignRows, normalizeSelection, stripPrefix, unquotePath } = require('../server/diff');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { parsePatch, formatFilePatch, alignRows, normalizeSelection, stripPrefix, unquotePath } from '../server/diff.ts';
 
 // Patch fixtures are built line-by-line so trailing whitespace and the "\ No newline"
 // marker are visible and exact.
@@ -324,7 +323,7 @@ test('alignRows leaves a pure deletion with an empty right side', () => {
 
 test('alignRows pairs what it can and spills the rest into one-sided rows', () => {
   // 3 removals against 1 addition → one paired change row, two lone removals.
-  /** @type {Array<{ type: import('../server/types').DiffLineType, text: string }>} */
+  /** @type {Array<{ type: import('../server/types.ts').DiffLineType, text: string }>} */
   const lines = [
     { type: 'del', text: 'a' }, { type: 'del', text: 'b' }, { type: 'del', text: 'c' },
     { type: 'add', text: 'A' },

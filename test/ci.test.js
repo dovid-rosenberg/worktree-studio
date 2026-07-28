@@ -1,5 +1,4 @@
-'use strict';
-// The CI push feed (server/ci.js). What has to hold is not "a frame arrived" but
+// The CI push feed (server/ci.ts). What has to hold is not "a frame arrived" but
 // the three properties the push model was worth having for:
 //   * nothing spawns a forge CLI unless an SSE client is attached;
 //   * a refresh happens on the events that plausibly change CI, and no more often
@@ -7,9 +6,9 @@
 //   * a slow or hung gh/glab is contained — it can never reject into the bus, and
 //     it can never wedge the feed so no later refresh runs.
 // The forge is injected, so no gh, no glab and no network are involved.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { createCiFeed, DEFAULTS } = require('../server/ci');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { createCiFeed, DEFAULTS } from '../server/ci.ts';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

@@ -1,9 +1,9 @@
-'use strict';
-// server/layout.js — where worktrees live. The default must reproduce the
+// server/layout.ts — where worktrees live. The default must reproduce the
 // `.worktrees/<name>` convention that used to be a literal in four files.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const layout = require('../server/layout');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import os from 'os';
+import * as layout from '../server/layout.ts';
 
 const nested = layout.resolve({});
 
@@ -97,7 +97,7 @@ test('external puts worktrees under <root>/<repo>/<name>', () => {
 
 test('external expands ~ in root', () => {
   const l = layout.resolve({ worktrees: { layout: 'external', root: '~/wt' } });
-  assert.ok(l.root.startsWith(require('os').homedir()));
+  assert.ok(l.root.startsWith(os.homedir()));
   assert.ok(!l.root.includes('~'));
 });
 

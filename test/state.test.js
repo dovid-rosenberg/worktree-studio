@@ -1,11 +1,10 @@
-'use strict';
-// The state payload contract (server/state.js): what /api/state, every SSE frame,
+// The state payload contract (server/state.ts): what /api/state, every SSE frame,
 // SwiftBar and Alfred read. Covers the seams the extraction introduced — the deps
 // getters, the topology/session-state halves, and group resolution — against fake
 // collaborators, so no repos are scanned and no lsof runs.
-const { test } = require('node:test');
-const assert = require('node:assert');
-const { createState } = require('../server/state');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import { createState } from '../server/state.ts';
 
 // A Servers stand-in: `running` is a Map(path → {pid,ports}) keyed by real path,
 // which for these fixtures is the path itself.
@@ -198,12 +197,13 @@ test('mux reports "none" when no multiplexer was found', async () => {
 // path it owned. These cover what replaced it — one index and one realpath per
 // path per generation — against the REAL SessionManager and real dirs on disk,
 // because the whole point is what the syscalls do.
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { SessionManager } = require('../server/sessions');
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { SessionManager } from '../server/sessions.ts';
+import { Servers } from '../server/servers.ts';
 
-// Count realpathSync calls made while fn runs (util.js resolves through this same
+// Count realpathSync calls made while fn runs (util.ts resolves through this same
 // module object, so swapping the property is enough).
 function countRealpaths(fn) {
   const real = fs.realpathSync;
@@ -342,7 +342,6 @@ test('a corrupt sessions.json is kept aside instead of being replaced by an empt
 });
 
 test('a corrupt servers.json is kept aside too', () => {
-  const { Servers } = require('../server/servers');
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-corrupt-servers-'));
   const file = path.join(stateDir, 'servers.json');
   fs.writeFileSync(file, '{"tracked":{');

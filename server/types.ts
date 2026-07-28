@@ -2,7 +2,7 @@
 //
 // Four consumers read these shapes and none of them share a process with the
 // server: the SvelteKit client, the SwiftBar menubar plugin, the Alfred workflow
-// and bin/wt-studio.js. docs/api.md describes the same contract in prose; where
+// and bin/wt-studio.ts. docs/api.md describes the same contract in prose; where
 // the two disagree, this file follows the code, because the code is what answers
 // the request.
 //
@@ -40,14 +40,14 @@ export type PartialDeep<T> =
     : T extends object ? { [K in keyof T]?: PartialDeep<T[K]> }
       : T;
 
-/** Where a repo's worktrees live on disk (server/layout.js). */
+/** Where a repo's worktrees live on disk (server/layout.ts). */
 export interface WorktreeLayout {
   layout: 'nested' | 'sibling' | 'external';
   dir: string;
   root: string;
 }
 
-/** What makes two worktrees in different repos "the same feature" (server/identity.js). */
+/** What makes two worktrees in different repos "the same feature" (server/identity.ts). */
 export interface FeatureIdentityConfig {
   strategy: 'basename' | 'branch' | 'manifest';
   branchPattern: string;
@@ -60,11 +60,31 @@ export interface GroupConfig {
   members: string[];
 }
 
-/** One repo's dev-server launch config. */
-export interface StartConfig {
-  cmd?: string;
-  ports?: number[];
-  [key: string]: unknown;
+/**
+ * One repo's dev-server launch config.
+ *
+ * The bare-string form is worktree-dash compatibility: `start[repo] = "npm run dev"`.
+ * config.ts copies `dash.start` across verbatim, so a config written by worktree-dash
+ * arrives in that shape and servers.startCfg() reads it as `{ cmd, ports: [] }`.
+ *
+ * `cmd` is optional on the object form because a hand-edited config.json can carry a
+ * `ports`-only row. That is not launchable, and startCfg() answers null for it —
+ * stating it here is what keeps `canStart` from advertising a command that isn't there.
+ */
+export type StartConfig = string | { cmd?: string; ports?: number[] };
+
+/**
+ * How to open a path in one editor.
+ *
+ * `openGroup` is optional and shipped: server/orchestrator.ts reads it to open a
+ * whole feature at once, POST /settings persists it, and docs/api.md documents it.
+ * An editor without one falls back to running `open` per member.
+ */
+export interface EditorConfig {
+  /** Shell command with `{path}` substituted. */
+  open: string;
+  /** Shell command opening several paths at once; `{paths}` is the substitution. */
+  openGroup?: string;
 }
 
 /** An imported editor run/test config. */
@@ -109,7 +129,41 @@ export interface ConcurrencyConfig {
 }
 
 /**
- * config.json as server/config.js hands it to everything else.
+ * Pacing overrides for server/watch.ts, merged over that module's DEFAULTS.
+ *
+ * Hand-added to config.json, like `sources.gitlab.project` below: defaults() never
+ * ships it, and without it watch.ts's own DEFAULTS are what is in force. It is named
+ * here anyway because watch.ts documents it as a supported knob, and a knob a user
+ * is invited to set belongs in the config contract rather than only in the module
+ * that reads it. Every key is optional — the merge is per-key.
+ */
+export interface WatchPacing {
+  /** scheduler heartbeat */
+  tickMs?: number;
+  /** how long a burst of fs events must be quiet before a scan */
+  debounceMs?: number;
+  /** …but a sustained stream still lands within this */
+  maxDebounceMs?: number;
+  /** hard ceiling on how often watching alone shells out to git */
+  minRescanMs?: number;
+  /** safety-net rescan, dashboard open */
+  netActiveMs?: number;
+  /** safety-net rescan, nobody looking */
+  netIdleMs?: number;
+  /** lsof sweep, dashboard open */
+  runningActiveMs?: number;
+  /** lsof sweep, nobody looking */
+  runningIdleMs?: number;
+  /** multiplexer liveness, dashboard open */
+  reconcileActiveMs?: number;
+  /** multiplexer liveness, nobody looking */
+  reconcileIdleMs?: number;
+  /** refuse to arm past this many fs watchers */
+  maxWatchers?: number;
+}
+
+/**
+ * config.json as server/config.ts hands it to everything else.
  *
  * `_file` and `_stateDir` are stamped on at load time and are not written back;
  * the leading underscore is the marker that they describe the file rather than
@@ -120,7 +174,7 @@ export interface Config {
   scanDepth: number;
   web: { port: number; host: string };
   claude: { cmd: string };
-  editors: Record<string, { open: string }>;
+  editors: Record<string, EditorConfig>;
   defaultEditor: string;
   worktrees: WorktreeLayout;
   featureIdentity: FeatureIdentityConfig;
@@ -133,16 +187,37 @@ export interface Config {
   popout: { terminal: string };
   sources: {
     github?: { enabled: boolean };
-    gitlab?: { enabled: boolean; host: string; token: string };
+    // `project` is read by the REST fallback in sources/gitlab.ts and gated on by its
+    // isEnabled(), but defaults() never ships it — it is hand-added to config.json,
+    // which is why it is the one optional key in this block.
+    gitlab?: { enabled: boolean; host: string; token: string; project?: string };
     asana?: { enabled: boolean; token: string; workspace: string };
     [id: string]: unknown;
   };
   notify: { waiting: boolean; sound: boolean; idle: boolean };
   concurrency: ConcurrencyConfig;
+  /** Absent from defaults(); see WatchPacing. */
+  watch?: WatchPacing;
   _file?: string;
-  _stateDir?: string;
-  /** The boot token, when one was minted. Never written back to config.json. */
-  _token?: string;
+  /**
+   * Where the state directory is. REQUIRED, unlike `_file`: load() stamps it
+   * unconditionally and every reader (servers.ts, sessions.ts, transcript-routes.ts)
+   * joins a path onto it, so an absent one is a `path.join(undefined, …)` throw
+   * rather than a degraded mode. `_file` stays optional because save() has an
+   * explicit fallback for it and nothing here has one for this.
+   */
+  _stateDir: string;
+  /**
+   * The boot token. Never written back to config.json.
+   *
+   * REQUIRED for the same reason, and one more: security.ts `createGuard` takes a
+   * `token: string`, and an undefined one would make the guard fail closed and 401
+   * every request — including the hook posts a live session depends on — with no
+   * error anywhere. load() always assigns `security.loadToken()`, which always
+   * returns a string, so the invariant is stated here rather than re-checked at each
+   * use. Hand-built configs are typed `PartialDeep<Config>`, which is unaffected.
+   */
+  _token: string;
 }
 
 // ---- sessions ---------------------------------------------------------------
@@ -180,7 +255,7 @@ export interface Session {
   worktree: string | null;
   worktreePath: string | null;
   branch: string | null;
-  /** The feature identity, resolved by server/identity.js — NOT the worktree name. */
+  /** The feature identity, resolved by server/identity.ts — NOT the worktree name. */
   feature: string;
   repos: SessionRepo[];
   /** Repos chosen up front, added at promote time. */
@@ -242,7 +317,7 @@ export interface Worktree {
   isMain: boolean;
   detached: boolean;
   merged: boolean;
-  /** The owning repo's defaultBranch, repeated. Never null — git.js falls back to 'main'. */
+  /** The owning repo's defaultBranch, repeated. Never null — git.ts falls back to 'main'. */
   baseBranch: string;
   /** The scanned baseDir this repo sits under, or '' when none matched. */
   baseDir: string;
@@ -419,7 +494,7 @@ export interface SseEvents {
 
 export type SseEventName = keyof SseEvents;
 
-// ---- the diff model (server/diff.js) ----------------------------------------
+// ---- the diff model (server/diff.ts) ----------------------------------------
 
 export type DiffLineType = 'context' | 'add' | 'del';
 
@@ -606,4 +681,55 @@ export interface UsageTotals {
   offset: number;
   malformedLines: number;
   truncatedTail: boolean;
+}
+
+// ---- intake sources (server/sources/*) --------------------------------------
+
+/** One candidate in the picker, as `list()` hands it back. */
+export interface SourceItem {
+  id: string;
+  title: string;
+  subtitle: string;
+}
+
+/** The upstream record a session is opened from, as `seed()` hands it back. */
+export interface SourceSeed {
+  /** The adapter's own `id`. */
+  source: string;
+  /** null for free text, which has no upstream record to point at. */
+  id: string | null;
+  title: string;
+  body: string;
+  /** null when the record has no page of its own. */
+  url: string | null;
+}
+
+/**
+ * The bag `list()` and `seed()` are handed — the union of what the adapters read,
+ * every key optional because the route passes one flat object to all of them and a
+ * key another adapter needs is simply absent.
+ *
+ * `q` is `unknown` rather than a string because it arrives as `req.query.q`, which
+ * express parses to an ARRAY for `?q=a&q=b` and to an object for `?q[x]=y`. An
+ * adapter has to coerce it before it reaches an execFile argv or a URL.
+ */
+export interface SourceParams {
+  repoPath?: string;
+  q?: unknown;
+  id?: string;
+  text?: string;
+  name?: string;
+}
+
+/**
+ * One intake source adapter, as server/sources/index.ts drives it: the picker calls
+ * `isEnabled` then `list`, and opening a session calls `seed`.
+ *
+ * The adapters are independent modules whose only tie to each other is this shape,
+ * so it lives here rather than in whichever one was written first.
+ */
+export interface SourceAdapter extends SourceInfo {
+  isEnabled(cfg: PartialDeep<Config>): boolean;
+  list(cfg: PartialDeep<Config>, params: SourceParams): Promise<SourceItem[]>;
+  seed(cfg: PartialDeep<Config>, params: SourceParams): Promise<SourceSeed>;
 }

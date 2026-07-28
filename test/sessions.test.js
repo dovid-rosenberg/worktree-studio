@@ -1,12 +1,11 @@
-'use strict';
-const { test } = require('node:test');
-const assert = require('node:assert');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { execFileSync } = require('child_process');
-const { SessionManager } = require('../server/sessions');
-const { shq } = require('../server/util');
+import { test } from 'node:test';
+import assert from 'node:assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
+import { SessionManager } from '../server/sessions.ts';
+import { shq } from '../server/util.ts';
 
 function tempRepo(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `wts-${name}-`));
@@ -21,7 +20,7 @@ function tempRepo(name) {
 }
 
 // `cfgExtra` lets a test pick a featureIdentity strategy; the manager builds its
-// own resolver from cfg exactly as it does when server.js hands it the shared one.
+// own resolver from cfg exactly as it does when server.ts hands it the shared one.
 function manager(cfgExtra = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-'));
   const cfg = { _stateDir: stateDir, _file: path.join(stateDir, 'config.json'), web: { port: 0 }, claude: { cmd: 'claude' }, baseDirs: [], copyPatterns: {}, ...cfgExtra };
@@ -245,7 +244,6 @@ test('restore flags a promoted session whose worktree dir is gone instead of fak
 });
 
 test('tmux sendText sends the body literally (-l) then submits with a separate Enter', async (t) => {
-  const tmux = require('../server/multiplexer/tmux');
   if (!(await tmux.available())) { t.skip('tmux not installed'); return; }
   const name = `wts-test-sendtext-${Date.now().toString(36)}`;
   const outFile = path.join(os.tmpdir(), `${name}.txt`);
@@ -354,13 +352,13 @@ test('adopt sets home to the worktree launch dir (so resume resolves the convers
 // session.feature is the feature IDENTITY, not the worktree name
 //
 // `POST /group/pr { group: session.feature }` (public/app.js) resolves that value
-// against the feature names state.js computes with server/identity.js. Under
+// against the feature names state.ts computes with server/identity.ts. Under
 // `basename` the identity and the worktree name coincide, which is why storing the
 // name was latent; under `branch`/`manifest` they differ and the lookup 404s.
 // ---------------------------------------------------------------------------
-
-const { computeFeatures } = require('../server/features');
-const { createIdentity } = require('../server/identity');
+import { createIdentity } from '../server/identity.ts';
+import tmux from '../server/multiplexer/tmux.ts';
+import { computeFeatures } from '../server/features.ts';
 
 // Group `fix/4821-payments` and `feat/4821-ui` both onto the ticket number 4821.
 const BY_TICKET = { featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat|feature)/(\\d+)' } };
