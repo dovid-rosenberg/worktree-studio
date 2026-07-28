@@ -170,6 +170,24 @@ export function statusInfo(status) {
 }
 
 /**
+ * True for the composite path `git --numstat` prints for a rename: `old => new`, or
+ * `{src => lib}/math.js` when only part of the path moved.
+ *
+ * The daemon builds its file list from `--numstat` AND `--name-status`, keyed by path,
+ * and those two spell a rename differently — so a renamed file arrives TWICE: once under
+ * this composite path with no patch at all, and once under its real new path with the
+ * diff. Without this the composite half renders as a file header with nothing under it,
+ * which reads as "this file's diff failed to load".
+ *
+ * A path test rather than a payload flag because the daemon does not mark them, and
+ * ` => ` does not occur in real paths.
+ * @param {string} file
+ */
+export function isRenameSummaryPath(file) {
+  return / => /.test(file);
+}
+
+/**
  * Why a file has no stageable hunks, phrased for the user. Mirrors
  * `unstageableReason()` in server/hunks.js — the server refuses these, and the panel
  * has to say so up front rather than letting the user press Stage and get a 400.

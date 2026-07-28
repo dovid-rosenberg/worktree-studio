@@ -26,7 +26,7 @@
    */
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { fetchCommits, fetchCommitDetail, fetchHunks, applyHunks } from './api.js';
-  import { refusal, pairRenames } from './model.js';
+  import { refusal, pairRenames, isRenameSummaryPath } from './model.js';
   import { activatable } from '$lib/actions/activatable.js';
   import CommitList from './CommitList.svelte';
   import DiffViewport from './DiffViewport.svelte';
@@ -122,7 +122,11 @@
       if (token !== detailToken) return;
       files = res.files || [];
       loadingDetail = false;
-      if (sha === 'uncommitted') await loadAllHunks(repo, files.map((f) => f.file), token);
+      // Skip the rename summary lines: there is no such path on disk, so /hunks would
+      // spend a git call per rename to answer "no diff".
+      if (sha === 'uncommitted') {
+        await loadAllHunks(repo, files.map((f) => f.file).filter((f) => !isRenameSummaryPath(f)), token);
+      }
     } catch (e) {
       if (token !== detailToken) return;
       detailError = /** @type {Error} */ (e).message;
@@ -189,7 +193,15 @@
       let note = null;
       let error = null;
 
-      if (isUncommitted) {
+      // The `old => new` half of a rename carries no patch on either route, so it gets
+      // its explanation up front and skips the rest — otherwise it renders as a file
+      // header with nothing under it, or (uncommitted) as "nothing left to stage",
+      // which sounds like the user's changes went missing.
+      const renameSummary = isRenameSummaryPath(f.file);
+
+      if (renameSummary) {
+        note = { tone: 'info', text: 'Rename summary line — git lists the same change again under its new path, with the patch. Stage it there.' };
+      } else if (isUncommitted) {
         const h = hunkState.get(f.file);
         if (!h) {
           // Show the merged working-tree diff immediately; it is replaced by the split
@@ -221,7 +233,8 @@
           else if (why && why.tone === 'warn') note = why;
         }
       } else {
-        note = refusal(f.parsed);
+        note = refusal(f.parsed)
+          || (f.parsed ? null : { tone: 'warn', text: 'git listed this path in the commit summary but produced no patch for it.' });
         if (f.parsed && f.parsed.hunks.length) {
           groups.push({ label: '', side: null, action: null, hunks: f.parsed.hunks });
         }
@@ -275,7 +288,9 @@
 
 <div class="changes">
   <div class="branchbar">
-    <span class="br">{selRepo ? selRepo.branch : ''}</span>
+    <!-- Falls back to the first repo's branch: with nothing selected (no commits, clean
+         tree) there is still a branch, and a blank heading reads like a failed load. -->
+    <span class="br">{(selRepo || repos[0] || { branch: '' }).branch}</span>
     <span class="chip"><span class="cdot b"></span>{totals.commits} commit{totals.commits === 1 ? '' : 's'} vs {(repos[0] && repos[0].defaultBranch) || 'default'}</span>
     {#if totals.unc}<span class="chip"><span class="cdot a"></span>{totals.unc} uncommitted</span>{/if}
     {#each repos as r (r.repo)}
