@@ -78,15 +78,21 @@ the IPv6 loopback, so use `localhost`, not `127.0.0.1`.
 Work and Fleet are two views of **one** route, not two routes: switching must not tear
 down the live terminal, and on a static SPA fallback a URL change would do exactly that.
 
-## The two-half stream, and the trap in it
+## The three-half stream, and the trap in it
 
-`GET /api/events` carries two named events, each a full replacement of one half of the
+`GET /api/events` carries three named events, each a full replacement of one half of the
 state payload:
 
 | event | carries | rate |
 | --- | --- | --- |
 | `topology` | repos, worktrees, features, groups, sources, config | rarely (rescan / mutation) |
 | `session-state` | `{ sessions, servers }` | every Claude hook — i.e. every tool call |
+| `ci` | `{ ci }` — each session's PR/MR + checks | minutes, and only when it changed |
+
+`ci` is its own event precisely *because* `session-state` is the hook half: riding along
+with every tool call would re-send an unchanged payload thousands of times. It is also
+the only half that is not part of `GET /api/state` — it is built asynchronously and is
+stream-only.
 
 The trap: the topology half embeds a trimmed `{id,state,activity,muxName}` copy of the
 driving session into every worktree row **and** every feature, frozen at the moment the
@@ -136,8 +142,10 @@ that cannot set a header (`EventSource` and the terminal WebSocket).
 - **Production**: `app.html` declares `window.WTS_TOKEN` with a `__WTS_TOKEN__`
   placeholder, and the daemon substitutes it when it serves the document — the mechanism
   `public/index.html` already uses, so no new server code is needed beyond pointing the
-  existing injector at `client/build/index.html`. The placeholder must appear **exactly
-  once** in `app.html`: the injector is a single `String.replace`.
+  existing injector at `client/build/index.html`. The injector replaces **every**
+  occurrence (`split`/`join`, not `String.replace` — which would substitute only the
+  first, and would expand `$&`-style patterns in the replacement). `app.html` still
+  carries the placeholder exactly once, and says so.
 - **Dev / preview**: there is no daemon in front of the document, so Vite `define`s the
   token read from `<stateDir>/token`. It is applied only for `command === 'serve'`, so a
   build can never write a token into `build/`.
@@ -185,6 +193,15 @@ handler and a matching `paths.base` in `svelte.config.js`, or the assets resolve
 The `/ws/term` WebSocket is unaffected: `server.on('upgrade')` runs before Express sees
 the request, so static serving and the terminal socket cannot collide. Verified against
 the served build — a deep link, a reload, and a terminal that round-trips input.
+
+That handler is hand-written for a reason. The socket is created with
+`new WebSocketServer({ noServer: true })`, **not** `{ server, path }`: with `{ server }`
+ws accepts the handshake itself and the connection handler — which spawns a pty — has
+already run by the time any check could reject it. WebSockets are exempt from CORS, so
+the `Origin` check at the upgrade is the only thing between an open tab on any site and
+a read/write shell in the user's tmux. A rejected upgrade is answered with a plain HTTP
+`401`/`403` and the socket destroyed, so the client sees a failed handshake rather than
+a socket that opens and immediately dies.
 
 ## Terminal.svelte
 

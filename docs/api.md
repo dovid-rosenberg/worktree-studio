@@ -179,7 +179,8 @@ connection alive.
 > `repos[].worktrees[].session` and in `features`/`groups`, those copies are
 > only as fresh as the last `topology` frame. A client that renders them should
 > re-project the live `sessions` onto them after each frame, keyed by session id
-> (`public/app.js`'s `restitchSessions()`).
+> (`public/app.js`'s `stitchSessions()`; the SvelteKit client does the same in
+> `client/src/lib/stores/world.svelte.js`).
 
 ---
 
@@ -492,6 +493,115 @@ mainline commits. `uncommitted` summarises the working tree as
 `POST /sessions/:id/commit` takes `{ repo, message, paths?, amend? }`. Without
 `paths` it stages everything (`git add -A`). `message` is required (`400`).
 
+### Structured diff and hunk staging
+
+The routes above answer "what changed" as raw patches. These four answer it as a
+*model* — files → hunks → lines, with left/right rows already aligned — and let a
+client stage or unstage one hunk at a time. `server/routes-review.js`.
+
+| Route                                | Returns                                                            |
+| ------------------------------------ | ------------------------------------------------------------------ |
+| `GET /sessions/:id/diff`             | `{ repo, worktreePath, sha, files }`                                |
+| `GET /sessions/:id/hunks`            | `{ file, untracked, unstaged, staged }`                             |
+| `POST /sessions/:id/hunks/stage`     | `{ ok, file, hunks, untracked, unstaged, staged }` or `{ ok: false, error }` |
+| `POST /sessions/:id/hunks/unstage`   | same shape                                                          |
+
+All four resolve the worktree the same way: `?repo=<name>` on the GETs, `repo` in
+the body on the POSTs. A session that owns exactly one repo may omit it; otherwise
+it is required (`400 { error: "repo is required" }`, or `400 unknown repo '<name>'`).
+Unknown session → `404`.
+
+#### `GET /sessions/:id/diff?repo=<name>&sha=<sha>`
+
+The same set of files `commit-detail` returns, each carrying **both** the raw
+patch and the parsed model:
+
+```jsonc
+{ "repo": "api", "worktreePath": "/code/api/.worktrees/feat-a", "sha": "uncommitted",
+  "files": [
+    { "file": "src/a.js", "status": "M", "added": 12, "deleted": 3,
+      "diff": "diff --git a/src/a.js …",     // raw unified diff, unchanged
+      "parsed": {
+        "path": "src/a.js", "oldPath": "src/a.js", "newPath": "src/a.js",
+        "status": "modified", "binary": false, "added": 12, "deleted": 3,
+        "hunks": [
+          { "index": 0, "header": "@@ -1,6 +1,7 @@ function a() {",
+            "oldStart": 1, "oldLines": 6, "newStart": 1, "newLines": 7,
+            "section": " function a() {", "added": 1, "deleted": 0,
+            "lines": [ { "type": "context|add|del", "text": "…", "oldLine": 1, "newLine": 1 } ],
+            "rows":  [ { "type": "context|add|del|change", "left": 0, "right": 0 } ] } ] } }
+  ] }
+```
+
+`parsed` is `null` for a file with no diff text at all. `lines` renders unified;
+`rows` renders side-by-side and references `lines` **by index**, so neither copy of
+the text exists twice. A `change` row pairs a removal
+with the addition that replaced it; one-sided rows carry `null` on the other side.
+
+`sha` defaults to `uncommitted` (the working tree). It is validated before it
+reaches a git argv — anything that is not a hex object name or the literal
+`uncommitted` is `400 { error: "sha must be a hex object name or \"uncommitted\"" }`,
+never a 500. A repeated `?sha=` collapses to its first value.
+
+Two shapes cannot be modelled and say so instead of being mis-parsed:
+`parsed.binary` is `true` for a binary file, and `parsed.unsupported: "combined"`
+marks a merge diff (`@@@`). `parsed.modeOnly` marks a permission-only change.
+
+#### `GET /sessions/:id/hunks?repo=<name>&file=<path>`
+
+One working file, split the way staging needs it. `file` is required (`400`).
+
+- `unstaged` — index → worktree. These hunks can be **staged**.
+- `staged` — HEAD → index. These hunks can be **unstaged**.
+- Either side is `null` when there is nothing on it. `untracked` is `true` for a
+  file git has never seen; its `unstaged` side is the synthesized `/dev/null → file`
+  patch, so staging a hunk of a brand-new file works.
+
+Each side has the `parsed` shape above. The pre-image is deliberately the **index**,
+not HEAD, which is what makes a partially-staged file work — the same choice
+`git add -p` makes.
+
+#### `POST /sessions/:id/hunks/stage` · `POST /sessions/:id/hunks/unstage`
+
+```jsonc
+{ "repo": "api", "file": "src/a.js", "hunks": [0, 2], "expect": ["@@ -1,6 +1,7 @@ …"] }
+```
+
+`hunks` is an array of indexes **into the matching side** of the `GET …/hunks`
+payload — `stage` indexes `unstaged`, `unstage` indexes `staged`. `hunks: 0` and
+`hunk: 0` are both accepted as the single-hunk shorthand.
+
+`expect` is optional and is the `@@` header the caller believes each selected hunk
+has. The diff is re-read server-side, so a file that moved between render and call
+would otherwise stage the *wrong* hunk silently; with `expect` the request is
+refused instead.
+
+On success the response carries the freshly re-read `untracked`/`unstaged`/`staged`
+for that file, so a client never needs a follow-up GET, and a `session-state` frame
+is scheduled on the SSE stream (the index moved; the topology half did not).
+
+Every refusal is a **`400`, not a `500`** — these all mean "the request no longer
+matches the repo", which is the caller's to resolve:
+
+| `error`                                                     | Cause                                  |
+| ----------------------------------------------------------- | -------------------------------------- |
+| `file is required`                                           | no `file`                              |
+| `no <staged\|unstaged> changes for this file`                | nothing on that side                   |
+| `hunks must be indexes into the <side> diff (0…N)`           | out of range / not an integer          |
+| `the diff changed since it was loaded — reload and try again`| `expect` mismatch                      |
+| `binary file — stage or unstage the whole file instead`      | binary                                 |
+| `mode-only change — stage or unstage the whole file instead` | permission-only change                 |
+| `combined (merge) diff — hunk staging is not supported`      | `@@@`                                  |
+| git's own message                                            | `git apply --check` refused the patch  |
+
+Staging is all-or-nothing: the patch is `git apply --check`ed before it is applied,
+because `git apply` is not atomic across files and a half-applied patch leaves the
+index in a state nobody asked for.
+
+> This sits **alongside** the file-level staging in `POST /sessions/:id/commit`
+> (its `paths` argument), it does not replace it — binary and mode-only changes can
+> only be staged whole, which is exactly what the errors above say.
+
 ### `GET /sessions/:id/ci`
 
 PR/MR + CI checks for every repo the session owns that has a worktree and a
@@ -699,6 +809,194 @@ order:
 
 A provider whose CLI isn't installed exits with an empty stderr, and that
 silence never replaces the reason from one that ran.
+
+---
+
+## Transcripts (search + token/cost telemetry)
+
+Claude Code appends a JSONL transcript per session to
+`~/.claude/projects/<slugified-cwd>/<claudeSessionId>.jsonl`. These routes search
+it and cost it. `server/transcript-routes.js`.
+
+Two things to know before reading the shapes:
+
+- **Transcripts record tokens, never money.** Every dollar figure here is derived
+  from a maintained price table (`server/pricing.js`) and is an **estimate**.
+  Responses that carry a cost also carry `costIsEstimate: true` and a `pricing`
+  block saying how old the table is.
+- **The index is optional.** Storage is `node:sqlite` (built into Node 22). If it
+  or FTS5 is unavailable the routes degrade to scanning the transcript files
+  directly rather than failing; `backend` always says which answered
+  (`sqlite-fts5` · `sqlite-like` · `file-scan`).
+
+Indexing is incremental — the byte offset of the last pass is remembered and only
+appended bytes are read — and is triggered by the `Stop` / `SubagentStop` /
+`SessionEnd` hooks. Any route that reports on one session brings that session up
+to date first, so a caller never sees stale numbers because no hook has fired yet.
+
+A `claudeSessionId` that is not a uuid is refused before it is joined into a path;
+it arrives from a hook payload, and `../../..` would otherwise escape the
+transcript root.
+
+### `GET /transcripts/status`
+
+Index health, and the pricing metadata every cost-bearing response repeats.
+
+```jsonc
+{ "ready": true, "backend": "sqlite-fts5", "fts5": true,
+  "file": "~/.local/state/worktree-studio/transcripts.db", "error": null,
+  "sessions": 12, "messages": 48213,
+  "pricing": {
+    "verifiedAt": "2026-07-27",
+    "note": "Costs are estimates derived from a maintained price table …",
+    "cacheMultipliers": { "input": 1, "cacheWrite5m": 1.25, "cacheWrite1h": 2, "cacheRead": 0.1 }
+  } }
+```
+
+`cacheMultipliers` is the multiple of a model's **input** rate that each
+input-family token class bills at. It is published because the API prices a
+*model*, never a token class — a client that wants to show *which class* the money
+went to cannot derive it, and must not hardcode it: change a multiplier and the
+dollar figures here move, while a client holding its own copy silently keeps the
+old ratios. Output tokens are deliberately absent — they bill on a separate output
+rate whose ratio to the input rate is a per-model price, not a structural
+multiplier.
+
+### `GET /sessions/:id/transcript`
+
+Which transcript a session maps to, and whether the server can see it. Useful on
+its own when a session's numbers look empty — it says *why*.
+
+```jsonc
+{ "session": { "id": "…", "title": "…", "feature": "feat-a", "branch": "feature/a",
+               "repo": "api", "active": true, "state": "working" },
+  "claudeSessionId": "3f2a1b4c-…", "found": true,
+  "file": "/Users/d/.claude/projects/-Users-d-code-api/3f2a1b4c-….jsonl",
+  "cwd": "/Users/d/code/api", "slug": "-Users-d-code-api",
+  "projectsRoot": "/Users/d/.claude/projects" }
+```
+
+When `found` is `false` the payload carries `reason` instead of `file`/`cwd`
+(`session has no claudeSessionId yet` · `claudeSessionId is not a uuid` ·
+`no projects dir at <path>` · `transcript not found`). `viaScan: true` means the
+file was found by scanning the project dirs rather than at the expected slug — a
+promote whose `/cd` never landed does this. `404` for an unknown session.
+
+### `GET /transcripts/search`
+
+Full-text search across every session Studio manages — deliberately *not* across
+all of `~/.claude/projects`.
+
+| Param             | Meaning                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| `q` (or `query`)  | the search text. Empty → `{ query: "", hits: [], total: 0, backend }`, not an error. |
+| `session`         | scope to one session id (also refreshes that session's index first) |
+| `role`            | `user` / `assistant`                                              |
+| `since`           | epoch ms floor on the message timestamp                           |
+| `order`           | `rank` (default) or `recent`                                      |
+| `limit`           | 1–200, default 30                                                 |
+
+```jsonc
+{ "ok": true, "backend": "sqlite-fts5", "query": "port already in use",
+  "total": 3,
+  "hits": [ { "sessionId": "…", "uuid": "…", "role": "assistant",
+              "model": "claude-opus-5", "ts": "2026-07-27T…", "tsMs": 1785…,
+              "gitBranch": "feature/a", "sidechain": false,
+              "snippet": "…«port already in use» (pid 991)…",
+              "session": { "id": "…", "title": "…", … } } ] }
+```
+
+`total` is the length of *this page*, not a corpus count. `snippet` carries FTS5's
+`«` `»` highlight markers on the `sqlite-fts5` backend only. `sidechain` marks a
+subagent's message.
+
+The query is **not** an FTS5 expression: every whitespace-run is quoted as a
+literal phrase and the phrases are ANDed, so `OR`, `NEAR`, `*` and unbalanced
+quotes are searched for rather than executed.
+
+A repeated param (`?q=a&q=b`) collapses to its first value rather than erroring.
+
+### `GET /sessions/:id/transcript/search`
+
+The same search scoped to one session, and the session's index is refreshed
+first. Takes `q`/`query`, `limit`, `order`. Returns the same shape plus a
+top-level `session`, and omits the per-hit `session` meta (the caller already
+knows whose it is). `404` for an unknown session.
+
+> Prefer the global endpoint with `?session=<id>` when rendering a results list:
+> it carries per-hit session meta, which is what lets a hit from an unknown
+> session render at all.
+
+### `GET /sessions/:id/transcript/usage`
+
+One session's tokens and derived cost.
+
+```jsonc
+{ "session": { … }, "source": "index",
+  "input": 982, "output": 41203,
+  "cacheWrite5m": 120400, "cacheWrite1h": 88000, "cacheWrite": 208400,
+  "cacheRead": 576324491, "webSearch": 2, "webFetch": 0,
+  "messages": 214, "firstAt": 1785…, "lastAt": 1785…,
+  "byModel": [ { "model": "claude-opus-5", "speed": null, "messages": 190,
+                 "input": 900, "output": 40000, "…": "…",
+                 "costUsd": 12.4413, "priced": true } ],
+  "costUsd": 12.4413, "costIsEstimate": true, "unpricedModels": [],
+  "pricing": { … } }
+```
+
+- `source` is `index` (from sqlite), `transcript` (read directly — no sqlite, or
+  not indexed yet) or `none` (no transcript found, with `reason`). The two live
+  sources differ in one field: `index` reports `messages`, while `transcript`
+  reports `assistantMessages` + `userMessages` and adds `file`, `bytes`, `offset`,
+  `malformedLines` and `truncatedTail` about the read itself.
+- Cache writes are split by TTL because a 1 h write bills at 2× the input rate and
+  a 5 m write at 1.25×. Pricing the lump as 5 m would understate any session using
+  the 1 h cache.
+- `costUsd` is `null`, never `0`, for a model with no rate in the table — the two
+  mean opposite things. Such models are named in `unpricedModels`, so the gap is
+  visible rather than silently wrong. `<synthetic>` (Claude Code's locally
+  generated notices) is not reported as unpriced; it carries no real cost.
+- Token totals are deduped on the API message id. Claude Code writes **one JSONL
+  line per content block** and repeats the identical `usage` on each, so summing
+  lines over-counts by ~2.9× on a tool-heavy session.
+
+`404` for an unknown session.
+
+### `GET /transcripts/usage`
+
+Everything at once: per session, rolled up per **feature**, plus a grand total.
+Feature is the unit worth costing — it is what ties a feature's worktrees together
+across repos.
+
+```jsonc
+{ "sessions": [ { "session": { … }, "…": "…", "costUsd": 12.44, "indexed": true } ],
+  "features": [ { "feature": "feat-a", "sessions": 2, "…": "…",
+                  "costUsd": 18.90, "unpricedModels": [] } ],
+  "totals": { "…": "…", "costUsd": 31.34, "unpricedModels": [] },
+  "costIsEstimate": true, "pricing": { … }, "backend": "sqlite-fts5" }
+```
+
+`sessions` and `features` are sorted by cost, descending. `?refresh=1` brings
+every session's index up to date first — that is a read of every appended byte, so
+it is opt-in rather than the default.
+
+### `POST /transcripts/reindex`
+
+`{ session?, full? }` → re-index one session or all of them. `full: true` (or
+`?full=1`) discards the stored byte offset and re-reads from the top, which is
+what to use when a transcript was rewritten under the server.
+
+```jsonc
+{ "ok": true, "full": false,
+  "results": [ { "session": "…", "ok": true, "file": "…", "added": 12,
+                 "offset": 3418822, "size": 3418822,
+                 "malformedLines": 0, "truncatedTail": false } ],
+  "status": { … } }
+```
+
+A per-session `ok: false` carries `reason` (`transcript vanished`,
+`claudeSessionId is not a uuid`, `index unavailable`, …). `upToDate: true` means
+there were no new bytes — the cheap, normal outcome.
 
 ---
 
