@@ -672,9 +672,20 @@ with `gh pr create --fill`, falling back to `glab mr create --fill --yes`.
 ```
 
 Top-level `ok` is true if *any* member got a URL. Unlike `/sessions/:id/ci`,
-creation shells out whether or not the CLI was detected at startup; the reported
-`error` is the last provider's first stderr line, or `"gh/glab unavailable or
-failed"`.
+creation shells out whether or not the CLI was detected at startup.
+
+The reported `error` is the failure that actually explains the outcome, in this
+order:
+
+1. the first stderr line from the first **installed** provider that refused
+   (GitHub before GitLab — the order they're tried in);
+2. `"gh/glab unavailable or failed"` when an installed provider failed without
+   saying anything;
+3. `"no forge CLI installed — install gh (GitHub) or glab (GitLab)"` when
+   neither CLI exists on the machine.
+
+A provider whose CLI isn't installed exits with an empty stderr, and that
+silence never replaces the reason from one that ran.
 
 ---
 

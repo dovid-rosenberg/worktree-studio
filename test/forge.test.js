@@ -154,15 +154,43 @@ test('openPullRequest falls back to the next provider when the first refuses', a
   assert.deepEqual(await f.openPullRequest(MEMBER, {}), { repo: 'api', url: 'https://gl/mr/9' });
 });
 
-test('openPullRequest reports the LAST provider\'s first stderr line when all refuse', async () => {
+test('openPullRequest reports the FIRST installed provider\'s first stderr line when all refuse', async () => {
+  // Both CLIs are present, so both genuinely ran and refused. GitHub is tried
+  // first and is the forge the repo is on — its reason is the one to show.
   const f = forge([
-    provider('github', { create: async () => ({ ok: false, stderr: 'gh failed\nmore gh noise' }) }),
+    provider('github', { create: async () => ({ ok: false, stderr: 'gh: pull request already exists\nmore gh noise' }) }),
     provider('gitlab', { create: async () => ({ ok: false, stderr: '  glab: not authenticated\ntrace\n' }) }),
   ]);
-  assert.deepEqual(await f.openPullRequest(MEMBER, {}), { repo: 'api', error: 'glab: not authenticated' });
+  assert.deepEqual(await f.openPullRequest(MEMBER, {}), { repo: 'api', error: 'gh: pull request already exists' });
 });
 
-test('openPullRequest falls back to a generic error when nothing said why', async () => {
+// The bug this asserts against: on a GitHub-only repo `gh pr create` fails with a
+// real reason, then glab's spawn fails with ENOENT and leaves stderr empty — and
+// reporting the LAST provider's stderr let that emptiness erase gh's reason.
+test('an uninstalled provider\'s silence never overwrites the reason from one that ran', async () => {
+  const f = createForge({
+    providers: [
+      provider('github', { create: async () => ({ ok: false, stderr: 'gh: No commits between main and feature/a' }) }),
+      provider('gitlab', { create: async () => ({ ok: false, stderr: '' }) }), // ENOENT — never ran
+    ],
+    isInstalled: (p) => p.id === 'github',
+  });
+  assert.deepEqual(await f.openPullRequest(MEMBER, {}), { repo: 'api', error: 'gh: No commits between main and feature/a' });
+});
+
+test('with no forge CLI installed at all, that is what the user is told', async () => {
+  const f = createForge({
+    providers: [
+      provider('github', { create: async () => ({ ok: false, stderr: '' }) }),
+      provider('gitlab', { create: async () => ({ ok: false, stderr: '' }) }),
+    ],
+    isInstalled: () => false,
+  });
+  const r = await f.openPullRequest(MEMBER, {});
+  assert.match(r.error, /no forge CLI installed/, 'a CLI that was never there did not "fail"');
+});
+
+test('openPullRequest falls back to a generic error when an installed provider fails mutely', async () => {
   const f = forge([provider('github', { create: async () => ({ ok: false, stderr: '' }) })]);
   assert.deepEqual(await f.openPullRequest(MEMBER, {}), { repo: 'api', error: 'gh/glab unavailable or failed' });
 });

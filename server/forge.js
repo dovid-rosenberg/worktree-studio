@@ -98,6 +98,7 @@ const PROVIDERS = [github, gitlab];
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
 function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), onChanged = () => {} } = {}) {
   const installed = providers.filter(isInstalled);
+  const installedSet = new Set(installed); // membership test for failure attribution
   const ciCache = new Map();
 
   // Drop every cached answer. Called when something is known to have changed the
@@ -124,18 +125,41 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
     return { ...data, repo };
   }
 
+  // Which of several failures to report when nothing could be opened.
+  //
+  // Reporting the LAST provider's stderr was wrong because "didn't run" and
+  // "ran and refused" are not the same failure. On a GitHub-only repo `gh pr
+  // create` fails with a real reason, then `glab` isn't installed, its spawn
+  // fails with ENOENT and its stderr is empty — so the empty string overwrote
+  // gh's reason and the user got a generic "gh/glab unavailable or failed".
+  //
+  // The failure that matters is the first one from a provider that is actually
+  // installed (GitHub first, matching the try order — that is the forge the
+  // repo is on). Only when no installed provider had anything to say do we fall
+  // back, and a machine with no forge CLI at all gets told exactly that instead
+  // of a sentence implying its CLI refused.
+  function failureReason(failures) {
+    const ran = failures.find((f) => f.installed && f.stderr);
+    if (ran) return ran.stderr;
+    if (failures.some((f) => f.installed)) return 'gh/glab unavailable or failed';
+    const said = failures.find((f) => f.stderr);
+    if (said) return said.stderr;
+    return 'no forge CLI installed — install gh (GitHub) or glab (GitLab)';
+  }
+
   // Push the branch, then open a PR/MR with the first provider that accepts it.
-  // Reports the LAST provider's stderr on total failure — that's the one that had
-  // the final say about why nothing could be opened.
   async function openPullRequest(member, env) {
     await run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env });
-    let last = null;
+    // Creation is attempted for every provider, installed or not (a missing CLI
+    // simply fails and the next one gets its turn) — but whether it was installed
+    // is what decides whose failure is worth reporting.
+    const failures = [];
     for (const p of providers) {
       const r = await p.create(member.branch, member.path, env);
       if (r.ok) return { repo: member.repo, url: r.url };
-      last = r;
+      failures.push({ installed: installedSet.has(p), stderr: (r.stderr || '').trim().split('\n')[0] });
     }
-    return { repo: member.repo, error: ((last && last.stderr) || '').trim().split('\n')[0] || 'gh/glab unavailable or failed' };
+    return { repo: member.repo, error: failureReason(failures) };
   }
 
   // `app` here is the API router — server.js mounts it at both /api and /api/v1.
