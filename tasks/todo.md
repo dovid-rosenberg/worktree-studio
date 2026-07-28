@@ -9,23 +9,28 @@ Single web app unifying: pluggable intake → seeded Claude Code session (CLAUDE
 - Multiplexer abstraction: zellij (0.44) + tmux drivers; auto-detect.
 - Claude Code integration: per-session `--settings` hook file → POST status to server.
 
-## Build checklist
+## Build checklist — all shipped (2026-07-23)
+
+Ticked retroactively: these were never checked off during the build, and the
+"Review — built & verified" section below is the evidence they all landed. File
+names here are pre-migration (`.js`, `public/`, zellij, pop-out); the modules are
+`.ts`, there is one UI, tmux is the only driver, and pop-out is gone.
 - [x] Scaffold, deps, node-pty spawn-helper fix, xterm vendored
 - [x] Environment recon (zellij installed, claude 2.1.218, gh present)
-- [ ] server/util.js — exec/git/json helpers, tilde expand, id gen
-- [ ] server/config.js — load/seed ~/.config/worktree-studio/config.json
-- [ ] server/git.js — scan repos + worktrees, default branch, merged state
-- [ ] server/worktree.js — native `wt`: create/remove + copy gitignored patterns
-- [ ] server/multiplexer/{index,tmux,zellij}.js — session/tab/attach/capture/popout
-- [ ] server/status.js — hook receiver + settings generator + state machine
-- [ ] server/sources/{freetext,github,gitlab,asana}.js — seed adapters
-- [ ] server/sessions.js — registry, create, promote, popout, restore, tabs
-- [ ] server/servers.js — dev-server start/stop/status per worktree
-- [ ] server/server.js — Express + WS + SSE wiring
-- [ ] public/* — UI (rail, session dock w/ xterm tabs, intake modal, servers)
-- [ ] bin/wt-studio.js — CLI launcher
-- [ ] tests — worktree logic, sources, status state machine
-- [ ] Browser end-to-end verification
+- [x] server/util.js — exec/git/json helpers, tilde expand, id gen
+- [x] server/config.js — load/seed ~/.config/worktree-studio/config.json
+- [x] server/git.js — scan repos + worktrees, default branch, merged state
+- [x] server/worktree.js — native `wt`: create/remove + copy gitignored patterns
+- [x] server/multiplexer/{index,tmux,zellij}.js — session/tab/attach/capture/popout
+- [x] server/status.js — hook receiver + settings generator + state machine
+- [x] server/sources/{freetext,github,gitlab,asana}.js — seed adapters
+- [x] server/sessions.js — registry, create, promote, popout, restore, tabs
+- [x] server/servers.js — dev-server start/stop/status per worktree
+- [x] server/server.js — Express + WS + SSE wiring
+- [x] public/* — UI (rail, session dock w/ xterm tabs, intake modal, servers)
+- [x] bin/wt-studio.js — CLI launcher
+- [x] tests — worktree logic, sources, status state machine
+- [x] Browser end-to-end verification
 
 ## Review — built & verified 2026-07-23
 

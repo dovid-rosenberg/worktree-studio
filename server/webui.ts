@@ -36,8 +36,12 @@ interface MountOptions {
 // Prove the client is actually built. Throws with an actionable message rather than
 // letting the daemon boot and answer `/` with a 500 or a blank page — a UI that isn't
 // there is a startup error, not a per-request one.
-// `root` is the repo root; it is a parameter only so tests can point at a fixture tree.
-function resolve(root: string = ROOT): ResolvedUi {
+//
+// `root` is the repo root; it is a parameter so tests can point at a fixture tree, and
+// `WT_STUDIO_UI_ROOT` is the same seam for a test that spawns a real daemon rather than
+// calling this directly. It overrides the location, never the UI: there is one client,
+// and this cannot select a different one.
+function resolve(root: string = process.env.WT_STUDIO_UI_ROOT || ROOT): ResolvedUi {
   const uiRoot = path.join(root, 'client', 'build');
   const index = path.join(uiRoot, 'index.html');
   if (!fs.existsSync(index)) {

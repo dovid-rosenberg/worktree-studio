@@ -207,14 +207,16 @@ test('a daemon that cannot bind its port exits non-zero instead of running on he
   const stateDir = path.join(dir, 'state');
   fs.writeFileSync(configFile, JSON.stringify({ baseDirs: [], web: { host: '127.0.0.1', port: held.port } }));
 
-  // WTS_UI=legacy pins this to `public/`, which is tracked in the repo. Without it the
-  // test depends on `client/build` existing: a missing build is itself a fatal boot
-  // error (webui.resolve), so on a fresh clone this daemon would exit non-zero for the
-  // WRONG reason and the assertion below would report a confusing failure. This test is
-  // about crash policy, not about which UI is served — so pin the part it doesn't care
-  // about. If `public/` is ever removed, this needs a stub UI dir instead.
+  // A stub UI, so this test does not depend on `client/build` existing. A missing build
+  // is itself a fatal boot error (webui.resolve), so without this the daemon would exit
+  // non-zero for the WRONG reason on a fresh clone and the assertion below would report
+  // a confusing failure. This test is about crash policy, not about which UI is served.
+  // (It used to pin WTS_UI=legacy at the tracked `public/` tree; that UI is gone.)
+  fs.mkdirSync(path.join(dir, 'client', 'build'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'client', 'build', 'index.html'), '<!doctype html><body>stub</body>');
+
   const child = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'server', 'server.ts')], {
-    env: { ...process.env, WT_STUDIO_CONFIG: configFile, WT_STUDIO_STATE: stateDir, WTS_UI: 'legacy' },
+    env: { ...process.env, WT_STUDIO_CONFIG: configFile, WT_STUDIO_STATE: stateDir, WT_STUDIO_UI_ROOT: dir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';

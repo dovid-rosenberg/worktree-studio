@@ -1,7 +1,8 @@
 # Worktree Studio — Cockpit Upgrades: execution plan
 
 Branch: `feature/cockpit-upgrades`. Scope = everything from the review **except** the
-standalone/Electron packaging. Mockup: `mockups/cockpit.html`.
+standalone/Electron packaging. (The `mockups/cockpit.html` reference is gone —
+the mockups were removed once the UI shipped.)
 
 Each task below is sized for **one subagent**. Tasks that touch the same hot files
 (`server/server.js`, `public/app.js`) are **sequenced** to avoid merge clobber; tasks
@@ -61,7 +62,7 @@ Hot shared files: `server/server.js`, `public/app.js`, `public/index.html`,
 - New dock tab "✎ Changes" with the changed-file count badge; file list (status + ±counts +
   stage checkbox), unified diff pane, commit bar (message, amend, "run tests first",
   Commit / Commit&PR). "Draft message from the diff" = send a one-line ask into the session.
-- Match `mockups/cockpit.html` `.changes*`/`.commitbar` classes.
+- Match the shipped `.changes*`/`.commitbar` classes in `client/src/lib/components/review/`.
 - Files: `public/app.js`, `public/index.html`, `public/style.css`.
 
 ## Phase 4 — Live server logs  (1 full-stack agent)  — after Phase 3 (shares server.js/app.js)

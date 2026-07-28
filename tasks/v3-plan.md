@@ -9,7 +9,28 @@ Both tracks touch `client/`, which is why they waited.
 
 From a review of the running app at 1440×900 (Work + Fleet). Ordered by payoff.
 
+**Status 2026-07-28**, after the Work/Fleet unification and the tab-strip rebuild:
+
+| Item | State |
+|---|---|
+| 1.1 Fleet `SERVERS RUNNING` duplication | **open, and contested** — see the note under it |
+| 1.2 Summary bar zeros / two vocabularies | partly: `unpromoted` hides at zero, the rest do not |
+| 1.3 Pills only when non-default | **open** — `servers · stopped` and `agent · idle` still render |
+| 1.4 One verb per concept | partly: the nine-actions-per-row problem is gone (actions moved to the bottom ActionBar); the `Stop stack`/`Stop`, `Run stack`/`Start session` vocabularies and green-means-two-things remain |
+| 1.5 `Pop out` twice | **done** — the feature was removed entirely |
+| 1.5 Group headers duplicating their only child | **done** — the rail is feature-keyed, there is no separate group header |
+| 1.5 Tab strip mixing panels and terminals | **done** — two groups, two tablists |
+| 1.5 `reattached` on every rail card | **open** |
+
 ### 1.1 Fleet: delete the `SERVERS RUNNING` section — the main fix
+
+> **Contested, and deliberately not done.** `fleet/ServerRow.svelte` states the
+> overlap is intentional: *"when servers are running, this is the section you watch,
+> so the browse buttons belong here too."* So the repo currently holds two opposed
+> positions — this plan's "one row per thing, always" and that comment. The port
+> formatting difference the section below calls out is likewise deliberate now
+> (`repo:port` where several repos are listed, `:port` where one is). Someone has to
+> pick; until then the duplication stands and both rows are consistent with each other.
 
 `custom-reports` and `fix-recurring-deleted-pm` each render **twice**: once under
 `SERVERS RUNNING · 3`, again under `WORKTREES · 7`. The duplicates disagree with each
@@ -74,7 +95,12 @@ hunk subset back through `git apply --check`; `no-regression.test.js` reimplemen
 functions verbatim and asserts equality over a corpus. The bias toward integration over
 unit is **correct** for a process orchestrator. The gaps are elsewhere.
 
-### 2.0 The server tests are `.js` and therefore unchecked
+### 2.0 The server tests are `.js` and therefore unchecked — DONE (2026-07-28)
+
+All 33 test files are `.ts`, inside `tsconfig.json`'s `include`, and checked under
+`strict`. The doubles are typed against the interfaces they stand for, so a drifted
+stub is a compile error — which is what caught the `renameTab` gap when tabs moved to
+id-addressing.
 
 32 files, ~8,400 lines, all ESM and all green — but outside `tsconfig.json`'s `include`,
 so `strict` never looks at them. The config already anticipates `test/**/*.ts`.
@@ -214,6 +240,7 @@ whole piece of work.
   (8 and 17 consecutive clean runs after). Both occurred alongside concurrent daemon
   teardown. Suspected environment contention in tests that shell out to `lsof`/`git`/tmux.
   Not dismissed — unexplained.
-- **Delete `public/`** once the SvelteKit UI has been used in anger. `WTS_UI=legacy` is the
-  escape hatch until then. Note `test/crash.test.js` pins `WTS_UI=legacy` and will need a
-  stub UI dir when `public/` goes.
+- ~~**Delete `public/`**~~ — done 2026-07-28, with `bin/vendor.ts`, the `WTS_UI`
+  registry and the three dev-harness routes. The note about `test/crash.test.ts` was
+  right: it now builds a stub UI in a temp dir and points the daemon at it with
+  `WT_STUDIO_UI_ROOT`, a location seam that cannot select a different UI.
