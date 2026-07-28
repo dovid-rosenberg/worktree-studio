@@ -155,7 +155,10 @@ async function commits(worktreePath, defaultBranch) {
   const b = await base(worktreePath, defaultBranch);
   const SEP = '\x1f'; const REC = '\x1e';
   const raw = await git(worktreePath, ['log', `--format=${REC}%H${SEP}%an${SEP}%ar${SEP}%s`, '--numstat', `${b}..HEAD`]);
+  /** @typedef {{ sha: string, author: string, when: string, subject: string, added: number, deleted: number, fileCount: number }} Commit */
+  /** @type {Commit[]} */
   const list = [];
+  /** @type {Commit|null} */
   let cur = null;
   for (const line of raw.split('\n')) {
     if (line.startsWith(REC)) {

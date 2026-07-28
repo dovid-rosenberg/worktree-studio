@@ -52,8 +52,14 @@ function findRepos(baseDirs, depth) {
   return walkTree(baseDirs, depth).repos;
 }
 
+/** One `git worktree list --porcelain` record, before describeRepo decorates it. */
+/** @typedef {{ path: string, head: string|null, branch: string|null, detached: boolean, bare: boolean }} PorcelainWorktree */
+
+/** @param {string} porcelain @returns {PorcelainWorktree[]} */
 function parseWorktrees(porcelain) {
+  /** @type {PorcelainWorktree[]} */
   const out = [];
+  /** @type {PorcelainWorktree|null} */
   let cur = null;
   for (const line of porcelain.split('\n')) {
     if (line.startsWith('worktree ')) {

@@ -16,7 +16,9 @@ const pricing = require('./pricing');
 // node:sqlite is experimental in Node 22 (it prints an ExperimentalWarning on first
 // require). If it or FTS5 is missing we degrade to the file-scan search in
 // transcripts.js rather than taking the whole feature down.
+/** @type {typeof import('node:sqlite')|null} */
 let sqlite = null;
+/** @type {string|null} */
 let loadError = null;
 try { sqlite = require('node:sqlite'); } catch (e) { loadError = e.message; }
 

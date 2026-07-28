@@ -21,6 +21,9 @@ function createTerminalHandler({ manager, spawn = pty.spawn }) {
     const pane = url.searchParams.get('pane');
     const cols = Number(url.searchParams.get('cols')) || 100;
     const rows = Number(url.searchParams.get('rows')) || 30;
+    // No `?session=` at all is the same answer as an unknown id: there is nothing to
+    // attach to. Checked separately so the lookup is never handed a null.
+    if (!id) { ws.close(); return; }
     const s = manager.get(id);
     if (!s) { ws.close(); return; }
 
@@ -34,9 +37,10 @@ function createTerminalHandler({ manager, spawn = pty.spawn }) {
     // threw into an empty catch on every keystroke, and onExit never fired because
     // `tmux attach-session` does not exit on its own. The result was an orphaned
     // node-pty plus an attached tmux client, for the daemon's life, per toggle.
-    let term = null;
+    /** @type {import('node-pty').IPty|null} */
+    let spawned = null;
     let closed = false;
-    ws.on('close', () => { closed = true; if (term) { try { term.kill(); } catch { /* */ } } });
+    ws.on('close', () => { closed = true; if (spawned) { try { spawned.kill(); } catch { /* */ } } });
 
     // The split pane attaches to the standalone `-split` session — a separate terminal
     // in the same worktree with its own tabs. Ensure it exists before the pty attaches.
@@ -45,10 +49,16 @@ function createTerminalHandler({ manager, spawn = pty.spawn }) {
 
     const spec = manager.mux.attachSpawn(s.muxName, pane === 'split' ? { group: 'split' } : {});
     // Nothing between here and the assignment may await, or the close listener above
-    // would again be looking at a null `term` while one exists.
-    term = spawn(spec.file, spec.args, {
+    // would again be looking at a null `spawned` while one exists.
+    //
+    // The handlers below close over the CONST, not the let: `spawned` exists only so
+    // the close listener installed before the await can reach the pty, and reading a
+    // reassignable binding from inside a handler is a standing claim that there might
+    // be no pty yet — long after there provably is one.
+    const term = spawn(spec.file, spec.args, {
       name: 'xterm-256color', cols, rows, cwd: s.worktreePath || s.repoPath, env: spec.env || process.env,
     });
+    spawned = term;
     term.onData((d) => { try { ws.send(d); } catch { /* */ } });
     term.onExit(() => { try { ws.close(); } catch { /* */ } });
     ws.on('message', (data, isBinary) => {

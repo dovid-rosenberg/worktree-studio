@@ -17,6 +17,7 @@
     // Phase 3 turns this on. Until then the goal is "zero errors at the level
     // the code was written for", not a null-safety audit.
     "strict": false,
+    "strictNullChecks": true,
 
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,

@@ -21,8 +21,11 @@
 // Everyone who asks mid-scan therefore shares ONE follow-up and waits for it —
 // the same collapse-into-a-single-rerun that server/watch.js already does for its
 // own triggers.
+/** @param {() => any} scan */
 function createRescan(scan) {
+  /** @type {Promise<any>|null} */
   let inFlight = null; // the scan running right now
+  /** @type {Promise<any>|null} */
   let followUp = null; // the single queued re-run, shared by every mid-scan caller
 
   return function rescan() {

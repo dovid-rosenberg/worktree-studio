@@ -43,6 +43,7 @@
  */
 function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   const clients = new Set();
+  /** @type {ReturnType<typeof setTimeout>|null} */
   let timer = null;
   let topologyPending = false;
   let ciPending = false;

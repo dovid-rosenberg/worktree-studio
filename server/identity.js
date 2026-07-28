@@ -48,7 +48,12 @@ function compileBranchMatcher(pattern, flags) {
   // many groups it has, so the exec result's length counts them exactly — no
   // guessing at parentheses inside character classes or escapes.
   let groups = 0;
-  try { groups = new RegExp(`${re.source}|`).exec('').length - 1; } catch { groups = 1; }
+  try {
+    // The `|` alternative makes this match unconditionally, so `m` is never null —
+    // but a null would mean we learned nothing, which is the same as the catch below.
+    const m = new RegExp(`${re.source}|`).exec('');
+    groups = m ? m.length - 1 : 1;
+  } catch { groups = 1; }
   if (groups === 0) return { error: 'featureIdentity.branchPattern has no capture group' };
   return { re };
 }
@@ -72,7 +77,9 @@ function firstCapture(m) {
 // so a manual group whose members are named differently per repo got a slot each
 // and its repos collided on ports. Under `manifest` the group name becomes the
 // feature identity everywhere, grouping and slotting alike.
+/** @returns {Map<string, string>} `repo/<branch-or-wtname>` → the group's name */
 function manifestIndex(groups) {
+  /** @type {Map<string, string>} */
   const byRef = new Map();
   for (const g of groups || []) {
     if (!g || !g.name) continue;
@@ -84,14 +91,36 @@ function manifestIndex(groups) {
 }
 
 /**
+ * As much of a worktree as identity ever reads. The git scan's rows, a session's
+ * stored repo entry and a hand-built `{ repo, wtname, branch, path }` all qualify —
+ * which is the point: `of()` must answer the same for all three.
+ * @typedef {{ repo?: string, wtname?: string, name?: string, branch?: string|null, path?: string }} IdentityInput
+ */
+
+/**
+ * The resolver `createIdentity` returns. state.js, servers.js and sessions.js all
+ * hold one; this is the whole of what they may call.
+ * @typedef {object} Identity
+ * @property {string} strategy               the one in force, after any fallback
+ * @property {ReturnType<typeof layoutMod.resolve>} layout
+ * @property {(w?: IdentityInput|null) => string} of         identity of a worktree object
+ * @property {(p?: string|null) => string} ofPath            identity of a path
+ * @property {(w?: IdentityInput|null) => string} nameOf     the layout's name for it
+ * @property {(repos?: any[]) => void} reindex               feed the path index from a git scan
+ * @property {string|null} warning           what was wrong with the config, if anything
+ */
+
+/**
  * Build the resolver for a config. Pure apart from the console.warn on a bad
  * config and the realpath calls behind the path index.
- * @returns {{ strategy, layout, of, ofPath, nameOf, reindex, warning }}
+ * @param {import('./types').PartialDeep<import('./types').Config>} [cfg]
+ * @returns {Identity}
  */
 function createIdentity(cfg = {}) {
   const layout = layoutMod.resolve(cfg);
   const fi = cfg.featureIdentity || {};
   let strategy = String(fi.strategy || 'basename');
+  /** @type {string|null} */
   let warning = null;
 
   if (!STRATEGIES.includes(strategy)) {
@@ -99,6 +128,7 @@ function createIdentity(cfg = {}) {
     strategy = 'basename';
   }
 
+  /** @type {RegExp|null} */
   let re = null;
   if (strategy === 'branch') {
     const c = compileBranchMatcher(fi.branchPattern, fi.branchFlags);
@@ -119,7 +149,8 @@ function createIdentity(cfg = {}) {
   // The sentinel is a fresh object rather than undefined/null, so an absent
   // cfg.groups still counts as "not built yet" on the first call.
   const UNBUILT = {};
-  let manifestCache = { src: UNBUILT, map: null };
+  /** @type {{ src: unknown, map: Map<string, string> }} */
+  let manifestCache = { src: UNBUILT, map: new Map() };
   function manifestMap() {
     if (manifestCache.src !== cfg.groups) manifestCache = { src: cfg.groups, map: manifestIndex(cfg.groups) };
     return manifestCache.map;
@@ -151,7 +182,10 @@ function createIdentity(cfg = {}) {
 
   function of(w) {
     if (!w) return '';
-    if (strategy === 'branch' && w.branch) {
+    // `re` is non-null exactly when the strategy is still 'branch' — a pattern that
+    // failed to compile rewrote strategy to 'basename' above. Testing the regex
+    // rather than the strategy name is the same condition, stated where it is checkable.
+    if (re && w.branch) {
       const cap = firstCapture(re.exec(w.branch));
       if (cap) return cap;
       // no match → this worktree isn't part of the scheme; group it by name
