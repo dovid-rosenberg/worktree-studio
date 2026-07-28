@@ -90,11 +90,6 @@ function defaults(): ShippedConfig {
     groups: dash.groups || [],
     // imported editor run/test configs: { "<repo>": [{ name, cmd, kind, source }] }
     runConfigs: dash.runConfigs || {},
-    // pop-out target terminal (macOS). {name} is the mux session.
-    popout: {
-      terminal: 'Terminal',
-      // command run to open a native window attached to a mux session
-    },
     sources: {
       github: { enabled: true },
       gitlab: { enabled: false, host: 'https://gitlab.com', token: '' },

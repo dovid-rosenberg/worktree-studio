@@ -131,6 +131,58 @@ test uses a state dir where saving fails. Extend to: tmux killed out from under 
 
 ---
 
+## 2.6 Port the SvelteKit client to TypeScript
+
+**Blocked on the in-flight `feature/unify-work-fleet` work — both touch every component.**
+Queued at David's request (2026-07-28); start only once that lands.
+
+### The baseline, measured — not what you'd assume
+
+`client/jsconfig.json` already sets `"strict": true` AND `"checkJs": true`, and
+`npx svelte-check` reports **0 errors, 0 warnings**. So this is NOT a bug hunt: the
+client is already strict-clean, just through inference and JSDoc rather than
+annotations. Anyone starting this expecting `tsc` to light up a hundred latent
+mistakes will be disappointed, and should not go looking for justification that
+isn't there.
+
+### The one real payoff: the client has no compile-time link to the wire contract
+
+`grep -rn "TopologyPayload\|server/types" client/src` returns **nothing**. The server's
+payload shapes are fully typed in `server/types.ts`, and the client re-derives them
+from prose — `world.svelte.js` documents the three-frame stitching in a 60-line
+header comment and then works with untyped objects.
+
+That is the actual gap. `world.svelte.js` is the file where the SSE halves are kept
+verbatim and re-projected, it has already had one real bug, and a server-side change
+to `TopologyPayload` breaks it **silently** today. Importing the server's own types
+makes that a compile error. Everything else here is ergonomics.
+
+### Order of work
+
+1. `client/jsconfig.json` → `tsconfig.json`; point `svelte-check` at it. Nothing else
+   changes — `strict`/`checkJs` are already on, so this step must stay green.
+2. `lib/` first, leaves-first, ~1,200 lines over 7 files. `api.js` (76) and
+   `stores/dialog.svelte.js` (92) are the easy start; `ops.svelte.js` (327) is the
+   biggest single file; `world.svelte.js` (193) is the one that matters — do it last
+   in this step, and wire it to `server/types.ts` as you go.
+3. The 44 components: `<script lang="ts">`, then type `$props()`. Svelte 5 runes are
+   the hazard here, not the volume — `$props()` destructuring wants an explicit type
+   argument, and `$state`/`$derived` inference across component boundaries is where
+   the friction will be.
+4. **Wire it into the gate.** `npm run check` exists inside `client/` and *nothing
+   runs it* — not `npm test`, not CI. A type check nobody runs is decoration. Adding
+   it to the root `test` script is worth doing on its own, before any of the above.
+
+### How to share `server/types.ts` across the boundary
+
+The client is a separate package with `moduleResolution: bundler`; the server is
+`nodenext` with `allowImportingTsExtensions`. A plain relative import of
+`../../server/types.ts` will fight both. Decide this before step 2 — a `paths` mapping
+in the client tsconfig is the likely answer, and it is the one design question in this
+whole piece of work.
+
+---
+
 ## 3. Known deferred items
 
 - **`/group/pr` loops members serially.** Timeouts bound it, but a wedged member still

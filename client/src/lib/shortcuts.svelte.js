@@ -13,6 +13,7 @@
  */
 
 import { ui } from '$lib/stores/ui.svelte.js';
+import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
 import { promote, startSessionServers } from '$lib/ops.svelte.js';
@@ -20,8 +21,8 @@ import { promote, startSessionServers } from '$lib/ops.svelte.js';
 const ROWS = [
   ['⌘K', 'Command palette'],
   ['⌘N', 'New session'],
-  ['⌘\\', 'Toggle Work / Fleet'],
-  ['⌘1–9', 'Jump to the Nth session'],
+  ['⌘\\', 'Toggle the Overview pane'],
+  ['⌘1–9', 'Jump to the Nth rail row'],
   ['⌘↵', 'Promote current to worktree'],
   ['⌘D', 'Review changes'],
   ['⌘R', 'Run dev servers'],
@@ -54,10 +55,15 @@ export function handleShortcut(e) {
 
   const s = ui.selected;
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); overlays.openIntake(); return; }
-  if (e.key === '\\') { e.preventDefault(); ui.setView(ui.view === 'work' ? 'fleet' : 'work'); return; }
+  if (e.key === '\\') { e.preventDefault(); ui.toggleOverview(); return; }
   if (e.key >= '1' && e.key <= '9') {
+    // The rail draws agents then features, and a feature may have no session — so a row
+    // is picked by what it IS, not by a session id it might not have.
     const pick = ui.railOrder[Number(e.key) - 1];
-    if (pick) { e.preventDefault(); ui.goToSession(pick.id); }
+    if (!pick) return;
+    e.preventDefault();
+    if (pick.id) ui.goToSession(pick.id);
+    else ui.selectFeature(world.features.find((/** @type {any} */ f) => f.name === pick.name));
     return;
   }
   if (e.key === 'Enter') { if (s && !s.worktreePath) { e.preventDefault(); promote(s); } return; }

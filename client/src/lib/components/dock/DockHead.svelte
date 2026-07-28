@@ -7,7 +7,7 @@
   import { labelForSource } from '$lib/stores/ui.svelte.js';
   import {
     activateSession, addRepoToSession, closeSession, deactivateSession,
-    openEditor, popout, promote, renameSession,
+    openEditor, promote, renameSession,
   } from '$lib/ops.svelte.js';
 
   let { session } = $props();
@@ -22,7 +22,6 @@
 
   // One busy flag per action that fires a request — app.js's guardBtn(), as state.
   let busyPromote = $state(false);
-  let busyPopout = $state(false);
   let busyActive = $state(false);
 
   /**
@@ -67,9 +66,6 @@
       <button class="btn sm" onclick={() => openEditor(session.worktreePath)}>Open in editor</button>
     {/if}
 
-    <button class="btn sm" aria-label="Pop out" disabled={busyPopout} onclick={() => guard((v) => (busyPopout = v), () => popout(session))}>
-      Pop out ⧉
-    </button>
     <button class="btn sm ghost" title="Rename" aria-label="Rename" onclick={() => renameSession(session)}>✐</button>
 
     {#if session.active === false}

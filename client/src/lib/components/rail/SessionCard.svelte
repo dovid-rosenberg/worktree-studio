@@ -1,77 +1,86 @@
 <script>
   /*
-   * One session in the rail.
+   * One UNPROMOTED session in the rail — an agent with no worktree, and therefore no
+   * feature to sit under. Promoted sessions are drawn by FeatureCard instead, since the
+   * rail is keyed on features now.
+   *
+   * Like FeatureCard, this is a fixed-height readout with no buttons: Promote, Resume and
+   * Delete all live in the bottom ActionBar. Hover-revealed actions used to grow the card
+   * and reflow the rows below it, which made the list move under the pointer.
    *
    * The whole point of the port lives here: this card is rendered once per session and
    * then *updated in place* as frames arrive. app.js rebuilt the entire rail with
    * `rail.innerHTML = ''` on every SSE tick — i.e. several times a second while a
    * session is working — which destroyed focus, scroll position and any open menu.
    */
-  import { activatable } from '$lib/actions/activatable.js';
   import { ui, labelForSource } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
 
   let { session } = $props();
 
-  const promoted = $derived(!!session.worktreePath);
+  const stopped = $derived(session.state === 'stopped');
   const srv = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
   const running = $derived(srv.filter((/** @type {any} */ r) => r.running));
   const ports = $derived(running.flatMap((/** @type {any} */ r) => r.ports || []));
   const selected = $derived(ui.selectedId === session.id);
-  /** The repo chips: every repo of a promoted feature, or just "main" before promote. */
-  const repoTags = $derived(
-    promoted
-      ? (session.repos && session.repos.length
-        ? session.repos.map((/** @type {any} */ r) => r.repo)
-        : [session.repoName])
-      : ['main'],
+  const reps = $derived(
+    session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }],
   );
 </script>
 
-<div
-  class="scard"
-  class:sel={selected}
-  class:running={running.length > 0}
-  data-id={session.id}
-  aria-pressed={selected}
-  use:activatable={() => ui.select(session.id)}
->
-  <div class="scard-top">
-    <span class="dot {session.state}"></span>
-    <span class="scard-title">{session.title}</span>
-    {#if running.length}
-      <span class="pill run" title="Dev servers running{ports.length ? ` — :${ports.join(' :')}` : ''}">
-        <span class="pi">⇅</span>running
-      </span>
-    {:else}
-      <span class="pill {session.state}">{session.state}</span>
-    {/if}
-  </div>
-  <div class="scard-meta">
-    <span class="src">{session.source}</span>
-    {#if session.sourceUrl}
-      <!-- A real link, so a click must not also select the card. -->
-      <a
-        class="link"
-        href={session.sourceUrl}
-        target="_blank"
-        rel="noreferrer"
-        onclick={(e) => e.stopPropagation()}
-      >{labelForSource(session)}</a>
-    {/if}
-    {#each repoTags as r (r)}<span class="grp">{r}</span>{/each}
-  </div>
-  <div class="scard-act">{session.activity || ''}</div>
+<div class="scard" class:sel={selected} class:running={running.length > 0} class:stoppedrow={stopped} role="listitem">
+  <button
+    class="hit"
+    onclick={() => ui.select(session.id)}
+    aria-pressed={selected}
+    aria-label="Select session {session.title}"
+  >
+    <div class="top">
+      <span class="dot {session.state}"></span>
+      <span class="title">{session.title}</span>
+      {#if running.length}
+        <span class="pill run" title="Dev servers running{ports.length ? ` — :${ports.join(' :')}` : ''}">
+          <span class="pi">⇅</span>running
+        </span>
+      {:else}
+        <span class="pill {session.state}">{session.state}</span>
+      {/if}
+    </div>
+    <div class="meta">
+      <span class="src">{session.source}</span>
+      {#if session.sourceUrl}
+        <!-- A real link, so a click must not also select the card. -->
+        <a
+          class="link"
+          href={session.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          onclick={(e) => e.stopPropagation()}
+        >{labelForSource(session)}</a>
+      {/if}
+      {#each reps as r (r.repo)}<span class="grp">{r.repo}</span>{/each}
+    </div>
+    <div class="act">{session.activity || ''}</div>
+  </button>
 </div>
 
 <style>
-  .scard { border:1px solid var(--border); border-radius:10px; padding:10px 11px; cursor:pointer; background:var(--panel); transition:border-color .12s, background .12s; }
+  .scard { border:1px solid var(--border); border-radius:10px; background:var(--panel); margin:0 8px 6px;
+           transition:border-color .12s, background .12s; }
   @media (prefers-reduced-motion:reduce){ .scard { transition:none; } }
   .scard:hover { border-color:var(--border-strong); }
   .scard.sel { border-color:var(--brand); background:var(--elevated); }
   .scard.running { box-shadow:inset 3px 0 0 var(--done); }
-  .scard-top { display:flex; align-items:center; gap:8px; }
-  .scard-title { font-weight:600; font-size:13px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .scard-meta { display:flex; align-items:center; gap:7px; margin-top:6px; font-family:var(--mono); font-size:10.5px; color:var(--muted); flex-wrap:wrap; }
-  .scard-act { margin-top:6px; font-family:var(--mono); font-size:10.5px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Dimmed, not hidden: a stopped agent is still resumable and must stay findable. */
+  .scard.stoppedrow .title, .scard.stoppedrow .meta { opacity:.55; }
+
+  .hit { display:block; width:100%; min-width:0; text-align:left; background:none; border:0;
+         padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
+
+  .top { display:flex; align-items:center; gap:8px; min-width:0; }
+  .title { font-weight:600; font-size:13px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .meta { display:flex; align-items:center; gap:7px; margin-top:6px; font-family:var(--mono); font-size:10.5px;
+          color:var(--muted); flex-wrap:wrap; }
+  .act { margin-top:6px; font-family:var(--mono); font-size:10.5px; color:var(--faint);
+         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>

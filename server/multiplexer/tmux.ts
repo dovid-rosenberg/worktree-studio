@@ -57,7 +57,7 @@ export interface TmuxDriver {
   available(): Promise<boolean>;
   hasSession(name: string): Promise<boolean>;
   ensure(name: string, opts?: TmuxLaunchOptions): Promise<TmuxEnsureResult>;
-  attachSpawn(name: string, opts?: { popout?: boolean; group?: string }): AttachSpec;
+  attachSpawn(name: string, opts?: { group?: string }): AttachSpec;
   ensureSplit(name: string, opts?: { cwd?: string }): Promise<void>;
   newTab(name: string, opts?: TmuxNewTabOptions): Promise<TmuxNewTabResult>;
   listTabs(name: string): Promise<TmuxTab[]>;
@@ -68,7 +68,6 @@ export interface TmuxDriver {
   closeTab(name: string, id: string | number): Promise<boolean>;
   rename(oldName: string, newName: string): Promise<boolean>;
   kill(name: string): Promise<boolean>;
-  popoutCommand(name: string): string;
 }
 
 const SOCK = 'wt-studio';
@@ -109,6 +108,30 @@ function persistCmd(cmd?: string): string {
   return cmd ? `${cmd}; exec ${process.env.SHELL || '/bin/bash'} -l` : `${process.env.SHELL || '/bin/bash'} -l`;
 }
 
+// Launch commands go to a FILE and we type `source <file>` — never the command itself.
+//
+// send-keys types into the pane's tty, and a tty in canonical mode (which is where a
+// shell sits until it finishes starting and ZLE takes over the terminal in raw mode)
+// silently DROPS everything past MAX_INPUT — 1024 bytes on macOS. A session launch
+// command carries the user's seed and the system-prompt note inline, so it crosses
+// 1024 routinely; the cut lands mid-single-quote and the shell then sits at `quote>`
+// forever, waiting for a closing quote that was thrown away. claude never starts and
+// nothing reports an error, because from tmux's side the keys were delivered.
+// One file per pane, rewritten each launch: bounded, no cleanup, and `cat`-able when
+// a launch needs debugging.
+const LAUNCH_DIR = path.join(CONFIG_DIR, 'launch');
+export function launchKeys(target: string, cmd?: string): string {
+  const line = persistCmd(cmd);
+  try {
+    fs.mkdirSync(LAUNCH_DIR, { recursive: true });
+    const file = path.join(LAUNCH_DIR, `${target.replace(/[^A-Za-z0-9._-]/g, '_')}.sh`);
+    fs.writeFileSync(file, `${line}\n`, { mode: 0o600 });
+    return `. '${file.replace(/'/g, `'\\''`)}'`; // `.`, not `source` — dash/sh don't have `source`
+  } catch {
+    return line; // can't write → type it, which is what we did before (and works under 1024)
+  }
+}
+
 const tmux: TmuxDriver = {
   name: 'tmux',
   env: ENV,
@@ -129,23 +152,18 @@ const tmux: TmuxDriver = {
     const r = await T(['new-session', '-d', '-s', name, '-n', 'claude', '-x', '220', '-y', '50', '-c', cwd || HOME, ...envArgs]);
     if (r.code !== 0) return { created: false, error: r.stderr.trim() };
     await T(['set-option', '-t', name, 'remain-on-exit', 'off']);
-    await T(['send-keys', '-t', `${name}:0`, '--', persistCmd(cmd), 'Enter']);
+    await T(['send-keys', '-t', `${name}:0`, '--', launchKeys(`${name}-0`, cmd), 'Enter']);
     return { created: true };
   },
 
   // For node-pty: attach an interactive client to the session.
-  //  - popout: a GROUPED session (`-t name`) — a native window mirroring the same
-  //    live session, which is exactly what "pop out to a terminal" should do.
   //  - split: attach the embedded second pane to the `-split` session — a SEPARATE,
   //    standalone tmux session (not grouped) with its own window list. It's just
   //    "another terminal" in the same worktree, with its own independent tabs, so
   //    nothing mirrors the primary. Call ensureSplit(name, {cwd}) first.
   //  - default: attach the embedded primary client to the session.
-  attachSpawn(name, { popout = false, group } = {}) {
+  attachSpawn(name, { group } = {}) {
     const base = ['-L', SOCK];
-    if (popout) {
-      return { file: 'tmux', args: [...base, 'new-session', '-A', '-s', `${name}-popout`, '-t', name], env: ENV };
-    }
     if (group === 'split') {
       return { file: 'tmux', args: [...base, 'attach-session', '-t', `${name}-split`], env: ENV };
     }
@@ -165,7 +183,7 @@ const tmux: TmuxDriver = {
     const r = await T(['new-window', '-t', name, '-n', title || 'shell', '-c', cwd || HOME]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() };
     // new-window selects the new window → send the command to the session's active window
-    if (cmd) await T(['send-keys', '-t', name, '--', persistCmd(cmd), 'Enter']);
+    if (cmd) await T(['send-keys', '-t', name, '--', launchKeys(`${name}-tab`, cmd), 'Enter']);
     return { ok: true };
   },
 
@@ -212,16 +230,12 @@ const tmux: TmuxDriver = {
 
   async kill(name) {
     await T(['kill-session', '-t', `=${name}`]);
+    // still killed: sessions created before pop-out was removed may have one alive
     await T(['kill-session', '-t', `=${name}-popout`]);
     await T(['kill-session', '-t', `=${name}-split`]);
     return true;
   },
 
-  // shell command a native terminal runs to attach — a grouped session, so closing
-  // the native window never disconnects the embedded client.
-  popoutCommand(name) {
-    return `tmux -L ${SOCK} new-session -A -s ${name}-popout -t ${name}`;
-  },
 };
 
 export default tmux;

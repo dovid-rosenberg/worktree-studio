@@ -42,14 +42,6 @@ export async function promote(s) {
 }
 
 /** @param {any} s */
-export async function popout(s) {
-  try {
-    await api('POST', `/api/sessions/${s.id}/popout`, {});
-    toast('Popped out to a native terminal (same live session).');
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
-}
-
-/** @param {any} s */
 export async function addRepoToSession(s) {
   const have = new Set((s.repos || []).map((/** @type {any} */ r) => r.repo));
   const avail = world.repos.map((/** @type {any} */ r) => r.name).filter((/** @type {string} */ n) => !have.has(n));

@@ -34,12 +34,15 @@ export interface ReviewCommit {
   fileCount: number;
 }
 
-/** What `commit()` answers with. `sha` on success, `error` on any refusal. */
-export interface CommitResult {
-  ok: boolean;
-  sha?: string;
-  error?: string;
-}
+/**
+ * What `commit()` answers with: a discriminated union, because the two branches are
+ * genuinely exclusive — `sha` exists on exactly the successes and `error` on exactly
+ * the refusals. Stated as one optional-everything interface, a caller could read
+ * `out.sha` off a refusal and get `undefined` with no complaint from anything.
+ */
+export type CommitResult =
+  | { ok: true; sha: string; error?: undefined }
+  | { ok: false; error: string; sha?: undefined };
 
 // A commit-ish that arrived in a query string is not a positional argument until it
 // has been proved to be one.

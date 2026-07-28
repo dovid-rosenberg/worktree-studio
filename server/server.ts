@@ -431,15 +431,6 @@ async function main() {
     res.json({ ok: true });
   });
 
-  api.post('/sessions/:id/popout', async (req, res) => {
-    const cmd = manager.popout(req.params.id);
-    if (!cmd) return res.status(404).json({ error: 'no such session' });
-    // open a native Terminal window attached to the same mux session
-    const script = `tell application "Terminal" to do script ${JSON.stringify(cmd)}\ntell application "Terminal" to activate`;
-    await run('osascript', ['-e', script]);
-    res.json({ ok: true, cmd });
-  });
-
   api.delete('/sessions/:id', async (req, res) => {
     // Capture the session BEFORE close (close deletes it). Mirror /api/group/delete's
     // orphan cleanup: stop each owned worktree's dev servers + release its slot, else a

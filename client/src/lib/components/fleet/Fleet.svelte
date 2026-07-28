@@ -12,7 +12,6 @@
   import ServerRow from '$lib/components/fleet/ServerRow.svelte';
   import MainServerRow from '$lib/components/fleet/MainServerRow.svelte';
   import { world } from '$lib/stores/world.svelte.js';
-  import { restartStack, stopStack } from '$lib/ops.svelte.js';
 
   /** Active = a live agent or a running dev server. @param {any} f */
   const featActive = (f) => f.members.some(
@@ -46,28 +45,13 @@
     );
   })());
 
-  const flat = $derived(feats.flatMap((/** @type {any} */ f) => f.members.filter((/** @type {any} */ m) => m && !m.missing)));
-  const running = $derived(flat.filter((/** @type {any} */ m) => m.running).length);
-  const waiting = $derived(flat.filter((/** @type {any} */ m) => m.session && m.session.state === 'waiting').length);
-  const workingA = $derived(flat.filter((/** @type {any} */ m) => m.session && m.session.state === 'working').length);
-
   const nothing = $derived(!feats.length && !agents.length && !mainWebRunning.length);
-
-  const runningFeats = () => feats.filter((/** @type {any} */ f) => f.members.some((/** @type {any} */ m) => m.running));
 </script>
 
+<!-- The summary bar that used to sit here (counts + Stop all / Restart all) moved to the
+     TopBar when Fleet became a pane: those numbers describe the whole fleet, and hiding
+     them behind this one pane was the reason you had to come here to read them. -->
 <section class="fleet">
-  <div class="fleet-summary">
-    <span><b>{feats.length}</b> features</span>
-    <span class="chip"><span class="pi">✦</span>{agents.length} unpromoted</span>
-    <span class="chip"><span class="dot done"></span><b>{running}</b> running</span>
-    <span class="chip"><span class="dot working"></span>{workingA} working</span>
-    <span class="chip"><span class="dot waiting"></span>{waiting} waiting</span>
-    <span class="grow"></span>
-    <button class="btn sm" onclick={() => runningFeats().forEach((/** @type {any} */ f) => restartStack(f.name))}>Restart all</button>
-    <button class="btn sm" onclick={() => runningFeats().forEach((/** @type {any} */ f) => stopStack(f.name))}>Stop all</button>
-  </div>
-
   <div class="fleet-tablewrap">
     <div class="fleet-list">
       {#if nothing}
@@ -97,10 +81,6 @@
 
 <style>
   .fleet { flex:1; min-height:0; background:var(--bg); display:flex; flex-direction:column; }
-  .fleet-summary { display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:11.5px; color:var(--muted); flex-wrap:wrap; flex:none; }
-  .fleet-summary b { color:var(--ink); }
-  .fleet-summary .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:6px; padding:2px 8px; background:var(--elevated); }
-  .fleet-summary .grow { flex:1; }
   .fleet-tablewrap { flex:1; min-height:0; overflow:auto; padding:0 0 40px; }
   .fleet-list { display:flex; flex-direction:column; }
   .fleet-empty { color:var(--faint); padding:22px 16px; font-size:13px; }
