@@ -23,6 +23,7 @@
    */
   import { buildItems, indexAt, navigable, statusInfo, H } from './model.js';
   import { activatable } from '$lib/actions/activatable.js';
+  import { trapFocus } from '$lib/actions/trapFocus.js';
 
   let {
     /** @type {import('./model.js').Block[]} */
@@ -223,6 +224,7 @@
       case '[': move(-1, (it) => it.k === 'file'); break;
       case 's': applyAtCursor('stage'); break;
       case 'u': applyAtCursor('unstage'); break;
+      case 'f': case '/': openJump(); break;
       case 'Enter': case ' ': {
         const it = items[cursor];
         if (it && it.k === 'file') ontoggle(it.b.file);
@@ -242,6 +244,21 @@
   }
 
   /**
+   * Clicking the diff must put the keyboard ON the diff. Nothing inside the surface is
+   * focusable except the row controls, so a plain click on a diff line left focus on
+   * <body>: a mouse user who clicked a hunk and pressed `s` got nothing, and the cursor,
+   * `n`/`p` and `f` were reachable only by tabbing in from elsewhere.
+   *
+   * Deferred, and only when the press left focus on <body>, so it can never steal focus
+   * from a Stage button or a file header that legitimately took it.
+   */
+  function onPointerDown() {
+    queueMicrotask(() => {
+      if (scroller && document.activeElement === document.body) scroller.focus({ preventScroll: true });
+    });
+  }
+
+  /**
    * Keyboard focus can be sitting on a button inside a row that the next scroll unmounts.
    * Without this the focus falls to <body> and arrow keys stop working mid-review, which
    * is the classic way a virtualized list breaks for keyboard users.
@@ -254,6 +271,69 @@
       }
     });
   }
+
+  /* ---------------- the file list (`f`) ----------------
+   *
+   * Windowing has one honest cost — off-screen rows are not in the DOM, so the browser's
+   * own Ctrl-F cannot find them — and `[` / `]` walk files one at a time, which is fine
+   * for the third file of five and useless for the fortieth of sixty. This is the way
+   * back: type part of a path, land on its header.
+   *
+   * It reads the same item list the viewport draws, so "jump" is just a cursor move; no
+   * second model of what is in the diff, and nothing to keep in sync.
+   */
+  let jumpOpen = $state(false);
+  let jumpQuery = $state('');
+  let jumpAt = $state(0);
+  let jumpInput = $state(/** @type {HTMLInputElement|null} */ (null));
+
+  /** Built only while open — on a 100k-item list this is a full pass. */
+  const jumpFiles = $derived.by(() => {
+    if (!jumpOpen) return [];
+    /** @type {{ i:number, b:import('./model.js').Block }[]} */
+    const out = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.k === 'file') out.push({ i, b: it.b });
+    }
+    return out;
+  });
+  const jumpHits = $derived.by(() => {
+    const q = jumpQuery.trim().toLowerCase();
+    return q ? jumpFiles.filter((f) => f.b.file.toLowerCase().includes(q)) : jumpFiles;
+  });
+
+  function openJump() {
+    jumpQuery = '';
+    jumpAt = 0;
+    jumpOpen = true;
+  }
+  function closeJump() {
+    jumpOpen = false;
+    // trapFocus restores focus on destroy, but only to whatever was focused at mount —
+    // be explicit, because a jump should always leave the keyboard on the diff.
+    if (scroller) scroller.focus({ preventScroll: true });
+  }
+  /** @param {number} i */
+  function jumpTo(i) {
+    cursor = i;
+    closeJump();
+    reveal(i);
+  }
+
+  /** @param {KeyboardEvent} e */
+  function onJumpKeydown(e) {
+    if (e.key === 'Escape') { closeJump(); }
+    else if (e.key === 'ArrowDown') { jumpAt = Math.min(jumpAt + 1, jumpHits.length - 1); }
+    else if (e.key === 'ArrowUp') { jumpAt = Math.max(jumpAt - 1, 0); }
+    else if (e.key === 'Enter') { const hit = jumpHits[jumpAt]; if (hit) jumpTo(hit.i); }
+    else return;
+    e.preventDefault();
+  }
+
+  $effect(() => { if (jumpOpen && jumpInput) jumpInput.focus(); });
+  // A query that filters everything away must not leave the highlight past the end.
+  $effect(() => { if (jumpAt >= jumpHits.length) jumpAt = 0; });
 
   /** One-line description of the cursor, for the polite live region. */
   const cursorLabel = $derived.by(() => {
@@ -293,13 +373,14 @@
     bind:this={scroller}
     onscroll={onScroll}
     onwheel={onWheel}
+    onpointerdown={onPointerDown}
     onkeydown={onKeydown}
     onfocusin={() => { focused = true; }}
     onfocusout={onFocusout}
     onblur={() => { focused = false; }}
     tabindex="0"
     role="group"
-    aria-label="Diff — arrow keys move, n and p jump hunks, bracket keys jump files{stageable ? ', s stages, u unstages' : ''}"
+    aria-label="Diff — arrow keys move, n and p jump hunks, bracket keys jump files, f lists the files in this change{stageable ? ', s stages, u unstages' : ''}"
     style="--cols:{model.cols}"
   >
     <div
@@ -453,12 +534,57 @@
     </div>
   {/if}
 
+  {#if jumpOpen}
+    <button class="jump-scrim" tabindex="-1" aria-label="Close the file list" onclick={closeJump}></button>
+    <div
+      class="jump"
+      use:trapFocus
+      onkeydown={onJumpKeydown}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Go to a file in this change"
+      tabindex="-1"
+    >
+      <input
+        class="jumpq"
+        bind:this={jumpInput}
+        bind:value={jumpQuery}
+        placeholder="Go to file…"
+        aria-label="Filter files by path"
+        aria-controls="jump-hits"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div class="jumplist" id="jump-hits" role="listbox" aria-label="Files in this change">
+        {#each jumpHits as h, n (h.i)}
+          {@const st = statusInfo(h.b.status)}
+          <button
+            class="jumprow" class:at={n === jumpAt}
+            role="option" aria-selected={n === jumpAt}
+            onmouseenter={() => { jumpAt = n; }}
+            onclick={() => jumpTo(h.i)}
+          >
+            <span class="st {st.cls}" title={st.label}>{st.letter}</span>
+            <span class="nm">{h.b.file}</span>
+            <span class="fstat">
+              {#if h.b.added}<span class="add">+{h.b.added}</span>{/if}
+              {#if h.b.deleted}<span class="del">−{h.b.deleted}</span>{/if}
+            </span>
+          </button>
+        {/each}
+        {#if !jumpHits.length}<div class="jumpnone">No file matches “{jumpQuery}”.</div>{/if}
+      </div>
+      <div class="jumpfoot"><kbd>↑</kbd><kbd>↓</kbd> pick · <kbd>↵</kbd> go · <kbd>esc</kbd> close</div>
+    </div>
+  {/if}
+
   <p class="sr-only" aria-live="polite">{cursorLabel}</p>
   <div class="legend">
     <span><kbd>↑</kbd><kbd>↓</kbd> line</span>
     {#if split}<span><kbd>←</kbd><kbd>→</kbd> pan</span>{/if}
     <span><kbd>n</kbd><kbd>p</kbd> hunk</span>
     <span><kbd>[</kbd><kbd>]</kbd> file</span>
+    <span><kbd>f</kbd> go to file</span>
     <span><kbd>↵</kbd> collapse</span>
     {#if stageable}<span><kbd>s</kbd> stage</span><span><kbd>u</kbd> unstage</span>{/if}
     <span class="spacer"></span>
@@ -467,7 +593,7 @@
 </div>
 
 <style>
-  .viewport-shell { display:flex; flex-direction:column; min-height:0; flex:1; }
+  .viewport-shell { position:relative; display:flex; flex-direction:column; min-height:0; flex:1; }
   .viewport {
     flex:1; min-height:0; overflow:auto; background:var(--bg);
     font-family:var(--mono); font-size:12px; tab-size:4; outline-offset:-2px;
@@ -563,6 +689,38 @@
   .legend { flex:none; display:flex; align-items:center; gap:12px; padding:4px 14px; border-top:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:10px; color:var(--faint); }
   .legend .spacer { flex:1; }
   .legend kbd { font-family:var(--mono); font-size:9.5px; border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:3px; padding:0 3px; margin-right:2px; color:var(--muted); }
+
+  /* The file list. Sits over the diff rather than in a portal: it belongs to this
+     surface, and `trapFocus` keeps Tab inside it while it is open. */
+  .jump-scrim { position:absolute; inset:0; z-index:4; border:0; padding:0; background:var(--bg); opacity:.55; cursor:default; }
+  .jump {
+    position:absolute; z-index:5; top:18px; left:50%; transform:translateX(-50%);
+    width:min(560px, calc(100% - 32px)); max-height:min(60%, 420px);
+    display:flex; flex-direction:column;
+    background:var(--panel); border:1px solid var(--border-strong); border-radius:10px;
+    box-shadow:0 12px 34px rgb(0 0 0 / .38); overflow:hidden;
+  }
+  .jumpq {
+    flex:none; border:0; border-bottom:1px solid var(--border); background:transparent;
+    color:var(--ink); font-family:var(--mono); font-size:12.5px; padding:10px 13px; outline:none;
+  }
+  .jumpq::placeholder { color:var(--faint); }
+  .jumplist { overflow:auto; min-height:0; }
+  .jumprow {
+    display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+    border:0; background:none; cursor:pointer; padding:5px 13px;
+    font-family:var(--mono); font-size:11.5px; color:var(--ink);
+  }
+  .jumprow.at { background:var(--elevated); box-shadow:inset 2px 0 0 var(--brand); }
+  .jumprow .st { width:13px; text-align:center; font-weight:700; flex:none; }
+  .jumprow .st.m { color:var(--waiting); } .jumprow .st.a { color:var(--add); }
+  .jumprow .st.d { color:var(--del); } .jumprow .st.r { color:var(--working); }
+  /* Long paths matter at the END — `.../review/DiffViewport.svelte` — so clip the head. */
+  .jumprow .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
+  .jumprow .fstat { flex:none; display:inline-flex; gap:6px; font-size:10.5px; }
+  .jumpnone { padding:12px 13px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
+  .jumpfoot { flex:none; padding:5px 13px; border-top:1px solid var(--border); font-family:var(--mono); font-size:9.5px; color:var(--faint); }
+  .jumpfoot kbd { font-family:var(--mono); font-size:9.5px; border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:3px; padding:0 3px; margin-right:2px; color:var(--muted); }
 
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; margin:0; }
 </style>
