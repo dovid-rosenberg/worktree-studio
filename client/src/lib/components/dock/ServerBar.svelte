@@ -15,6 +15,9 @@
 
   let { session } = $props();
 
+  // Stable across frames (see the note in Dock.svelte): the CI poll below must key off
+  // the session's identity, not off the object the store replaces on every frame.
+  const sessionId = $derived(session.id);
   const promoted = $derived(!!session.worktreePath);
   const reps = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
   const anyRunning = $derived(reps.some((/** @type {any} */ r) => r.running));
@@ -33,7 +36,7 @@
   // A self-scheduling timeout (not setInterval) so a slow `gh` call can never let two
   // polls overlap. The effect's cleanup is what stops it when the selection moves on.
   $effect(() => {
-    const id = session.id;
+    const id = sessionId;
     if (!promoted) { ci = null; return; }
     let alive = true;
     /** @type {ReturnType<typeof setTimeout>|undefined} */

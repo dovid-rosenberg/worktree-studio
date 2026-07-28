@@ -9,19 +9,25 @@
  */
 
 /**
- * The boot token. `app.html` declares `window.WTS_TOKEN = "__WTS_TOKEN__"` and the
- * daemon substitutes the real value when it serves the document — the same mechanism
+ * The boot token.
+ *
+ * PRODUCTION: `app.html` declares `window.WTS_TOKEN` with a placeholder, and the daemon
+ * substitutes the real value when it serves the document — the same mechanism
  * `public/index.html` already uses, so the built SPA needs no new server code path
  * beyond pointing the existing injector at `client/build/index.html`.
  *
- * In dev the document is served by Vite, which does the substitution itself (see the
- * `wtsToken` plugin in vite.config.js). An UNsubstituted placeholder means neither
- * happened; treat it as absent so the failure is a clean 401 rather than a token that
- * is silently wrong.
+ * DEV: there is no daemon in front of the document (Vite serves it), so the placeholder
+ * would survive. Vite `define`s the token instead, and only for `serve` — on a build the
+ * identifier below is statically replaced with `''`, so a token can never be written
+ * into the built output.
+ *
+ * An unsubstituted placeholder with no dev value means neither path ran; treat it as
+ * absent so the failure is a clean 401 rather than a token that is silently wrong.
  */
 export const TOKEN = (() => {
-  const t = typeof window !== 'undefined' ? /** @type {any} */ (window).WTS_TOKEN : '';
-  return !t || t === '__WTS_TOKEN__' ? '' : String(t);
+  const injected = typeof window !== 'undefined' ? /** @type {any} */ (window).WTS_TOKEN : '';
+  if (injected && !/^__WTS_TOKEN/.test(injected)) return String(injected);
+  return String(import.meta.env.VITE_WTS_TOKEN || '');
 })();
 
 /**

@@ -13,7 +13,12 @@
   import { api } from '$lib/api.js';
   import { toast } from '$lib/stores/toasts.svelte.js';
 
-  let { session } = $props();
+  /*
+   * Takes the session ID, not the session object. The object is replaced on every
+   * session-state frame; the id is a stable string, so the effect below fetches the
+   * split tab list once per session instead of once per Claude tool call.
+   */
+  let { sessionId } = $props();
 
   /** @type {{title:string, active?:boolean}[]} */
   let tabs = $state([]);
@@ -37,14 +42,14 @@
     } catch { tabs = []; activeIndex = 0; }
   }
 
-  // Re-runs on session change: the pane follows the selection like the primary does.
-  $effect(() => { fetchTabs(session.id); });
+  // Re-runs on session change only: the pane follows the selection like the primary does.
+  $effect(() => { fetchTabs(sessionId); });
 
   /** @param {number} i */
   async function select(i) {
     activeIndex = i;
     try {
-      await api('POST', `/api/sessions/${session.id}/split/select-tab`, { index: i });
+      await api('POST', `/api/sessions/${sessionId}/split/select-tab`, { index: i });
       term?.focus();
     } catch (e) { toast(/** @type {Error} */ (e).message, true); }
   }
@@ -53,10 +58,10 @@
     if (busyAdd) return;
     busyAdd = true;
     try {
-      await api('POST', `/api/sessions/${session.id}/split/tabs`, { title: 'shell' });
-      await fetchTabs(session.id);
+      await api('POST', `/api/sessions/${sessionId}/split/tabs`, { title: 'shell' });
+      await fetchTabs(sessionId);
       activeIndex = Math.max(0, tabs.length - 1);
-      await api('POST', `/api/sessions/${session.id}/split/select-tab`, { index: activeIndex });
+      await api('POST', `/api/sessions/${sessionId}/split/select-tab`, { index: activeIndex });
     } catch (e) { toast(/** @type {Error} */ (e).message, true); }
     finally { busyAdd = false; }
   }
@@ -64,8 +69,8 @@
   /** @param {number} i */
   async function close(i) {
     try {
-      await api('POST', `/api/sessions/${session.id}/split/close-tab`, { index: i });
-      await fetchTabs(session.id);
+      await api('POST', `/api/sessions/${sessionId}/split/close-tab`, { index: i });
+      await fetchTabs(sessionId);
     } catch (e) { toast(/** @type {Error} */ (e).message, true); }
   }
 </script>
@@ -91,7 +96,7 @@
   </div>
   <!-- autofocus={false}: only one pane on screen may take the keyboard, and the
        primary (the Claude session) is the one that should. -->
-  <Terminal bind:this={term} sessionId={session.id} pane="split" autofocus={false} />
+  <Terminal bind:this={term} {sessionId} pane="split" autofocus={false} />
 </div>
 
 <style>

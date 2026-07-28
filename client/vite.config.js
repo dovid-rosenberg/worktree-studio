@@ -31,55 +31,55 @@ function readToken() {
   catch { return ''; }
 }
 
-/**
- * In production the daemon substitutes the token into the document it serves. Vite
- * serves the document in dev and in preview, so it has to do the same substitution —
- * otherwise those are the one build of the app with no way to authenticate, and every
- * /api call 401s.
+/*
+ * The dev server and the daemon are on different ports, and server/security.js checks
+ * BOTH `Host` and `Origin` against the daemon's own bind address (that pair is the
+ * DNS-rebinding defence — see the header of security.js). A dev request forwarded
+ * verbatim therefore arrives claiming `localhost:5273`, and is refused with
+ * `403 forbidden host` before any handler sees it.
  *
- * `apply: 'serve'` is load-bearing: it keeps this OUT of `vite build`, so the token is
- * never written into `build/index.html` on disk. The built file ships the placeholder
- * and the daemon fills it in per response, with `Cache-Control: no-store`.
+ * So the proxy has to present itself as the daemon's own origin:
+ *   changeOrigin: true   rewrites Host to the target's host:port
+ *   headers.origin       rewrites the Origin the browser attached to POSTs
  *
- * The token is read per request, not at config load: it is generated on the daemon's
- * first run, which may well happen after `npm run dev` started.
+ * This is not a weakening of the gate. The gate exists to stop a *page* from reaching
+ * the daemon; here the rewrite happens in a Node process on the user's machine that the
+ * user started, one hop after Vite has already decided the request came from its own
+ * origin. A hostile page still cannot reach the daemon — it cannot reach this proxy
+ * either, and it does not have the token.
  */
-const wtsToken = {
-  name: 'wts-token',
-  apply: /** @type {const} */ ('serve'),
-  transformIndexHtml(/** @type {string} */ html) {
-    return html.replace('__WTS_TOKEN__', readToken());
-  },
-  // `vite preview` serves the built files statically and never calls transformIndexHtml,
-  // so the same substitution is applied here by hand.
-  configurePreviewServer(/** @type {any} */ server) {
-    server.middlewares.use((/** @type {any} */ req, /** @type {any} */ res, /** @type {any} */ next) => {
-      const url = String(req.url || '').split('?')[0];
-      if (url !== '/' && url !== '/index.html') return next();
-      let html;
-      try { html = fs.readFileSync(path.join(import.meta.dirname, 'build', 'index.html'), 'utf8'); }
-      catch { return next(); }
-      res.setHeader('content-type', 'text/html');
-      res.setHeader('cache-control', 'no-store');
-      res.end(html.replace('__WTS_TOKEN__', readToken()));
-    });
-  },
-};
+const asDaemon = { target: DAEMON, changeOrigin: true, headers: { origin: DAEMON } };
 
 const proxy = {
   // Covers /api/state, /api/events (SSE) and every action endpoint. SSE works through
   // this untouched because Vite streams proxied responses rather than buffering them.
-  '/api': { target: DAEMON, changeOrigin: false },
+  '/api': { ...asDaemon },
   // `ws: true` makes Vite forward the HTTP Upgrade handshake instead of trying to
   // answer it — without this the terminal socket 404s in dev and only in dev.
-  '/ws': { target: DAEMON, changeOrigin: false, ws: true },
+  '/ws': { ...asDaemon, ws: true },
 };
 
-export default defineConfig({
-  plugins: [sveltekit(), wtsToken],
+export default defineConfig(({ command }) => ({
+  plugins: [sveltekit()],
+  /*
+   * How the dev client gets the boot token.
+   *
+   * In production the daemon injects it into the document it serves (the __WTS_TOKEN__
+   * placeholder in app.html). Dev has no daemon in front of the document — Vite serves
+   * it — so the placeholder would survive and every /api call would 401.
+   *
+   * `define` is the right tool because it is decided by `command`: it is applied for
+   * `serve` (dev and preview) and NEVER for `build`, so the token cannot end up written
+   * into build/index.html or a hashed chunk on disk. On a build the identifier is
+   * statically replaced with `''` and the client falls back to window.WTS_TOKEN, which
+   * is the only path production ever takes.
+   */
+  define: {
+    'import.meta.env.VITE_WTS_TOKEN': JSON.stringify(command === 'serve' ? readToken() : ''),
+  },
   server: { port: 5273, strictPort: true, proxy },
   // `vite preview` gets the same proxy so the built output can be exercised against the
   // real daemon before it is wired into Express — otherwise the only way to test the
   // production bundle is to change server.js, which is exactly what this avoids.
   preview: { port: 5274, strictPort: true, proxy },
-});
+}));

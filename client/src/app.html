@@ -20,9 +20,11 @@
          server/security.js is what stops a DNS-rebinding page from reading it either.
 
          adapter-static copies this file to build/index.html verbatim, so the daemon's
-         EXISTING injector — `html.replace('__WTS_TOKEN__', cfg._token)` in server.js —
-         works on it unchanged; only the path it reads has to move. In dev the document is
-         served by Vite, which performs the same substitution (see vite.config.js). -->
+         EXISTING single-line injector in server.js works on it unchanged; only the path
+         it reads has to move. NOTE that injector is a single `String.replace`, so the
+         placeholder below must appear exactly ONCE in this file — do not spell it out
+         anywhere else, comments included. Dev has no daemon in front of it and gets the
+         token from Vite instead (see api.js). -->
     <script>window.WTS_TOKEN = "__WTS_TOKEN__";</script>
     %sveltekit.head%
   </head>

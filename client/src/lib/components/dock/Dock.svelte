@@ -26,6 +26,21 @@
   const isTerm = $derived(ui.dockView === 'term');
   const splitOn = $derived(!!session && ui.splitOn(session.id));
 
+  /*
+   * `session` is a NEW object on every session-state frame — the store derives the world
+   * from two pristine halves rather than patching one in place, which is what makes the
+   * stitching safe. The cost is that anything downstream depending on the object itself
+   * invalidates several times a second.
+   *
+   * These two `$derived`s are the firebreak. A derived only propagates when its value
+   * changes by `===`, so a string id stays stable across frames, and an `$effect` in a
+   * child that reads it does not re-run. Without them the Terminal's socket effect
+   * re-ran per frame and opened a fresh WebSocket per Claude tool call — measured, not
+   * theorised: 10 frames produced 10 sockets, and each one's onopen stole focus.
+   */
+  const sessionId = $derived(session?.id ?? '');
+  const hasWorktree = $derived(!!session?.worktreePath);
+
   /**
    * Uncommitted-file count for the ✎ Changes badge. Fetched here rather than in the
    * review panel so the badge has a number before the tab is ever opened — the same
@@ -34,13 +49,12 @@
   let changesCount = $state(0);
 
   $effect(() => {
-    const s = session;
-    if (!s || !s.worktreePath) { changesCount = 0; return; }
-    const id = s.id;
-    // Depend on the session list so a frame while Changes is open schedules a refresh;
-    // 400 ms of debounce keeps a busy agent from issuing a git call per tool use.
-    const watch = ui.dockView === 'changes' ? world.sessions : null;
-    void watch;
+    const id = sessionId;
+    if (!id || !hasWorktree) { changesCount = 0; return; }
+    // Depend on the session list ONLY while Changes is open, so a frame schedules a
+    // refresh there and nowhere else; 400 ms of debounce keeps a busy agent from
+    // issuing a git call per tool use.
+    if (ui.dockView === 'changes') void world.sessions;
     let alive = true;
     const t = setTimeout(async () => {
       try {
@@ -74,9 +88,9 @@
 
     <!-- Hidden, never unmounted: see the note at the top of this file. -->
     <div class="term-area" class:term-split={splitOn} hidden={!isTerm}>
-      <Terminal sessionId={session.id} active={isTerm} />
+      <Terminal {sessionId} active={isTerm} />
       {#if splitOn}
-        <SplitPane {session} />
+        <SplitPane {sessionId} />
       {/if}
     </div>
 
