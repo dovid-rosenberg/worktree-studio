@@ -72,17 +72,24 @@ export function displayWidth(text) {
  *
  * @param {Block[]} blocks
  * @param {'unified'|'split'} view
- * @returns {{ items:Item[], offsets:Float64Array, total:number, cols:number }}
+ * @returns {{ items:Item[], offsets:Float64Array, total:number,
+ *             cols:number, colsLeft:number, colsRight:number }}
  *   `offsets[i]` is item i's top; `offsets[items.length]` is the total height.
- *   `cols` is the widest line in columns — the scroll canvas is sized from it so the
- *   canvas width does not jitter as rows scroll in and out.
+ *
+ *   The three widths are the widest line, in columns, of each surface that scrolls
+ *   sideways on its own: `cols` for the unified canvas, `colsLeft`/`colsRight` for the
+ *   two side-by-side columns. They are measured HERE, over the whole diff, so each
+ *   surface's scroll range is fixed before the first frame and does not jitter as rows
+ *   are recycled — and so one 260-column line on the right cannot invent scroll range
+ *   on the left, where every line is short.
  */
 export function buildItems(blocks, view) {
   /** @type {Item[]} */
   const items = [];
+  const split = view === 'split';
   let cols = 0;
-  /** @param {string} t */
-  const wide = (t) => { const w = displayWidth(t); if (w > cols) cols = w; };
+  let colsLeft = 0;
+  let colsRight = 0;
 
   for (const b of blocks) {
     items.push({ k: 'file', b });
@@ -93,17 +100,19 @@ export function buildItems(blocks, view) {
         if (g.label) items.push({ k: 'group', b, g });
         for (const hunk of g.hunks) {
           items.push({ k: 'hunk', b, g, hunk });
-          if (view === 'split') {
+          if (split) {
+            // `rows` is the server's alignment: left/right index INTO `lines`, and a
+            // null side is a line that exists only on the other one.
             for (const r of hunk.rows) {
               const left = r.left === null ? null : hunk.lines[r.left];
               const right = r.right === null ? null : hunk.lines[r.right];
-              if (left) wide(left.text);
-              if (right) wide(right.text);
+              if (left) colsLeft = Math.max(colsLeft, displayWidth(left.text));
+              if (right) colsRight = Math.max(colsRight, displayWidth(right.text));
               items.push({ k: 'row', b, type: r.type, left, right });
             }
           } else {
             for (const line of hunk.lines) {
-              wide(line.text);
+              cols = Math.max(cols, displayWidth(line.text));
               items.push({ k: 'row', b, type: line.type, left: line, right: line });
             }
           }
@@ -118,8 +127,9 @@ export function buildItems(blocks, view) {
   for (let i = 0; i < items.length; i++) { offsets[i] = y; y += H[items[i].k]; }
   offsets[items.length] = y;
   // A hard floor keeps short diffs from collapsing the gutter, and the cap stops one
-  // pathological minified line from creating a 200k-pixel-wide canvas nothing can scroll.
-  return { items, offsets, total: y, cols: Math.max(40, Math.min(cols, 2000)) };
+  // pathological minified line from creating a 200k-pixel-wide surface nothing can scroll.
+  const clamp = (/** @type {number} */ n) => Math.max(40, Math.min(n, 2000));
+  return { items, offsets, total: y, cols: clamp(cols), colsLeft: clamp(colsLeft), colsRight: clamp(colsRight) };
 }
 
 /**
