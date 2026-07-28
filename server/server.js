@@ -2,7 +2,6 @@
 const http = require('http');
 const express = require('express');
 const { WebSocketServer } = require('ws');
-const pty = require('node-pty');
 
 const configMod = require('./config');
 const muxSelect = require('./multiplexer');
@@ -21,6 +20,7 @@ const { createForge } = require('./forge');
 const { createCiFeed } = require('./ci');
 const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
+const { createTerminalHandler } = require('./term');
 const webui = require('./webui');
 const crash = require('./crash');
 const { run, has, shq, A } = require('./util');
@@ -587,34 +587,7 @@ async function main() {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
-  wss.on('connection', async (ws, req) => {
-    const url = new URL(req.url, 'http://localhost');
-    const id = url.searchParams.get('session');
-    const pane = url.searchParams.get('pane');
-    const cols = Number(url.searchParams.get('cols')) || 100;
-    const rows = Number(url.searchParams.get('rows')) || 30;
-    const s = manager.get(id);
-    if (!s) { ws.close(); return; }
-    // The split pane attaches to the standalone `-split` session — a separate terminal
-    // in the same worktree with its own tabs. Ensure it exists before the pty attaches.
-    if (pane === 'split') { try { await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath }); } catch { /* */ } }
-    const spec = manager.mux.attachSpawn(s.muxName, pane === 'split' ? { group: 'split' } : {});
-    const term = pty.spawn(spec.file, spec.args, {
-      name: 'xterm-256color', cols, rows, cwd: s.worktreePath || s.repoPath, env: spec.env || process.env,
-    });
-    term.onData((d) => { try { ws.send(d); } catch { /* */ } });
-    term.onExit(() => { try { ws.close(); } catch { /* */ } });
-    ws.on('message', (data, isBinary) => {
-      if (isBinary) { term.write(data.toString('utf8')); return; }
-      const txt = data.toString('utf8');
-      try {
-        const msg = JSON.parse(txt);
-        if (msg.type === 'resize') { term.resize(Math.max(2, msg.cols | 0), Math.max(2, msg.rows | 0)); return; }
-        if (msg.type === 'input') { term.write(msg.data); return; }
-      } catch { term.write(txt); }
-    });
-    ws.on('close', () => { try { term.kill(); } catch { /* */ } });
-  });
+  wss.on('connection', createTerminalHandler({ manager }));
 
   // ---- boot ----
   // Crash policy lives in server/crash.js: fatal by default, with one narrow
