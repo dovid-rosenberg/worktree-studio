@@ -11,12 +11,19 @@ import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import * as hunks from '../server/hunks.ts';
 import { parsePatch, formatFilePatch } from '../server/diff.ts';
+import type { DiffFile } from '../server/types.ts';
+import type { FileHunks } from '../server/hunks.ts';
+import { expectErr, expectOk, present } from './helpers.ts';
 
-function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
+/** The side of a FileHunks the test is asserting on; null means "no such diff". */
+const side = (fh: FileHunks, which: 'staged' | 'unstaged'): DiffFile =>
+  present(fh[which], `the ${which} diff for ${fh.file}`);
+
+function sh(cwd: string, args: string[]) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 
 // A repo with one commit. core.autocrlf=false so the CRLF case is about the diff model,
 // not about git's line-ending conversion.
-function repo(files) {
+function repo(files: Record<string, string | Buffer>) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-hunks-'));
   sh(dir, ['init', '-q', '-b', 'main']);
   sh(dir, ['config', 'user.email', 't@t.t']);
@@ -27,16 +34,16 @@ function repo(files) {
   sh(dir, ['commit', '-qm', 'base']);
   return dir;
 }
-function write(dir, name, content) { fs.writeFileSync(path.join(dir, name), content); }
-function rm(dir) { fs.rmSync(dir, { recursive: true, force: true }); }
-const numbered = (n, prefix = 'L') => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
-const cached = (dir) => sh(dir, ['diff', '--cached']);
-const unstaged = (dir) => sh(dir, ['diff']);
-const atAt = (text) => text.split('\n').filter((l) => l.startsWith('@@'));
+function write(dir: string, name: string, content: string | Buffer) { fs.writeFileSync(path.join(dir, name), content); }
+function rm(dir: string) { fs.rmSync(dir, { recursive: true, force: true }); }
+const numbered = (n: number, prefix = 'L') => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
+const cached = (dir: string) => sh(dir, ['diff', '--cached']);
+const unstaged = (dir: string) => sh(dir, ['diff']);
+const atAt = (text: string) => text.split('\n').filter((l: string) => l.startsWith('@@'));
 
 // The strongest check we have: hand git back a patch we built from its own diff and see
 // whether it would apply it to the index.
-function applies(dir, patch, extra = []) {
+function applies(dir: string, patch: string, extra: string[] = []) {
   const r = spawnSync('git', ['-C', dir, 'apply', '--cached', '--check', ...extra, '-'], { input: patch, encoding: 'utf8' });
   return { ok: r.status === 0, err: (r.stderr || '').trim() };
 }
@@ -59,7 +66,7 @@ function threeHunkRepo() {
 test('stage() puts exactly the chosen hunk in the index', async () => {
   const dir = threeHunkRepo();
   const out = await hunks.stage(dir, { file: 'p.txt', hunks: [1] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   const staged = cached(dir);
   assert.match(staged, /^\+p20 CHANGED$/m);
   assert.doesNotMatch(staged, /p3 CHANGED/);
@@ -90,9 +97,9 @@ test('unstage() takes one hunk back out of the index and leaves the rest staged'
   const dir = threeHunkRepo();
   sh(dir, ['add', 'p.txt']); // file-level stage: all three hunks
   const before = await hunks.fileHunks(dir, 'p.txt');
-  assert.equal(before.staged.hunks.length, 3);
+  assert.equal(side(before, 'staged').hunks.length, 3);
   const out = await hunks.unstage(dir, { file: 'p.txt', hunks: [1] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   const staged = cached(dir);
   assert.doesNotMatch(staged, /p20 CHANGED/, 'the unstaged hunk is gone from the index');
   assert.match(staged, /^\+p3 CHANGED$/m);
@@ -105,7 +112,7 @@ test('stage() then unstage() of the same hunk leaves an empty index diff', async
   const dir = threeHunkRepo();
   await hunks.stage(dir, { file: 'p.txt', hunks: [2] });
   const out = await hunks.unstage(dir, { file: 'p.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.equal(cached(dir), '');
   rm(dir);
 });
@@ -129,10 +136,10 @@ function unbalancedRepo() {
 test('stage() of a late hunk rewrites its @@ offset for the hunks it left behind', async () => {
   const dir = unbalancedRepo();
   const before = await hunks.fileHunks(dir, 'o.txt');
-  assert.deepEqual(before.unstaged.hunks.map((h) => h.header),
+  assert.deepEqual(side(before, 'unstaged').hunks.map((h) => h.header),
     ['@@ -1,6 +1,10 @@', '@@ -22,8 +26,6 @@ b21', '@@ -47,7 +49,7 @@ b46']);
   const out = await hunks.stage(dir, { file: 'o.txt', hunks: [2] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   // Full patch says +49; with the +4 and −2 hunks skipped it has to be +47.
   assert.deepEqual(atAt(cached(dir)), ['@@ -47,7 +47,7 @@ b46']);
   rm(dir);
@@ -142,7 +149,7 @@ test('unstage() of a late hunk rewrites the other side’s offset the same way',
   const dir = unbalancedRepo();
   sh(dir, ['add', 'o.txt']);
   const out = await hunks.unstage(dir, { file: 'o.txt', hunks: [2] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.match(unstaged(dir), /^\+b50 CHANGED$/m);
   assert.equal(atAt(cached(dir)).length, 2, 'the +4 and −2 hunks stay staged');
   rm(dir);
@@ -153,7 +160,7 @@ test('staging every hunk one at a time ends up identical to staging the whole fi
   const expected = (() => { const d = unbalancedRepo(); sh(d, ['add', 'o.txt']); const t = sh(d, ['rev-parse', ':o.txt']); rm(d); return t; })();
   for (let i = 0; i < 3; i++) {
     const out = await hunks.stage(dir, { file: 'o.txt', hunks: [0] }); // always the first remaining
-    assert.equal(out.ok, true, out.error);
+    expectOk(out);
   }
   assert.equal(sh(dir, ['rev-parse', ':o.txt']), expected, 'index blob matches a plain `git add`');
   assert.equal(unstaged(dir), '', 'nothing left unstaged');
@@ -168,8 +175,8 @@ test('hunks are read against the INDEX, so an already-staged hunk drops out of t
   const dir = threeHunkRepo();
   await hunks.stage(dir, { file: 'p.txt', hunks: [0] });
   const after = await hunks.fileHunks(dir, 'p.txt');
-  assert.equal(after.unstaged.hunks.length, 2, 'the staged hunk is no longer offered for staging');
-  assert.equal(after.staged.hunks.length, 1, 'and shows up as unstageable instead');
+  assert.equal(side(after, 'unstaged').hunks.length, 2, 'the staged hunk is no longer offered for staging');
+  assert.equal(side(after, 'staged').hunks.length, 1, 'and shows up as unstageable instead');
   rm(dir);
 });
 
@@ -177,7 +184,7 @@ test('a second stage() on a partially staged file still applies cleanly', async 
   const dir = threeHunkRepo();
   await hunks.stage(dir, { file: 'p.txt', hunks: [0] });
   const out = await hunks.stage(dir, { file: 'p.txt', hunks: [1] }); // index 1 of what REMAINS
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   const staged = cached(dir);
   assert.match(staged, /^\+p3 CHANGED$/m);
   assert.match(staged, /^\+p36 CHANGED$/m);
@@ -193,10 +200,10 @@ test('a file staged and then edited again offers both sides independently', asyn
   const v2 = [...v1]; v2[9] = 'L10 unstaged';
   write(dir, 'w.txt', `${v2.join('\n')}\n`);
   const fh = await hunks.fileHunks(dir, 'w.txt');
-  assert.equal(fh.staged.hunks.length, 1);
-  assert.equal(fh.unstaged.hunks.length, 1);
-  assert.match(fh.staged.hunks[0].lines.map((l) => l.text).join('\n'), /L1 staged/);
-  assert.match(fh.unstaged.hunks[0].lines.map((l) => l.text).join('\n'), /L10 unstaged/);
+  assert.equal(side(fh, 'staged').hunks.length, 1);
+  assert.equal(side(fh, 'unstaged').hunks.length, 1);
+  assert.match(side(fh, 'staged').hunks[0].lines.map((l) => l.text).join('\n'), /L1 staged/);
+  assert.match(side(fh, 'unstaged').hunks[0].lines.map((l) => l.text).join('\n'), /L10 unstaged/);
   rm(dir);
 });
 
@@ -208,7 +215,7 @@ test('a file with no trailing newline stages with its "\\ No newline" markers in
   const dir = repo({ 'n.txt': 'a\nb\nc' }); // deliberately unterminated
   write(dir, 'n.txt', 'a\nB\nC');
   const out = await hunks.stage(dir, { file: 'n.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.equal(sh(dir, ['show', ':n.txt']), 'a\nB\nC', 'index blob is still unterminated');
   assert.equal(unstaged(dir), '');
   rm(dir);
@@ -221,7 +228,7 @@ test('staging an EARLY hunk of an unterminated file leaves the "\\ No newline" h
   lines[19] = 'L20 CHANGED';
   write(dir, 'n.txt', lines.join('\n'));
   const out = await hunks.stage(dir, { file: 'n.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.doesNotMatch(cached(dir), /No newline/, 'the marker belongs to the hunk we skipped');
   assert.match(unstaged(dir), /\\ No newline at end of file/);
   assert.equal(sh(dir, ['show', ':n.txt']), lines.slice(0, 19).concat('L20').join('\n'));
@@ -232,9 +239,9 @@ test('a CRLF file keeps its line endings byte for byte through staging', async (
   const dir = repo({ 'c.txt': 'x\r\ny\r\nz\r\n' });
   write(dir, 'c.txt', 'x\r\nY\r\nz\r\n');
   const fh = await hunks.fileHunks(dir, 'c.txt');
-  assert.deepEqual(fh.unstaged.hunks[0].lines.map((l) => l.text), ['x\r', 'y\r', 'Y\r', 'z\r']);
+  assert.deepEqual(side(fh, 'unstaged').hunks[0].lines.map((l) => l.text), ['x\r', 'y\r', 'Y\r', 'z\r']);
   const out = await hunks.stage(dir, { file: 'c.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.equal(sh(dir, ['show', ':c.txt']), 'x\r\nY\r\nz\r\n');
   rm(dir);
 });
@@ -244,10 +251,10 @@ test('an untracked file is offered as an added file and can be staged by hunk', 
   write(dir, 'new.txt', 'n1\nn2\nn3\n');
   const fh = await hunks.fileHunks(dir, 'new.txt');
   assert.equal(fh.untracked, true);
-  assert.equal(fh.unstaged.status, 'added');
-  assert.equal(fh.unstaged.hunks.length, 1);
+  assert.equal(side(fh, 'unstaged').status, 'added');
+  assert.equal(side(fh, 'unstaged').hunks.length, 1);
   const out = await hunks.stage(dir, { file: 'new.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.equal(sh(dir, ['status', '--porcelain', '--', 'new.txt']), 'A  new.txt\n');
   rm(dir);
 });
@@ -256,9 +263,9 @@ test('a deleted file stages as a deletion', async () => {
   const dir = repo({ 'del.txt': 'd1\nd2\n' });
   fs.rmSync(path.join(dir, 'del.txt'));
   const fh = await hunks.fileHunks(dir, 'del.txt');
-  assert.equal(fh.unstaged.status, 'deleted');
+  assert.equal(side(fh, 'unstaged').status, 'deleted');
   const out = await hunks.stage(dir, { file: 'del.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.equal(sh(dir, ['status', '--porcelain', '--', 'del.txt']), 'D  del.txt\n');
   rm(dir);
 });
@@ -271,7 +278,7 @@ test('staging a hunk of a renamed file leaves the staged rename intact', async (
   lines[18] = 'r19 CHANGED';
   write(dir, 'r2.txt', `${lines.join('\n')}\n`);
   const out = await hunks.stage(dir, { file: 'r2.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   const staged = sh(dir, ['diff', '--cached', '-M']);
   assert.match(staged, /^rename to r2\.txt$/m, 'still a rename, now with one hunk of content on top');
   assert.match(staged, /^\+r2 CHANGED$/m);
@@ -289,10 +296,10 @@ test('a staged rename is modelled as two independent halves, one per path', asyn
   sh(dir, ['add', '-A']);
   const newSide = await hunks.fileHunks(dir, 'b.txt');
   const oldSide = await hunks.fileHunks(dir, 'a.txt');
-  assert.equal(newSide.staged.status, 'added');
-  assert.equal(oldSide.staged.status, 'deleted');
+  assert.equal(side(newSide, 'staged').status, 'added');
+  assert.equal(side(oldSide, 'staged').status, 'deleted');
   const out = await hunks.unstage(dir, { file: 'b.txt', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.equal(sh(dir, ['status', '--porcelain']), 'D  a.txt\n?? b.txt\n', 'only the half we named moved');
   rm(dir);
 });
@@ -301,10 +308,9 @@ test('a binary file is refused with a message pointing at file-level staging', a
   const dir = repo({ 'b.bin': Buffer.from([0, 1, 2, 3]) });
   fs.writeFileSync(path.join(dir, 'b.bin'), Buffer.from([0, 1, 9, 9]));
   const fh = await hunks.fileHunks(dir, 'b.bin');
-  assert.equal(fh.unstaged.binary, true);
+  assert.equal(side(fh, 'unstaged').binary, true);
   const out = await hunks.stage(dir, { file: 'b.bin', hunks: [0] });
-  assert.equal(out.ok, false);
-  assert.match(out.error, /binary/);
+  assert.match(expectErr(out).error, /binary/);
   assert.equal(cached(dir), '', 'nothing was staged');
   rm(dir);
 });
@@ -313,10 +319,9 @@ test('a mode-only change is refused with a message pointing at file-level stagin
   const dir = repo({ 'm.sh': '#!/bin/sh\n' });
   fs.chmodSync(path.join(dir, 'm.sh'), 0o755);
   const fh = await hunks.fileHunks(dir, 'm.sh');
-  assert.equal(fh.unstaged.modeOnly, true);
+  assert.equal(side(fh, 'unstaged').modeOnly, true);
   const out = await hunks.stage(dir, { file: 'm.sh', hunks: [0] });
-  assert.equal(out.ok, false);
-  assert.match(out.error, /mode-only/);
+  assert.match(expectErr(out).error, /mode-only/);
   assert.equal(cached(dir), '');
   rm(dir);
 });
@@ -326,7 +331,7 @@ test('a mode change alongside content rides along when a hunk is staged', async 
   write(dir, 'm.sh', `#!/bin/sh\n${numbered(5).map((l, i) => (i === 2 ? 'L3 CHANGED' : l)).join('\n')}\n`);
   fs.chmodSync(path.join(dir, 'm.sh'), 0o755);
   const out = await hunks.stage(dir, { file: 'm.sh', hunks: [0] });
-  assert.equal(out.ok, true, out.error);
+  expectOk(out);
   assert.match(cached(dir), /^new mode 100755$/m, 'the mode is part of the file header, not a hunk');
   rm(dir);
 });
@@ -338,8 +343,7 @@ test('a mode change alongside content rides along when a hunk is staged', async 
 test('a stale `expect` header is refused instead of staging the wrong hunk', async () => {
   const dir = threeHunkRepo();
   const out = await hunks.stage(dir, { file: 'p.txt', hunks: [1], expect: ['@@ -999,1 +999,1 @@'] });
-  assert.equal(out.ok, false);
-  assert.match(out.error, /reload/);
+  assert.match(expectErr(out).error, /reload/);
   assert.equal(cached(dir), '', 'index untouched');
   rm(dir);
 });
@@ -347,16 +351,15 @@ test('a stale `expect` header is refused instead of staging the wrong hunk', asy
 test('a matching `expect` header goes through', async () => {
   const dir = threeHunkRepo();
   const fh = await hunks.fileHunks(dir, 'p.txt');
-  const out = await hunks.stage(dir, { file: 'p.txt', hunks: [1], expect: [fh.unstaged.hunks[1].header] });
-  assert.equal(out.ok, true, out.error);
+  const out = await hunks.stage(dir, { file: 'p.txt', hunks: [1], expect: [side(fh, 'unstaged').hunks[1].header] });
+  expectOk(out);
   rm(dir);
 });
 
 test('an out-of-range hunk index is refused', async () => {
   const dir = threeHunkRepo();
   const out = await hunks.stage(dir, { file: 'p.txt', hunks: [7] });
-  assert.equal(out.ok, false);
-  assert.match(out.error, /indexes/);
+  assert.match(expectErr(out).error, /indexes/);
   assert.equal(cached(dir), '');
   rm(dir);
 });
@@ -371,16 +374,14 @@ test('an empty hunk selection is refused rather than silently doing nothing', as
 test('a file with no unstaged changes is refused', async () => {
   const dir = repo({ 'q.txt': 'unchanged\n' });
   const out = await hunks.stage(dir, { file: 'q.txt', hunks: [0] });
-  assert.equal(out.ok, false);
-  assert.match(out.error, /no unstaged changes/);
+  assert.match(expectErr(out).error, /no unstaged changes/);
   rm(dir);
 });
 
 test('unstage() on a file with nothing staged is refused', async () => {
   const dir = threeHunkRepo();
   const out = await hunks.unstage(dir, { file: 'p.txt', hunks: [0] });
-  assert.equal(out.ok, false);
-  assert.match(out.error, /no staged changes/);
+  assert.match(expectErr(out).error, /no staged changes/);
   rm(dir);
 });
 
