@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Session } from '../../../../../server/types';
   /*
    * One UNPROMOTED session in the rail — an agent with no worktree, and therefore no
    * feature to sit under. Promoted sessions are drawn by FeatureCard instead, since the
@@ -16,12 +17,12 @@
   import { ui, labelForSource } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
 
-  let { session } = $props();
+  let { session }: { session: Session } = $props();
 
   const stopped = $derived(session.state === 'stopped');
   const srv = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
-  const running = $derived(srv.filter((r: any) => r.running));
-  const ports = $derived(running.flatMap((r: any) => r.ports || []));
+  const running = $derived(srv.filter((r) => r.running));
+  const ports = $derived(running.flatMap((r) => r.ports || []));
   const selected = $derived(ui.selectedId === session.id);
   const reps = $derived(
     session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }],

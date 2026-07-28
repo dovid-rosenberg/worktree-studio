@@ -27,7 +27,7 @@
   const agents = $derived(ui.visibleAgents);
   const mains = $derived(ui.visibleMainServers);
 
-  const sessionless = $derived(feats.filter((f: any) => !f.session).length);
+  const sessionless = $derived(feats.filter((f) => !f.session).length);
   const empty = $derived(!feats.length && !agents.length && !mains.length);
 </script>
 

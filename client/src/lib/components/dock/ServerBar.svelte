@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Session } from '../../../../../server/types';
   /*
    * The bar under the dock: the whole shared workspace (every repo this session owns),
    * its dev-server ports, the frontend "Open ↗" buttons, run/stop, and the PR/CI pills.
@@ -14,7 +15,7 @@
   import { ui } from '$lib/stores/ui.svelte.js';
   import { startSessionServers, stopSessionServers } from '$lib/ops.svelte.js';
 
-  let { session } = $props();
+  let { session }: { session: Session } = $props();
 
   const sessionId = $derived(session.id);
   const promoted = $derived(!!session.worktreePath);

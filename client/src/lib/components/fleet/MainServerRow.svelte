@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Worktree } from '../../../../../server/types';
   /*
    * A running web dev-server in a repo's MAIN checkout. Not a worktree, therefore not a
    * feature, therefore absent from every feature row — surfaced here purely so it is
@@ -7,7 +8,7 @@
   import { openApp } from '$lib/stores/world.svelte.js';
   import { stopMainServer } from '$lib/ops.svelte.js';
 
-  let { worktree } = $props();
+  let { worktree }: { worktree: Worktree } = $props();
 </script>
 
 <div class="frow srvrow">

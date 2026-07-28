@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Feature } from '../../../../../server/types';
   /*
    * What the dock shows for a feature with no agent.
    *
@@ -15,7 +16,7 @@
     restartStack, runStack, startFeatureSession, stopStack,
   } from '$lib/ops.svelte.js';
 
-  let { feature } = $props();
+  let { feature }: { feature: Feature } = $props();
 
   const ms = $derived(liveMembers(feature));
   const anyRunning = $derived(ms.some((m: any) => m.running));

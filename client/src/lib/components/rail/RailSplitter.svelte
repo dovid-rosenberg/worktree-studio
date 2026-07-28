@@ -15,21 +15,21 @@
   let dragging = $state(false);
 
   /** @param {PointerEvent} e */
-  function down(e: any) {
+  function down(e: PointerEvent) {
     dragging = true;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     e.preventDefault();
   }
 
   /** @param {PointerEvent} e */
-  function move(e: any) {
+  function move(e: PointerEvent) {
     if (!dragging) return;
     // The rail starts at the viewport's left edge, so clientX IS the width.
     ui.railWidth = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.round(e.clientX)));
   }
 
   /** @param {PointerEvent} e */
-  function up(e: any) {
+  function up(e: PointerEvent) {
     if (!dragging) return;
     dragging = false;
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
@@ -37,7 +37,7 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function key(e: any) {
+  function key(e: KeyboardEvent) {
     const step = e.shiftKey ? 40 : 12;
     if (e.key === 'ArrowLeft') { e.preventDefault(); ui.setRailWidth(ui.railWidth - step); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); ui.setRailWidth(ui.railWidth + step); }

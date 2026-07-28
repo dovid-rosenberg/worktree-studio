@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Feature } from '../../../../../server/types';
   /*
    * One FEATURE in the rail — the unit the rail is keyed on.
    *
@@ -12,7 +13,7 @@
    */
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
 
-  let { feature } = $props();
+  let { feature }: { feature: Feature } = $props();
 
   const ms = $derived(liveMembers(feature));
   const anyRunning = $derived(ms.some((m: any) => m.running));

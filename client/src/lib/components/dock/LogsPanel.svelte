@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Session } from '../../../../../server/types';
   /*
    * Live dev-server tail. `GET /api/servers/logs?worktreePath=&offset=` returns the
    * bytes after `offset`, so this is a byte-offset poll rather than a stream.
@@ -12,7 +13,7 @@
   import { api } from '$lib/api.js';
   import { world } from '$lib/stores/world.svelte.js';
 
-  let { session } = $props();
+  let { session }: { session: Session } = $props();
 
   const MAX_LOG_LINES = 2000;
 
