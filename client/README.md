@@ -196,8 +196,36 @@ The heights in `model.js`'s `H` are load-bearing — the CSS pins the same `heig
 row, and changing one without the other makes the list drift from its own scrollbar.
 
 The trade-off is real and deliberate: **off-screen rows are not in the DOM, so the
-browser's own Ctrl-F cannot find them.** That is what the cursor and `n`/`p`/`[`/`]` are
-for.
+browser's own Ctrl-F cannot find them.** That is what the cursor, `n`/`p`/`[`/`]` and the
+`f` file list are for.
+
+### Side-by-side scrolls its two columns independently
+
+Unified can size its canvas to the widest line and let the pane's own scrollbar do the
+work. Side-by-side cannot. Two columns of a 260-column line is a 3000px+ canvas, so the
+right-hand column starts past the edge of the pane — and scrolling to reach it takes the
+left-hand column off the other side. One long line anywhere in the diff was enough to
+make half of every row unreachable.
+
+So in split the canvas is pinned to the pane, each column clips its own text, and each
+carries its own offset (`--hxl` / `--hxr`) driven by its own scrollbar under the pane:
+
+- **independent, not shared.** A long line on the right is a fact about the *new* file;
+  dragging the unchanged left column sideways to read it is collateral damage. The two
+  scrollbars are real focusable scroll containers, so arrow keys, `Home`/`End` and
+  dragging all work with no code of ours.
+- **vertical stays exactly in step for free** — both sides of a row are still one element
+  in one scroller, so there is no second scroll position to synchronise.
+- **the gutters do not move.** `.tx` is the clip box and `.txi` the thing that moves; a
+  bare transform on the text slides it left *over* the line number, because the row does
+  not clip. Reading a wide line while its number scrolls away is the bug this layout
+  exists to avoid.
+- widths are measured **per surface** in `model.js` over the whole diff (`cols`,
+  `colsLeft`, `colsRight`), so each scroll range is fixed before the first frame and a
+  long line on the right cannot invent scroll range on the left.
+
+From the diff surface itself `←`/`→` walk both columns together — reading across a row is
+the common case — and trackpad swipes go to whichever column the pointer is over.
 
 ### Keyboard
 
@@ -210,9 +238,21 @@ polite live region), not 10,000 tab stops.
 | `PgUp` `PgDn` `Home` `End` | move a screen / to the ends |
 | `n` `p` | next / previous hunk |
 | `[` `]` | previous / next file |
+| `←` `→` | side-by-side: pan both columns; unified: the pane's own horizontal scroll |
+| `f` or `/` | the file list — type part of a path, `↑`/`↓` to pick, `↵` to land on its header |
 | `↵` on a file header | collapse / expand that file |
 | `s` `u` | stage / unstage — the hunk under the cursor, or every hunk on that side when the cursor is on a group or file header |
-| `Esc` | return focus from a button to the surface |
+| `Esc` | return focus from a button (or the file list) to the surface |
+
+Clicking the diff focuses it. That is not free: a bare `tabindex="0"` container does not
+take focus from a click on a child, so without it a mouse user who clicked a hunk and
+pressed `s` got nothing. The surface claims focus on pointerdown, deferred and only when
+the press left focus on `<body>`, so it never takes it from a Stage button.
+
+The file list is the panel's only overlay and therefore where `trapFocus` belongs: Tab
+cycles the input and the results and never escapes to the diff behind the scrim. It is
+built only while open — on a 100k-item list that scan is not free — and it reads the same
+item list the viewport draws, so a jump is just a cursor move.
 
 The commit list is a vertical toolbar with a roving tabindex: Tab enters and leaves it
 once, `↑`/`↓` move within it.
@@ -241,6 +281,14 @@ working tree, a branch with no commits, a file whose changes are now fully stage
 rename. git usually reports a rename as one `R` file; when its detection does not fire the
 change arrives as an independent delete + add, and the two are re-linked for display only
 (they still stage separately, because that is how the hunk layer sees them).
+
+Renames also arrive **twice**. The daemon keys its file list by path and fills it from
+both `git --numstat` and `--name-status`, which spell a rename differently — `--numstat`
+prints the composite `README.md => docs.md` (or `{src => lib}/math.js`), `--name-status`
+prints the new path. The composite half has no patch on any route, so the panel labels it
+as a summary line and skips its `/hunks` request rather than drawing a file header with
+nothing under it. If the daemon ever emits a real flag for this, `isRenameSummaryPath()`
+in `model.js` is the one place to change.
 
 ### Not built here
 
