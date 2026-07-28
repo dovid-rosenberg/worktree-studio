@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Session } from '../../../../../server/types';
   /*
    * The Insights panel — transcript search + cost/token telemetry — mounted in the dock.
    *
@@ -24,7 +25,7 @@
   import SessionUsage from '$lib/components/insights/SessionUsage.svelte';
   import SearchPanel from '$lib/components/insights/SearchPanel.svelte';
 
-    let { session }: { session?: any } = $props();
+    let { session }: { session?: Session } = $props();
 
   const sessionId = $derived(session?.id ?? null);
 </script>

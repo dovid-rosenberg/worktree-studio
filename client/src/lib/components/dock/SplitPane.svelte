@@ -18,7 +18,7 @@
    * session-state frame; the id is a stable string, so the effect below fetches the
    * split tab list once per session instead of once per Claude tool call.
    */
-  let { sessionId } = $props();
+  let { sessionId }: { sessionId: string } = $props();
 
     let tabs: {title:string, active?:boolean}[] = $state([]);
   let activeIndex = $state(0);

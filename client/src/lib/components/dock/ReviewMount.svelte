@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Session } from '../../../../../server/types';
   /*
    * The Changes / review panel, mounted into the dock.
    *
@@ -26,7 +27,7 @@
    * Dock.svelte already fetches the badge count itself. Kept in the signature so the
    * dock's call site isn't silently dropping a prop.
    */
-  let { session }: { session?: any; onchangescount?: (n: number) => void } = $props();
+  let { session }: { session?: Session; onchangescount?: (n: number) => void } = $props();
 
   const sessionId = $derived(session?.id ?? null);
 </script>

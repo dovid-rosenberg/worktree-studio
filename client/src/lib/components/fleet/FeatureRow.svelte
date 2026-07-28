@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Feature } from '../../../../../server/types';
   /*
    * A feature in Fleet: a two-line row — the decision line (what state is it in, what
    * would I do next) and the stack line (which repos, which branches, which ports).
@@ -9,15 +10,15 @@
    */
   import FeatureMenu from '$lib/components/fleet/FeatureMenu.svelte';
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
-  import { ui } from '$lib/stores/ui.svelte.js';
+  import { liveMembers, ui } from '$lib/stores/ui.svelte.js';
   import {
     closeFeature, deleteFeature, openGroup, pending, prFeature,
     restartStack, runStack, startFeatureSession, stopStack,
   } from '$lib/ops.svelte.js';
 
-  let { feature } = $props();
+  let { feature }: { feature: Feature } = $props();
 
-  const ms = $derived(feature.members.filter((m: any) => m && !m.missing));
+  const ms = $derived(liveMembers(feature));
   const anyRunning = $derived(ms.some((m: any) => m.running));
   const anyStartable = $derived(ms.some((m: any) => m.canStart && !m.running));
   const sess = $derived(feature.session); // one session per feature

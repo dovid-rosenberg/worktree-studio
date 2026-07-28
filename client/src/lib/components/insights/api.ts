@@ -99,10 +99,6 @@ export const searchTranscripts = (
 export const sessionUsage = (id: string, signal?: AbortSignal): Promise<Usage> =>
   get(`${V1}/sessions/${encodeURIComponent(id)}/transcript/usage`, signal);
 
-/** Where a session's transcript is, or why it can't be found. */
-export const transcriptLocation = (id: string, signal?: AbortSignal): Promise<any> =>
-  get(`${V1}/sessions/${encodeURIComponent(id)}/transcript`, signal);
-
 /** Everything: per session, rolled up per feature, plus a grand total. */
 export const fleetUsage = (
   { refresh }: { refresh?: boolean } = {},

@@ -142,13 +142,6 @@ export function shortModel(model: string | null | undefined): string {
 // twice. Reading the live object rather than destructuring it is what makes a chart
 // re-derive when a response installs new values.
 
-/** The four input-family classes, in fixed display order. Order is the color key. */
-export const INPUT_CLASSES = [
-  { key: 'input', label: 'Input', slot: 1 },
-  { key: 'cacheWrite', label: 'Cache write', slot: 2 },
-  { key: 'cacheRead', label: 'Cache read', slot: 3 },
-];
-
 /**
  * Input-rate-equivalent tokens for one usage record. Exactly proportional to the
  * input-family dollars, model-independent. Cache writes are split by TTL because a

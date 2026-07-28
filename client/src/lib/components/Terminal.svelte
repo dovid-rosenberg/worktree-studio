@@ -205,7 +205,11 @@
   // Own the socket. Re-runs whenever the attach target changes; the returned cleanup is
   // what guarantees a destroyed pane leaves no socket and no pending retry behind.
   $effect(() => {
-    const target = `${sessionId} ${pane ?? ''} ${tab ?? ''}`;
+    // \0 as an escape, not a literal NUL byte. Written raw, those two bytes made
+    // `file` classify this source as binary, and every -I grep (ripgrep, ugrep,
+    // git grep) then skipped the file SILENTLY — a search for anything in here
+    // came back empty rather than wrong, which is the worse failure.
+    const target = `${sessionId}\0${pane ?? ''}\0${tab ?? ''}`;
     const t = term;
     if (!t || !sessionId) return;
 

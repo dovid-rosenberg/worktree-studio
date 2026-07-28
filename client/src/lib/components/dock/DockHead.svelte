@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Session } from '../../../../../server/types';
   /*
    * The dock header: state dot, title, source link, repo chips, and the per-session
    * action buttons. Rebuilt-in-place rather than re-innerHTML'd, so a button that has
@@ -10,7 +11,7 @@
     openEditor, promote, renameSession,
   } from '$lib/ops.svelte.js';
 
-  let { session } = $props();
+  let { session }: { session: Session } = $props();
 
   const promoted = $derived(!!session.worktreePath);
   /** Before promote there is one implicit chip for the primary repo. */
@@ -62,8 +63,10 @@
       <button class="btn sm primary" disabled={busyPromote} onclick={() => guard((v: any) => (busyPromote = v), () => promote(session))}>
         ⤴ Promote to worktree
       </button>
-    {:else}
-      <button class="btn sm" onclick={() => openEditor(session.worktreePath)}>Open in editor</button>
+    {:else if session.worktreePath}
+      <!-- Branch on the field, not on a derived boolean: only the field narrows it. -->
+      {@const wt = session.worktreePath}
+      <button class="btn sm" onclick={() => openEditor(wt)}>Open in editor</button>
     {/if}
 
     <button class="btn sm ghost" title="Rename" aria-label="Rename" onclick={() => renameSession(session)}>✐</button>

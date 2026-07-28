@@ -1,9 +1,10 @@
 <script lang="ts">
+  import type { Session } from '../../../../../server/types';
   /* An unpromoted agent. Live → Promote is the obvious next step; stopped → Resume. */
   import { ui } from '$lib/stores/ui.svelte.js';
   import { activateSession, closeSession, promote } from '$lib/ops.svelte.js';
 
-  let { session } = $props();
+  let { session }: { session: Session } = $props();
 
   const stopped = $derived(session.state === 'stopped');
   const reps = $derived(session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }]);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Worktree } from '../../../../../server/types';
   /*
    * A dev server running from a repo's MAIN checkout. Not a worktree, so not a feature,
    * so it appears in no other list — this row exists purely so it is openable and
@@ -10,7 +11,7 @@
   import { openApp } from '$lib/stores/world.svelte.js';
   import { stopMainServer } from '$lib/ops.svelte.js';
 
-  let { worktree } = $props();
+  let { worktree }: { worktree: Worktree } = $props();
 </script>
 
 <div class="mcard" role="listitem">

@@ -1,21 +1,22 @@
 <script lang="ts">
+  import type { Feature } from '../../../../../server/types';
   /*
    * A compact readout of a feature whose dev servers are up. It overlaps the Worktrees
    * section on purpose: when servers are running, this is the section you watch, so the
    * browse buttons belong here too rather than only further down the page.
    */
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
-  import { ui } from '$lib/stores/ui.svelte.js';
+  import { liveMembers, ui } from '$lib/stores/ui.svelte.js';
   import { stopStack } from '$lib/ops.svelte.js';
 
-  let { feature } = $props();
+  let { feature }: { feature: Feature } = $props();
 
   const ports = $derived(
-    feature.members
-      .filter((m: any) => m && m.running)
-      .flatMap((m: any) => (m.ports || []).map((p: number) => `${m.repo}:${p}`)),
+    liveMembers(feature)
+      .filter((m) => m.running)
+      .flatMap((m) => (m.ports || []).map((p) => `${m.repo}:${p}`)),
   );
-  const webApps = $derived(webAppsFor(feature.members.filter((m: any) => m && !m.missing)));
+  const webApps = $derived(webAppsFor(liveMembers(feature)));
 </script>
 
 <div class="frow srvrow">
@@ -28,7 +29,9 @@
       <button class="btn sm primary" onclick={() => openApp(web.port)}>Open {web.repo} ↗</button>
     {/each}
     {#if feature.session}
-      <button class="btn sm" onclick={() => ui.goToSession(feature.session.id)}>Go to session ▸</button>
+      <!-- Bound: the narrowing does not survive into the click closure. -->
+      {@const sid = feature.session.id}
+      <button class="btn sm" onclick={() => ui.goToSession(sid)}>Go to session ▸</button>
     {/if}
     <button class="btn sm danger" onclick={() => stopStack(feature.name)}>Stop stack</button>
   </div>
