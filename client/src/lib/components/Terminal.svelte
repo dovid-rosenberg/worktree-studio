@@ -20,6 +20,7 @@
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import '@xterm/xterm/css/xterm.css';
   import { termTheme } from '$lib/theme.svelte.js';
+  import { TOKEN } from '$lib/api.js';
 
   let {
     /** Session id from /api/state. */
@@ -114,6 +115,10 @@
     const qs = new URLSearchParams({ session: sessionId, cols: String(t.cols), rows: String(t.rows) });
     if (pane) qs.set('pane', pane);
     if (tab != null) qs.set('tab', String(tab));
+    // A WebSocket handshake cannot carry a header, so the boot token rides in the query
+    // string — the form server/security.js accepts for exactly this reason. Without it
+    // the upgrade is refused with 401 before any pty is spawned.
+    if (TOKEN) qs.set('token', TOKEN);
 
     const sock = new WebSocket(`${proto}://${location.host}/ws/term?${qs}`);
     sock.binaryType = 'arraybuffer';
