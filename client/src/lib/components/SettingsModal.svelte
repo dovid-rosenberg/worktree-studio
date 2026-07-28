@@ -60,7 +60,7 @@
           open: (v && (v as any).open) || '',
           openGroup: (v && (v as any).openGroup) || '',
         }));
-        groupRows = (d.groups || []).map((g: any) => ({
+        groupRows = (d.groups || []).map((g: { name?: string; members?: string[] }) => ({
           key: ++rowKey,
           name: g.name || '',
           members: (g.members || []).join(', '),

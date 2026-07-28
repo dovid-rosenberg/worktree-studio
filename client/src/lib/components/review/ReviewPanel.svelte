@@ -109,7 +109,7 @@
   }
 
   /** @param {string} repo @param {string} sha */
-  async function select(repo: any, sha: any) {
+  async function select(repo: string, sha: string) {
     sel = { repo, sha };
     const token = ++detailToken;
     files = [];
@@ -137,9 +137,8 @@
 
   /**
    * Fetch both sides of every working file, a few at a time.
-   * @param {string} repo @param {string[]} list @param {number} token
    */
-  async function loadAllHunks(repo: any, list: any, token: any) {
+  async function loadAllHunks(repo: string, list: string[], token: number) {
     let next = 0;
     const worker = async () => {
       while (next < list.length && token === detailToken) {
@@ -158,9 +157,8 @@
   /* ---------------- staging ---------------- */
 
   /**
-   * @param {{ op:'stage'|'unstage', file:string, hunks:number[], expect:string[] }} a
    */
-  async function apply(a: any) {
+  async function apply(a: { op: 'stage' | 'unstage'; file: string; hunks: number[]; expect: string[] }) {
     if (!sel || !isUncommitted || busyFiles.has(a.file) || !a.hunks.length) return;
     busyFiles.add(a.file);
     banner = null;
@@ -264,7 +262,7 @@
   }
 
   /** @param {string} file */
-  function toggleFile(file: any) {
+  function toggleFile(file: string) {
     if (collapsed.has(file)) collapsed.delete(file); else collapsed.add(file);
   }
 

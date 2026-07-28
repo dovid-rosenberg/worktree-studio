@@ -9,6 +9,7 @@
   import TokenMix from './TokenMix.svelte';
   import EstimateNote from './EstimateNote.svelte';
   import { usd, compactTokens, exactTokens, totalTokens, shortModel, span, stamp, pct, share } from './format.js';
+  import type { ModelUsage } from './types';
 
   /**
    * @type {{
@@ -51,7 +52,7 @@
   // block, and the server deliberately keeps them out of unpricedModels. Calling that
   // "unpriced" would invent a hole in the numbers that doesn't exist.
   /** @param {import('./types.js').ModelUsage} m */
-  const costCell = (m: any) => {
+  const costCell = (m: ModelUsage) => {
     if (m.priced) return { text: usd(m.costUsd) ?? '—', kind: 'ok' };
     if (unpriced.includes(m.model ?? 'unknown')) return { text: 'unpriced', kind: 'gap' };
     return { text: 'not billed', kind: 'none' };

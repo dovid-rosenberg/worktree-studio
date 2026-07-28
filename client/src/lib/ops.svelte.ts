@@ -60,8 +60,10 @@ export async function addRepoToSession(s: Session) {
     fields: [{ type: 'select', label: 'Repo', value: avail[0], options: avail }],
     okLabel: 'Add',
   });
-  if (!r0) return;
-  const pick = r0[0];
+  // `true` means the dialog had no fields, which this one does — so a non-array here
+  // is a caller/spec mismatch, not a pick.
+  if (!Array.isArray(r0)) return;
+  const pick = String(r0[0] ?? '');
   if (!avail.includes(pick)) return;
   try {
     const r = await api('POST', `/api/sessions/${s.id}/add-repo`, { repo: pick });
@@ -297,10 +299,11 @@ export async function deleteFeature(f: Feature) {
     okLabel: 'Delete',
     danger: true,
   });
-  if (!r0) return;
+  if (!Array.isArray(r0)) return;
+  const deleteBranches = Boolean(r0[0]);
   return pending.run(f.name, async () => {
     try {
-      const r = await api('POST', '/api/group/delete', { group: f.name, deleteBranches: r0[0] });
+      const r = await api('POST', '/api/group/delete', { group: f.name, deleteBranches });
       toast(r.ok ? `Deleted ${f.name}` : 'Some removals failed', !r.ok);
     } catch (e) { toast(errMessage(e), true); }
   });

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Feature } from '../../../../../server/types';
+  import type { Feature, Worktree } from '../../../../../server/types';
   /*
    * A feature in Fleet: a two-line row — the decision line (what state is it in, what
    * would I do next) and the stack line (which repos, which branches, which ports).
@@ -19,8 +19,8 @@
   let { feature }: { feature: Feature } = $props();
 
   const ms = $derived(liveMembers(feature));
-  const anyRunning = $derived(ms.some((m: any) => m.running));
-  const anyStartable = $derived(ms.some((m: any) => m.canStart && !m.running));
+  const anyRunning = $derived(ms.some((m) => m.running));
+  const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
   const sess = $derived(feature.session); // one session per feature
   const isPending = $derived(pending.has(feature.name));
   const webApps = $derived(webAppsFor(ms));
@@ -38,7 +38,7 @@
   ]);
 
   /** @param {any} m */
-  const memberState = (m: any) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
+  const memberState = (m: Worktree) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
 </script>
 
 <div class="frow">

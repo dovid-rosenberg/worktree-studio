@@ -69,7 +69,7 @@
    * undelivered notifications". Coalescing to the next animation frame breaks that loop.
    * @param {() => void} cb
    */
-  function rafObserver(cb: any) {
+  function rafObserver(cb: () => void) {
     let scheduled = false;
     return new ResizeObserver(() => {
       if (scheduled) return;
@@ -82,7 +82,7 @@
   }
 
   /** @param {XTerm} t @param {string} s */
-  function note(t: any, s: any) {
+  function note(t: XTerm, s: string) {
     // Dim, so daemon-level notices never read as program output.
     try { t.write(`\r\n\x1b[2m${s}\x1b[0m\r\n`); } catch { /* disposed mid-flight */ }
   }
@@ -109,7 +109,7 @@
    * @param {number} attempt
    * @param {number} gen
    */
-  function connect(t: any, attempt: any, gen: any) {
+  function connect(t: XTerm, attempt: number, gen: number) {
     if (gen !== generation) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const qs = new URLSearchParams({ session: sessionId, cols: String(t.cols), rows: String(t.rows) });
@@ -256,7 +256,7 @@
    * message by the server's parse-then-fallback branch.
    * @param {string} data
    */
-  export function sendText(data: any) {
+  export function sendText(data: string) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify({ type: 'input', data }));
     return true;

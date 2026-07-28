@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Hit, StateSession } from './types';
   // SearchPanel in the app's command-palette chrome.
   //
   // The palette is where transcript search will most likely be mounted, and an overlay
@@ -18,13 +19,21 @@
    *   onclose?: () => void,
    * }}
    */
-  let { open = false, sessionId = null, sessions = null, onopen = () => {}, onclose = () => {} } = $props();
+  let {
+    open = false, sessionId = null, sessions = null, onopen = () => {}, onclose = () => {},
+  }: {
+    open?: boolean;
+    sessionId?: string | null;
+    sessions?: StateSession[] | null;
+    onopen?: (hit: Hit) => void;
+    onclose?: () => void;
+  } = $props();
 
   // The panel consumes Escape itself whenever it has something to undo — clearing a
   // non-empty query, or stepping out of the results list — and stops propagation when
   // it does. So anything reaching here is an Escape nobody wanted, which means close.
   /** @param {KeyboardEvent} e */
-  function onDialogKey(e: any) {
+  function onDialogKey(e: KeyboardEvent) {
     if (e.key === 'Escape') { e.preventDefault(); onclose(); }
   }
 </script>

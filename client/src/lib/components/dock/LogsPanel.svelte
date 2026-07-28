@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Session } from '../../../../../server/types';
+  import type { Session, SessionServerRepo } from '../../../../../server/types';
   /*
    * Live dev-server tail. `GET /api/servers/logs?worktreePath=&offset=` returns the
    * bytes after `offset`, so this is a byte-offset poll rather than a stream.
@@ -35,8 +35,8 @@
   // server, else the first — the same fallback order the old panel used.
   $effect(() => {
     const list = repos;
-    if (list.some((r: any) => r.worktreePath === selectedPath)) return;
-    const pick = list.find((r: any) => r.running) || list[0];
+    if (list.some((r) => r.worktreePath === selectedPath)) return;
+    const pick = list.find((r) => r.running) || list[0];
     selectedPath = pick ? pick.worktreePath : '';
   });
 
@@ -70,7 +70,7 @@
   });
 
   /** @param {string} chunk */
-  function append(chunk: any) {
+  function append(chunk: string) {
     const combined = partial + chunk;
     const parts = combined.split('\n');
     partial = parts.pop() ?? '';
@@ -82,7 +82,7 @@
   }
 
   /** Light level colouring, matching the old regexes exactly. @param {string} raw */
-  function classify(raw: any) {
+  function classify(raw: string) {
     let cls = '';
     if (/(error|fatal|exception|failed|✗|\bECONN)/i.test(raw)) cls = 'e';
     else if (/(warn|deprecated)/i.test(raw)) cls = 'w';
@@ -91,13 +91,13 @@
   }
 
   /** @param {any} r */
-  function optionLabel(r: any) {
+  function optionLabel(r: SessionServerRepo) {
     const ports = (r.ports && r.ports.length) ? ' ' + r.ports.map((p: number) => ':' + p).join(' ') : '';
     return `${r.repo}${ports}${r.running ? '' : ' (stopped)'}`;
   }
 
   /** Leading timestamp is dimmed; everything else is plain text. @param {string} t */
-  function splitTs(t: any) {
+  function splitTs(t: string) {
     const m = t.match(/^\s*(\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?)/);
     return m ? { ts: m[1], rest: t.slice(m[0].length) } : { ts: '', rest: t };
   }

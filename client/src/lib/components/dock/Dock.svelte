@@ -72,7 +72,7 @@
         const data = await api('GET', `/api/sessions/${id}/commits`);
         if (!alive) return;
         changesCount = (data.repos || []).reduce(
-          (/** @type {number} */ n: any, /** @type {any} */ r: any) => n + ((r.uncommitted && r.uncommitted.fileCount) || 0),
+          (n: number, r: { uncommitted?: { fileCount?: number } }) => n + (r.uncommitted?.fileCount || 0),
           0,
         );
       } catch { /* a git failure must not take the tab strip with it */ }

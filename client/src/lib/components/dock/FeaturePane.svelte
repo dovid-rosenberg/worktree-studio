@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Feature } from '../../../../../server/types';
+  import type { Feature, Worktree } from '../../../../../server/types';
   /*
    * What the dock shows for a feature with no agent.
    *
@@ -19,13 +19,13 @@
   let { feature }: { feature: Feature } = $props();
 
   const ms = $derived(liveMembers(feature));
-  const anyRunning = $derived(ms.some((m: any) => m.running));
-  const anyStartable = $derived(ms.some((m: any) => m.canStart && !m.running));
+  const anyRunning = $derived(ms.some((m) => m.running));
+  const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
   const isPending = $derived(pending.has(feature.name));
   const webApps = $derived(webAppsFor(ms));
 
   /** @param {any} m */
-  const memberState = (m: any) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
+  const memberState = (m: Worktree) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
 </script>
 
 <div class="fpane">

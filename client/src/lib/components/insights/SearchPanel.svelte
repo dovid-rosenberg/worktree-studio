@@ -39,6 +39,13 @@
     onopen = () => {},
     /** Called when the user asks to leave (Escape on an empty query). */
     onclose = null,
+  }: {
+    sessionId?: string | null;
+    sessions?: StateSession[] | null;
+    autofocus?: boolean;
+    limit?: number;
+    onopen?: (hit: Hit) => void;
+    onclose?: (() => void) | null;
   } = $props();
 
   let q = $state('');
@@ -73,7 +80,7 @@
   // The server answers these with an empty list and no explanation.
   const degenerate = $derived(q.trim().length > 0 && terms.length === 0);
   const capped = $derived(hits.length >= limit);
-  const scopedSession = $derived(sessionList.find((s: any) => s.id === scope) || null);
+  const scopedSession = $derived(sessionList.find((s) => s.id === scope) || null);
 
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -81,7 +88,7 @@
   let seq = 0;
 
   /** @param {unknown} e */
-  const errText = (e: any) => (e instanceof Error ? e.message : String(e));
+  const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
   async function refreshStatus() {
     try { status = await transcriptStatus(); } catch (e) { statusError = errText(e); }
@@ -149,7 +156,7 @@
   }
 
   /** @param {{ session?: string|null, full?: boolean }} opts */
-  async function doReindex(opts: any) {
+  async function doReindex(opts: { session?: string | null; full?: boolean }) {
     indexing = true;
     statusError = null;
     try {
@@ -169,7 +176,7 @@
   const hitEls = () => (listEl ? /** @type {HTMLElement[]} */ ([...listEl.querySelectorAll<HTMLElement>('[data-hit]')]) : []);
 
   /** @param {number} i */
-  function focusHit(i: any) {
+  function focusHit(i: number) {
     const els = hitEls();
     if (!els.length) return false;
     const n = Math.max(0, Math.min(els.length - 1, i));
@@ -179,7 +186,7 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onInputKey(e: any) {
+  function onInputKey(e: KeyboardEvent) {
     if (e.key === 'ArrowDown') { if (focusHit(0)) e.preventDefault(); return; }
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -194,7 +201,7 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onListKey(e: any) {
+  function onListKey(e: KeyboardEvent) {
     const els = hitEls();
     if (!els.length) return;
     const at = els.indexOf((document.activeElement as HTMLElement));

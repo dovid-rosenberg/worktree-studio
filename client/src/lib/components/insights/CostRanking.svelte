@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Tokens } from './types';
   // "Where did the money go" — one row per feature or per session, ranked by cost.
   //
   // Form: emphasis, not categorical. There is one measure here and the rows are nominal
@@ -13,16 +14,27 @@
   import { activatable } from '$lib/actions/activatable.js';
   import { usd, compactTokens, exactTokens, totalTokens } from './format.js';
 
-  /**
-   * @type {{
-   *   rows: { key: string, label: string, sub?: string, costUsd: number|null,
-   *           usage: any, indexed?: boolean, unpriced?: string[] }[],
-   *   selected?: string|null,
-   *   onselect?: (key: string) => void,
-   *   emptyLabel?: string,
-   * }}
-   */
-  let { rows = [], selected = null, onselect = () => {}, emptyLabel = 'Nothing indexed yet.' } = $props();
+  /** One ranked row: a feature or a session, with the usage the bar is drawn from. */
+  export interface RankRow {
+    key: string;
+    label: string;
+    sub?: string;
+    costUsd: number | null;
+    /** Usage rows come from either the session or the feature rollup, so both carry
+     *  the token counts plus an optional message count. */
+    usage: Tokens & { costUsd?: number | null; messages?: number };
+    indexed?: boolean;
+    unpriced?: string[];
+  }
+
+  let {
+    rows = [], selected = null, onselect = () => {}, emptyLabel = 'Nothing indexed yet.',
+  }: {
+    rows?: RankRow[];
+    selected?: string | null;
+    onselect?: (key: string) => void;
+    emptyLabel?: string;
+  } = $props();
 
   const max = $derived(Math.max(0, ...rows.map((r) => r.costUsd || 0)));
   const total = $derived(rows.reduce((a, r) => a + (r.costUsd || 0), 0));

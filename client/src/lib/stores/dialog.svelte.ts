@@ -12,10 +12,19 @@
  * another dialog's handler queues behind it rather than stacking two backdrops.
  */
 
+/** A field's value: text/select carry a string, a checkbox carries a boolean. */
+export type DialogValue = string | boolean;
+
+/**
+ * What `open()` settles to: null on cancel/Escape, true when the dialog had no
+ * fields, otherwise the field values in declaration order.
+ */
+export type DialogResult = null | true | DialogValue[];
+
 export interface DialogField {
   type?: 'text' | 'checkbox' | 'select';
   label?: string;
-  value?: any;
+  value?: DialogValue;
   placeholder?: string;
   options?: string[];
 }
@@ -33,7 +42,7 @@ export interface DialogSpec {
 interface QueuedDialog {
   id: number;
   spec: DialogSpec;
-  resolve: (v: any) => void;
+  resolve: (v: DialogResult) => void;
 }
 
 let nextId = 0;
@@ -44,18 +53,14 @@ class Dialogs {
   /** The dialog currently on screen — the head of the queue. */
   current = $derived(this.queue[0] || null);
 
-  /**
-   * Resolves `null` on cancel/Escape; `true` when there are no fields; otherwise an
-   * array of field values in declaration order.
-   */
-  open(spec: DialogSpec): Promise<any> {
+  open(spec: DialogSpec): Promise<DialogResult> {
     return new Promise((resolve) => {
       const id = ++nextId;
       this.queue = [...this.queue, { id, spec, resolve }];
     });
   }
 
-  close(id: number, value: any): void {
+  close(id: number, value: DialogResult): void {
     const entry = this.queue.find((q) => q.id === id);
     if (!entry) return;
     this.queue = this.queue.filter((q) => q.id !== id);
@@ -68,7 +73,7 @@ class Dialogs {
 
 export const dialogs = new Dialogs();
 
-export const uiDialog = (spec: DialogSpec): Promise<any> => dialogs.open(spec);
+export const uiDialog = (spec: DialogSpec): Promise<DialogResult> => dialogs.open(spec);
 
 export async function uiConfirm(
   message: string,
@@ -93,5 +98,5 @@ export async function uiPrompt(
     fields: [{ type: 'text', label: opts.label || '', value, placeholder: opts.placeholder || '' }],
     okLabel: opts.okLabel || 'OK',
   });
-  return r ? r[0] : null;
+  return Array.isArray(r) ? String(r[0] ?? '') : null;
 }
