@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The dock: header, tab strip, the live terminal (plus its split), the DOM panels,
    * and the server bar.
@@ -72,7 +72,7 @@
         const data = await api('GET', `/api/sessions/${id}/commits`);
         if (!alive) return;
         changesCount = (data.repos || []).reduce(
-          (/** @type {number} */ n, /** @type {any} */ r) => n + ((r.uncommitted && r.uncommitted.fileCount) || 0),
+          (/** @type {number} */ n: any, /** @type {any} */ r: any) => n + ((r.uncommitted && r.uncommitted.fileCount) || 0),
           0,
         );
       } catch { /* a git failure must not take the tab strip with it */ }
@@ -116,7 +116,7 @@
     </div>
 
     {#if ui.dockView === 'changes'}
-      <ReviewMount {session} onchangescount={(/** @type {number} */ n) => (changesCount = n)} />
+      <ReviewMount {session} onchangescount={(n: number) => (changesCount = n)} />
     {:else if ui.dockView === 'logs'}
       <LogsPanel {session} />
     {:else if ui.dockView === 'insights'}

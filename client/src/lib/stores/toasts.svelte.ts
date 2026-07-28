@@ -2,31 +2,27 @@
 
 let nextId = 0;
 
-class Toasts {
-  /** @type {{id:number, msg:string, err:boolean}[]} */
-  items = $state([]);
+export interface Toast {
+  id: number;
+  msg: string;
+  err: boolean;
+}
 
-  /**
-   * @param {string} msg
-   * @param {boolean} [err]
-   */
-  push(msg, err = false) {
+class Toasts {
+  items = $state<Toast[]>([]);
+
+  push(msg: string, err = false): number {
     const id = ++nextId;
     this.items = [...this.items, { id, msg: String(msg), err }];
     setTimeout(() => this.dismiss(id), err ? 6000 : 3200);
     return id;
   }
 
-  /** @param {number} id */
-  dismiss(id) {
+  dismiss(id: number): void {
     this.items = this.items.filter((t) => t.id !== id);
   }
 }
 
 export const toasts = new Toasts();
 
-/**
- * @param {string} msg
- * @param {boolean} [err]
- */
-export const toast = (msg, err = false) => toasts.push(msg, err);
+export const toast = (msg: string, err = false): number => toasts.push(msg, err);

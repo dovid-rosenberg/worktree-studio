@@ -13,14 +13,23 @@
 
 import { api } from '$lib/api.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
+import type { Feature, Session } from '../../../server/types';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
-import { ui } from '$lib/stores/ui.svelte.js';
+import { liveMembers, ui } from '$lib/stores/ui.svelte.js';
+
+/**
+ * `catch (e)` binds `unknown` under strict mode, and every handler below reports
+ * `e.message`. One helper rather than a cast per site — a cast would claim the thrown
+ * value is an Error, which nothing guarantees.
+ */
+function errMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 /* ---------------- sessions ---------------- */
 
-/** @param {any} s */
-export async function promote(s) {
+export async function promote(s: Session) {
   const branch = await uiPrompt('Branch to create for this worktree:', s.suggestedBranch || 'feature/x');
   if (!branch) return;
   try {
@@ -36,15 +45,14 @@ export async function promote(s) {
       r = await api('POST', `/api/sessions/${s.id}/promote`, { branch, confirm: true });
     }
     const w = r.worktree || {};
-    const warn = (w.warnings || []).find((/** @type {string} */ x) => /taken/.test(x));
+    const warn = (w.warnings || []).find((x: string) => /taken/.test(x));
     toast(warn ? `Promoted as “${w.name}” — ${warn}` : `Promoted → ${w.branch || branch}`);
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  } catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {any} s */
-export async function addRepoToSession(s) {
-  const have = new Set((s.repos || []).map((/** @type {any} */ r) => r.repo));
-  const avail = world.repos.map((/** @type {any} */ r) => r.name).filter((/** @type {string} */ n) => !have.has(n));
+export async function addRepoToSession(s: Session) {
+  const have = new Set((s.repos || []).map((r) => r.repo));
+  const avail = world.repos.map((r) => r.name).filter((n) => !have.has(n));
   if (!avail.length) return toast('No other repos to add.', true);
   const r0 = await uiDialog({
     title: 'Add a repo to this feature',
@@ -58,43 +66,33 @@ export async function addRepoToSession(s) {
   try {
     const r = await api('POST', `/api/sessions/${s.id}/add-repo`, { repo: pick });
     toast(r.already ? `${pick} already in feature` : `Added ${pick} → ${r.worktree.name}`);
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  } catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {any} s */
-export async function addTab(s) {
+export async function addTab(s: Session) {
   const title = await uiPrompt('New tab name:', 'shell');
   if (title === null) return;
   try {
     await api('POST', `/api/sessions/${s.id}/tabs`, { title: title || 'shell' });
     toast(`Tab “${title || 'shell'}” added`);
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  } catch (e) { toast(errMessage(e), true); }
 }
 
-/**
- * @param {any} s
- * @param {number} i
- */
-export async function selectTab(s, i) {
+export async function selectTab(s: Session, i: number) {
   ui.dockView = 'term';
   ui.activeTab = i;
   try { await api('POST', `/api/sessions/${s.id}/select-tab`, { index: i }); }
-  catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  catch (e) { toast(errMessage(e), true); }
 }
 
-/**
- * @param {any} s
- * @param {number} i
- */
-export async function closeTab(s, i) {
+export async function closeTab(s: Session, i: number) {
   try {
     await api('POST', `/api/sessions/${s.id}/close-tab`, { index: i });
     toast('Tab closed');
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  } catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {any} s */
-export async function closeSession(s) {
+export async function closeSession(s: Session) {
   const ok = await uiConfirm(`Delete “${s.title}”? This kills its ${world.mux} session and removes it.`, {
     title: 'Delete session', okLabel: 'Delete', danger: true,
   });
@@ -103,54 +101,48 @@ export async function closeSession(s) {
     await api('DELETE', `/api/sessions/${s.id}`);
     if (ui.selectedId === s.id) ui.selectedId = null;
     toast('Session deleted');
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  } catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {any} s */
-export async function renameSession(s) {
+export async function renameSession(s: Session) {
   const title = await uiPrompt('Rename session:', s.title);
   if (title === null || !title.trim()) return;
   try { await api('POST', `/api/sessions/${s.id}/rename`, { title }); toast('Renamed'); }
-  catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {any} s */
-export async function deactivateSession(s) {
+export async function deactivateSession(s: Session) {
   const ok = await uiConfirm(
     `Deactivate “${s.title}”? Stops the process; you can resume it later to continue the conversation.`,
     { title: 'Deactivate', okLabel: 'Deactivate' },
   );
   if (!ok) return;
   try { await api('POST', `/api/sessions/${s.id}/deactivate`, {}); toast('Deactivated'); }
-  catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {any} s */
-export async function activateSession(s) {
+export async function activateSession(s: Session) {
   try { await api('POST', `/api/sessions/${s.id}/activate`, {}); toast('Resuming session'); }
-  catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  catch (e) { toast(errMessage(e), true); }
 }
 
 /* ---------------- dev servers ---------------- */
 
-/** @param {any} s */
-export async function startSessionServers(s) {
+export async function startSessionServers(s: Session) {
   try {
     const r = await api('POST', `/api/sessions/${s.id}/servers/start`, {});
     toast(r.ok ? 'Workspace servers starting' : 'Some failed to start', !r.ok);
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  } catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {any} s */
-export async function stopSessionServers(s) {
+export async function stopSessionServers(s: Session) {
   try { await api('POST', `/api/sessions/${s.id}/servers/stop`, {}); toast('Workspace servers stopped'); }
-  catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {string} p */
-export async function openEditor(p) {
+export async function openEditor(p: string): Promise<void> {
   try { await api('POST', '/api/open', { path: p }); }
-  catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  catch (e) { toast(errMessage(e), true); }
 }
 
 /* ---------------- features / fleet ---------------- */
@@ -160,16 +152,11 @@ export async function openEditor(p) {
  * disabled "working…" in place of the row's buttons.
  */
 class Pending {
-  /** @type {Set<string>} */
-  #keys = $state(new Set());
-  /** @param {string} key */
-  has(key) { return this.#keys.has(key); }
-  /**
-   * @template T
-   * @param {string} key
-   * @param {() => Promise<T>} fn
-   */
-  async run(key, fn) {
+  #keys = $state(new Set<string>());
+
+  has(key: string): boolean { return this.#keys.has(key); }
+
+  async run<T>(key: string, fn: () => Promise<T>): Promise<T> {
     this.#keys = new Set([...this.#keys, key]);
     try { return await fn(); }
     finally {
@@ -181,8 +168,7 @@ class Pending {
 }
 export const pending = new Pending();
 
-/** @param {any} f */
-export function startFeatureSession(f) {
+export function startFeatureSession(f: Feature) {
   return pending.run(f.name, async () => {
     try {
       const r = await api('POST', '/api/group/session', { group: f.name });
@@ -190,26 +176,24 @@ export function startFeatureSession(f) {
         ui.selectedId = r.session.id;
         toast(r.existed ? 'Session already open — “Go to session ▸”' : `Session started for ${f.name} — “Go to session ▸”`);
       }
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast(errMessage(e), true); }
   });
 }
 
 // Summarize a /group/start answer. `ok` is the server's verdict (false unless every
 // member came up), so the toast never reports a stack where nothing started as a
 // success — which is what "started 0/3" used to look like on the stop-and-switch path.
-/** @param {string} verb @param {any} r */
-function startResult(verb, r) {
+function startResult(verb: string, r: { started: number; total: number; failures?: unknown[] }): string {
   const failed = (r.failures || []).length;
   return `${verb} ${r.started}/${r.total}${failed ? ` (${failed} failed)` : ''}`;
 }
 
-/** @param {string} name */
-export function runStack(name) {
+export function runStack(name: string) {
   return pending.run(name, async () => {
     try {
       const r = await api('POST', '/api/group/start', { group: name });
       if (r.needsConfirm) {
-        const names = [...new Set(r.conflicts.map((/** @type {any} */ c) => c.wtname))];
+        const names = [...new Set(r.conflicts.map((c: { wtname: string }) => c.wtname))];
         const list = names.map((n) => `“${n}”`).join(', ');
         const ok = await uiConfirm(
           `${list} ${names.length > 1 ? 'are' : 'is'} already running in the same repo. Stop ${names.length > 1 ? 'them' : 'it'} and switch to “${name}”?`,
@@ -221,57 +205,57 @@ export function runStack(name) {
       } else {
         toast(startResult('Started', r), !r.ok);
       }
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast(errMessage(e), true); }
   });
 }
 
-/** @param {string} name */
-export function stopStack(name) {
+export function stopStack(name: string) {
   return pending.run(name, async () => {
     try { await api('POST', '/api/group/stop', { group: name }); toast(`Stopped ${name}`); }
-    catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    catch (e) { toast(errMessage(e), true); }
   });
 }
 
-/** @param {string} name */
-export function restartStack(name) {
+export function restartStack(name: string) {
   return pending.run(name, async () => {
     try { await api('POST', '/api/group/restart', { group: name }); toast(`Restarting ${name}`); }
-    catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    catch (e) { toast(errMessage(e), true); }
   });
 }
 
-/** @param {string} name */
-export async function openGroup(name) {
+export async function openGroup(name: string): Promise<void> {
   try { await api('POST', '/api/group/open', { group: name }); }
-  catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  catch (e) { toast(errMessage(e), true); }
 }
 
-/** @param {string} name */
-export function prFeature(name) {
+export function prFeature(name: string) {
   return pending.run(name, async () => {
     try {
       toast('Opening PR / MR…');
       const r = await api('POST', '/api/group/pr', { group: name });
       await showPrResults(r);
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast(errMessage(e), true); }
   });
 }
 
 /**
  * The PR/MR result dialog. `messageHtml` is built here from server-supplied repo names,
  * URLs and error strings — escaped, because a branch or error message is not ours.
- * @param {any} r
  */
-export async function showPrResults(r) {
-  const html = (r.results || []).map((/** @type {any} */ x) => (x.url
+export interface PrResult {
+  repo: string;
+  url?: string;
+  error?: string;
+}
+
+export async function showPrResults(r: { results?: PrResult[] }): Promise<void> {
+  const html = (r.results || []).map((x) => (x.url
     ? `<div>${esc(x.repo)}: <a href="${esc(x.url)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`
     : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`)).join('');
   await uiDialog({ title: 'Pull / merge requests', messageHtml: html || 'No results', okLabel: 'Done', cancelLabel: '' });
 }
 
-/** @param {string} name */
-export async function closeFeature(name) {
+export async function closeFeature(name: string) {
   const ok = await uiConfirm(
     `Close feature “${name}”? Stops its servers and deactivates its sessions (worktrees kept).`,
     { title: 'Close feature', okLabel: 'Close' },
@@ -279,14 +263,13 @@ export async function closeFeature(name) {
   if (!ok) return;
   return pending.run(name, async () => {
     try { await api('POST', '/api/group/close', { group: name }); toast(`Closed ${name}`); }
-    catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    catch (e) { toast(errMessage(e), true); }
   });
 }
 
-/** @param {any} f */
-export async function deleteFeature(f) {
-  const ms = f.members.filter((/** @type {any} */ m) => m && !m.missing);
-  const anyMerged = ms.some((/** @type {any} */ m) => m.merged);
+export async function deleteFeature(f: Feature) {
+  const ms = liveMembers(f);
+  const anyMerged = ms.some((m) => m.merged);
   const r0 = await uiDialog({
     title: `Delete feature “${f.name}”?`,
     message: `Kills its sessions and removes its worktree(s) in ${ms.length} repo(s).`,
@@ -299,21 +282,20 @@ export async function deleteFeature(f) {
     try {
       const r = await api('POST', '/api/group/delete', { group: f.name, deleteBranches: r0[0] });
       toast(r.ok ? `Deleted ${f.name}` : 'Some removals failed', !r.ok);
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast(errMessage(e), true); }
   });
 }
 
-/** @param {any} w */
-export async function stopMainServer(w) {
+export async function stopMainServer(w: { repo: string; path: string }): Promise<void> {
   try {
     await api('POST', '/api/servers/stop', { repo: w.repo, worktreePath: w.path });
     toast(`Stopped ${w.repo}`);
-  } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+  } catch (e) { toast(errMessage(e), true); }
 }
 
 /** Minimal escaper for the one place we still hand a dialog raw HTML. */
-function esc(/** @type {unknown} */ s) {
-  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => (
-    /** @type {Record<string,string>} */ ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]
-  ));
+const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
+
+function esc(s: unknown): string {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ESCAPES[c]);
 }

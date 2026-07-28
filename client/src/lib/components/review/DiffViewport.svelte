@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The windowed diff surface: one scroll container for the whole detail view — every
    * file header, group label, hunk header and diff row of every file in the selected
@@ -28,7 +28,7 @@
   let {
     /** @type {import('./model.js').Block[]} */
     blocks,
-    view = /** @type {'unified'|'split'} */ ('unified'),
+    view = ('unified' as 'unified'|'split'),
     /** True on the uncommitted entry: hunk and file staging controls are shown. */
     stageable = false,
     /** @type {(file:string) => void} */
@@ -40,7 +40,7 @@
   /** Extra items rendered above and below the viewport so a fast flick never shows blank. */
   const OVERSCAN = 8;
 
-  let scroller = $state(/** @type {HTMLElement|null} */ (null));
+  let scroller = $state<HTMLElement|null>(null);
   let scrollTop = $state(0);
   let viewH = $state(600);
   let cursor = $state(0);
@@ -61,8 +61,8 @@
    * it would be pure collateral damage. Vertical stays shared and therefore exactly in
    * step, because both sides of a row are still one element in one scroller.
    */
-  let barL = $state(/** @type {HTMLElement|null} */ (null));
-  let barR = $state(/** @type {HTMLElement|null} */ (null));
+  let barL = $state<HTMLElement|null>(null);
+  let barR = $state<HTMLElement|null>(null);
   let hxL = $state(0);
   let hxR = $state(0);
   /** Percent-of-travel for each scrollbar's `aria-valuenow`. */
@@ -101,7 +101,7 @@
   }
 
   /** Publish a bar's scrollLeft to the column it drives. @param {'l'|'r'} which */
-  function onBarScroll(which) {
+  function onBarScroll(which: any) {
     const bar = which === 'l' ? barL : barR;
     if (!bar) return;
     const max = bar.scrollWidth - bar.clientWidth;
@@ -117,7 +117,7 @@
    * only reading of "scroll this sideways" that respects two independent columns.
    * @param {WheelEvent} e
    */
-  function onWheel(e) {
+  function onWheel(e: any) {
     if (!split || !scroller) return;
     const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
     if (!dx) return;
@@ -141,7 +141,7 @@
    * and then scrolling is enough — the item is guaranteed to be rendered on the next tick.
    * @param {number} i
    */
-  function reveal(i) {
+  function reveal(i: any) {
     if (!scroller || i < 0 || i >= items.length) return;
     const top = model.offsets[i];
     const bottom = top + H[items[i].k];
@@ -158,7 +158,7 @@
    * @param {number} dir
    * @param {(it:import('./model.js').Item) => boolean} pred
    */
-  function move(dir, pred) {
+  function move(dir: any, pred: any) {
     for (let i = cursor + dir; i >= 0 && i < items.length; i += dir) {
       if (pred(items[i])) { cursor = i; reveal(i); return true; }
     }
@@ -166,7 +166,7 @@
   }
 
   /** The hunk indexes + `@@` headers a stage/unstage of `g` would send. */
-  function selectionOf(/** @type {import('./model.js').Group} */ g) {
+  function selectionOf(g: import('./model.js').Group) {
     return { hunks: g.hunks.map((h) => h.index), expect: g.hunks.map((h) => h.header) };
   }
 
@@ -176,7 +176,7 @@
    * file-level staging the panel also exposes as a button, driven from the keyboard.
    * @param {'stage'|'unstage'} op
    */
-  function applyAtCursor(op) {
+  function applyAtCursor(op: any) {
     const it = items[cursor];
     if (!it || !stageable) return;
     const side = op === 'stage' ? 'unstaged' : 'staged';
@@ -193,7 +193,7 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e) {
+  function onKeydown(e: any) {
     // A real control inside a rendered row owns its own keys; only the panel-wide
     // shortcuts that cannot collide with typing are honoured from there.
     const inControl = e.target !== scroller;
@@ -218,10 +218,10 @@
       case 'PageUp': jump(-Math.floor(viewH / H.row)); break;
       case 'Home': cursor = 0; reveal(0); break;
       case 'End': cursor = items.length - 1; reveal(cursor); break;
-      case 'n': move(1, (it) => it.k === 'hunk'); break;
-      case 'p': move(-1, (it) => it.k === 'hunk'); break;
-      case ']': move(1, (it) => it.k === 'file'); break;
-      case '[': move(-1, (it) => it.k === 'file'); break;
+      case 'n': move(1, (it: any) => it.k === 'hunk'); break;
+      case 'p': move(-1, (it: any) => it.k === 'hunk'); break;
+      case ']': move(1, (it: any) => it.k === 'file'); break;
+      case '[': move(-1, (it: any) => it.k === 'file'); break;
       case 's': applyAtCursor('stage'); break;
       case 'u': applyAtCursor('unstage'); break;
       case 'f': case '/': openJump(); break;
@@ -238,7 +238,7 @@
   }
 
   /** @param {number} n */
-  function jump(n) {
+  function jump(n: any) {
     const dir = n < 0 ? -1 : 1;
     for (let i = 0; i < Math.abs(n); i++) if (!move(dir, navigable)) break;
   }
@@ -285,13 +285,12 @@
   let jumpOpen = $state(false);
   let jumpQuery = $state('');
   let jumpAt = $state(0);
-  let jumpInput = $state(/** @type {HTMLInputElement|null} */ (null));
+  let jumpInput = $state<HTMLInputElement|null>(null);
 
   /** Built only while open — on a 100k-item list this is a full pass. */
   const jumpFiles = $derived.by(() => {
     if (!jumpOpen) return [];
-    /** @type {{ i:number, b:import('./model.js').Block }[]} */
-    const out = [];
+        const out: { i:number, b:import('./model.js').Block }[] = [];
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       if (it.k === 'file') out.push({ i, b: it.b });
@@ -315,14 +314,14 @@
     if (scroller) scroller.focus({ preventScroll: true });
   }
   /** @param {number} i */
-  function jumpTo(i) {
+  function jumpTo(i: any) {
     cursor = i;
     closeJump();
     reveal(i);
   }
 
   /** @param {KeyboardEvent} e */
-  function onJumpKeydown(e) {
+  function onJumpKeydown(e: any) {
     if (e.key === 'Escape') { closeJump(); }
     else if (e.key === 'ArrowDown') { jumpAt = Math.min(jumpAt + 1, jumpHits.length - 1); }
     else if (e.key === 'ArrowUp') { jumpAt = Math.max(jumpAt - 1, 0); }
@@ -352,7 +351,7 @@
   });
 
   /** @param {import('./model.js').Item} it */
-  const rowCls = (it) => (it.k === 'row' ? it.type : '');
+  const rowCls = (it: any) => (it.k === 'row' ? it.type : '');
 </script>
 
 <div class="viewport-shell">

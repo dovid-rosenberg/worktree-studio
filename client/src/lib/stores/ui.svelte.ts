@@ -30,6 +30,20 @@
 
 import { SvelteSet } from 'svelte/reactivity';
 import { world } from '$lib/stores/world.svelte.js';
+import type { Feature, FeatureMember, Session, Worktree } from '../../../../server/types';
+
+/** A member that survived the on-disk check — `missing` rows are filtered out first. */
+export type LiveMember = Worktree;
+
+/**
+ * One ⌘1–9 target. `id` is null for a feature with no agent — there is no session to
+ * jump to, so the caller selects the feature by name instead.
+ */
+export interface RailEntry {
+  kind: 'session' | 'feature';
+  id: string | null;
+  name: string;
+}
 
 const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
@@ -40,22 +54,20 @@ export const RAIL_MAX = 560;
 const RAIL_DEFAULT = 320;
 
 /**
- * The app-level views — the two that render with nothing selected. Everything else in
- * DockView is a panel of the selected session.
- * @typedef {'term'|'changes'|'logs'|'insights'|'overview'|'usage'} DockView
+ * The app-level views are the two that render with nothing selected. Everything else
+ * in DockView is a panel of the selected session.
  */
-const APP_VIEWS = ['overview', 'usage'];
+export type DockView = 'term' | 'changes' | 'logs' | 'insights' | 'overview' | 'usage';
+const APP_VIEWS: DockView[] = ['overview', 'usage'];
 
-/** @returns {DockView} */
-function savedDock() {
+function savedDock(): DockView {
   try {
     const v = localStorage.getItem(DOCK_KEY);
-    return APP_VIEWS.includes(String(v)) ? /** @type {DockView} */ (v) : 'term';
+    return APP_VIEWS.includes(v as DockView) ? (v as DockView) : 'term';
   } catch { return 'term'; }
 }
 
-/** @returns {number} */
-function savedRailWidth() {
+function savedRailWidth(): number {
   try {
     const n = Number(localStorage.getItem(RAIL_KEY));
     return Number.isFinite(n) && n >= RAIL_MIN && n <= RAIL_MAX ? n : RAIL_DEFAULT;
@@ -65,46 +77,45 @@ function savedRailWidth() {
 /**
  * Active = a live agent or a running dev server. Ported from Fleet.svelte, where it is
  * the sort key; it is the only thing that decides whether a feature sits at the top.
- * @param {any} f
  */
-export function featureActive(f) {
-  return (f.members || []).some(
-    (/** @type {any} */ m) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped')),
-  );
+export function featureActive(f: Feature): boolean {
+  return (f.members || []).some((m: FeatureMember) => {
+    if (!m || ('missing' in m && m.missing)) return false;
+    const w = m as Worktree;
+    return Boolean(w.running || (w.session && w.session.state !== 'stopped'));
+  });
 }
 
-/**
- * Fleet's ordering, verbatim: active first, then alphabetical. Returns a new array.
- * @param {any[]} list
- */
-export function sortFeatures(list) {
+/** Fleet's ordering, verbatim: active first, then alphabetical. Returns a new array. */
+export function sortFeatures(list: Feature[]): Feature[] {
   return list.slice().sort(
-    (/** @type {any} */ a, /** @type {any} */ b) =>
-      (Number(featureActive(b)) - Number(featureActive(a))) || String(a.name).localeCompare(String(b.name)),
+    (a, b) => (Number(featureActive(b)) - Number(featureActive(a))) || String(a.name).localeCompare(String(b.name)),
   );
 }
 
-/** Members that actually exist on disk. @param {any} f */
-export function liveMembers(f) {
-  return (f.members || []).filter((/** @type {any} */ m) => m && !m.missing);
+/** Members that actually exist on disk. */
+export function liveMembers(f: Feature): LiveMember[] {
+  return (f.members || []).filter(
+    (m: FeatureMember): m is Worktree => Boolean(m) && !('missing' in m && m.missing),
+  );
 }
 
 class UI {
   /** Selected session id, or null. */
-  selectedId = $state(/** @type {string|null} */ (null));
+  selectedId = $state<string | null>(null);
   /**
    * Selected feature NAME, set only when the picked feature has no session — there is no
    * session id to hold in that case, and the dock shows the feature pane instead of a
    * terminal. Exactly one of these two is ever non-null.
    */
-  selectedFeatureName = $state(/** @type {string|null} */ (null));
+  selectedFeatureName = $state<string | null>(null);
   /** Rail repo filter — '' means all repos. */
   repoFilter = $state('');
   /**
    * Which dock panel is showing. 'term' keeps the live terminal mounted; 'overview' is
    * the old Fleet view, now a pane, and is the one value that renders with no selection.
    */
-  dockView = $state(/** @type {DockView} */ (savedDock()));
+  dockView = $state<DockView>(savedDock());
   /** Rail width in px — dragged by the splitter, persisted, clamped to [MIN, MAX]. */
   railWidth = $state(savedRailWidth());
   /** Active multiplexer window index within the primary session. */
@@ -113,7 +124,7 @@ class UI {
    * Session ids whose split pane is engaged. A Set (not a boolean) because the split
    * persists per session across selection changes, exactly as app.js's splitSessions did.
    */
-  splitSessions = new SvelteSet();
+  splitSessions = new SvelteSet<string>();
 
   /** The selected session object, or null. Follows the live `sessions` list. */
   selected = $derived(this.selectedId ? world.session(this.selectedId) : null);
@@ -121,20 +132,22 @@ class UI {
   /** The selected sessionless feature, or null. Follows the live `features` list. */
   selectedFeature = $derived(
     this.selectedFeatureName
-      ? (world.features.find((/** @type {any} */ f) => f.name === this.selectedFeatureName) || null)
+      ? (world.features.find((f) => f.name === this.selectedFeatureName) || null)
       : null,
   );
 
-  /** @param {any} f */
-  #featureMatches = (f) => !this.repoFilter
-    || (f.members || []).some((/** @type {any} */ m) => m && m.repo === this.repoFilter);
+  #featureMatches = (f: Feature): boolean => !this.repoFilter
+    // A MissingMember is a dangling config reference with no repo, so it can never
+    // match a filter — guard on the discriminant rather than casting it away.
+    || (f.members || []).some((m) => Boolean(m) && !('missing' in m && m.missing)
+      && (m as Worktree).repo === this.repoFilter);
 
   /** Features after the repo filter, in Fleet's order. Whole features, never split. */
   visibleFeatures = $derived(sortFeatures(world.features.filter(this.#featureMatches)));
 
   /** Features with at least one dev server up. Deliberately ALSO listed under worktrees. */
   serverFeatures = $derived(
-    this.visibleFeatures.filter((/** @type {any} */ f) => liveMembers(f).some((/** @type {any} */ m) => m.running)),
+    this.visibleFeatures.filter((f) => liveMembers(f).some((m) => m.running)),
   );
 
   /**
@@ -143,9 +156,9 @@ class UI {
    */
   visibleAgents = $derived(
     world.sessions
-      .filter((/** @type {any} */ s) => !s.worktreePath && (!this.repoFilter || s.repoName === this.repoFilter))
+      .filter((s) => !s.worktreePath && (!this.repoFilter || s.repoName === this.repoFilter))
       .slice()
-      .sort((/** @type {any} */ a, /** @type {any} */ b) =>
+      .sort((a, b) =>
         (Number(a.state === 'stopped') - Number(b.state === 'stopped'))
         || String(a.title || '').localeCompare(String(b.title || ''))),
   );
@@ -157,24 +170,24 @@ class UI {
   visibleMainServers = $derived((() => {
     const web = new Set(world.webRepos || []);
     return world.repos
-      .flatMap((/** @type {any} */ r) => r.worktrees || [])
-      .filter((/** @type {any} */ w) => w.isMain && web.has(w.repo) && w.running && (w.ports || []).length)
-      .filter((/** @type {any} */ w) => !this.repoFilter || w.repo === this.repoFilter);
+      .flatMap((r) => r.worktrees || [])
+      .filter((w) => w.isMain && web.has(w.repo) && w.running && (w.ports || []).length)
+      .filter((w) => !this.repoFilter || w.repo === this.repoFilter);
   })());
 
   /**
    * What ⌘1–9 picks, in the order the rail draws it. Agents first (they are the things
    * awaiting a decision), then every feature.
    */
-  railOrder = $derived([
-    ...this.visibleAgents.map((/** @type {any} */ s) => ({ kind: /** @type {const} */ ('session'), id: s.id, name: s.title })),
-    ...this.visibleFeatures.map((/** @type {any} */ f) => ({ kind: /** @type {const} */ ('feature'), id: f.session ? f.session.id : null, name: f.name })),
+  railOrder = $derived<RailEntry[]>([
+    ...this.visibleAgents.map((s) => ({ kind: 'session' as const, id: s.id, name: s.title })),
+    ...this.visibleFeatures.map((f) => ({ kind: 'feature' as const, id: f.session ? f.session.id : null, name: f.name })),
   ]);
 
   /** Repo names offered by the filter: every member repo, plus unpromoted sessions' repos. */
   repoNames = $derived([...new Set([
-    ...world.features.flatMap((/** @type {any} */ f) => (f.members || []).map((/** @type {any} */ m) => m.repo)),
-    ...world.sessions.map((/** @type {any} */ s) => s.repoName),
+    ...world.features.flatMap((f) => liveMembers(f).map((m) => m.repo)),
+    ...world.sessions.map((s) => s.repoName),
   ])].filter(Boolean).sort());
 
   /** True when nothing at all is selected — the dock shows its empty state. */
@@ -183,8 +196,7 @@ class UI {
   /** True while an app-level view (Overview / Insights) owns the dock. */
   appView = $derived(APP_VIEWS.includes(this.dockView));
 
-  /** @param {DockView} v */
-  setDockView(v) {
+  setDockView(v: DockView): void {
     this.dockView = v;
     // Only the app-level views are worth persisting: the panel views belong to a
     // session and reset on selection anyway.
@@ -192,23 +204,21 @@ class UI {
   }
 
   /** ⌘\ — Overview is a pane you toggle, not a mode you get stuck in. */
-  toggleOverview() {
+  toggleOverview(): void {
     this.setDockView(this.dockView === 'overview' ? 'term' : 'overview');
   }
 
   /** Fleet-wide token/cost telemetry, as a peer of Overview. */
-  toggleUsage() {
+  toggleUsage(): void {
     this.setDockView(this.dockView === 'usage' ? 'term' : 'usage');
   }
 
-  /** @param {number} px */
-  setRailWidth(px) {
+  setRailWidth(px: number): void {
     this.railWidth = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.round(px)));
     try { localStorage.setItem(RAIL_KEY, String(this.railWidth)); } catch { /* private mode */ }
   }
 
-  /** @param {string} id */
-  select(id) {
+  select(id: string): void {
     if (this.selectedId === id && !this.selectedFeatureName) return;
     this.selectedId = id;
     this.selectedFeatureName = null;
@@ -220,9 +230,8 @@ class UI {
   /**
    * Pick a feature. One with an agent behaves exactly as picking that session did; one
    * without has no terminal to show, so the dock renders the feature pane instead.
-   * @param {any} f
    */
-  selectFeature(f) {
+  selectFeature(f: Feature | null | undefined): void {
     if (f && f.session && f.session.id) { this.select(f.session.id); return; }
     this.selectedFeatureName = f ? f.name : null;
     this.selectedId = null;
@@ -230,25 +239,21 @@ class UI {
     this.activeTab = 0;
   }
 
-  /** @param {string} id */
-  goToSession(id) {
+  goToSession(id: string): void {
     this.select(id);
     // Leaving an app-level view up would hide the session we were just asked to go to.
     if (APP_VIEWS.includes(this.dockView)) this.setDockView('term');
   }
 
-  /** @param {string} id */
-  splitOn(id) { return this.splitSessions.has(id); }
+  splitOn(id: string): boolean { return this.splitSessions.has(id); }
 
-  /** @param {string} id */
-  toggleSplit(id) {
+  toggleSplit(id: string): void {
     if (this.splitSessions.has(id)) this.splitSessions.delete(id);
     else this.splitSessions.add(id);
   }
 }
 
-/** @param {any} s */
-export function labelForSource(s) {
+export function labelForSource(s: Pick<Session, 'source' | 'sourceId'>): string {
   if (s.source === 'github') return `GH#${s.sourceId}`;
   if (s.source === 'gitlab') return `GL!${s.sourceId}`;
   if (s.source === 'asana') return 'Asana';

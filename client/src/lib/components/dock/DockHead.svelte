@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The dock header: state dot, title, source link, repo chips, and the per-session
    * action buttons. Rebuilt-in-place rather than re-innerHTML'd, so a button that has
@@ -28,7 +28,7 @@
    * @param {(v: boolean) => void} set
    * @param {() => Promise<any>} fn
    */
-  async function guard(set, fn) {
+  async function guard(set: any, fn: any) {
     set(true);
     try { await fn(); } finally { set(false); }
   }
@@ -59,7 +59,7 @@
     <button class="btn sm" title="Add another repo to this feature" onclick={() => addRepoToSession(session)}>＋ repo</button>
 
     {#if !promoted}
-      <button class="btn sm primary" disabled={busyPromote} onclick={() => guard((v) => (busyPromote = v), () => promote(session))}>
+      <button class="btn sm primary" disabled={busyPromote} onclick={() => guard((v: any) => (busyPromote = v), () => promote(session))}>
         ⤴ Promote to worktree
       </button>
     {:else}
@@ -69,13 +69,13 @@
     <button class="btn sm ghost" title="Rename" aria-label="Rename" onclick={() => renameSession(session)}>✐</button>
 
     {#if session.active === false}
-      <button class="btn sm" disabled={busyActive} onclick={() => guard((v) => (busyActive = v), () => activateSession(session))}>Resume</button>
+      <button class="btn sm" disabled={busyActive} onclick={() => guard((v: any) => (busyActive = v), () => activateSession(session))}>Resume</button>
     {:else}
       <button
         class="btn sm ghost"
         title="Stop the process but keep the session (resumable)"
         disabled={busyActive}
-        onclick={() => guard((v) => (busyActive = v), () => deactivateSession(session))}
+        onclick={() => guard((v: any) => (busyActive = v), () => deactivateSession(session))}
       >Deactivate</button>
     {/if}
 

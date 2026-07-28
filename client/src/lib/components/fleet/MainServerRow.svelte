@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * A running web dev-server in a repo's MAIN checkout. Not a worktree, therefore not a
    * feature, therefore absent from every feature row — surfaced here purely so it is

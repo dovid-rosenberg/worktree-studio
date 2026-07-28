@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The ⋯ overflow menu on a Fleet feature row.
    *
@@ -16,18 +16,22 @@
    */
   import { onMount } from 'svelte';
 
-  /** @typedef {{ label?: string, run?: () => void, danger?: boolean, sep?: boolean }} MenuItem */
+  interface MenuItem {
+    label?: string;
+    run?: () => void;
+    danger?: boolean;
+    sep?: boolean;
+  }
 
-  /** @type {{ anchor: HTMLElement, items?: MenuItem[], onclose?: () => void }} */
-  let {
+    let {
     /** The ⋯ button; used for positioning and for focus restore. */
     anchor,
     /** `sep: true` renders a divider instead of an item. */
     items = [],
     onclose,
-  } = $props();
+  }: { anchor: HTMLElement, items?: MenuItem[], onclose?: () => void } = $props();
 
-  let menu = $state(/** @type {HTMLElement|null} */ (null));
+  let menu = $state<HTMLElement|null>(null);
   let top = $state(0);
   let left = $state(0);
 
@@ -38,11 +42,11 @@
     const rect = anchor.getBoundingClientRect();
     top = rect.bottom + 4;
     left = Math.max(8, rect.right - (menu?.offsetWidth ?? 160));
-    /** @type {HTMLElement|null} */ (menu?.querySelector('[role="menuitem"]'))?.focus();
+    /** @type {HTMLElement|null} */ (menu?.querySelector<HTMLElement>('[role="menuitem"]'))?.focus();
 
     // Deferred by a tick so the click that opened the menu doesn't immediately close it.
     /** @param {MouseEvent} e */
-    const onDocClick = (e) => {
+    const onDocClick = (e: any) => {
       if (menu && e.target instanceof Node && menu.contains(e.target)) return;
       onclose?.();
     };
@@ -51,14 +55,14 @@
   });
 
   /** @param {{run?:()=>void}} item */
-  function activate(item) {
+  function activate(item: any) {
     onclose?.();
     anchor?.focus?.();
     item.run?.();
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e) {
+  function onKeydown(e: any) {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -68,9 +72,9 @@
     }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
-    const els = [.../** @type {NodeListOf<HTMLElement>} */ (menu?.querySelectorAll('[role="menuitem"]') ?? [])];
+    const els = [.../** @type {NodeListOf<HTMLElement>} */ (menu?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
     if (!els.length) return;
-    const i = els.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+    const i = els.indexOf((document.activeElement as HTMLElement));
     const d = e.key === 'ArrowDown' ? 1 : -1;
     els[(i + d + els.length) % els.length].focus();
   }

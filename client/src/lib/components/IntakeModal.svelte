@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * New-session intake. One dialog, several pluggable sources: free text, a GitHub /
    * GitLab issue, an Asana task. A source that is not configured is shown disabled
@@ -23,21 +23,20 @@
   let repo = $state('');
   let text = $state('');
   let name = $state('');
-  /** @type {{id:string,title:string,subtitle?:string}[]} */
-  let issues = $state([]);
-  let issueId = $state(/** @type {string|null} */ (null));
+    let issues: {id:string,title:string,subtitle?:string}[] = $state([]);
+  let issueId = $state<string|null>(null);
   /** @type {Set<string>} — extra repos this feature will touch. */
   let extra = $state(new Set());
   let loading = $state(false);
   let starting = $state(false);
-  let textarea = $state(/** @type {HTMLTextAreaElement|null} */ (null));
+  let textarea = $state<HTMLTextAreaElement|null>(null);
 
-  const enabled = $derived(new Set(world.sources.map((/** @type {any} */ s) => s.id)));
+  const enabled = $derived(new Set(world.sources.map((s: any) => s.id)));
   const isFree = $derived(source === 'freetext');
-  const otherRepos = $derived(world.repos.filter((/** @type {any} */ r) => r.name !== repo));
+  const otherRepos = $derived(world.repos.filter((r: any) => r.name !== repo));
   const note = $derived(isFree
     ? 'Boots a real Claude Code session in the repo (CLAUDE.md loaded). The name is optional; the branch is chosen when you promote.'
-    : `Seeds the session from ${source}. ${world.sources.find((/** @type {any} */ s) => s.id === source && s.needsRepo) ? 'Uses the selected repo.' : ''}`);
+    : `Seeds the session from ${source}. ${world.sources.find((s: any) => s.id === source && s.needsRepo) ? 'Uses the selected repo.' : ''}`);
 
   // Default the repo once the topology has arrived, and focus the prompt on open.
   $effect(() => {
@@ -48,7 +47,7 @@
   });
 
   /** @param {string} id */
-  function pickSource(id) {
+  function pickSource(id: any) {
     source = id;
     issues = [];
     issueId = null;
@@ -62,12 +61,12 @@
       if (!out.ok) throw new Error(out.error || 'failed');
       issues = out.items || [];
       if (!issues.length) toast('No items found.');
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast((e as Error).message, true); }
     finally { loading = false; }
   }
 
   /** @param {string} n */
-  function toggleExtra(n) {
+  function toggleExtra(n: any) {
     const next = new Set(extra);
     if (next.has(n)) next.delete(n); else next.add(n);
     extra = next;
@@ -75,8 +74,7 @@
 
   async function start() {
     if (starting) return;
-    /** @type {Record<string, any>} */
-    const body = { source, repo };
+        const body: Record<string, any> = { source, repo };
     if (isFree) {
       if (!text.trim()) return toast('Describe what you’re working on first.', true);
       body.text = text;
@@ -92,7 +90,7 @@
       overlays.closeIntake();
       ui.goToSession(s.id);
       toast(`Session started — ${s.title}`);
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast((e as Error).message, true); }
     finally { starting = false; }
   }
 </script>

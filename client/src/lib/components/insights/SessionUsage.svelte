@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // One session's telemetry: cost, the token mix, and the per-model breakdown.
   //
   // Usable two ways — handed a payload by the fleet view (no fetch), or given a session
@@ -21,11 +21,9 @@
    */
   let { usage = null, sessionId = null, pricing = null, title = null, estimateLine = true } = $props();
 
-  /** @type {import('./types.js').Usage|null} */
-  let fetched = $state(null);
+    let fetched: import('./types.js').Usage|null = $state(null);
   let loading = $state(false);
-  /** @type {string|null} */
-  let error = $state(null);
+    let error: string|null = $state(null);
 
   $effect(() => {
     if (usage || !sessionId) return;
@@ -53,7 +51,7 @@
   // block, and the server deliberately keeps them out of unpricedModels. Calling that
   // "unpriced" would invent a hole in the numbers that doesn't exist.
   /** @param {import('./types.js').ModelUsage} m */
-  const costCell = (m) => {
+  const costCell = (m: any) => {
     if (m.priced) return { text: usd(m.costUsd) ?? '—', kind: 'ok' };
     if (unpriced.includes(m.model ?? 'unknown')) return { text: 'unpriced', kind: 'gap' };
     return { text: 'not billed', kind: 'none' };

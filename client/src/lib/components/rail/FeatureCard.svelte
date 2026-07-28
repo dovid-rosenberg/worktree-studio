@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * One FEATURE in the rail — the unit the rail is keyed on.
    *
@@ -15,16 +15,16 @@
   let { feature } = $props();
 
   const ms = $derived(liveMembers(feature));
-  const anyRunning = $derived(ms.some((/** @type {any} */ m) => m.running));
+  const anyRunning = $derived(ms.some((m: any) => m.running));
   const sess = $derived(feature.session); // one session per feature
-  const anyMerged = $derived(ms.some((/** @type {any} */ m) => m.merged));
+  const anyMerged = $derived(ms.some((m: any) => m.merged));
 
   const selected = $derived(
     sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name,
   );
 
   /** @param {any} m */
-  const memberState = (m) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
+  const memberState = (m: any) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
 </script>
 
 <div class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
@@ -65,7 +65,7 @@
           <span class="r">{m.repo}</span>
           <span class="br">{m.branch || m.wtname}</span>
           {#if (m.ports || []).length}
-            <span class="p">{m.ports.map((/** @type {number} */ p) => ':' + p).join(' ')}</span>
+            <span class="p">{m.ports.map((p: number) => ':' + p).join(' ')}</span>
           {/if}
         </span>
       {/each}

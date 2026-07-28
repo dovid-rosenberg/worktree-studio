@@ -12,40 +12,50 @@
  * another dialog's handler queues behind it rather than stacking two backdrops.
  */
 
-/**
- * @typedef {{ type?: 'text'|'checkbox'|'select', label?: string, value?: any,
- *             placeholder?: string, options?: string[] }} DialogField
- * @typedef {{ title?: string, message?: string, messageHtml?: string,
- *             fields?: DialogField[], okLabel?: string, cancelLabel?: string,
- *             danger?: boolean }} DialogSpec
- */
+export interface DialogField {
+  type?: 'text' | 'checkbox' | 'select';
+  label?: string;
+  value?: any;
+  placeholder?: string;
+  options?: string[];
+}
+
+export interface DialogSpec {
+  title?: string;
+  message?: string;
+  messageHtml?: string;
+  fields?: DialogField[];
+  okLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+}
+
+interface QueuedDialog {
+  id: number;
+  spec: DialogSpec;
+  resolve: (v: any) => void;
+}
 
 let nextId = 0;
 
 class Dialogs {
-  /** @type {{id:number, spec:DialogSpec, resolve:(v:any)=>void}[]} */
-  queue = $state([]);
+  queue = $state<QueuedDialog[]>([]);
 
   /** The dialog currently on screen — the head of the queue. */
   current = $derived(this.queue[0] || null);
 
   /**
-   * @param {DialogSpec} spec
-   * @returns {Promise<any>} `null` on cancel/Escape; `true` when there are no fields;
-   *   otherwise an array of field values in declaration order.
+   * Resolves `null` on cancel/Escape; `true` when there are no fields; otherwise an
+   * array of field values in declaration order.
    */
-  open(spec) {
+  open(spec: DialogSpec): Promise<any> {
     return new Promise((resolve) => {
       const id = ++nextId;
       this.queue = [...this.queue, { id, spec, resolve }];
     });
   }
 
-  /**
-   * @param {number} id
-   * @param {any} value
-   */
-  close(id, value) {
+  close(id: number, value: any): void {
     const entry = this.queue.find((q) => q.id === id);
     if (!entry) return;
     this.queue = this.queue.filter((q) => q.id !== id);
@@ -53,20 +63,17 @@ class Dialogs {
   }
 
   /** True while any dialog is up — the global shortcut handler checks this. */
-  get open_() { return this.queue.length > 0; }
+  get open_(): boolean { return this.queue.length > 0; }
 }
 
 export const dialogs = new Dialogs();
 
-/** @param {DialogSpec} spec */
-export const uiDialog = (spec) => dialogs.open(spec);
+export const uiDialog = (spec: DialogSpec): Promise<any> => dialogs.open(spec);
 
-/**
- * @param {string} message
- * @param {{ title?: string, okLabel?: string, danger?: boolean }} [opts]
- * @returns {Promise<boolean>}
- */
-export async function uiConfirm(message, opts = {}) {
+export async function uiConfirm(
+  message: string,
+  opts: { title?: string; okLabel?: string; danger?: boolean } = {},
+): Promise<boolean> {
   const r = await dialogs.open({
     title: opts.title || 'Confirm',
     message,
@@ -76,13 +83,11 @@ export async function uiConfirm(message, opts = {}) {
   return r === true;
 }
 
-/**
- * @param {string} message
- * @param {string} [value]
- * @param {{ label?: string, placeholder?: string, okLabel?: string }} [opts]
- * @returns {Promise<string|null>}
- */
-export async function uiPrompt(message, value = '', opts = {}) {
+export async function uiPrompt(
+  message: string,
+  value = '',
+  opts: { label?: string; placeholder?: string; okLabel?: string } = {},
+): Promise<string | null> {
   const r = await dialogs.open({
     title: message,
     fields: [{ type: 'text', label: opts.label || '', value, placeholder: opts.placeholder || '' }],

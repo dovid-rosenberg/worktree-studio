@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * What the dock shows for a feature with no agent.
    *
@@ -18,13 +18,13 @@
   let { feature } = $props();
 
   const ms = $derived(liveMembers(feature));
-  const anyRunning = $derived(ms.some((/** @type {any} */ m) => m.running));
-  const anyStartable = $derived(ms.some((/** @type {any} */ m) => m.canStart && !m.running));
+  const anyRunning = $derived(ms.some((m: any) => m.running));
+  const anyStartable = $derived(ms.some((m: any) => m.canStart && !m.running));
   const isPending = $derived(pending.has(feature.name));
   const webApps = $derived(webAppsFor(ms));
 
   /** @param {any} m */
-  const memberState = (m) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
+  const memberState = (m: any) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
 </script>
 
 <div class="fpane">
@@ -74,7 +74,7 @@
             <td class="r">{m.repo}</td>
             <td>{m.branch || m.wtname}{#if m.merged}<span class="badge merged">✓ merged</span>{/if}</td>
             <td>{m.running ? 'running' : 'stopped'}</td>
-            <td class="ports">{(m.ports || []).length ? m.ports.map((/** @type {number} */ p) => m.repo + ':' + p).join(' ') : '—'}</td>
+            <td class="ports">{(m.ports || []).length ? m.ports.map((p: number) => m.repo + ':' + p).join(' ') : '—'}</td>
             <td><span class="pill {memberState(m)}">{memberState(m)}</span></td>
           </tr>
         {/each}

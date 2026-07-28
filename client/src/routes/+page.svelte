@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The single screen: rail | splitter | dock, with the action bar pinned underneath.
    *

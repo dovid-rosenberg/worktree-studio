@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * Renders the queued uiDialog/uiConfirm/uiPrompt (see stores/dialog.svelte.js).
    *
@@ -15,17 +15,17 @@
   const fields = $derived(spec?.fields ?? []);
 
   /** Field values, re-seeded whenever a different dialog reaches the head of the queue. */
-  let values = $state(/** @type {any[]} */ ([]));
-  let root = $state(/** @type {HTMLElement|null} */ (null));
+  let values = $state<any[]>([]);
+  let root = $state<HTMLElement|null>(null);
 
   $effect(() => {
     const id = entry?.id;
     if (id == null) return;
-    values = fields.map((/** @type {any} */ f) => (f.type === 'checkbox' ? !!f.value : (f.value ?? '')));
+    values = fields.map((f: any) => (f.type === 'checkbox' ? !!f.value : (f.value ?? '')));
     // Focus the first field, else the confirm button — the same target app.js chose.
     // The nodes only exist after this render, so defer by a microtask.
     queueMicrotask(() => {
-      const el = /** @type {HTMLElement|null} */ (root?.querySelector('.dlgf') || root?.querySelector('.dlg-ok'));
+      const el = /** @type {HTMLElement|null} */ (root?.querySelector<HTMLElement>('.dlgf') || root?.querySelector<HTMLElement>('.dlg-ok'));
       el?.focus();
       if (el instanceof HTMLInputElement && el.type !== 'checkbox') el.select();
     });
@@ -41,11 +41,11 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e) {
+  function onKeydown(e: any) {
     if (!entry) return;
     if (e.key === 'Escape') { e.stopPropagation(); cancel(); return; }
     if (e.key !== 'Enter') return;
-    if (fields.some((/** @type {any} */ f) => f.type === 'select')) return;
+    if (fields.some((f: any) => f.type === 'select')) return;
     if (e.target instanceof HTMLTextAreaElement) return;
     e.preventDefault();
     submit();

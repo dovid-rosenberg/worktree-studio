@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Harness for the transcript-search surface. Not the shell — the shell agent mounts
   // SearchPanel / SearchOverlay wherever they belong. This exists so search can be
   // developed and proved against a live daemon on its own, in both of the shapes it
@@ -9,25 +9,23 @@
   import { stamp } from '$lib/components/insights/format.js';
   import { theme, toggleTheme } from '$lib/theme.svelte.js';
 
-  /** @type {import('$lib/components/insights/types.js').StateSession[]} */
-  let sessions = $state([]);
+    let sessions: import('$lib/components/insights/types.js').StateSession[] = $state([]);
   let scoped = $state('');
   let overlay = $state(false);
-  /** @type {import('$lib/components/insights/types.js').Hit|null} */
-  let picked = $state(null);
+    let picked: import('$lib/components/insights/types.js').Hit|null = $state(null);
 
   $effect(() => {
     listSessions().then((s) => { sessions = s; }).catch(() => {});
   });
 
   /** @param {import('$lib/components/insights/types.js').Hit} hit */
-  function onopen(hit) {
+  function onopen(hit: any) {
     picked = hit;
     overlay = false;
   }
 
   /** @param {KeyboardEvent} e */
-  function onWindowKey(e) {
+  function onWindowKey(e: any) {
     // Stands in for the shell's global shortcut so the overlay can be exercised the
     // way it will actually be opened.
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') { e.preventDefault(); overlay = !overlay; }

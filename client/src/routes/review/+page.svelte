@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * Harness for the Changes panel — NOT the shell.
    *
@@ -16,11 +16,10 @@
   import { api } from '$lib/api.js';
   import { toggleTheme, theme } from '$lib/theme.svelte.js';
 
-  let sessions = $state(/** @type {{ id:string, title:string, worktreePath?:string, repos?:{repo:string}[] }[]} */ ([]));
+  let sessions = $state<{ id:string, title:string, worktreePath?:string, repos?:{repo:string}[] }[]>([]);
   let selected = $state('');
-  let error = $state(/** @type {string|null} */ (null));
-  /** @type {'unified'|'split'} */
-  let view = $state('unified');
+  let error = $state<string|null>(null);
+    let view: 'unified'|'split' = $state('unified');
 
   onMount(async () => {
     try {
@@ -28,17 +27,17 @@
       // token like every other route, and a bare fetch here 401'd against a real daemon.
       const st = await api('GET', '/api/v1/state');
       // Only promoted sessions have a worktree, and only those have anything to review.
-      sessions = (st.sessions || []).filter((/** @type {any} */ s) => s.worktreePath);
+      sessions = (st.sessions || []).filter((s: any) => s.worktreePath);
       const want = new URLSearchParams(location.search).get('session');
       selected = (want && sessions.some((s) => s.id === want) ? want : sessions[0] && sessions[0].id) || '';
     } catch (e) {
-      error = /** @type {Error} */ (e).message;
+      error = (e as Error).message;
     }
   });
 
   /** Keep the URL shareable as the picker moves, without a navigation. */
-  function pick(/** @type {Event} */ e) {
-    selected = /** @type {HTMLSelectElement} */ (e.currentTarget).value;
+  function pick(e: Event) {
+    selected = (e.currentTarget as HTMLSelectElement).value;
     const u = new URL(location.href);
     u.searchParams.set('session', selected);
     history.replaceState(null, '', u);

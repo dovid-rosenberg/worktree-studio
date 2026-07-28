@@ -131,10 +131,28 @@ test uses a state dir where saving fails. Extend to: tmux killed out from under 
 
 ---
 
-## 2.6 Port the SvelteKit client to TypeScript
+## 2.6 Port the SvelteKit client to TypeScript — DONE (2026-07-28)
 
-**Blocked on the in-flight `feature/unify-work-fleet` work — both touch every component.**
-Queued at David's request (2026-07-28); start only once that lands.
+Landed on `chore/client-typescript`. 20 modules and 47 components; `client/tsconfig.json`
+no longer sets `allowJs`/`checkJs` because no `.js` remains under `src/`.
+
+**The sharing question, answered:** a relative `import type` from `server/types.ts`, not a
+`paths` alias. `paths` does not merge across `extends`, so declaring one in the client
+tsconfig would clobber the `$lib`/`$app` mappings SvelteKit generates. `server/types.ts`
+imports nothing, so nothing else crosses the boundary, and `import type` is erased before
+Vite sees it. `world.svelte.ts`, `ui.svelte.ts`, `notify.svelte.ts` and `review/api.ts`
+all consume it.
+
+**Import specifiers were left alone.** Both tsc's bundler resolution and Vite map a `.js`
+specifier onto the `.ts` file, so renaming a module never rippled into its importers.
+Verified with a build before relying on it.
+
+**The baseline held:** this was not a bug hunt. What typing did surface, all fixed in
+place: two formatters documented as returning a number that return a breakdown object;
+`pairRenames` annotated as returning nothing; a dead `stat()` whose body contradicted its
+docstring (removed); `ReviewMount`'s `onchangescount` documented but never destructured;
+`hunkState`'s union described only in a cast; and five `querySelector().focus()` sites
+relying on `Element` being wide enough.
 
 ### The baseline, measured — not what you'd assume
 

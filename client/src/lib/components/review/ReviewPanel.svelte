@@ -1,4 +1,5 @@
-<script>
+<script lang="ts">
+  import type { FileHunks } from './api';
   /*
    * The Changes panel: per repo, the branch's commits plus an uncommitted entry, with a
    * diff pane beside it. Self-contained — it owns its own fetching and its own state, and
@@ -35,26 +36,26 @@
     /** Session id from /api/v1/state. */
     sessionId,
     /** Persisted layout choice; the shell may override it. */
-    view = /** @type {'unified'|'split'} */ ('unified'),
+    view = ('unified' as 'unified'|'split'),
   } = $props();
 
   /** How many per-file /hunks requests are in flight at once. Enough to be fast on a
    *  20-file working tree, low enough not to stampede git on a 500-file one. */
   const HUNK_CONCURRENCY = 5;
 
-  let repos = $state(/** @type {import('./api.js').RepoCommits[]} */ ([]));
-  let sel = $state(/** @type {{ repo:string, sha:string }|null} */ (null));
-  let files = $state(/** @type {import('./api.js').DetailFile[]} */ ([]));
+  let repos = $state<import('./api.js').RepoCommits[]>([]);
+  let sel = $state<{ repo:string, sha:string }|null>(null);
+  let files = $state<import('./api.js').DetailFile[]>([]);
   let loadingList = $state(true);
   let loadingDetail = $state(false);
-  let listError = $state(/** @type {string|null} */ (null));
-  let detailError = $state(/** @type {string|null} */ (null));
-  let banner = $state(/** @type {string|null} */ (null));
+  let listError = $state<string|null>(null);
+  let detailError = $state<string|null>(null);
+  let banner = $state<string|null>(null);
 
   /** file → the /hunks payload, or a per-file failure. */
-  const hunkState = new SvelteMap(/** @type {[string, import('./api.js').FileHunks|{ error:string }][]} */ ([]));
-  const busyFiles = new SvelteSet(/** @type {string[]} */ ([]));
-  const collapsed = new SvelteSet(/** @type {string[]} */ ([]));
+  const hunkState = new SvelteMap<string, FileHunks | { error: string }>([]);
+  const busyFiles = new SvelteSet(([] as string[]));
+  const collapsed = new SvelteSet(([] as string[]));
 
   // Every async result is stamped with the request that asked for it. A slower earlier
   // response must never overwrite a faster later one — the classic way a diff pane ends
@@ -101,14 +102,14 @@
         else { sel = null; files = []; }
       }
     } catch (e) {
-      listError = /** @type {Error} */ (e).message;
+      listError = (e as Error).message;
     } finally {
       loadingList = false;
     }
   }
 
   /** @param {string} repo @param {string} sha */
-  async function select(repo, sha) {
+  async function select(repo: any, sha: any) {
     sel = { repo, sha };
     const token = ++detailToken;
     files = [];
@@ -129,7 +130,7 @@
       }
     } catch (e) {
       if (token !== detailToken) return;
-      detailError = /** @type {Error} */ (e).message;
+      detailError = (e as Error).message;
       loadingDetail = false;
     }
   }
@@ -138,7 +139,7 @@
    * Fetch both sides of every working file, a few at a time.
    * @param {string} repo @param {string[]} list @param {number} token
    */
-  async function loadAllHunks(repo, list, token) {
+  async function loadAllHunks(repo: any, list: any, token: any) {
     let next = 0;
     const worker = async () => {
       while (next < list.length && token === detailToken) {
@@ -147,7 +148,7 @@
           const h = await fetchHunks(sessionId, repo, file);
           if (token === detailToken) hunkState.set(file, h);
         } catch (e) {
-          if (token === detailToken) hunkState.set(file, { error: /** @type {Error} */ (e).message });
+          if (token === detailToken) hunkState.set(file, { error: (e as Error).message });
         }
       }
     };
@@ -159,7 +160,7 @@
   /**
    * @param {{ op:'stage'|'unstage', file:string, hunks:number[], expect:string[] }} a
    */
-  async function apply(a) {
+  async function apply(a: any) {
     if (!sel || !isUncommitted || busyFiles.has(a.file) || !a.hunks.length) return;
     busyFiles.add(a.file);
     banner = null;
@@ -170,7 +171,7 @@
       });
       if (token === detailToken) hunkState.set(a.file, res);
     } catch (e) {
-      banner = `${a.op === 'stage' ? 'Stage' : 'Unstage'} failed — ${/** @type {Error} */ (e).message}`;
+      banner = `${a.op === 'stage' ? 'Stage' : 'Unstage'} failed — ${(e as Error).message}`;
       // A refusal usually means the file moved under us. Re-read it so what is on screen
       // is what is on disk before the user tries again.
       try {
@@ -185,13 +186,10 @@
   /* ---------------- the block model the viewport renders ---------------- */
 
   const blocks = $derived.by(() => {
-    /** @type {import('./model.js').Block[]} */
-    const out = files.map((f) => {
-      /** @type {import('./model.js').Group[]} */
-      const groups = [];
-      /** @type {import('./model.js').Note|null} */
-      let note = null;
-      let error = null;
+        const out: import('./model.js').Block[] = files.map((f) => {
+            const groups: import('./model.js').Group[] = [];
+            let note: import('./model.js').Note|null = null;
+      let error: string | null = null;
 
       // The `old => new` half of a rename carries no patch on either route, so it gets
       // its explanation up front and skips the rest — otherwise it renders as a file
@@ -266,7 +264,7 @@
   }
 
   /** @param {string} file */
-  function toggleFile(file) {
+  function toggleFile(file: any) {
     if (collapsed.has(file)) collapsed.delete(file); else collapsed.add(file);
   }
 

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The rail: repo filter, four sections, count footer.
    *
@@ -27,7 +27,7 @@
   const agents = $derived(ui.visibleAgents);
   const mains = $derived(ui.visibleMainServers);
 
-  const sessionless = $derived(feats.filter((/** @type {any} */ f) => !f.session).length);
+  const sessionless = $derived(feats.filter((f: any) => !f.session).length);
   const empty = $derived(!feats.length && !agents.length && !mains.length);
 </script>
 

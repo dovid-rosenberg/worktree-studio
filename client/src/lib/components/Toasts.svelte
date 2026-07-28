@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /* Bottom-right toast stack. Keyed by id so an expiring toast doesn't renumber the
      rest and restart their fade. */
   import { toasts } from '$lib/stores/toasts.svelte.js';

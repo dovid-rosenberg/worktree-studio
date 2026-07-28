@@ -1,4 +1,5 @@
-<script>
+<script lang="ts">
+  import type { Commit } from './api';
   /*
    * Left column: every uncommitted entry (one per repo with working changes) pinned at
    * the top, then each repo's commits newest first under a repo header. Order matches
@@ -17,16 +18,15 @@
     onselect = () => {},
   } = $props();
 
-  let list = $state(/** @type {HTMLElement|null} */ (null));
+  let list = $state<HTMLElement|null>(null);
 
-  /**
-   * @typedef {{ t:'hd', key:string, label:string }
-   *         | { t:'unc', key:string, repo:string, u:{ fileCount:number, added:number, deleted:number } }
-   *         | { t:'commit', key:string, repo:string, c:import('./api.js').Commit }} Entry
-   */
+
+  type Entry =
+    | { t: 'hd'; key: string; label: string }
+    | { t: 'unc'; key: string; repo: string; u: { fileCount: number; added: number; deleted: number } }
+    | { t: 'commit'; key: string; repo: string; c: Commit };
   const rendered = $derived.by(() => {
-    /** @type {Entry[]} */
-    const out = [];
+        const out: Entry[] = [];
     const withUnc = repos.filter((r) => r.uncommitted && r.uncommitted.fileCount > 0);
     if (withUnc.length) {
       out.push({ t: 'hd', key: 'hd:unc', label: 'Uncommitted' });
@@ -54,10 +54,10 @@
   const anyUnc = $derived(rendered.some((e) => e.t === 'unc'));
 
   /** ↑/↓ walk the rendered rows in DOM order, which is exactly the visual order. */
-  function onKeydown(/** @type {KeyboardEvent} */ e) {
+  function onKeydown(e: KeyboardEvent) {
     if (!list || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
-    const els = /** @type {HTMLElement[]} */ ([...list.querySelectorAll('button.crow')]);
-    const i = els.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+    const els = /** @type {HTMLElement[]} */ ([...list.querySelectorAll<HTMLElement>('button.crow')]);
+    const i = els.indexOf((document.activeElement as HTMLElement));
     const next = els[(i < 0 ? 0 : i + (e.key === 'ArrowDown' ? 1 : -1))];
     if (!next) return;
     e.preventDefault();

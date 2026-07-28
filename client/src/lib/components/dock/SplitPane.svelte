@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The split pane: a SECOND, independent terminal beside the primary, backed by the
    * standalone `<muxName>-split` session. Nothing mirrors — it has its own window list,
@@ -20,10 +20,9 @@
    */
   let { sessionId } = $props();
 
-  /** @type {{title:string, active?:boolean}[]} */
-  let tabs = $state([]);
+    let tabs: {title:string, active?:boolean}[] = $state([]);
   let activeIndex = $state(0);
-  let term = $state(/** @type {any} */ (null));
+  let term = $state<any>(null);
   let busyAdd = $state(false);
 
   const shown = $derived(tabs.length ? tabs : [{ title: 'shell' }]);
@@ -33,7 +32,7 @@
    * if it does not exist yet, so this runs before the socket attaches.
    * @param {string} id
    */
-  async function fetchTabs(id) {
+  async function fetchTabs(id: any) {
     try {
       const r = await api('GET', `/api/sessions/${id}/split/tabs`);
       tabs = r.tabs || [];
@@ -46,12 +45,12 @@
   $effect(() => { fetchTabs(sessionId); });
 
   /** @param {number} i */
-  async function select(i) {
+  async function select(i: any) {
     activeIndex = i;
     try {
       await api('POST', `/api/sessions/${sessionId}/split/select-tab`, { index: i });
       term?.focus();
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast((e as Error).message, true); }
   }
 
   async function add() {
@@ -62,16 +61,16 @@
       await fetchTabs(sessionId);
       activeIndex = Math.max(0, tabs.length - 1);
       await api('POST', `/api/sessions/${sessionId}/split/select-tab`, { index: activeIndex });
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast((e as Error).message, true); }
     finally { busyAdd = false; }
   }
 
   /** @param {number} i */
-  async function close(i) {
+  async function close(i: any) {
     try {
       await api('POST', `/api/sessions/${sessionId}/split/close-tab`, { index: i });
       await fetchTabs(sessionId);
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast((e as Error).message, true); }
   }
 </script>
 

@@ -24,9 +24,15 @@
  * the server shipped when this file was written, and they exist only so a chart that
  * renders before the first response has something coherent to draw. The first payload
  * with a `pricing` block replaces them.
- * @type {{ input: number, cacheWrite5m: number, cacheWrite1h: number, cacheRead: number }}
  */
-export const billingMultipliers = $state({
+export interface BillingMultipliers {
+  input: number;
+  cacheWrite5m: number;
+  cacheWrite1h: number;
+  cacheRead: number;
+}
+
+export const billingMultipliers = $state<BillingMultipliers>({
   input: 1,
   cacheWrite5m: 1.25,
   cacheWrite1h: 2,
@@ -38,12 +44,11 @@ export const billingMultipliers = $state({
  * (/transcripts/status, /transcripts/usage, /sessions/:id/transcript/usage).
  * Ignores a payload without them, so an older daemon degrades to the bootstrap
  * values rather than to zeros.
- * @param {{ cacheMultipliers?: Record<string, unknown> }|null|undefined} pricing
  */
-export function adoptPricing(pricing) {
+export function adoptPricing(pricing: { cacheMultipliers?: Record<string, unknown> } | null | undefined): void {
   const m = pricing && pricing.cacheMultipliers;
   if (!m || typeof m !== 'object') return;
-  for (const key of /** @type {(keyof typeof billingMultipliers)[]} */ (Object.keys(billingMultipliers))) {
+  for (const key of Object.keys(billingMultipliers) as (keyof BillingMultipliers)[]) {
     const v = Number(m[key]);
     // A missing or non-numeric member keeps its current value: a partial block must
     // not zero out a multiplier and quietly erase a whole class from the chart.

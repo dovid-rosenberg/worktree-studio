@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * A feature in Fleet: a two-line row — the decision line (what state is it in, what
    * would I do next) and the stack line (which repos, which branches, which ports).
@@ -17,15 +17,15 @@
 
   let { feature } = $props();
 
-  const ms = $derived(feature.members.filter((/** @type {any} */ m) => m && !m.missing));
-  const anyRunning = $derived(ms.some((/** @type {any} */ m) => m.running));
-  const anyStartable = $derived(ms.some((/** @type {any} */ m) => m.canStart && !m.running));
+  const ms = $derived(feature.members.filter((m: any) => m && !m.missing));
+  const anyRunning = $derived(ms.some((m: any) => m.running));
+  const anyStartable = $derived(ms.some((m: any) => m.canStart && !m.running));
   const sess = $derived(feature.session); // one session per feature
   const isPending = $derived(pending.has(feature.name));
   const webApps = $derived(webAppsFor(ms));
 
   let menuOpen = $state(false);
-  let moreBtn = $state(/** @type {HTMLElement|null} */ (null));
+  let moreBtn = $state<HTMLElement|null>(null);
 
   const menuItems = $derived([
     { label: 'Open in editor', run: () => openGroup(feature.name) },
@@ -37,7 +37,7 @@
   ]);
 
   /** @param {any} m */
-  const memberState = (m) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
+  const memberState = (m: any) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
 </script>
 
 <div class="frow">
@@ -97,7 +97,7 @@
         <span class="r">{m.repo}</span>
         <span class="br">{m.branch || m.wtname}</span>
         {#if (m.ports || []).length}
-          <span class="p">{m.ports.map((/** @type {number} */ p) => ':' + p).join(' ')}</span>
+          <span class="p">{m.ports.map((p: number) => ':' + p).join(' ')}</span>
         {/if}
         {#if m.merged}<span class="badge merged">✓ merged</span>{/if}
       </span>

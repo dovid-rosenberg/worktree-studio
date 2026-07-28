@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The dock's tab strip: one tab per multiplexer window, plus the DOM panels that are
    * not tmux windows at all (✎ Changes, ▤ Logs, ◔ Insights), plus new-tab / pop-out /

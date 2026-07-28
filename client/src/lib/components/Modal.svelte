@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The shared overlay chrome: backdrop, click-outside-to-close, focus trap, focus
    * restore. Every overlay in the app (intake, settings, dialogs, palette) is this
@@ -22,7 +22,7 @@
   } = $props();
 
   /** @param {MouseEvent} e */
-  function onBackdrop(e) {
+  function onBackdrop(e: any) {
     // Only a click on the backdrop itself — not one that bubbled out of the panel.
     if (e.target === e.currentTarget) onclose?.();
   }

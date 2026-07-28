@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // "Where did the money go" — one row per feature or per session, ranked by cost.
   //
   // Form: emphasis, not categorical. There is one measure here and the rows are nominal

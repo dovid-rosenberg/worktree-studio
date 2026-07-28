@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // The cost disclosure.
   //
   // Every cost figure in Studio is derived: Claude Code transcripts record tokens and
