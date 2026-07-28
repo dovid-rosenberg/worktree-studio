@@ -2,13 +2,14 @@
 // Asana tasks via the REST API (personal access token in config).
 function cfgOf(cfg) { return (cfg.sources && cfg.sources.asana) || {}; }
 
+/** @returns {Promise<any>} the Asana envelope's `data` — shape varies by endpoint */
 async function api(cfg, pathAndQuery) {
   const a = cfgOf(cfg);
   const res = await fetch(`https://app.asana.com/api/1.0${pathAndQuery}`, {
     headers: { Authorization: `Bearer ${a.token}` },
   });
   if (!res.ok) throw new Error(`Asana API ${res.status}`);
-  return (await res.json()).data;
+  return /** @type {any} */ (await res.json()).data;
 }
 
 module.exports = {

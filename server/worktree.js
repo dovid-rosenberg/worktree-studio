@@ -128,10 +128,17 @@ async function defaultBase(repoPath) {
 
 /**
  * Create a worktree. Returns { ok, path, branch, name, base, created, copied, warnings, error }.
+ * @param {string} repoPath  main checkout the worktree is added to
  * @param {string} branch  branch name (created off default base if it doesn't exist)
  * @param {string} name    worktree dir name (defaults from branch)
- * @param {object} opts    { unique, fetch, fetchTimeoutMs, copyPatterns, copyAlways, layout }
- *                         layout: a server/layout.js descriptor; defaults to nested `.worktrees`
+ * @param {object} [opts]
+ * @param {boolean} [opts.unique]          auto-suffix on collision instead of failing
+ * @param {boolean} [opts.fetch]           false skips the pre-add fetch
+ * @param {number}  [opts.fetchTimeoutMs]
+ * @param {string[]} [opts.copyPatterns]   gitignored files to seed into the new checkout
+ * @param {string[]} [opts.copyAlways]
+ * @param {ReturnType<typeof layoutMod.resolve>} [opts.layout]
+ *                         a server/layout.js descriptor; defaults to nested `.worktrees`
  */
 async function create(repoPath, branch, name, opts = {}) {
   const warnings = [];

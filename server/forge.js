@@ -123,6 +123,15 @@ function pushFailureLine(r) {
 // `onChanged` is how the push side (server/ci.js) hears that *this* module just did
 // something that changes a branch's PR state — opening one. Everything else that can
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
+/**
+ * @param {object} [deps]
+ * @param {InstanceType<typeof import('./sessions').SessionManager>} [deps.manager]
+ * @param {(name: string) => Promise<{ group?: any }>} [deps.resolveGroup]
+ * @param {typeof PROVIDERS} [deps.providers]
+ * @param {(p: any) => boolean} [deps.isInstalled]
+ * @param {typeof pushBranchToOrigin} [deps.pushBranch]
+ * @param {() => void} [deps.onChanged]
+ */
 function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), pushBranch = pushBranchToOrigin, onChanged = () => {} } = {}) {
   const installed = providers.filter(isInstalled);
   const installedSet = new Set(installed); // membership test for failure attribution
@@ -196,6 +205,10 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   }
 
   // `app` here is the API router — server.js mounts it at both /api and /api/v1.
+  /**
+   * @param {import('express').Router} app
+   * @param {{ manager?: InstanceType<typeof import('./sessions').SessionManager>, resolveGroup?: (name: string) => Promise<{ group?: any }> }} [deps]
+   */
   function register(app, deps = {}) {
     const mgr = deps.manager || manager;
     const resolve = deps.resolveGroup || resolveGroup;

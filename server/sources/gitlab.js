@@ -7,6 +7,7 @@ const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.
 
 function cfgOf(cfg) { return (cfg.sources && cfg.sources.gitlab) || {}; }
 
+/** @returns {Promise<any>} decoded GitLab JSON — shape varies by endpoint */
 async function rest(cfg, pathAndQuery) {
   const g = cfgOf(cfg);
   const host = (g.host || 'https://gitlab.com').replace(/\/$/, '');

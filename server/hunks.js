@@ -93,6 +93,14 @@ function unstageableReason(fd, scope) {
 // diff is re-read here, so between the client rendering it and this call the file may
 // have moved under us; without the guard a stale index would silently stage the WRONG
 // hunk. With it we refuse and tell the caller to reload.
+/**
+ * @param {string} worktreePath
+ * @param {object} [sel]
+ * @param {string} [sel.file]                repo-relative path
+ * @param {number|string|Array<number|string>} [sel.hunks] index(es) into that file's diff
+ * @param {boolean} [sel.reverse]            true unstages instead of staging
+ * @param {string|string[]} [sel.expect]     the `@@` header(s) the caller rendered
+ */
 async function apply(worktreePath, { file, hunks, reverse = false, expect } = {}) {
   if (!file) return { ok: false, error: 'file is required' };
   const scope = reverse ? 'staged' : 'unstaged';

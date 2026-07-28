@@ -27,7 +27,7 @@ if (cmd === 'add-repo') {
   fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/add-repo`, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-wts-token': token }, body,
   }).then(async (r) => {
-    const data = await r.json().catch(() => ({}));
+    const data = /** @type {any} */ (await r.json().catch(() => ({})));
     if (!r.ok || data.ok === false) { console.error(`add-repo failed: ${data.error || r.statusText}`); process.exit(1); }
     const wt = data.worktree ? data.worktree.path : '(already added)';
     console.log(`Added ${repo} to this feature → ${wt}\nYou now have access to it (via /add-dir). Do that repo's changes in the worktree above.`);

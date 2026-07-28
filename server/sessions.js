@@ -140,6 +140,7 @@ class SessionManager extends EventEmitter {
     return s.worktree || (primary && primary.worktree) || s.suggestedName || s.feature;
   }
 
+  /** @param {*} session @param {{ resume?: boolean }} [opts] */
   claudeCmd(session, { resume } = {}) {
     // Launch claude clean. On a FRESH launch the single-line seed rides along as
     // claude's final positional arg (see below) — no post-launch typing race. On
@@ -291,6 +292,12 @@ class SessionManager extends EventEmitter {
   }
 
   // Start a session in a worktree that already exists (no promote step).
+  /**
+   * Open a session on a worktree that already exists on disk (Fleet's "Start
+   * session here"). `seed` is optional: without one the worktree name is the title.
+   * @param {{ worktreePath: string, repoName: string, repoPath: string,
+   *           branch?: string, wtname?: string, seed?: any }} args
+   */
   async adopt({ worktreePath, repoName, repoPath, branch, wtname, seed }) {
     // dedup: never open two sessions for the same worktree, even on concurrent calls
     const existing = this.sessionForWorktree(worktreePath);
@@ -341,6 +348,7 @@ class SessionManager extends EventEmitter {
     } catch { return []; }
   }
 
+  /** @param {string} id @param {{ branch?: string, name?: string, confirm?: boolean }} [opts] */
   async promote(id, { branch, name, confirm } = {}) {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
@@ -386,6 +394,7 @@ class SessionManager extends EventEmitter {
     return { ok: true, session: s, worktree: res };
   }
 
+  /** @param {string} id @param {{ title?: string, cmd?: string }} [opts] */
   async addTab(id, { title, cmd } = {}) {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };

@@ -7,7 +7,12 @@
 // booting a daemon. `spawn` is injectable for exactly that reason.
 const pty = require('node-pty');
 
-function createTerminalHandler({ manager, spawn = pty.spawn } = {}) {
+/**
+ * @param {object} deps
+ * @param {InstanceType<typeof import('./sessions').SessionManager>} deps.manager
+ * @param {typeof pty.spawn} [deps.spawn]
+ */
+function createTerminalHandler({ manager, spawn = pty.spawn }) {
   return async function onConnection(ws, req) {
     const url = new URL(req.url, 'http://localhost');
     const id = url.searchParams.get('session');

@@ -51,6 +51,7 @@ module.exports = {
     return (await T(['has-session', '-t', `=${name}`])).code === 0;
   },
 
+  /** @param {string} name @param {{ cwd?: string, cmd?: string, env?: Record<string, any> }} [opts] */
   async ensure(name, { cwd, cmd, env } = {}) {
     if (await this.hasSession(name)) return { created: false };
     // Pass env in new-session itself (-e KEY=VAL, tmux ≥3.2) so window 0's shell —
@@ -73,6 +74,7 @@ module.exports = {
   //    "another terminal" in the same worktree, with its own independent tabs, so
   //    nothing mirrors the primary. Call ensureSplit(name, {cwd}) first.
   //  - default: attach the embedded primary client to the session.
+  /** @param {string} name @param {{ popout?: boolean, group?: string }} [opts] */
   attachSpawn(name, { popout = false, group } = {}) {
     const base = ['-L', SOCK];
     if (popout) {
@@ -87,12 +89,14 @@ module.exports = {
   // Ensure the standalone `-split` session exists with its own shell window. It is
   // independent of the primary (not grouped): its own tabs, no shared windows. Tab
   // ops (newTab/selectTab/closeTab/listTabs) target `${name}-split` and just work.
+  /** @param {string} name @param {{ cwd?: string }} [opts] */
   async ensureSplit(name, { cwd } = {}) {
     if (await this.hasSession(`${name}-split`)) return;
     await T(['new-session', '-d', '-s', `${name}-split`, '-n', 'shell', '-x', '220', '-y', '50', '-c', cwd || process.env.HOME]);
     await T(['set-option', '-t', `${name}-split`, 'remain-on-exit', 'off']);
   },
 
+  /** @param {string} name @param {{ title?: string, cwd?: string, cmd?: string }} [opts] */
   async newTab(name, { title, cwd, cmd } = {}) {
     const r = await T(['new-window', '-t', name, '-n', title || 'shell', '-c', cwd || process.env.HOME]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() };

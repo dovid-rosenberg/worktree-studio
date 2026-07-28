@@ -119,7 +119,9 @@ function scan(file, opts = {}, onRecord) {
       }
     };
 
-    stream.on('data', (chunk) => {
+    // No encoding is set on the stream, so every chunk is a Buffer — which is what
+    // lets us find the newline by byte and slice without re-decoding.
+    stream.on('data', (/** @type {Buffer} */ chunk) => {
       pending.push(chunk);
       pendingLen += chunk.length;
       if (chunk.indexOf(NL) === -1) return; // no line boundary yet — keep buffering
