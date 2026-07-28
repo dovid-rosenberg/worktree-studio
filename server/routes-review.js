@@ -60,6 +60,9 @@ function register(app, deps) {
     const r = resolveWorktree(deps, req, req.query.repo);
     if (r.error) return res.status(r.status).json({ error: r.error });
     const sha = req.query.sha || 'uncommitted';
+    // Reject at the boundary, so a `sha` that is really a git option never reaches
+    // an argv (see review.js). A bad request is a 400, not a 500.
+    if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
     const detail = await review.commitDetail(r.entry.worktreePath, defaultBranchOf(r.entry.repo), sha);
     res.json({ repo: r.entry.repo, worktreePath: r.entry.worktreePath, sha, files: detail.files });
   });

@@ -7,6 +7,25 @@ const path = require('path');
 const { git, gitFull } = require('./util');
 const { parsePatch } = require('./diff');
 
+// A commit-ish that arrived in a query string is not a positional argument until it
+// has been proved to be one.
+//
+// `git show --format= --numstat -z <sha>` spliced `sha` in bare, so a `?sha=` of
+// `--output=/tmp/anything` was read by git as an OPTION: it exits 0 and truncates
+// that path. `GET /sessions/:id/diff` and `GET /sessions/:id/commit-detail` both
+// feed it straight from the query string, so a GET could overwrite an arbitrary
+// file. The boot token gates it, but a GET that writes to the filesystem is the
+// wrong shape regardless — it lands in logs and shell history, and it would be
+// reachable from an <img> tag if the Origin gate ever regressed.
+//
+// Two independent defences, because either alone is one mistake from being the
+// whole protection:
+//   - the value has to look like an object name (or the literal 'uncommitted'), and
+//   - every command gets `--` after it, so git stops parsing options at that point.
+const SHA_RE = /^[0-9a-f]{4,40}$/i;
+
+function isValidSha(sha) { return sha === 'uncommitted' || SHA_RE.test(String(sha == null ? '' : sha)); }
+
 // The review baseline: the merge-base of HEAD with the default branch. A branch is
 // often cut from origin/<default> while the LOCAL <default> ref lags behind — basing
 // on the stale local ref drags in commits already on the mainline (the classic "why
@@ -158,18 +177,21 @@ async function commits(worktreePath, defaultBranch) {
 // files at once and filter to one client-side without another round-trip.
 async function commitDetail(worktreePath, defaultBranch, sha) {
   if (sha === 'uncommitted') return workingDetail(worktreePath);
+  // Last line of defence — the routes reject this with a 400 first, but nothing
+  // downstream of here should ever have to wonder whether `sha` is a flag.
+  if (!isValidSha(sha)) throw new Error(`invalid commit sha: ${String(sha).slice(0, 60)}`);
   const byPath = new Map();
   const get = (f) => {
     if (!byPath.has(f)) byPath.set(f, { file: f, status: 'M', added: 0, deleted: 0 });
     return byPath.get(f);
   };
-  for (const r of parseNumstatZ(await git(worktreePath, ['show', '--format=', '--numstat', '-z', sha]))) {
+  for (const r of parseNumstatZ(await git(worktreePath, ['show', '--format=', '--numstat', '-z', sha, '--']))) {
     const e = get(r.file);
     e.added = r.added;
     e.deleted = r.deleted;
     if (r.oldFile) e.oldFile = r.oldFile;
   }
-  for (const r of parseNameStatusZ(await git(worktreePath, ['show', '--format=', '--name-status', '-z', sha]))) {
+  for (const r of parseNameStatusZ(await git(worktreePath, ['show', '--format=', '--name-status', '-z', sha, '--']))) {
     const e = get(r.file);
     e.status = r.status;
     if (r.oldFile) e.oldFile = r.oldFile;
@@ -214,4 +236,4 @@ async function commit(worktreePath, message, { amend, paths } = {}) {
   return { ok: true, sha: await git(worktreePath, ['rev-parse', 'HEAD']) };
 }
 
-module.exports = { base, working, commits, commitDetail, commit };
+module.exports = { base, working, commits, commitDetail, commit, isValidSha };

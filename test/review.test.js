@@ -271,3 +271,44 @@ test('commitDetail() reports a committed rename once, with a parsed diff', async
   assert.equal(files[0].file, 'new.js');
   assert.ok(!files.some((f) => f.file.includes('=>')), 'no phantom entry');
 });
+
+// ---------------------------------------------------------------------------
+// `sha` reaches a git argv, so it is untrusted input until proved otherwise
+//
+// `git show --format= --numstat -z <sha>` spliced it in bare, and both callers
+// feed it straight from a query string — so `?sha=--output=/tmp/x` was read by
+// git as an OPTION, exited 0 and truncated that path. A GET that writes to the
+// filesystem is the wrong shape whatever gates sit in front of it.
+// ---------------------------------------------------------------------------
+
+test('a sha that is really a git option cannot write a file', async () => {
+  const { dir } = tempRepo();
+  const victim = path.join(os.tmpdir(), `wts-victim-${process.pid}-${Date.now()}.txt`);
+  fs.rmSync(victim, { force: true });
+
+  await assert.rejects(
+    () => review.commitDetail(dir, 'main', `--output=${victim}`),
+    /invalid commit sha/,
+  );
+  assert.equal(fs.existsSync(victim), false, `git wrote ${victim} — the option reached the argv`);
+
+  fs.rmSync(victim, { force: true });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('isValidSha accepts object names and "uncommitted", and nothing else', () => {
+  for (const good of ['uncommitted', 'abcd', 'a1b2c3d4', 'f'.repeat(40), 'DEADBEEF']) {
+    assert.equal(review.isValidSha(good), true, good);
+  }
+  for (const bad of ['--output=/tmp/x', '-n', 'HEAD', 'main', 'abc', 'f'.repeat(41), '', null, undefined, 'abc def', '../etc']) {
+    assert.equal(review.isValidSha(bad), false, String(bad));
+  }
+});
+
+test('a real sha still resolves, with the option terminator in place', async () => {
+  const { dir, commitSha } = tempRepo();
+  const detail = await review.commitDetail(dir, 'main', commitSha);
+  assert.deepEqual(detail.files.map((f) => f.file), ['committed.txt']);
+  assert.ok(detail.files[0].diff.includes('committed work'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});

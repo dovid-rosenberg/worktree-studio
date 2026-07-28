@@ -428,7 +428,11 @@ async function main() {
     const entry = (s.repos || []).find((r) => r.repo === req.query.repo);
     if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     const repoObj = repos.find((r) => r.name === entry.repo);
-    res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, req.query.sha || 'uncommitted'));
+    const sha = req.query.sha || 'uncommitted';
+    // Same boundary check as routes-review.js: `sha` reaches a git argv, so it has
+    // to be an object name and not an option (see server/review.js).
+    if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
+    res.json(await review.commitDetail(entry.worktreePath, repoObj && repoObj.defaultBranch, sha));
   }));
 
   api.post('/sessions/:id/commit', A(async (req, res) => {
