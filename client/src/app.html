@@ -13,6 +13,19 @@
         if (t) document.documentElement.setAttribute('data-theme', t);
       } catch (e) {}
     </script>
+    <!-- The boot token, substituted into this document when it is served. It can only be
+         delivered this way: the tab has no other channel, and any endpoint that handed it
+         out would also hand it to a cross-origin <script src>. Reading this document
+         cross-origin is what browsers forbid, and the Host/Origin gate in
+         server/security.js is what stops a DNS-rebinding page from reading it either.
+
+         adapter-static copies this file to build/index.html verbatim, so the daemon's
+         EXISTING single-line injector in server.js works on it unchanged; only the path
+         it reads has to move. NOTE that injector is a single `String.replace`, so the
+         placeholder below must appear exactly ONCE in this file — do not spell it out
+         anywhere else, comments included. Dev has no daemon in front of it and gets the
+         token from Vite instead (see api.js). -->
+    <script>window.WTS_TOKEN = "__WTS_TOKEN__";</script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
