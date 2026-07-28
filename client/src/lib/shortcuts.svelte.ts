@@ -18,7 +18,7 @@ import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
 import { promote, startSessionServers } from '$lib/ops.svelte.js';
 
-const ROWS = [
+const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
   ['⌘N', 'New session'],
   ['⌘\\', 'Toggle the Overview pane'],
@@ -29,20 +29,18 @@ const ROWS = [
   ['?', 'This help'],
 ];
 
-export function showShortcuts() {
+export function showShortcuts(): void {
   const html = `<div class="kbd-list">${ROWS.map(([k, d]) => `<div class="kbd-row"><kbd>${k}</kbd><span>${d}</span></div>`).join('')}</div>`;
   uiDialog({ title: 'Keyboard shortcuts', messageHtml: html, okLabel: 'Done', cancelLabel: '' });
 }
 
-/** @param {EventTarget|null} el */
-function isTypingTarget(el) {
+function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
   const tag = el.tagName;
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
-/** @param {KeyboardEvent} e */
-export function handleShortcut(e) {
+export function handleShortcut(e: KeyboardEvent): void {
   const meta = e.metaKey || e.ctrlKey;
 
   if (meta && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); overlays.togglePalette(); return; }
@@ -63,7 +61,7 @@ export function handleShortcut(e) {
     if (!pick) return;
     e.preventDefault();
     if (pick.id) ui.goToSession(pick.id);
-    else ui.selectFeature(world.features.find((/** @type {any} */ f) => f.name === pick.name));
+    else ui.selectFeature(world.features.find((f) => f.name === pick.name));
     return;
   }
   if (e.key === 'Enter') { if (s && !s.worktreePath) { e.preventDefault(); promote(s); } return; }
