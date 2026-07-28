@@ -23,6 +23,7 @@ const { createForge } = require('./forge');
 const { createCiFeed } = require('./ci');
 const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
+const crash = require('./crash');
 const { run, has, shq, A } = require('./util');
 
 async function main() {
@@ -610,8 +611,12 @@ async function main() {
   });
 
   // ---- boot ----
-  process.on('unhandledRejection', (e) => console.error('[wt-studio] unhandledRejection', e));
-  process.on('uncaughtException', (e) => console.error('[wt-studio] uncaughtException', e));
+  // Crash policy lives in server/crash.js: fatal by default, with one narrow
+  // exemption for errors confined to an already-dead client socket.
+  crash.install();
+  // A failed bind has to kill the process. Without this the 'error' event has no
+  // listener, Node re-throws it, and the daemon runs on with no HTTP server.
+  crash.guardListen(server, { host: cfg.web.host, port: cfg.web.port });
   await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   const restored = await manager.restore().catch(() => 0);
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
