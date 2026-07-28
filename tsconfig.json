@@ -1,0 +1,29 @@
+{
+  // Type-checking only. Node 22 strips TypeScript syntax natively, so nothing
+  // here ever emits — `npm start` stays `node server/server.js`. Keep the
+  // syntax erasable (no enum/namespace/parameter properties/decorators) or the
+  // runtime will refuse to load the file.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+
+    // Phase 3 turns this on. Until then the goal is "zero errors at the level
+    // the code was written for", not a null-safety audit.
+    "strict": false,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["server/**/*", "test/**/*", "bin/**/*"],
+  "exclude": ["node_modules", "client", "public"]
+}

@@ -13,6 +13,7 @@
   "scripts": {
     "start": "node server/server.js",
     "build": "node bin/build-client.js",
+    "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.js",
     "vendor": "node bin/vendor.js",
     "fix-pty": "node bin/fix-pty.js",
@@ -25,5 +26,11 @@
     "express": "^5.2.1",
     "node-pty": "^1.0.0",
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "26.1.1",
+    "@types/ws": "8.18.1",
+    "typescript": "7.0.2"
   }
 }
