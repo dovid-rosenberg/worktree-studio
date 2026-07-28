@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // What the search index is currently capable of, said plainly.
   //
   // Search runs over a corpus that is still being appended to, and the index behind it

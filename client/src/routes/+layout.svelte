@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The application shell's outermost frame.
    *

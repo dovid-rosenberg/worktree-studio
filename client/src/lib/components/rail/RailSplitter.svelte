@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The drag handle between rail and dock.
    *
@@ -15,29 +15,29 @@
   let dragging = $state(false);
 
   /** @param {PointerEvent} e */
-  function down(e) {
+  function down(e: any) {
     dragging = true;
-    /** @type {HTMLElement} */ (e.currentTarget).setPointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     e.preventDefault();
   }
 
   /** @param {PointerEvent} e */
-  function move(e) {
+  function move(e: any) {
     if (!dragging) return;
     // The rail starts at the viewport's left edge, so clientX IS the width.
     ui.railWidth = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.round(e.clientX)));
   }
 
   /** @param {PointerEvent} e */
-  function up(e) {
+  function up(e: any) {
     if (!dragging) return;
     dragging = false;
-    /** @type {HTMLElement} */ (e.currentTarget).releasePointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     ui.setRailWidth(ui.railWidth); // clamp + persist once, at the end of the gesture
   }
 
   /** @param {KeyboardEvent} e */
-  function key(e) {
+  function key(e: any) {
     const step = e.shiftKey ? 40 : 12;
     if (e.key === 'ArrowLeft') { e.preventDefault(); ui.setRailWidth(ui.railWidth - step); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); ui.setRailWidth(ui.railWidth + step); }

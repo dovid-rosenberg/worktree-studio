@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * Live dev-server tail. `GET /api/servers/logs?worktreePath=&offset=` returns the
    * bytes after `offset`, so this is a byte-offset poll rather than a stream.
@@ -20,14 +20,13 @@
   const repos = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
   let selectedPath = $state('');
   let follow = $state(true);
-  /** @type {{id:number, text:string, cls:string, partial:boolean}[]} */
-  let lines = $state([]);
+    let lines: {id:number, text:string, cls:string, partial:boolean}[] = $state([]);
   let tailing = $state(false);
-  let body = $state(/** @type {HTMLElement|null} */ (null));
+  let body = $state<HTMLElement|null>(null);
 
   let lineId = 0;
   /** Byte offset already consumed for the current worktree. */
-  let offset = /** @type {number|undefined} */ (undefined);
+  let offset = (undefined as number|undefined);
   /** Trailing incomplete line, prepended to the next chunk. */
   let partial = '';
 
@@ -35,8 +34,8 @@
   // server, else the first — the same fallback order the old panel used.
   $effect(() => {
     const list = repos;
-    if (list.some((/** @type {any} */ r) => r.worktreePath === selectedPath)) return;
-    const pick = list.find((/** @type {any} */ r) => r.running) || list[0];
+    if (list.some((r: any) => r.worktreePath === selectedPath)) return;
+    const pick = list.find((r: any) => r.running) || list[0];
     selectedPath = pick ? pick.worktreePath : '';
   });
 
@@ -48,7 +47,7 @@
     if (!path) { tailing = false; return; }
     let alive = true;
     /** @type {ReturnType<typeof setTimeout>|undefined} */
-    let timer;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     tailing = true;
     const tick = async () => {
       const el = body;
@@ -70,7 +69,7 @@
   });
 
   /** @param {string} chunk */
-  function append(chunk) {
+  function append(chunk: any) {
     const combined = partial + chunk;
     const parts = combined.split('\n');
     partial = parts.pop() ?? '';
@@ -82,7 +81,7 @@
   }
 
   /** Light level colouring, matching the old regexes exactly. @param {string} raw */
-  function classify(raw) {
+  function classify(raw: any) {
     let cls = '';
     if (/(error|fatal|exception|failed|✗|\bECONN)/i.test(raw)) cls = 'e';
     else if (/(warn|deprecated)/i.test(raw)) cls = 'w';
@@ -91,13 +90,13 @@
   }
 
   /** @param {any} r */
-  function optionLabel(r) {
-    const ports = (r.ports && r.ports.length) ? ' ' + r.ports.map((/** @type {number} */ p) => ':' + p).join(' ') : '';
+  function optionLabel(r: any) {
+    const ports = (r.ports && r.ports.length) ? ' ' + r.ports.map((p: number) => ':' + p).join(' ') : '';
     return `${r.repo}${ports}${r.running ? '' : ' (stopped)'}`;
   }
 
   /** Leading timestamp is dimmed; everything else is plain text. @param {string} t */
-  function splitTs(t) {
+  function splitTs(t: any) {
     const m = t.match(/^\s*(\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?)/);
     return m ? { ts: m[1], rest: t.slice(m[0].length) } : { ts: '', rest: t };
   }

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The Insights view: fleet-wide token and cost telemetry, as a peer of Overview.
    *
@@ -20,7 +20,7 @@
 </script>
 
 <div class="fleetinsights">
-  <UsagePanel sessionId={seed} onselect={(/** @type {string} */ id) => ui.goToSession(id)} />
+  <UsagePanel sessionId={seed} onselect={(id: string) => ui.goToSession(id)} />
 </div>
 
 <style>

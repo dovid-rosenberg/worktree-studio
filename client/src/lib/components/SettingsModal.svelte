@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * Connections & settings. Reads GET /api/settings on open and writes the whole form
    * back with POST /api/settings on save.
@@ -30,12 +30,9 @@
   // otherwise deleting row 2 of 4 re-seeds the inputs of rows 3 and 4 with each other's
   // values, which is exactly the class of bug this port exists to remove.
   let rowKey = 0;
-  /** @type {{key:number, repo:string, cmd:string, ports:string}[]} */
-  let startRows = $state([]);
-  /** @type {{key:number, name:string, open:string, openGroup:string}[]} */
-  let editorRows = $state([]);
-  /** @type {{key:number, name:string, members:string}[]} */
-  let groupRows = $state([]);
+    let startRows: {key:number, repo:string, cmd:string, ports:string}[] = $state([]);
+    let editorRows: {key:number, name:string, open:string, openGroup:string}[] = $state([]);
+    let groupRows: {key:number, name:string, members:string}[] = $state([]);
 
   $effect(() => {
     let alive = true;
@@ -54,23 +51,23 @@
         startRows = Object.entries(d.start || {}).map(([repo, v]) => ({
           key: ++rowKey,
           repo,
-          cmd: (v && /** @type {any} */ (v).cmd) || '',
-          ports: (((v && /** @type {any} */ (v).ports) || [])).join(' '),
+          cmd: (v && (v as any).cmd) || '',
+          ports: (((v && (v as any).ports) || [])).join(' '),
         }));
         editorRows = Object.entries(d.editors || {}).map(([name, v]) => ({
           key: ++rowKey,
           name,
-          open: (v && /** @type {any} */ (v).open) || '',
-          openGroup: (v && /** @type {any} */ (v).openGroup) || '',
+          open: (v && (v as any).open) || '',
+          openGroup: (v && (v as any).openGroup) || '',
         }));
-        groupRows = (d.groups || []).map((/** @type {any} */ g) => ({
+        groupRows = (d.groups || []).map((g: any) => ({
           key: ++rowKey,
           name: g.name || '',
           members: (g.members || []).join(', '),
         }));
         loaded = true;
       } catch (e) {
-        if (alive) error = /** @type {Error} */ (e).message;
+        if (alive) error = (e as Error).message;
       }
     })();
     return () => { alive = false; };
@@ -79,8 +76,7 @@
   async function save() {
     if (saving) return;
     saving = true;
-    /** @type {Record<string, {cmd:string, ports:number[]}>} */
-    const start = {};
+        const start: Record<string, {cmd:string, ports:number[]}> = {};
     for (const r of startRows) {
       const repo = r.repo.trim();
       const cmd = r.cmd.trim();
@@ -90,8 +86,7 @@
         ports: r.ports.split(/[\s,]+/).map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0),
       };
     }
-    /** @type {Record<string, {open:string, openGroup?:string}>} */
-    const editors = {};
+        const editors: Record<string, {open:string, openGroup?:string}> = {};
     for (const r of editorRows) {
       const name = r.name.trim();
       const open = r.open.trim();
@@ -117,7 +112,7 @@
       });
       overlays.closeSettings();
       toast('Settings saved');
-    } catch (e) { toast(/** @type {Error} */ (e).message, true); }
+    } catch (e) { toast((e as Error).message, true); }
     finally { saving = false; }
   }
 </script>

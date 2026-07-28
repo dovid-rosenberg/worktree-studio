@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /* An unpromoted agent. Live → Promote is the obvious next step; stopped → Resume. */
   import { ui } from '$lib/stores/ui.svelte.js';
   import { activateSession, closeSession, promote } from '$lib/ops.svelte.js';

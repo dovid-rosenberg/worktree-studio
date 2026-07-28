@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The Changes / review panel, mounted into the dock.
    *
@@ -25,9 +25,8 @@
    * `onchangescount` is accepted and unused: ReviewPanel exposes no such callback, and
    * Dock.svelte already fetches the badge count itself. Kept in the signature so the
    * dock's call site isn't silently dropping a prop.
-   * @type {{ session?: any, onchangescount?: (n: number) => void }}
    */
-  let { session } = $props();
+  let { session }: { session?: any; onchangescount?: (n: number) => void } = $props();
 
   const sessionId = $derived(session?.id ?? null);
 </script>

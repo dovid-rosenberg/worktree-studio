@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The bar under the dock: the whole shared workspace (every repo this session owns),
    * its dev-server ports, the frontend "Open ↗" buttons, run/stop, and the PR/CI pills.
@@ -19,27 +19,26 @@
   const sessionId = $derived(session.id);
   const promoted = $derived(!!session.worktreePath);
   const reps = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
-  const anyRunning = $derived(reps.some((/** @type {any} */ r) => r.running));
-  const anyStopped = $derived(reps.some((/** @type {any} */ r) => r.canStart && !r.running));
-  const configured = $derived(reps.some((/** @type {any} */ r) => r.canStart));
+  const anyRunning = $derived(reps.some((r: any) => r.running));
+  const anyStopped = $derived(reps.some((r: any) => r.canStart && !r.running));
+  const configured = $derived(reps.some((r: any) => r.canStart));
   const webApps = $derived(webAppsFor(reps));
 
   // Keyed by session id, so the pills follow the selection with no effect and no timer:
   // a session the feed knows nothing about yet simply has none, and a merged or closed
   // PR disappears when the next frame drops it.
   const ciRepos = $derived(
-    ((world.ci || {})[sessionId] || []).filter((/** @type {any} */ r) => r && r.hasPR),
+    ((world.ci || {})[sessionId] || []).filter((r: any) => r && r.hasPR),
   );
 
   let busyStart = $state(false);
   let busyStop = $state(false);
 
   /** One repo's check summary, in the compact form the bar has room for. */
-  function checks(/** @type {any} */ r) {
+  function checks(r: any) {
     const c = r.checks || { passed: 0, running: 0, failed: 0, total: 0 };
     if (c.total === 0) return r.state ? [{ cls: '', text: String(r.state).toLowerCase() }] : [];
-    /** @type {{cls:string,text:string}[]} */
-    const out = [];
+        const out: {cls:string,text:string}[] = [];
     if (c.passed) out.push({ cls: 'ok', text: `✓${c.passed}` });
     if (c.running) out.push({ cls: 'run', text: `◴${c.running}` });
     if (c.failed) out.push({ cls: 'x', text: `✕${c.failed}` });

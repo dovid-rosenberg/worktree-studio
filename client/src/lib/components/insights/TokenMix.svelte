@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Volume vs. billed weight, for one usage record.
   //
   // ── why this exists ──────────────────────────────────────────────────────────
@@ -27,8 +27,7 @@
   } from './format.js';
   import { billingMultipliers } from './pricing.svelte.js';
 
-  /** @type {{ usage: import('./types.js').Usage|null, dense?: boolean }} */
-  let { usage = null, dense = false } = $props();
+    let { usage = null, dense = false }: { usage: import('./types.js').Usage|null, dense?: boolean } = $props();
 
   const vol = $derived(volumeByClass(usage));
   const wt = $derived(weightByClass(usage));
@@ -75,7 +74,7 @@
   // relief the light-mode palette WARN requires.
   const MIN_SEG = 3;
   /** @param {number} v @param {number} total */
-  const segStyle = (v, total) => (v > 0 ? `flex: 1 1 ${share(v, total)}%; min-width: ${MIN_SEG}px;` : 'display:none;');
+  const segStyle = (v: any, total: any) => (v > 0 ? `flex: 1 1 ${share(v, total)}%; min-width: ${MIN_SEG}px;` : 'display:none;');
 </script>
 
 {#if !volTotal}

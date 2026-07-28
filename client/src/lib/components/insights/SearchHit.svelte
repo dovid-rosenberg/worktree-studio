@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // One search result. The row itself is the jump target; the session chip inside it
   // is a second, narrower action (scope the search to that session) — which is exactly
   // the nested-control case `activatable`'s `e.target === node` guard exists for, and

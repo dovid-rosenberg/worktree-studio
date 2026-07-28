@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Transcript search.
   //
   // Three things shape this component more than anything else:
@@ -16,8 +16,7 @@
   import SearchHit from './SearchHit.svelte';
   import IndexStatus from './IndexStatus.svelte';
 
-  /** @typedef {import('./types.js').Hit} Hit */
-  /** @typedef {import('./types.js').StateSession} StateSession */
+  import type { Hit, StateSession } from './types';
 
   /**
    * @type {{
@@ -50,30 +49,22 @@
   let role = $state('');
   let order = $state('rank');
 
-  /** @type {Hit[]} */
-  let hits = $state([]);
-  /** @type {string|null} */
-  let backend = $state(null);
+    let hits: Hit[] = $state([]);
+    let backend: string|null = $state(null);
   let loading = $state(false);
-  /** @type {string|null} */
-  let error = $state(null);
+    let error: string|null = $state(null);
   let ran = $state(false);
   let ranQuery = $state('');
   let ranAt = $state(0);
   let selected = $state(-1);
 
-  /** @type {StateSession[]} */
-  let ownSessions = $state([]);
-  /** @type {import('./types.js').TranscriptStatus|null} */
-  let status = $state(null);
-  /** @type {string|null} */
-  let statusError = $state(null);
+    let ownSessions: StateSession[] = $state([]);
+    let status: import('./types.js').TranscriptStatus|null = $state(null);
+    let statusError: string|null = $state(null);
   let indexing = $state(false);
 
-  /** @type {HTMLInputElement|null} */
-  let inputEl = $state(null);
-  /** @type {HTMLElement|null} */
-  let listEl = $state(null);
+    let inputEl: HTMLInputElement|null = $state(null);
+    let listEl: HTMLElement|null = $state(null);
 
   const locked = $derived(!!sessionId);
   const sessionList = $derived(sessions ?? ownSessions);
@@ -82,16 +73,15 @@
   // The server answers these with an empty list and no explanation.
   const degenerate = $derived(q.trim().length > 0 && terms.length === 0);
   const capped = $derived(hits.length >= limit);
-  const scopedSession = $derived(sessionList.find((s) => s.id === scope) || null);
+  const scopedSession = $derived(sessionList.find((s: any) => s.id === scope) || null);
 
   /** @type {ReturnType<typeof setTimeout>|undefined} */
-  let timer;
-  /** @type {AbortController|null} */
-  let ctrl = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+    let ctrl: AbortController|null = null;
   let seq = 0;
 
   /** @param {unknown} e */
-  const errText = (e) => (e instanceof Error ? e.message : String(e));
+  const errText = (e: any) => (e instanceof Error ? e.message : String(e));
 
   async function refreshStatus() {
     try { status = await transcriptStatus(); } catch (e) { statusError = errText(e); }
@@ -159,7 +149,7 @@
   }
 
   /** @param {{ session?: string|null, full?: boolean }} opts */
-  async function doReindex(opts) {
+  async function doReindex(opts: any) {
     indexing = true;
     statusError = null;
     try {
@@ -176,10 +166,10 @@
   // ---- keyboard ----
   // Every hit is a real tab stop (activatable sets tabindex=0), so Tab reaches any
   // result. Arrows are the fast path on top of that, not a replacement for it.
-  const hitEls = () => (listEl ? /** @type {HTMLElement[]} */ ([...listEl.querySelectorAll('[data-hit]')]) : []);
+  const hitEls = () => (listEl ? /** @type {HTMLElement[]} */ ([...listEl.querySelectorAll<HTMLElement>('[data-hit]')]) : []);
 
   /** @param {number} i */
-  function focusHit(i) {
+  function focusHit(i: any) {
     const els = hitEls();
     if (!els.length) return false;
     const n = Math.max(0, Math.min(els.length - 1, i));
@@ -189,7 +179,7 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onInputKey(e) {
+  function onInputKey(e: any) {
     if (e.key === 'ArrowDown') { if (focusHit(0)) e.preventDefault(); return; }
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -204,10 +194,10 @@
   }
 
   /** @param {KeyboardEvent} e */
-  function onListKey(e) {
+  function onListKey(e: any) {
     const els = hitEls();
     if (!els.length) return;
-    const at = els.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+    const at = els.indexOf((document.activeElement as HTMLElement));
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusHit(at + 1); break;
       case 'ArrowUp':
@@ -319,8 +309,8 @@
         terms={highlightTerms(ranQuery)}
         showSession={!locked}
         selected={selected === i}
-        onopen={(/** @type {Hit} */ h) => onopen(h)}
-        onscope={locked ? null : (/** @type {string} */ id) => { scope = id; inputEl?.focus(); }}
+        onopen={(h: Hit) => onopen(h)}
+        onscope={locked ? null : (id: string) => { scope = id; inputEl?.focus(); }}
       />
     {/each}
 

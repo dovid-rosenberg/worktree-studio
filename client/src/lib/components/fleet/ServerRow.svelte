@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * A compact readout of a feature whose dev servers are up. It overlaps the Worktrees
    * section on purpose: when servers are running, this is the section you watch, so the
@@ -12,10 +12,10 @@
 
   const ports = $derived(
     feature.members
-      .filter((/** @type {any} */ m) => m && m.running)
-      .flatMap((/** @type {any} */ m) => (m.ports || []).map((/** @type {number} */ p) => `${m.repo}:${p}`)),
+      .filter((m: any) => m && m.running)
+      .flatMap((m: any) => (m.ports || []).map((p: number) => `${m.repo}:${p}`)),
   );
-  const webApps = $derived(webAppsFor(feature.members.filter((/** @type {any} */ m) => m && !m.missing)));
+  const webApps = $derived(webAppsFor(feature.members.filter((m: any) => m && !m.missing)));
 </script>
 
 <div class="frow srvrow">

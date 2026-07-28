@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * One live terminal attached to one multiplexer pane.
    *
@@ -49,12 +49,12 @@
     allowProposedApi: true,
   };
 
-  let host = $state(/** @type {HTMLElement|null} */ (null));
-  let term = $state(/** @type {XTerm|null} */ (null));
-  let fitAddon = /** @type {FitAddon|null} */ (null);
-  let socket = /** @type {WebSocket|null} */ (null);
-  let retryTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
-  let lastTarget = /** @type {string|null} */ (null);
+  let host = $state<HTMLElement|null>(null);
+  let term = $state<XTerm|null>(null);
+  let fitAddon = (null as FitAddon|null);
+  let socket = (null as WebSocket|null);
+  let retryTimer = (null as ReturnType<typeof setTimeout>|null);
+  let lastTarget = (null as string|null);
 
   // Bumped on every teardown and retarget. Socket callbacks capture the value they were
   // created under and bail if it moved on, which is how a superseded socket's late
@@ -69,7 +69,7 @@
    * undelivered notifications". Coalescing to the next animation frame breaks that loop.
    * @param {() => void} cb
    */
-  function rafObserver(cb) {
+  function rafObserver(cb: any) {
     let scheduled = false;
     return new ResizeObserver(() => {
       if (scheduled) return;
@@ -82,7 +82,7 @@
   }
 
   /** @param {XTerm} t @param {string} s */
-  function note(t, s) {
+  function note(t: any, s: any) {
     // Dim, so daemon-level notices never read as program output.
     try { t.write(`\r\n\x1b[2m${s}\x1b[0m\r\n`); } catch { /* disposed mid-flight */ }
   }
@@ -109,7 +109,7 @@
    * @param {number} attempt
    * @param {number} gen
    */
-  function connect(t, attempt, gen) {
+  function connect(t: any, attempt: any, gen: any) {
     if (gen !== generation) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const qs = new URLSearchParams({ session: sessionId, cols: String(t.cols), rows: String(t.rows) });
@@ -252,7 +252,7 @@
    * message by the server's parse-then-fallback branch.
    * @param {string} data
    */
-  export function sendText(data) {
+  export function sendText(data: any) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify({ type: 'input', data }));
     return true;

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * One UNPROMOTED session in the rail — an agent with no worktree, and therefore no
    * feature to sit under. Promoted sessions are drawn by FeatureCard instead, since the
@@ -20,8 +20,8 @@
 
   const stopped = $derived(session.state === 'stopped');
   const srv = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
-  const running = $derived(srv.filter((/** @type {any} */ r) => r.running));
-  const ports = $derived(running.flatMap((/** @type {any} */ r) => r.ports || []));
+  const running = $derived(srv.filter((r: any) => r.running));
+  const ports = $derived(running.flatMap((r: any) => r.ports || []));
   const selected = $derived(ui.selectedId === session.id);
   const reps = $derived(
     session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }],

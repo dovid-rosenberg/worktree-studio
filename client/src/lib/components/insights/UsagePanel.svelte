@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Fleet telemetry: what every Studio session has cost, rolled up by feature.
   //
   // One request answers the whole view (/transcripts/usage returns per-session, per-
@@ -22,23 +22,19 @@
   /** @type {{ sessionId?: string|null, onselect?: (id: string) => void }} */
   let { sessionId = null, onselect = () => {} } = $props();
 
-  /** @typedef {import('./types.js').FleetUsage} FleetUsage */
-  /** @type {FleetUsage|null} */
-  let data = $state(null);
-  /** @type {import('./types.js').TranscriptStatus|null} */
-  let status = $state(null);
+  import type { FleetUsage } from './types';
+    let data: FleetUsage|null = $state(null);
+    let status: import('./types.js').TranscriptStatus|null = $state(null);
   let loading = $state(true);
-  /** @type {string|null} */
-  let error = $state(null);
+    let error: string|null = $state(null);
   let busy = $state(false);
 
-  let group = $state(/** @type {'feature'|'session'} */ ('feature'));
+  let group = $state<'feature'|'session'>('feature');
   // Deliberately the INITIAL value only: the prop seeds which row opens, after which
   // the selection belongs to the user. A derived would yank them back to the shell's
   // session every time it changed.
   // svelte-ignore state_referenced_locally
-  /** @type {string|null} */
-  let picked = $state(sessionId);
+    let picked: string|null = $state(sessionId);
 
   // Plain `let`, deliberately NOT $state: `load()` runs inside an $effect, so reading a
   // reactive value in its synchronous prologue would make the effect depend on it —
@@ -77,25 +73,25 @@
   const sessions = $derived.by(() => data?.sessions ?? []);
   const features = $derived.by(() => data?.features ?? []);
   const totals = $derived.by(() => data?.totals ?? null);
-  const selected = $derived.by(() => sessions.find((s) => s.session?.id === picked) ?? null);
+  const selected = $derived.by(() => sessions.find((s: any) => s.session?.id === picked) ?? null);
 
-  const indexedCount = $derived.by(() => sessions.filter((s) => s.indexed !== false).length);
+  const indexedCount = $derived.by(() => sessions.filter((s: any) => s.indexed !== false).length);
 
   const featureRows = $derived.by(() =>
-    features.map((f) => ({
+    features.map((f: any) => ({
       key: f.feature,
       label: f.feature,
       sub: `${f.sessions} session${f.sessions === 1 ? '' : 's'}`,
       costUsd: f.costUsd,
       usage: f,
       // A feature is "not indexed" only when nothing under it is.
-      indexed: sessions.some((s) => (s.session?.feature || s.session?.id) === f.feature && s.indexed !== false),
+      indexed: sessions.some((s: any) => (s.session?.feature || s.session?.id) === f.feature && s.indexed !== false),
       unpriced: f.unpricedModels,
     })),
   );
 
   const sessionRows = $derived.by(() =>
-    sessions.map((s) => ({
+    sessions.map((s: any) => ({
       key: s.session?.id ?? '',
       label: s.session?.title ?? s.session?.id ?? '—',
       sub: [s.session?.repo, s.session?.branch].filter(Boolean).join(' · '),
@@ -107,13 +103,13 @@
   );
 
   /** @param {string} key */
-  function selectRow(key) {
+  function selectRow(key: any) {
     if (group === 'session') {
       picked = key;
     } else {
       // A feature row selects the costliest session under it — the detail pane only
       // knows how to render a session, and that is the one worth looking at.
-      const under = sessions.filter((s) => (s.session?.feature || s.session?.id) === key);
+      const under = sessions.filter((s: any) => (s.session?.feature || s.session?.id) === key);
       picked = under[0]?.session?.id ?? picked;
     }
     if (picked) onselect(picked);
@@ -177,7 +173,7 @@
       <IndexStatus
         {status}
         {busy}
-        onreindex={async (/** @type {{ session?: string|null, full?: boolean }} */ o) => {
+        onreindex={async (/** @type {{ session?: string|null, full?: boolean }} */ o: any) => {
           busy = true;
           try { await reindex(o); } finally { await load(); }
         }}

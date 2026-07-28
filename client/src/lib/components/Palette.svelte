@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The ⌘K command palette: fuzzy-ish filter over every session, then the commands that
    * apply to the current selection.
@@ -15,8 +15,8 @@
 
   let query = $state('');
   let hi = $state(0);
-  let input = $state(/** @type {HTMLInputElement|null} */ (null));
-  let listEl = $state(/** @type {HTMLElement|null} */ (null));
+  let input = $state<HTMLInputElement|null>(null);
+  let listEl = $state<HTMLElement|null>(null);
 
   const q = $derived(query.trim().toLowerCase());
 
@@ -25,8 +25,8 @@
 
   const sessionRows = $derived(
     world.sessions
-      .filter((/** @type {any} */ s) => !q || `${s.title} ${s.repoName} ${s.state}`.toLowerCase().includes(q))
-      .map((/** @type {any} */ s) => {
+      .filter((s: any) => !q || `${s.title} ${s.repoName} ${s.state}`.toLowerCase().includes(q))
+      .map((s: any) => {
         const i = railIdx.get(s.id);
         return {
           key: `s:${s.id}`,
@@ -41,9 +41,8 @@
 
   const commandRows = $derived((() => {
     const cur = ui.selected;
-    /** @type {{key:string, glyph:string, title:string, sub:string, run:()=>void}[]} */
-    const cmds = [];
-    const add = (/** @type {string} */ glyph, /** @type {string} */ title, /** @type {string} */ sub, /** @type {()=>void} */ run) =>
+        const cmds: {key:string, glyph:string, title:string, sub:string, run:()=>void}[] = [];
+    const add = (/** @type {string} */ glyph: any, /** @type {string} */ title: any, /** @type {string} */ sub: any, /** @type {()=>void} */ run: any) =>
       cmds.push({ key: `c:${title}`, glyph, title, sub, run });
 
     add('＋', 'New session', '⌘N', () => overlays.openIntake());
@@ -78,14 +77,14 @@
   });
 
   /** @param {number} d */
-  function move(d) {
+  function move(d: any) {
     if (!rows.length) return;
     hi = (hi + d + rows.length) % rows.length;
-    listEl?.querySelectorAll('.pcmd')[hi]?.scrollIntoView({ block: 'nearest' });
+    listEl?.querySelectorAll<HTMLElement>('.pcmd')[hi]?.scrollIntoView({ block: 'nearest' });
   }
 
   /** @param {KeyboardEvent} e */
-  function onKeydown(e) {
+  function onKeydown(e: any) {
     if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
     else if (e.key === 'Enter') { e.preventDefault(); rows[hi]?.run(); }

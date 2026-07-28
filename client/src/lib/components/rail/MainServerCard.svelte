@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * A dev server running from a repo's MAIN checkout. Not a worktree, so not a feature,
    * so it appears in no other list — this row exists purely so it is openable and

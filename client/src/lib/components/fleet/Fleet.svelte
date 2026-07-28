@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * Fleet — the terminal-free view of everything running: features (worktrees), the
    * unpromoted agents, and every dev server that is up, including servers running from
@@ -14,8 +14,8 @@
   import { world } from '$lib/stores/world.svelte.js';
 
   /** Active = a live agent or a running dev server. @param {any} f */
-  const featActive = (f) => f.members.some(
-    (/** @type {any} */ m) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped')),
+  const featActive = (f: any) => f.members.some(
+    (m: any) => m && !m.missing && (m.running || (m.session && m.session.state !== 'stopped')),
   );
 
   const feats = $derived(
@@ -27,21 +27,21 @@
   // Unpromoted sessions — surfaced here so Fleet is the one place you watch work.
   // Ended/deactivated ones linger as stopped, sorted after the live ones.
   const agents = $derived(
-    world.sessions.filter((/** @type {any} */ s) => !s.worktreePath).slice().sort(
+    world.sessions.filter((s: any) => !s.worktreePath).slice().sort(
       (/** @type {any} */ a, /** @type {any} */ b) =>
         (Number(a.state === 'stopped') - Number(b.state === 'stopped')) || (a.title || '').localeCompare(b.title || ''),
     ),
   );
 
-  const serverFeats = $derived(feats.filter((/** @type {any} */ f) => f.members.some((/** @type {any} */ m) => m && m.running)));
+  const serverFeats = $derived(feats.filter((f: any) => f.members.some((m: any) => m && m.running)));
 
   // Running frontends served from a repo's MAIN checkout — not a worktree, so not a
   // feature. Common when the backend runs in a worktree and the frontend is served from
   // its main checkout; surfacing them is what makes every running FE openable.
   const mainWebRunning = $derived((() => {
     const webSet = new Set(world.webRepos || []);
-    return world.repos.flatMap((/** @type {any} */ r) => r.worktrees || []).filter(
-      (/** @type {any} */ w) => w.isMain && webSet.has(w.repo) && w.running && (w.ports || []).length,
+    return world.repos.flatMap((r: any) => r.worktrees || []).filter(
+      (w: any) => w.isMain && webSet.has(w.repo) && w.running && (w.ports || []).length,
     );
   })());
 

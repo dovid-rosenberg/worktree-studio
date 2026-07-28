@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The application header: brand, multiplexer badge, the fleet-wide summary, the
    * Overview toggle (carrying the waiting-count attention badge), and global actions.
@@ -21,13 +21,13 @@
   let { actions = undefined } = $props();
 
   const feats = $derived(world.features);
-  const flat = $derived(feats.flatMap((/** @type {any} */ f) => liveMembers(f)));
-  const running = $derived(flat.filter((/** @type {any} */ m) => m.running).length);
-  const working = $derived(flat.filter((/** @type {any} */ m) => m.session && m.session.state === 'working').length);
-  const waiting = $derived(flat.filter((/** @type {any} */ m) => m.session && m.session.state === 'waiting').length);
-  const unpromoted = $derived(world.sessions.filter((/** @type {any} */ s) => !s.worktreePath).length);
+  const flat = $derived(feats.flatMap((f: any) => liveMembers(f)));
+  const running = $derived(flat.filter((m: any) => m.running).length);
+  const working = $derived(flat.filter((m: any) => m.session && m.session.state === 'working').length);
+  const waiting = $derived(flat.filter((m: any) => m.session && m.session.state === 'waiting').length);
+  const unpromoted = $derived(world.sessions.filter((s: any) => !s.worktreePath).length);
 
-  const runningFeats = () => feats.filter((/** @type {any} */ f) => liveMembers(f).some((/** @type {any} */ m) => m.running));
+  const runningFeats = () => feats.filter((f: any) => liveMembers(f).some((m: any) => m.running));
   const anyRunning = $derived(feats.some(featureActive));
 </script>
 
@@ -62,8 +62,8 @@
   </div>
 
   {#if anyRunning}
-    <button class="btn ghost sm" onclick={() => runningFeats().forEach((/** @type {any} */ f) => restartStack(f.name))}>Restart all</button>
-    <button class="btn ghost sm" onclick={() => runningFeats().forEach((/** @type {any} */ f) => stopStack(f.name))}>Stop all</button>
+    <button class="btn ghost sm" onclick={() => runningFeats().forEach((f: any) => restartStack(f.name))}>Restart all</button>
+    <button class="btn ghost sm" onclick={() => runningFeats().forEach((f: any) => stopStack(f.name))}>Stop all</button>
   {/if}
 
   <span class="spacer"></span>

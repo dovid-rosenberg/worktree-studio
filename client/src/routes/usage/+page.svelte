@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // Harness for the telemetry surface. Mirrors /search: the shell mounts UsagePanel (or
   // SessionUsage alone, scoped to one session) wherever it belongs; this exists to prove
   // both shapes against a live daemon.
@@ -7,8 +7,7 @@
   import { listSessions } from '$lib/components/insights/api.js';
   import { theme, toggleTheme } from '$lib/theme.svelte.js';
 
-  /** @type {import('$lib/components/insights/types.js').StateSession[]} */
-  let sessions = $state([]);
+    let sessions: import('$lib/components/insights/types.js').StateSession[] = $state([]);
   let solo = $state('');
 
   $effect(() => {

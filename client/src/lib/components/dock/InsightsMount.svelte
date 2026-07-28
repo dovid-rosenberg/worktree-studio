@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   /*
    * The Insights panel — transcript search + cost/token telemetry — mounted in the dock.
    *
@@ -24,8 +24,7 @@
   import SessionUsage from '$lib/components/insights/SessionUsage.svelte';
   import SearchPanel from '$lib/components/insights/SearchPanel.svelte';
 
-  /** @type {{ session?: any }} */
-  let { session } = $props();
+    let { session }: { session?: any } = $props();
 
   const sessionId = $derived(session?.id ?? null);
 </script>

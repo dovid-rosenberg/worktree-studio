@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   // SearchPanel in the app's command-palette chrome.
   //
   // The palette is where transcript search will most likely be mounted, and an overlay
@@ -24,7 +24,7 @@
   // non-empty query, or stepping out of the results list — and stops propagation when
   // it does. So anything reaching here is an Escape nobody wanted, which means close.
   /** @param {KeyboardEvent} e */
-  function onDialogKey(e) {
+  function onDialogKey(e: any) {
     if (e.key === 'Escape') { e.preventDefault(); onclose(); }
   }
 </script>
