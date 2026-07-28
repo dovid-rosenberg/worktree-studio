@@ -11,7 +11,7 @@
 // file: grouping and concurrency-slot keying have to answer that question
 // identically, so they share one resolver. Omitting it keeps the historical
 // behavior (group by the worktree's directory name).
-import { createIdentity } from './identity.js';
+import { createIdentity } from './identity.ts';
 
 const DEFAULT_IDENTITY = createIdentity({});
 

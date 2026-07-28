@@ -6,9 +6,9 @@ import fs from 'fs';
 import path from 'path';
 import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } from './util.ts';
 import * as status from './status.ts';
-import * as worktree from './worktree.js';
+import * as worktree from './worktree.ts';
 import * as layoutMod from './layout.ts';
-import { createIdentity } from './identity.js';
+import { createIdentity } from './identity.ts';
 const { worktreeCopyOpts } = worktree;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

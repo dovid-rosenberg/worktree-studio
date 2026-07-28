@@ -8,24 +8,80 @@ import fs from 'fs';
 import path from 'path';
 import { git, gitFull, slug } from './util.ts';
 import * as layoutMod from './layout.ts';
+import type { ResolvedLayout } from './layout.ts';
+import type { Config, PartialDeep } from './types.ts';
+
+/** How many files `populate()` carried into a new checkout. */
+export interface CopyCounts {
+  runConfigs: number;
+  files: number;
+}
+
+/** The copy options `create()` wants, as `worktreeCopyOpts()` reads them out of a config. */
+export interface WorktreeCopyOpts {
+  copyPatterns: string[];
+  copyAlways: string[];
+}
+
+export interface WorktreeCreateOptions extends Partial<WorktreeCopyOpts> {
+  /** auto-suffix on collision instead of failing */
+  unique?: boolean;
+  /** false skips the pre-add fetch */
+  fetch?: boolean;
+  fetchTimeoutMs?: number;
+  /** a server/layout.js descriptor; defaults to nested `.worktrees` */
+  layout?: ResolvedLayout;
+}
+
+export interface WorktreeCreateSuccess {
+  ok: true;
+  path: string;
+  branch: string;
+  name: string;
+  /** The ref the new branch was cut from; null when the branch already existed. */
+  base: string | null;
+  created: boolean;
+  copied: CopyCounts;
+  warnings: string[];
+}
+
+/** A failure still names the worktree it was going to make — `addRepo()` attaches to it. */
+export interface WorktreeCreateFailure {
+  ok: false;
+  error: string;
+  path: string;
+  name: string;
+  branch: string;
+}
+
+export type WorktreeCreateResult = WorktreeCreateSuccess | WorktreeCreateFailure;
+
+export interface WorktreeRemoveOptions {
+  branch?: string | null;
+  deleteBranch?: boolean;
+}
+
+export type WorktreeRemoveResult =
+  | { ok: true; branchDeleted: boolean }
+  | { ok: false; error: string };
 
 // Expand a shell-style pattern (e.g. "config/*-config.js", ".env.*.local")
 // relative to base. Supports `*` (any chars within one path segment). Segments
 // are matched literally when they contain no `*`.
-function expandPattern(base, pattern) {
+function expandPattern(base: string, pattern: string): string[] {
   const segs = pattern.split('/');
   let dirs = [''];
   for (let i = 0; i < segs.length; i++) {
     const seg = segs[i];
     const last = i === segs.length - 1;
-    const next = [];
+    const next: string[] = [];
     const re = seg.includes('*')
       ? new RegExp('^' + seg.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$')
       : null;
     for (const d of dirs) {
       const abs = path.join(base, d);
       if (re) {
-        let entries;
+        let entries: fs.Dirent[];
         try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { continue; }
         for (const e of entries) {
           if (!re.test(e.name)) continue;
@@ -44,7 +100,7 @@ function expandPattern(base, pattern) {
   return dirs;
 }
 
-async function isIgnored(repoPath, rel) {
+async function isIgnored(repoPath: string, rel: string): Promise<boolean> {
   const r = await gitFull(repoPath, ['check-ignore', '-q', rel]);
   return r.code === 0;
 }
@@ -68,8 +124,8 @@ const FETCH_TIMEOUT_MS = 60000;
 // `copyAlways` key (a config written before it existed, or a hand-built test cfg)
 // keeps the historical unconditional run-config copy; an explicit one is obeyed,
 // empty array included.
-function worktreeCopyOpts(cfg, repo) {
-  const pick = (m) => (m && (m[repo] || m.default)) || [];
+function worktreeCopyOpts(cfg: PartialDeep<Config> | null | undefined, repo: string): WorktreeCopyOpts {
+  const pick = (m?: Record<string, string[] | undefined> | null): string[] => (m && (m[repo] || m.default)) || [];
   return {
     copyPatterns: pick(cfg && cfg.copyPatterns),
     copyAlways: cfg && cfg.copyAlways ? pick(cfg.copyAlways) : DEFAULT_COPY_ALWAYS,
@@ -77,7 +133,7 @@ function worktreeCopyOpts(cfg, repo) {
 }
 
 // Copy one expanded pattern's files from repoPath into dest. Returns the count.
-function copyMatches(repoPath, dest, pattern) {
+function copyMatches(repoPath: string, dest: string, pattern: string): number {
   let n = 0;
   for (const rel of expandPattern(repoPath, pattern)) {
     const src = path.join(repoPath, rel);
@@ -93,8 +149,13 @@ function copyMatches(repoPath, dest, pattern) {
 // `patterns` are copied ONLY when git ignores them: a tracked file already
 // arrives with the checkout, and copying the main checkout's copy over it would
 // silently import uncommitted edits.
-async function populate(repoPath, dest, patterns, always = DEFAULT_COPY_ALWAYS) {
-  const copied = { runConfigs: 0, files: 0 };
+async function populate(
+  repoPath: string,
+  dest: string,
+  patterns?: string[] | null,
+  always: string[] | null = DEFAULT_COPY_ALWAYS,
+): Promise<CopyCounts> {
+  const copied: CopyCounts = { runConfigs: 0, files: 0 };
   for (const pat of always || []) copied.runConfigs += copyMatches(repoPath, dest, pat);
   // local files — only carry the ones git actually ignores
   for (const pat of patterns || []) {
@@ -111,14 +172,14 @@ async function populate(repoPath, dest, patterns, always = DEFAULT_COPY_ALWAYS) 
 }
 
 // Does a local or remote branch already exist?
-async function branchExists(repoPath, branch) {
+async function branchExists(repoPath: string, branch: string): Promise<boolean> {
   const local = await gitFull(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
   if (local.code === 0) return true;
   const remote = await gitFull(repoPath, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
   return remote.code === 0;
 }
 
-async function defaultBase(repoPath) {
+async function defaultBase(repoPath: string): Promise<string> {
   const sym = await git(repoPath, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
   if (sym) return sym; // e.g. origin/develop
   const cur = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
@@ -127,20 +188,17 @@ async function defaultBase(repoPath) {
 
 /**
  * Create a worktree. Returns { ok, path, branch, name, base, created, copied, warnings, error }.
- * @param {string} repoPath  main checkout the worktree is added to
- * @param {string} branch  branch name (created off default base if it doesn't exist)
- * @param {string} name    worktree dir name (defaults from branch)
- * @param {object} [opts]
- * @param {boolean} [opts.unique]          auto-suffix on collision instead of failing
- * @param {boolean} [opts.fetch]           false skips the pre-add fetch
- * @param {number}  [opts.fetchTimeoutMs]
- * @param {string[]} [opts.copyPatterns]   gitignored files to seed into the new checkout
- * @param {string[]} [opts.copyAlways]
- * @param {ReturnType<typeof layoutMod.resolve>} [opts.layout]
- *                         a server/layout.js descriptor; defaults to nested `.worktrees`
+ * @param repoPath  main checkout the worktree is added to
+ * @param branch  branch name (created off default base if it doesn't exist)
+ * @param name    worktree dir name (defaults from branch)
  */
-async function create(repoPath, branch, name, opts = {}) {
-  const warnings = [];
+async function create(
+  repoPath: string,
+  branch: string,
+  name?: string | null,
+  opts: WorktreeCreateOptions = {},
+): Promise<WorktreeCreateResult> {
+  const warnings: string[] = [];
   const layout = opts.layout || layoutMod.resolve({});
   let wtName = slug(name || branch.replace(/\//g, '-'));
   let dest = layoutMod.destFor(layout, repoPath, wtName);
@@ -177,7 +235,7 @@ async function create(repoPath, branch, name, opts = {}) {
   if (opts.fetch !== false) await gitFull(repoPath, ['fetch', '--prune', 'origin'], { timeout: opts.fetchTimeoutMs || FETCH_TIMEOUT_MS });
 
   let created = false;
-  let base = null;
+  let base: string | null = null;
   if (await branchExists(repoPath, branch)) {
     const r = await gitFull(repoPath, ['worktree', 'add', dest, branch]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'git worktree add failed', path: dest, name: wtName, branch };
@@ -192,7 +250,7 @@ async function create(repoPath, branch, name, opts = {}) {
   return { ok: true, path: dest, branch, name: wtName, base, created, copied, warnings };
 }
 
-async function remove(repoPath, worktreePath, opts = {}) {
+async function remove(repoPath: string, worktreePath: string, opts: WorktreeRemoveOptions = {}): Promise<WorktreeRemoveResult> {
   const r = await gitFull(repoPath, ['worktree', 'remove', worktreePath]);
   if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'worktree remove failed (use force?)' };
   let branchDeleted = false;

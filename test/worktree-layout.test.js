@@ -8,7 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import * as worktree from '../server/worktree.js';
+import * as worktree from '../server/worktree.ts';
 import * as layoutMod from '../server/layout.ts';
 import * as gitMod from '../server/git.ts';
 import * as config from '../server/config.js';

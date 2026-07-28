@@ -9,7 +9,7 @@ import path from 'path';
 import * as transcripts from './transcripts.ts';
 import * as pricing from './pricing.ts';
 import { STATE_DIR } from './config.js';
-import { TranscriptIndex, summarize } from './transcript-index.js';
+import { TranscriptIndex, summarize } from './transcript-index.ts';
 
 // What every cost-bearing response says about where its dollars came from.
 //

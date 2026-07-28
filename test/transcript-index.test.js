@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as transcripts from '../server/transcripts.ts';
-import { TranscriptIndex, summarize, ftsQuery, likePattern } from '../server/transcript-index.js';
+import { TranscriptIndex, summarize, ftsQuery, likePattern } from '../server/transcript-index.ts';
 
 // Each test gets its own fake ~/.claude/projects root and its own on-disk db, so the
 // incremental-offset behaviour is exercised against real files rather than mocks.

@@ -3,14 +3,14 @@ import express from 'express';
 import { WebSocketServer } from 'ws';
 import * as muxSelect from './multiplexer/index.js';
 import * as gitMod from './git.ts';
-import * as watchMod from './watch.js';
-import * as worktree from './worktree.js';
+import * as watchMod from './watch.ts';
+import * as worktree from './worktree.ts';
 const { worktreeCopyOpts } = worktree;
 import * as review from './review.ts';
-import * as sources from './sources/index.js';
+import * as sources from './sources/index.ts';
 import { SessionManager } from './sessions.js';
 import { Servers } from './servers.js';
-import { createIdentity } from './identity.js';
+import { createIdentity } from './identity.ts';
 import { createState } from './state.js';
 import { createBroadcast } from './broadcast.ts';
 import { createForge } from './forge.ts';
@@ -25,7 +25,7 @@ import { run, has, shq, slug, expandTilde } from './util.ts';
 import * as configMod from './config.js';
 import tmux from './multiplexer/tmux.js';
 import * as transcriptRoutes from './transcript-routes.js';
-import * as routesReview from './routes-review.js';
+import * as routesReview from './routes-review.ts';
 
 async function main() {
   const cfg = configMod.load();

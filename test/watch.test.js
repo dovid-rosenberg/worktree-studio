@@ -7,8 +7,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import * as watch from '../server/watch.js';
-import * as worktree from '../server/worktree.js';
+import * as watch from '../server/watch.ts';
+import * as worktree from '../server/worktree.ts';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

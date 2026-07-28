@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { createIdentity, compileBranchMatcher, firstCapture } from '../server/identity.js';
+import { createIdentity, compileBranchMatcher, firstCapture } from '../server/identity.ts';
 import { computeFeatures } from '../server/features.js';
 import { featureFromPath } from '../server/servers.js';
 

@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { HOME, expandTilde, readJson, writeJson } from './util.ts';
 import * as security from './security.ts';
-import { DEFAULT_COPY_ALWAYS } from './worktree.js';
+import { DEFAULT_COPY_ALWAYS } from './worktree.ts';
 
 const CONFIG_DIR = process.env.WT_STUDIO_CONFIG_DIR || path.join(HOME, '.config', 'worktree-studio');
 const CONFIG_FILE = process.env.WT_STUDIO_CONFIG || path.join(CONFIG_DIR, 'config.json');

@@ -14,11 +14,11 @@ import os from 'os';
 import path from 'path';
 import * as orchestrator from '../server/orchestrator.js';
 import { createForge } from '../server/forge.ts';
-import { createIdentity } from '../server/identity.js';
+import { createIdentity } from '../server/identity.ts';
 import * as crash from '../server/crash.ts';
 import * as pricing from '../server/pricing.ts';
 import { EventEmitter } from 'node:events';
-import * as routesReview from '../server/routes-review.js';
+import * as routesReview from '../server/routes-review.ts';
 import * as transcriptRoutes from '../server/transcript-routes.js';
 
 // server.js mounts this last, after every route. The route modules used to carry their

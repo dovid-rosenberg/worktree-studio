@@ -8,7 +8,7 @@ import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { run, readJsonState, writeJson, realpath, slug } from './util.ts';
 import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
-import { createIdentity } from './identity.js';
+import { createIdentity } from './identity.ts';
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore

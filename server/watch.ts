@@ -67,8 +67,71 @@ const GIT_DIR_ENTRIES = new Set(['HEAD', 'packed-refs', 'refs', 'worktrees']);
 // the worktree and mean nothing to us.
 const WORKTREE_FILES = new Set(['HEAD', 'gitdir']);
 
-function isDir(p) { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
-function unref(t) { if (t && typeof t.unref === 'function') t.unref(); return t; }
+// What a directory is watched as, which is also what decides how its events are
+// filtered — see matters().
+type WatchKind = 'container' | 'gitdir' | 'refs' | 'worktrees';
+
+interface AttentionOptions {
+  /** current open SSE stream count */
+  streams?: () => number;
+  /**
+   * how long a poll keeps counting; comfortably more than SwiftBar's 10s period so a
+   * missed tick or a slow render doesn't drop us to the idle cadence
+   */
+  pollWindowMs?: number;
+}
+
+interface Attention {
+  seen(): void;
+  active(): boolean;
+}
+
+interface WatchDeps {
+  /** loaded config (baseDirs, scanDepth, optional .watch) */
+  cfg: { baseDirs?: string[]; scanDepth?: number; watch?: Partial<typeof DEFAULTS> };
+  /** re-read repos/worktrees into the state cache */
+  rescan: () => unknown;
+  /** lsof sweep for dev servers */
+  refreshRunning?: () => unknown;
+  /** multiplexer liveness sweep */
+  reconcile?: () => unknown;
+  /**
+   * true while anything is watching — see attention() (defaults to true, i.e.
+   * always-active pacing, so a partial wiring degrades to the old behaviour rather
+   * than to silence)
+   */
+  hasViewers?: () => boolean;
+  /** DEFAULTS overrides — used by the tests to run the same code paths on a millisecond timescale */
+  intervals?: Partial<typeof DEFAULTS>;
+}
+
+interface WatchStats {
+  scans: number;
+  watchers: number;
+  repos: number;
+  /** plus one entry per wired periodic job (`running`, `reconcile`, `net`): times it ran */
+  [job: string]: number;
+}
+
+interface WatchHandle {
+  stop(): void;
+  poke(): void;
+  watched(): string[];
+  stats(): WatchStats;
+}
+
+interface Job {
+  name: string;
+  fn: () => unknown;
+  active: number;
+  idle: number;
+  last: number;
+  busy: boolean;
+  runs: number;
+}
+
+function isDir(p: string): boolean { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
+function unref<T extends { unref?: () => unknown }>(t: T): T { if (t && typeof t.unref === 'function') t.unref(); return t; }
 
 /**
  * "Is anyone actually looking?" — the signal that paces the sweeps which cannot be
@@ -81,14 +144,8 @@ function unref(t) { if (t && typeof t.unref === 'function') t.unref(); return t;
  * which dev servers are up — sit on state up to two minutes stale in the most
  * common steady state of all (browser closed, menubar always running). So a recent
  * poll counts exactly as much as an open stream.
- *
- * @param {object} [opts]
- * @param {Function} [opts.streams]      current open SSE stream count
- * @param {number} [opts.pollWindowMs]   how long a poll keeps counting; comfortably more
- *                                       than SwiftBar's 10s period so a missed tick or a
- *                                       slow render doesn't drop us to the idle cadence
  */
-function attention({ streams, pollWindowMs = 30000 } = {}) {
+function attention({ streams, pollWindowMs = 30000 }: AttentionOptions = {}): Attention {
   let lastPoll = 0;
   return {
     seen() { lastPoll = Date.now(); }, // call this from the state route
@@ -103,53 +160,42 @@ function attention({ streams, pollWindowMs = 30000 } = {}) {
 
 /**
  * Start watching. Returns a handle with { stop, stats, watched, poke }.
- * @param {object} deps
- * @param {{ baseDirs?: string[], scanDepth?: number, watch?: Partial<typeof DEFAULTS> }} deps.cfg
- *                                     loaded config (baseDirs, scanDepth, optional .watch)
- * @param {Function} deps.rescan       re-read repos/worktrees into the state cache
- * @param {Function} [deps.refreshRunning] lsof sweep for dev servers
- * @param {Function} [deps.reconcile]  multiplexer liveness sweep
- * @param {Function} [deps.hasViewers] true while anything is watching — see attention()
- *                                     (defaults to true, i.e. always-active pacing, so a
- *                                     partial wiring degrades to the old behaviour rather
- *                                     than to silence)
- * @param {Partial<typeof DEFAULTS>} [deps.intervals] DEFAULTS overrides — used by the tests to
- *                                     run the same code paths on a millisecond timescale
  */
-async function start(deps) {
+async function start(deps: WatchDeps): Promise<WatchHandle> {
   const cfg = deps.cfg || {};
   const o = { ...DEFAULTS, ...(cfg.watch || {}), ...(deps.intervals || {}) };
-  const watching = typeof deps.hasViewers === 'function'
-    ? () => { try { return !!deps.hasViewers(); } catch { return true; } }
+  const hasViewers = deps.hasViewers;
+  const watching = typeof hasViewers === 'function'
+    ? () => { try { return !!hasViewers(); } catch { return true; } }
     : () => true;
 
   // dir → { w, kind }. One entry per watched directory; never one per ref file.
-  const watchers = new Map();
-  let knownRepos = new Set();
-  let knownDirs = new Set();
+  const watchers = new Map<string, { w: fs.FSWatcher; kind: WatchKind }>();
+  let knownRepos = new Set<string>();
+  let knownDirs = new Set<string>();
   // Directories a container watch reported that the following scan then ignored —
   // they get one rescan each and are never allowed to cost another (see containerMatters).
-  const dismissed = new Set();
+  const dismissed = new Set<string>();
   let stopped = false;
   let warnedCap = false;
   let scans = 0;
 
   // ---- watch set ------------------------------------------------------------
 
-  function disarm(dir) {
+  function disarm(dir: string): void {
     const e = watchers.get(dir);
     if (!e) return;
     watchers.delete(dir);
     try { e.w.close(); } catch { /* already dead */ }
   }
 
-  function arm(dir, kind, recursive) {
+  function arm(dir: string, kind: WatchKind, recursive: boolean): void {
     if (stopped || watchers.has(dir)) return;
     if (watchers.size >= o.maxWatchers) {
       if (!warnedCap) { warnedCap = true; console.warn(`[wt-studio] watch: hit maxWatchers (${o.maxWatchers}); falling back to the safety-net timer for the rest`); }
       return;
     }
-    let w;
+    let w: fs.FSWatcher;
     try {
       w = fs.watch(dir, { persistent: false, recursive: !!recursive });
     } catch {
@@ -168,14 +214,14 @@ async function start(deps) {
   // Recompute the desired watch set from the current tree and reconcile against it.
   // Called at start and after every scan, which is also what prunes watchers for
   // repos that have gone away (fs.watch stays silent on a deleted directory).
-  function sync() {
+  function sync(): void {
     if (stopped) return;
-    let tree;
+    let tree: ReturnType<typeof gitMod.walkTree>;
     try { tree = gitMod.walkTree(cfg.baseDirs || [], cfg.scanDepth || 3); } catch { return; }
     knownDirs = new Set(tree.dirs);
     knownRepos = new Set(tree.repos);
 
-    const want = new Map(); // dir → [kind, recursive]
+    const want = new Map<string, [WatchKind, boolean]>(); // dir → [kind, recursive]
     for (const d of tree.dirs) want.set(d, ['container', false]);
     for (const repo of tree.repos) {
       const g = path.join(repo, '.git');
@@ -203,7 +249,7 @@ async function start(deps) {
   // only thing that can change *at this level* is the set of repos, so an event is
   // interesting only when a child's repo-ness disagrees with what the last scan
   // recorded. Two stat calls, no git spawned, no rescan for ordinary churn.
-  function containerMatters(dir, name) {
+  function containerMatters(dir: string, name: string): boolean {
     if (name === 'node_modules' || name.startsWith('.')) return false; // findRepos skips these
     const p = path.join(dir, name);
     if (knownRepos.has(p)) return !fs.existsSync(path.join(p, '.git')); // repo gone / de-gitted
@@ -218,7 +264,7 @@ async function start(deps) {
     return true;
   }
 
-  function matters(dir, kind, name) {
+  function matters(dir: string, kind: WatchKind, name: string | null): boolean {
     if (name === null) return true; // macOS can report a null filename — assume it counts
     if (name.endsWith('.lock')) return false; // git's write-then-rename temp; the real name follows
     if (kind === 'container') return containerMatters(dir, name);
@@ -236,13 +282,13 @@ async function start(deps) {
 
   // ---- debounced, non-overlapping rescan ------------------------------------
 
-  let debounce = null;
+  let debounce: ReturnType<typeof setTimeout> | null = null;
   let burstAt = 0;
   let scanBusy = false;
   let scanQueued = false;
   let lastScanAt = 0;
 
-  function trigger() {
+  function trigger(): void {
     if (stopped) return;
     if (!burstAt) burstAt = Date.now();
     if (debounce) clearTimeout(debounce);
@@ -255,7 +301,7 @@ async function start(deps) {
     debounce = unref(setTimeout(fire, Math.max(0, settle, cooldown)));
   }
 
-  function fire() {
+  function fire(): void {
     debounce = null;
     burstAt = 0;
     runScan();
@@ -264,7 +310,7 @@ async function start(deps) {
   // Exactly one scan in flight. Anything that arrives mid-scan collapses into a
   // single follow-up rather than queueing per event (mirrors server.js's own
   // `scanning` guard, but re-runs afterwards instead of dropping the request).
-  async function runScan() {
+  async function runScan(): Promise<void> {
     if (stopped) return;
     if (scanBusy) { scanQueued = true; return; }
     scanBusy = true;
@@ -289,20 +335,19 @@ async function start(deps) {
   // looking" and one for "nobody is"; the tick itself spawns nothing, so the cost
   // of checking often is nil and a dashboard that opens after a long idle gets a
   // fresh sweep within one tick instead of waiting out the idle interval.
-  const jobs = [
-    { name: 'running', fn: deps.refreshRunning, active: o.runningActiveMs, idle: o.runningIdleMs },
-    { name: 'reconcile', fn: deps.reconcile, active: o.reconcileActiveMs, idle: o.reconcileIdleMs },
-    { name: 'net', fn: runScan, active: o.netActiveMs, idle: o.netIdleMs },
-  ].filter((j) => typeof j.fn === 'function');
-  for (const j of jobs) { j.last = 0; j.busy = false; j.runs = 0; }
+  const jobs: Job[] = [
+    { name: 'running', fn: deps.refreshRunning, active: o.runningActiveMs, idle: o.runningIdleMs, last: 0, busy: false, runs: 0 },
+    { name: 'reconcile', fn: deps.reconcile, active: o.reconcileActiveMs, idle: o.reconcileIdleMs, last: 0, busy: false, runs: 0 },
+    { name: 'net', fn: runScan, active: o.netActiveMs, idle: o.netIdleMs, last: 0, busy: false, runs: 0 },
+  ].filter((j): j is Job => typeof j.fn === 'function');
 
-  function runJob(j) {
+  function runJob(j: Job): Promise<void> {
     j.last = Date.now();
     j.busy = true;
     return Promise.resolve().then(j.fn).catch(() => {}).then(() => { j.busy = false; j.runs += 1; });
   }
 
-  function tick() {
+  function tick(): void {
     if (stopped) return;
     const active = watching();
     const now = Date.now();
@@ -336,8 +381,8 @@ async function start(deps) {
     // the filesystem cannot tell us about.
     poke: trigger,
     watched() { return [...watchers.keys()].sort(); },
-    stats() {
-      const out = { scans, watchers: watchers.size, repos: knownRepos.size };
+    stats(): WatchStats {
+      const out: WatchStats = { scans, watchers: watchers.size, repos: knownRepos.size };
       for (const j of jobs) out[j.name] = j.runs;
       return out;
     },

@@ -12,7 +12,7 @@
 // Alfred, resolveGroup.
 import { computeFeatures } from './features.js';
 import { createRealpathCache } from './util.ts';
-import * as sources from './sources/index.js';
+import * as sources from './sources/index.ts';
 
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference

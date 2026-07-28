@@ -13,7 +13,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { run, DEFAULT_TIMEOUT_MS } from '../server/util.ts';
 import { pushBranchToOrigin, pushFailureLine, createForge, TIMEOUTS } from '../server/forge.ts';
-import * as worktree from '../server/worktree.js';
+import * as worktree from '../server/worktree.ts';
 
 const REAL_GIT = execFileSync('/usr/bin/which', ['git']).toString().trim();
 

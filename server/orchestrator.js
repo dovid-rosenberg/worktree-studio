@@ -11,7 +11,7 @@
 //     is down, so a leaked slot never blocks the next feature.
 //   - conflicts: another worktree of the same repo already running, which has to be
 //     stopped before this one can bind the same ports (unless the repo is slotted).
-import * as worktree from './worktree.js';
+import * as worktree from './worktree.ts';
 import { run, shq } from './util.ts';
 
 // `app` here is the API router — server.js mounts it at both /api and /api/v1.

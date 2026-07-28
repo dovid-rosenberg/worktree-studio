@@ -356,7 +356,7 @@ test('adopt sets home to the worktree launch dir (so resume resolves the convers
 // `basename` the identity and the worktree name coincide, which is why storing the
 // name was latent; under `branch`/`manifest` they differ and the lookup 404s.
 // ---------------------------------------------------------------------------
-import { createIdentity } from '../server/identity.js';
+import { createIdentity } from '../server/identity.ts';
 import tmux from '../server/multiplexer/tmux.js';
 import { computeFeatures } from '../server/features.js';
 

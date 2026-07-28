@@ -40,7 +40,7 @@
 // forge's cache TTL, so however many triggers arrive, no worktree+branch pair can
 // be looked up more often than the 20 s cache already allowed. With nobody
 // subscribed the figure is zero.
-import { attention } from './watch.js';
+import { attention } from './watch.ts';
 
 const DEFAULTS = {
   debounceMs: 500,       // coalesce a burst of triggers (a rescan storm, push then commit) into one sweep

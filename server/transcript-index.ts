@@ -9,8 +9,11 @@
 // 22MB transcript on every Stop hook would be the obvious wrong thing.
 import fs from 'fs';
 import path from 'path';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import * as transcripts from './transcripts.ts';
 import * as pricing from './pricing.ts';
+import type { LocatableSession, ScanStats, SearchHit, TokenTotals } from './transcripts.ts';
+import type { UsageByModel } from './types.ts';
 
 // node:sqlite is experimental in Node 22 (it prints an ExperimentalWarning on first
 // load). If it or FTS5 is missing we degrade to the file-scan search in
@@ -19,12 +22,12 @@ import * as pricing from './pricing.ts';
 // process.getBuiltinModule, not `import`: a static import of a missing builtin is a
 // link-time failure that takes the whole module graph down, and `await import` would
 // make every importer of this file async for a value we need synchronously here.
-let sqlite = null;
-let loadError = null;
-try { sqlite = process.getBuiltinModule('node:sqlite'); } catch (e) { loadError = e.message; }
+let sqlite: typeof import('node:sqlite') | null = null;
+let loadError: string | null = null;
+try { sqlite = process.getBuiltinModule('node:sqlite'); } catch (e) { loadError = (e as Error).message; }
 if (!sqlite && !loadError) loadError = 'not built into this node';
 
-function ftsAvailable(db) {
+function ftsAvailable(db: DatabaseSync): boolean {
   try {
     db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS _fts_probe USING fts5(x)');
     db.exec('DROP TABLE IF EXISTS _fts_probe');
@@ -87,11 +90,122 @@ CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
 END;
 `;
 
+// ---- what comes back out of sqlite ------------------------------------------
+//
+// A row is shaped by the SELECT that produced it, not by the driver, so each one
+// gets a named type. Only _ingest() writes these tables and it inserts from a
+// normalized TranscriptEntry, so a column the schema leaves nullable is null only
+// where the entry itself allows it — hence `uuid` and `role` are strings here while
+// `ts`, `model` and `git_branch` are not.
+
+type CountRow = { n: number };
+
+type FileRow = { path: string; offset: number };
+
+type MessageRow = {
+  session_id: string;
+  uuid: string;
+  role: string;
+  ts: string | null;
+  ts_ms: number | null;
+  model: string | null;
+  git_branch: string | null;
+  sidechain: number;
+  snippet: string | null;
+};
+
+/** One `GROUP BY session_id, model, speed` row out of the usage table. */
+export type UsageRow = {
+  session_id: string;
+  model: string | null;
+  speed: string | null;
+  messages: number;
+  input: number | null;
+  output: number | null;
+  cw5m: number | null;
+  cw1h: number | null;
+  cache_read: number | null;
+  web_search: number | null;
+  web_fetch: number | null;
+  first_at: number | null;
+  last_at: number | null;
+};
+
+// COUNT(*) always answers with exactly one row; get() is typed for the general case.
+function countOf(db: DatabaseSync, sql: string): number {
+  const row = db.prepare(sql).get() as CountRow | undefined;
+  return row ? row.n : 0;
+}
+
+// ---- the index ---------------------------------------------------------------
+
+export type IndexBackend = 'sqlite-fts5' | 'sqlite-like' | 'file-scan';
+
+export interface TranscriptIndexOptions {
+  file?: string;
+  root?: string | null;
+}
+
+export interface IndexStatus {
+  ready: boolean;
+  backend: IndexBackend;
+  fts5: boolean;
+  file: string;
+  error: string | null;
+  sessions: number;
+  messages: number;
+}
+
+/** The session fields index() reads. A full `Session` satisfies it. */
+export interface IndexableSession extends LocatableSession {
+  id?: string | null;
+}
+
+export interface IndexOptions {
+  /** Re-read the whole transcript instead of resuming from the stored offset. */
+  full?: boolean;
+}
+
+/** A pass that ran, or was skipped because one was already in flight. */
+export interface IndexPass {
+  ok: true;
+  /** Set when a pass for this session was already in flight — nothing was read. */
+  skipped?: string;
+  file?: string;
+  added?: number;
+  offset?: number;
+  size?: number;
+  /** No bytes have been appended since the last pass. */
+  upToDate?: boolean;
+  malformedLines?: number;
+  truncatedTail?: boolean;
+}
+
+export type IndexResult = { ok: false; reason: string } | IndexPass;
+
+/** A sqlite hit is a file-scan hit plus the session it came from. */
+export interface IndexSearchHit extends SearchHit {
+  sessionId: string;
+}
+
+/** `limit` and `since` arrive off a query string, so they may still be strings. */
+export interface IndexSearchOptions {
+  limit?: number | string | null;
+  sessionId?: string | null;
+  role?: string | null;
+  since?: number | string | null;
+  order?: string | null;
+}
+
+export type IndexSearchResult =
+  | { ok: false; reason: string; hits: IndexSearchHit[] }
+  | { ok: true; backend: IndexBackend; query?: string | null; hits: IndexSearchHit[]; total: number };
+
 // FTS5 MATCH is a query language, not a search box: a bare `OR`, an unbalanced quote,
 // or a stray `*` is a syntax error rather than a search for those characters. Quote
 // every term as a literal phrase and AND them together — predictable and injection-proof.
 // Double-quoted runs in the user's input are preserved as phrases.
-function ftsQuery(q) {
+function ftsQuery(q: string | null | undefined): string | null {
   const terms = String(q || '').match(/"[^"]*"|\S+/g) || [];
   const cleaned = terms
     .map((t) => t.replace(/"/g, ' ').trim())
@@ -101,12 +215,20 @@ function ftsQuery(q) {
 }
 
 // LIKE fallback: escape the wildcards so a query containing % or _ searches for them.
-function likePattern(q) {
+function likePattern(q: string | null | undefined): string {
   return `%${String(q || '').replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }
 
 class TranscriptIndex {
-  constructor(opts = {}) {
+  file: string;
+  root: string | null;
+  db: DatabaseSync | null;
+  fts: boolean;
+  ready: boolean;
+  error: string | null;
+  _indexing: Set<string>;
+
+  constructor(opts: TranscriptIndexOptions = {}) {
     this.file = opts.file || ':memory:';
     this.root = opts.root || null; // override ~/.claude/projects (tests)
     this.db = null;
@@ -117,7 +239,7 @@ class TranscriptIndex {
     this.open();
   }
 
-  open() {
+  open(): void {
     if (!sqlite) { this.error = `node:sqlite unavailable (${loadError})`; return; }
     try {
       if (this.file !== ':memory:') fs.mkdirSync(path.dirname(this.file), { recursive: true });
@@ -128,38 +250,45 @@ class TranscriptIndex {
       if (this.fts) this.db.exec(FTS_SCHEMA);
       this.ready = true;
     } catch (e) {
-      this.error = e.message;
+      this.error = (e as Error).message;
       this.ready = false;
     }
   }
 
-  close() { if (this.db) { try { this.db.close(); } catch { /* */ } this.db = null; this.ready = false; } }
+  // `ready` and `db` are separate fields that open() sets together, so every query
+  // path reconciles them here once: a non-null handle IS the ready check, and the
+  // types then carry that fact into the statements instead of re-testing a flag.
+  _handle(): DatabaseSync | null { return this.ready ? this.db : null; }
 
-  status() {
+  close(): void { if (this.db) { try { this.db.close(); } catch { /* */ } this.db = null; this.ready = false; } }
+
+  status(): IndexStatus {
+    const db = this._handle();
     return {
       ready: this.ready,
       backend: this.ready ? (this.fts ? 'sqlite-fts5' : 'sqlite-like') : 'file-scan',
       fts5: this.fts,
       file: this.file,
       error: this.error,
-      sessions: this.ready ? this.db.prepare('SELECT COUNT(*) n FROM files').get().n : 0,
-      messages: this.ready ? this.db.prepare('SELECT COUNT(*) n FROM messages').get().n : 0,
+      sessions: db ? countOf(db, 'SELECT COUNT(*) n FROM files') : 0,
+      messages: db ? countOf(db, 'SELECT COUNT(*) n FROM messages') : 0,
     };
   }
 
   // Index the bytes appended since the last pass. Returns what changed so the caller
   // can log or ignore it. Cheap and safe to call on every Stop hook: with no new
   // bytes it does a stat and returns.
-  async index(session, opts = {}) {
-    if (!this.ready) return { ok: false, reason: this.error || 'index unavailable' };
-    const id = session && session.id;
-    if (!id) return { ok: false, reason: 'no session id' };
+  async index(session: IndexableSession | null | undefined, opts: IndexOptions = {}): Promise<IndexResult> {
+    const db = this._handle();
+    if (!db) return { ok: false, reason: this.error || 'index unavailable' };
+    if (!session || !session.id) return { ok: false, reason: 'no session id' };
+    const id = session.id;
     if (this._indexing.has(id)) return { ok: true, skipped: 'in flight' };
 
-    const loc = transcripts.locate(session, { root: this.root });
+    const loc = transcripts.locate(session, { root: this.root || undefined });
     if (!loc.found) return { ok: false, reason: loc.reason };
 
-    const prev = this.db.prepare('SELECT path, offset FROM files WHERE session_id = ?').get(id);
+    const prev = db.prepare('SELECT path, offset FROM files WHERE session_id = ?').get(id) as FileRow | undefined;
     // A relocated transcript (promote moves it) means the new file holds the whole
     // history — the old offset would silently skip everything before the move.
     let start = prev && prev.path === loc.file && !opts.full ? prev.offset : 0;
@@ -173,17 +302,26 @@ class TranscriptIndex {
 
     this._indexing.add(id);
     try {
-      return await this._ingest(id, loc.file, session.claudeSessionId, start);
+      return await this._ingest(db, id, loc.file, session.claudeSessionId, start);
     } finally {
       this._indexing.delete(id);
     }
   }
 
-  async _ingest(id, file, claudeSessionId, start) {
-    const insMsg = this.db.prepare(
+  // The handle is passed in rather than re-read off `this`: index() has already
+  // established that the index is open, and threading it through keeps that fact
+  // true by construction here.
+  async _ingest(
+    db: DatabaseSync,
+    id: string,
+    file: string,
+    claudeSessionId: string | null | undefined,
+    start: number,
+  ): Promise<IndexPass> {
+    const insMsg = db.prepare(
       'INSERT OR IGNORE INTO messages (session_id, uuid, role, ts, ts_ms, model, git_branch, sidechain, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
-    const insUsage = this.db.prepare(
+    const insUsage = db.prepare(
       'INSERT OR IGNORE INTO usage (session_id, msg_id, ts_ms, model, speed, input, output, cache_write_5m, cache_write_1h, cache_read, web_search, web_fetch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     // Insert inside the reader's callback rather than collecting every entry first.
@@ -195,8 +333,8 @@ class TranscriptIndex {
     // The transaction opens BEFORE the read so every insert lands inside it, which is
     // what makes the offset in `files` and the rows it accounts for commit together.
     let added = 0;
-    let stats;
-    this.db.exec('BEGIN');
+    let stats: ScanStats;
+    db.exec('BEGIN');
     try {
       stats = await transcripts.readTranscript(file, { start }, (e) => {
         if (e.uuid && e.text) {
@@ -211,7 +349,7 @@ class TranscriptIndex {
           }
         }
       });
-      this.db.prepare(
+      db.prepare(
         `INSERT INTO files (session_id, path, claude_session_id, offset, size, entries, indexed_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
@@ -219,9 +357,9 @@ class TranscriptIndex {
            offset=excluded.offset, size=excluded.size,
            entries=files.entries+excluded.entries, indexed_at=excluded.indexed_at`
       ).run(id, file, claudeSessionId || null, stats.offset, stats.size, added, Date.now());
-      this.db.exec('COMMIT');
+      db.exec('COMMIT');
     } catch (e) {
-      this.db.exec('ROLLBACK');
+      db.exec('ROLLBACK');
       throw e;
     }
     return {
@@ -231,25 +369,27 @@ class TranscriptIndex {
   }
 
   // Drop everything for a session (its Studio session was closed).
-  forget(sessionId) {
-    if (!this.ready) return;
-    this.db.exec('BEGIN');
+  forget(sessionId: string): void {
+    const db = this._handle();
+    if (!db) return;
+    db.exec('BEGIN');
     try {
-      this.db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
-      this.db.prepare('DELETE FROM usage WHERE session_id = ?').run(sessionId);
-      this.db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
-      this.db.exec('COMMIT');
-    } catch { this.db.exec('ROLLBACK'); }
+      db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
+      db.prepare('DELETE FROM usage WHERE session_id = ?').run(sessionId);
+      db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
+      db.exec('COMMIT');
+    } catch { db.exec('ROLLBACK'); }
   }
 
   // Search returns enough to be actionable without opening the transcript: the
   // matching text, which session it came from, when, and who said it.
-  search(query, opts = {}) {
-    if (!this.ready) return { ok: false, reason: this.error || 'index unavailable', hits: [] };
+  search(query: string | null | undefined, opts: IndexSearchOptions = {}): IndexSearchResult {
+    const db = this._handle();
+    if (!db) return { ok: false, reason: this.error || 'index unavailable', hits: [] };
     const limit = Math.max(1, Math.min(200, Number(opts.limit) || 30));
-    const where = [];
-    const args = [];
-    let sql;
+    const where: string[] = [];
+    const args: SQLInputValue[] = [];
+    let sql: string;
 
     if (this.fts) {
       const match = ftsQuery(query);
@@ -276,7 +416,7 @@ class TranscriptIndex {
     sql += ' LIMIT ?';
     args.push(limit);
 
-    const rows = this.db.prepare(sql).all(...args);
+    const rows = db.prepare(sql).all(...args) as MessageRow[];
     return {
       ok: true,
       backend: this.fts ? 'sqlite-fts5' : 'sqlite-like',
@@ -298,8 +438,9 @@ class TranscriptIndex {
 
   // Per-model token rollup for one session (or all of them), straight out of the
   // usage table — no transcript re-read.
-  usageRows(sessionId) {
-    if (!this.ready) return [];
+  usageRows(sessionId: string | null | undefined): UsageRow[] {
+    const db = this._handle();
+    if (!db) return [];
     const sql = `SELECT session_id, model, speed, COUNT(*) messages,
                         SUM(input) input, SUM(output) output,
                         SUM(cache_write_5m) cw5m, SUM(cache_write_1h) cw1h,
@@ -308,23 +449,38 @@ class TranscriptIndex {
                         MIN(ts_ms) first_at, MAX(ts_ms) last_at
                  FROM usage ${sessionId ? 'WHERE session_id = ?' : ''}
                  GROUP BY session_id, model, speed`;
-    return sessionId ? this.db.prepare(sql).all(sessionId) : this.db.prepare(sql).all();
+    return (sessionId ? db.prepare(sql).all(sessionId) : db.prepare(sql).all()) as UsageRow[];
   }
+}
+
+/** usageRows() rolled up and priced — the shape the telemetry API returns. */
+export interface UsageSummary extends TokenTotals {
+  messages: number;
+  firstAt: number | null;
+  lastAt: number | null;
+  byModel: UsageByModel[];
+  costUsd: number | null;
+  costIsEstimate: true;
+  unpricedModels: string[];
 }
 
 // Turn usageRows() output into the priced shape the API returns. Kept out of the
 // class so telemetry.js-style callers can roll up across sessions or features with
 // the same code path.
-function summarize(rows) {
+function summarize(rows: UsageRow[]): UsageSummary {
   const totals = transcripts.blankTotals();
-  const unpriced = new Set();
+  const unpriced = new Set<string>();
   let costUsd = 0;
   let messages = 0;
-  let firstAt = null;
-  let lastAt = null;
-  const byModel = [];
+  let firstAt: number | null = null;
+  let lastAt: number | null = null;
+  const byModel: UsageByModel[] = [];
 
   for (const r of rows) {
+    // A usage row's model is nullable (an assistant line can arrive without one).
+    // aggregate() reports that as 'unknown' and this function already did for
+    // unpricedModels, so byModel names it the same way rather than emitting null.
+    const model = r.model || 'unknown';
     const u = {
       input: r.input || 0, output: r.output || 0,
       cacheWrite5m: r.cw5m || 0, cacheWrite1h: r.cw1h || 0,
@@ -338,8 +494,8 @@ function summarize(rows) {
     if (r.last_at && (lastAt === null || r.last_at > lastAt)) lastAt = r.last_at;
     const { usd, priced } = pricing.costOf(r.model, u, { speed: r.speed });
     if (priced) costUsd += usd;
-    else if (pricing.isBillable(r.model)) unpriced.add(r.model || 'unknown');
-    byModel.push({ model: r.model, speed: r.speed, messages: r.messages, ...u, costUsd: pricing.round(usd), priced });
+    else if (pricing.isBillable(r.model)) unpriced.add(model);
+    byModel.push({ model, speed: r.speed, messages: r.messages, ...u, costUsd: pricing.round(usd), priced });
   }
   byModel.sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0) || b.output - a.output);
 
@@ -355,6 +511,6 @@ function summarize(rows) {
   };
 }
 
-const sqliteAvailable = () => !!sqlite;
+const sqliteAvailable = (): boolean => !!sqlite;
 
 export { TranscriptIndex, summarize, ftsQuery, likePattern, sqliteAvailable };

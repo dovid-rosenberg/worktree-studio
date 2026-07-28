@@ -16,11 +16,11 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 
-import { createIdentity } from '../server/identity.js';
+import { createIdentity } from '../server/identity.ts';
 import * as layoutMod from '../server/layout.ts';
 import { computeFeatures } from '../server/features.js';
 import { Servers, featureFromPath } from '../server/servers.js';
-import * as worktree from '../server/worktree.js';
+import * as worktree from '../server/worktree.ts';
 
 // ---------------------------------------------------------- the old code ----
 
