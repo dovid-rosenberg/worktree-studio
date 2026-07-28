@@ -64,17 +64,21 @@ async function pool(items, limit, fn) {
 
 /**
  * @param {object} deps
- * @param {object} deps.forge        createForge() result — ciForRepo(entry) + invalidate()
+ * @param {{ ciForRepo: (entry: any) => Promise<any>, invalidate?: () => void }} deps.forge
+ *                                   createForge() result. Typed by the two methods the
+ *                                   feed actually reaches for, not by the whole object:
+ *                                   that IS the dependency, and a test double owes
+ *                                   nothing more.
  * @param {Function} deps.sessions   () → the current session list (manager.all())
  * @param {Function} [deps.streams]  () → open SSE stream count; the attention signal.
  *                                   Omitted, nothing ever sweeps — this fails closed,
  *                                   because a half-wired feed spawning `gh` for nobody
  *                                   is the one outcome worth ruling out by construction.
  * @param {Function} [deps.onChange] called when the snapshot differs from the last one
- * @param {object} [deps.intervals]  DEFAULTS overrides — the tests run the same code
- *                                   paths on a millisecond timescale
+ * @param {Partial<typeof DEFAULTS>} [deps.intervals] DEFAULTS overrides — the tests run
+ *                                   the same code paths on a millisecond timescale
  */
-function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals } = {}) {
+function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals }) {
   const o = { ...DEFAULTS, ...(intervals || {}) };
   // The poll arm is deliberately never fed (`seen()` is not called): for CI,
   // "someone is looking" means an open stream and nothing else. See above.
@@ -163,7 +167,8 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
    * "Something happened that may have changed CI." Debounced, floored at
    * minSweepMs, and a no-op when nobody is subscribed — the timer is not even
    * armed then, so an idle server with a busy git repo stays silent.
-   * @param {boolean} [force] the caller knows the truth changed (a commit, a push,
+   * @param {object} [opts]
+   * @param {boolean} [opts.force] the caller knows the truth changed (a commit, a push,
    *                          a PR just opened), so the cached answer is wrong rather
    *                          than merely old and has to be dropped.
    */

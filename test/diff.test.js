@@ -324,6 +324,7 @@ test('alignRows leaves a pure deletion with an empty right side', () => {
 
 test('alignRows pairs what it can and spills the rest into one-sided rows', () => {
   // 3 removals against 1 addition → one paired change row, two lone removals.
+  /** @type {Array<{ type: import('../server/types').DiffLineType, text: string }>} */
   const lines = [
     { type: 'del', text: 'a' }, { type: 'del', text: 'b' }, { type: 'del', text: 'c' },
     { type: 'add', text: 'A' },

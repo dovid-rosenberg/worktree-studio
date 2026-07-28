@@ -208,7 +208,12 @@ const { SessionManager } = require('../server/sessions');
 function countRealpaths(fn) {
   const real = fs.realpathSync;
   let n = 0;
-  fs.realpathSync = (p, ...rest) => { n++; return real(p, ...rest); };
+  // Only the callable half is replaced; `.native` is carried over so the property
+  // still satisfies everything else that may reach for it while fn runs.
+  fs.realpathSync = /** @type {typeof fs.realpathSync} */ (Object.assign(
+    (/** @type {any} */ p, /** @type {any[]} */ ...rest) => { n++; return real(p, ...rest); },
+    { native: real.native },
+  ));
   try { fn(); } finally { fs.realpathSync = real; }
   return n;
 }

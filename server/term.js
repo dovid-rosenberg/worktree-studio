@@ -7,7 +7,14 @@
 // booting a daemon. `spawn` is injectable for exactly that reason.
 const pty = require('node-pty');
 
-function createTerminalHandler({ manager, spawn = pty.spawn } = {}) {
+/**
+ * @param {object} deps
+ * @param {{ get: (id: string) => any, mux: { ensureSplit: Function, attachSpawn: Function } }} deps.manager
+ *        the SessionManager, typed by the three things this file reaches for — the
+ *        surface a test double has to stand in for is exactly that and no more.
+ * @param {typeof pty.spawn} [deps.spawn]
+ */
+function createTerminalHandler({ manager, spawn = pty.spawn }) {
   return async function onConnection(ws, req) {
     const url = new URL(req.url, 'http://localhost');
     const id = url.searchParams.get('session');

@@ -58,6 +58,10 @@ const QUIET = {
 // Boots a watcher over `base` with a counting rescan. Returns the handle plus the
 // call log; the initial (awaited) boot scan is zeroed out so tests count only
 // what their own actions caused.
+/**
+ * @param {string} base
+ * @param {{ intervals?: object, rescan?: Function, [dep: string]: any }} [opts]
+ */
 async function boot(base, { intervals = {}, rescan, ...deps } = {}) {
   const calls = [];
   const h = await watch.start({

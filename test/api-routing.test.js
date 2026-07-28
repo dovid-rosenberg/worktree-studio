@@ -32,6 +32,10 @@ const identity = createIdentity({});
 const WT = (name) => `/code/api/.worktrees/${name}`;
 
 // Records what the orchestrator asked of the collaborators it was handed.
+/**
+ * @param {{ group?: any, flat?: any[], conflicts?: any[],
+ *           allocError?: any, startError?: any }} [opts]
+ */
 function harness({ group, flat = [], conflicts = [], allocError = null, startError = null } = {}) {
   const calls = { stopped: [], started: [], released: [], allocated: [], broadcasts: 0 };
   const servers = {
@@ -71,7 +75,7 @@ function harness({ group, flat = [], conflicts = [], allocError = null, startErr
 async function serving(app, fn) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${server.address().port}`;
+  const base = `http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}`;
   try { return await fn((p, init) => fetch(base + p, init)); }
   finally { server.close(); }
 }
@@ -365,7 +369,7 @@ test('repeated transcript query params are collapsed, not passed through as arra
 
 test('a burst of Stop hooks collapses into one follow-up index pass', async () => {
   const { EventEmitter } = require('node:events');
-  const manager = new EventEmitter();
+  const manager = /** @type {any} */ (new EventEmitter());
   const session = { id: 's1' };
   manager.get = (id) => (id === 's1' ? session : null);
   manager.all = () => [];
@@ -379,7 +383,7 @@ test('a burst of Stop hooks collapses into one follow-up index pass', async () =
   const calls = [];
   let release;
   const gate = new Promise((r) => { release = r; });
-  index.index = async (s) => { calls.push(s.id); await gate; return { ok: true }; };
+  index.index = /** @type {any} */ (async (/** @type {any} */ s) => { calls.push(s.id); await gate; return { ok: true }; });
 
   // Three hooks with no await between them: the first starts a pass, the other two
   // land while it is in flight.
@@ -397,7 +401,7 @@ test('a burst of Stop hooks collapses into one follow-up index pass', async () =
 
 test('a hook for an event that is not a reindex trigger enqueues nothing', async () => {
   const { EventEmitter } = require('node:events');
-  const manager = new EventEmitter();
+  const manager = /** @type {any} */ (new EventEmitter());
   manager.get = () => ({ id: 's1' });
   manager.all = () => [];
   const app = express();
@@ -407,7 +411,7 @@ test('a hook for an event that is not a reindex trigger enqueues nothing', async
   const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
 
   const calls = [];
-  index.index = async (s) => { calls.push(s.id); return { ok: true }; };
+  index.index = /** @type {any} */ (async (/** @type {any} */ s) => { calls.push(s.id); return { ok: true }; });
   for (const event of ['PreToolUse', 'Notification', 'SessionStart']) manager.emit('hook', { id: 's1', event });
   assert.deepEqual(calls, [], 'every tool call must not re-stat the transcript');
 

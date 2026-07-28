@@ -225,6 +225,11 @@ function structure(diffText) {
 }
 
 // Stage the given paths (or everything) and commit. Returns { ok, sha, error }.
+/**
+ * @param {string} worktreePath
+ * @param {string} message
+ * @param {{ amend?: boolean, paths?: string[] }} [opts]
+ */
 async function commit(worktreePath, message, { amend, paths } = {}) {
   // `paths` is req.body.paths, and it was spread straight into the argv. Without a
   // `--` separator an element beginning with `-` is an OPTION to git add

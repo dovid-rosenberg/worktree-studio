@@ -29,6 +29,7 @@ const TOKEN = 'a'.repeat(64);
 
 // A miniature of server.js's wiring: same middleware order, same upgrade handler,
 // with the pty replaced by an echo of what the socket was allowed to reach.
+/** @param {{ port?: number }} [opts] */
 function harness({ port } = {}) {
   const cfg = { web: { host: '127.0.0.1', port: port || 0 } };
   const guard = createGuard({ cfg, token: TOKEN });
@@ -49,7 +50,7 @@ function harness({ port } = {}) {
   ]);
   const hooks = [];
   app.post('/hook/:event', (req, res) => {
-    const known = sessions.get(req.query.wts);
+    const known = sessions.get(String(req.query.wts));
     const deny = guard.denyToken(req);
     if (deny && !(known && known.hookAuth !== true)) return res.status(deny.status).json({ error: deny.error });
     if (known) hooks.push(`${known.id}:${req.params.event}`);
@@ -84,7 +85,7 @@ async function serving(fn) {
   const h = harness();
   h.server.listen(0, '127.0.0.1');
   await new Promise((r) => h.server.once('listening', r));
-  const port = h.server.address().port;
+  const port = /** @type {import('net').AddressInfo} */ (h.server.address()).port;
   h.cfg.web.port = port;
   const origin = `http://127.0.0.1:${port}`;
   const get = (p, init = {}) => fetch(origin + p, { ...init, headers: { host: `127.0.0.1:${port}`, ...(init.headers || {}) } });
@@ -114,6 +115,10 @@ function raw(port, { path: p = '/api/state', headers = {} } = {}) {
 
 // Open a ws to the harness and resolve with what happened, never throwing: a refused
 // handshake and an accepted one both have to be observable.
+/**
+ * @param {number} port
+ * @param {{ origin?: string, host?: string, token?: string, session?: string }} [opts]
+ */
 function wsProbe(port, { origin, host, token, session = 's_1' } = {}) {
   return new Promise((resolve) => {
     const headers = {};

@@ -31,18 +31,37 @@
 //
 // `ci` is optional: wired in, it joins the snapshot and gets its own flush flag;
 // omitted, the bus behaves exactly as it did with two events.
+/**
+ * @param {object} deps
+ * @param {() => import('./types').TopologyPayload} deps.topology
+ *        builds the `topology` half on demand
+ * @param {() => import('./types').SessionStatePayload} deps.sessionState
+ *        builds the `session-state` half on demand
+ * @param {() => import('./types').CiPayload} [deps.ci]
+ *        builds the `ci` half; omitted, the bus has two events
+ * @param {number} [deps.debounceMs]
+ */
 function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   const clients = new Set();
   let timer = null;
   let topologyPending = false;
   let ciPending = false;
 
+  /**
+   * @template {import('./types').SseEventName} E
+   * @param {E} event
+   * @param {import('./types').SseEvents[E]} data
+   */
   function frame(event, data) { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
   // A dead socket throws here; the request's close handler is what unsubscribes,
   // so one broken client never breaks the fan-out for the others.
   function write(res, text) { try { res.write(text); } catch { /* */ } }
 
   // Send the full snapshot, then join the fan-out. Returns the unsubscribe fn.
+  /**
+   * @param {{ write: (chunk: string) => any }} res  the SSE response
+   * @returns {() => void} unsubscribe
+   */
   function subscribe(res) {
     write(res, ':ok\n\n');
     write(res, frame('topology', topology()));
@@ -60,6 +79,7 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }) {
   // a tool call should never trigger a rebuild of every repo's worktree list.
   // `ci: true` is the same deal for the CI half, raised only by server/ci.js when
   // a sweep found something different.
+  /** @param {{ topology?: boolean, ci?: boolean }} [dirty] which slow halves to rebuild */
   function schedule({ topology: withTopology = false, ci: withCi = false } = {}) {
     if (withTopology) topologyPending = true;
     if (withCi) ciPending = true;

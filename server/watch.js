@@ -83,10 +83,11 @@ function unref(t) { if (t && typeof t.unref === 'function') t.unref(); return t;
  * common steady state of all (browser closed, menubar always running). So a recent
  * poll counts exactly as much as an open stream.
  *
- * @param {Function} [streams]      current open SSE stream count
- * @param {number} [pollWindowMs]   how long a poll keeps counting; comfortably more
- *                                  than SwiftBar's 10s period so a missed tick or a
- *                                  slow render doesn't drop us to the idle cadence
+ * @param {object} [opts]
+ * @param {Function} [opts.streams]      current open SSE stream count
+ * @param {number} [opts.pollWindowMs]   how long a poll keeps counting; comfortably more
+ *                                       than SwiftBar's 10s period so a missed tick or a
+ *                                       slow render doesn't drop us to the idle cadence
  */
 function attention({ streams, pollWindowMs = 30000 } = {}) {
   let lastPoll = 0;
@@ -104,7 +105,8 @@ function attention({ streams, pollWindowMs = 30000 } = {}) {
 /**
  * Start watching. Returns a handle with { stop, stats, watched, poke }.
  * @param {object} deps
- * @param {object} deps.cfg            loaded config (baseDirs, scanDepth, optional .watch)
+ * @param {{ baseDirs?: string[], scanDepth?: number, watch?: Partial<typeof DEFAULTS> }} deps.cfg
+ *                                     loaded config (baseDirs, scanDepth, optional .watch)
  * @param {Function} deps.rescan       re-read repos/worktrees into the state cache
  * @param {Function} [deps.refreshRunning] lsof sweep for dev servers
  * @param {Function} [deps.reconcile]  multiplexer liveness sweep
@@ -112,8 +114,8 @@ function attention({ streams, pollWindowMs = 30000 } = {}) {
  *                                     (defaults to true, i.e. always-active pacing, so a
  *                                     partial wiring degrades to the old behaviour rather
  *                                     than to silence)
- * @param {object} [deps.intervals]    DEFAULTS overrides — used by the tests to run the
- *                                     same code paths on a millisecond timescale
+ * @param {Partial<typeof DEFAULTS>} [deps.intervals] DEFAULTS overrides — used by the tests to
+ *                                     run the same code paths on a millisecond timescale
  */
 async function start(deps) {
   const cfg = deps.cfg || {};

@@ -336,12 +336,13 @@ test('a path that is really a git flag is treated as a pathspec, not an option',
 
 test('a non-string entry in paths is a rejected request, not a TypeError', async () => {
   const { dir } = tempRepo();
-  for (const bad of [[123], [null], [{}], ['']]) {
+  // Deliberately ill-typed input: the point is that a bad request is answered, not thrown.
+  for (const bad of /** @type {any[]} */ ([[123], [null], [{}], ['']])) {
     const r = await review.commit(dir, 'msg', { paths: bad });
     assert.equal(r.ok, false, JSON.stringify(bad));
     assert.match(r.error, /non-empty string/);
   }
-  const r = await review.commit(dir, 'msg', { paths: 'modified.txt' });
+  const r = await review.commit(dir, 'msg', { paths: /** @type {any} */ ('modified.txt') });
   assert.equal(r.ok, false);
   assert.match(r.error, /must be an array/);
   fs.rmSync(dir, { recursive: true, force: true });

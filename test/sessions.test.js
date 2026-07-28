@@ -27,7 +27,9 @@ function manager(cfgExtra = {}) {
   const cfg = { _stateDir: stateDir, _file: path.join(stateDir, 'config.json'), web: { port: 0 }, claude: { cmd: 'claude' }, baseDirs: [], copyPatterns: {}, ...cfgExtra };
   const sent = [];
   const mux = { name: 'stub', async sendText(n, t) { sent.push(t); }, async paneCommand() { return 'node'; }, async ensure() { return {}; }, async kill() {}, async rename() { return false; }, async hasSession() { return false; } };
-  const m = new SessionManager(cfg, mux);
+  // `_sent` is this helper's own bookkeeping stapled to the instance — the mux stub
+  // records what was typed into the session, and the tests assert on it.
+  const m = /** @type {InstanceType<typeof SessionManager> & { _sent: string[] }} */ (new SessionManager(cfg, mux));
   m._sent = sent;
   return m;
 }

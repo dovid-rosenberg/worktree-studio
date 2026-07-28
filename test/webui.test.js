@@ -17,6 +17,7 @@ const webui = require('../server/webui');
 const TOKEN = 'a'.repeat(64);
 
 // A repo-root-shaped fixture: client/build and/or public, each with an index.html.
+/** @param {{ client?: string, legacy?: string }} [have] which index.html(s) to lay down */
 function fixture({ client, legacy } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-webui-'));
   if (client !== undefined) {
@@ -37,7 +38,7 @@ const SHELL = `<!doctype html><html><head><script>window.WTS_TOKEN = "${webui.PL
 async function serving(app, fn) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
-  const base = `http://127.0.0.1:${server.address().port}`;
+  const base = `http://127.0.0.1:${/** @type {import('net').AddressInfo} */ (server.address()).port}`;
   try { return await fn((p, init) => fetch(base + p, init)); }
   finally { server.close(); }
 }
@@ -66,7 +67,7 @@ test('resolve() serves the SvelteKit build by default', () => {
 
 test('resolve() refuses to boot when the client has not been built, and says how', () => {
   const root = fixture({ legacy: '<html>old</html>' }); // public/ only
-  assert.throws(() => webui.resolve({}, root), (e) => {
+  assert.throws(() => webui.resolve({}, root), (/** @type {any} */ e) => {
     assert.match(e.message, /has not been built/);
     assert.match(e.message, /npm run build/);
     assert.match(e.message, /WTS_UI=legacy/); // the way out is in the message

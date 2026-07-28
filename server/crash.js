@@ -47,10 +47,13 @@ function isConnectionError(err) {
   return !!err && typeof err === 'object' && CONNECTION_ERROR_CODES.has(err.code);
 }
 
+/** Where a listen was attempted, for the message. @typedef {{ host?: string, port?: number|string }} Addr */
+
 // A human line explaining a fatal listen failure, or null if `err` isn't one.
 // EADDRINUSE is the case worth spelling out: it is nearly always a second daemon
 // being started against a port the first one already owns, and the generic
 // stack trace buries that.
+/** @param {*} err @param {Addr} [addr] */
 function listenErrorMessage(err, { host, port } = {}) {
   if (!err || typeof err !== 'object') return null;
   const at = `${host || '?'}:${port || '?'}`;
@@ -63,7 +66,11 @@ function listenErrorMessage(err, { host, port } = {}) {
 /**
  * Install the policy. `log`/`exit`/`on` are injectable so the classification can
  * be driven in a test without arming real process handlers or killing the runner.
- * @returns {{ handleException(err): boolean }} handleException reports whether the
+ * @param {object} [io]
+ * @param {(...args: any[]) => void} [io.log]
+ * @param {(code: number) => void} [io.exit]
+ * @param {(event: string, listener: (err: any) => void) => any} [io.on]
+ * @returns {{ handleException(err: any): boolean }} handleException reports whether the
  *          error was survived (true) or fatal (false), for tests.
  */
 function install({ log = console.error, exit = process.exit, on = process.on.bind(process) } = {}) {
@@ -91,6 +98,10 @@ function install({ log = console.error, exit = process.exit, on = process.on.bin
  * with no listener is re-thrown as an uncaughtException, which is how EADDRINUSE
  * ever reached the blanket handler in the first place; handling it here is what
  * turns it into a sentence the user can act on.
+ * @param {{ on: (event: string, listener: (err: any) => void) => any }} server
+ *        an http.Server, typed by the one thing this touches
+ * @param {Addr} [addr]
+ * @param {{ log?: Function, exit?: Function }} [io]
  */
 function guardListen(server, { host, port } = {}, { log = console.error, exit = process.exit } = {}) {
   server.on('error', (err) => {

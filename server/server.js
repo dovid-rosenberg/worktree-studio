@@ -558,7 +558,12 @@ async function main() {
   // The exemption is narrow (this route only sets a session's state/activity string)
   // and self-clearing (activate/restore rewrites the file and sets the flag).
   app.post('/hook/:event', (req, res) => {
-    const id = req.query.wts;
+    // `?wts=a&wts=b` (or `?wts[x]=y`) hands express an array/object, not a string —
+    // same hazard transcript-routes.js collapses for its query params. Here it made
+    // the lookup miss and the hook get dropped in silence. Collapse to the first
+    // value, which is what a client sending one session id meant.
+    const raw = req.query.wts;
+    const id = raw == null ? '' : String(Array.isArray(raw) ? raw[0] : raw);
     const known = id ? manager.get(id) : null;
     const deny = guard.denyToken(req);
     if (deny && !(known && known.hookAuth !== true)) return res.status(deny.status).json({ error: deny.error });
