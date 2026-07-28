@@ -7,18 +7,32 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'events';
 import { createTerminalHandler } from '../server/term.ts';
+import type { TerminalPty, TerminalSession, TerminalSpawn } from '../server/term.ts';
+import { present } from './helpers.ts';
 
 // Just enough of a `ws`: close() emits 'close', exactly as the real one does when
 // the browser goes away.
 class FakeSocket extends EventEmitter {
-  constructor() { super(); this.sent = []; this.closed = false; }
-  send(d) { if (this.closed) throw new Error('socket is closed'); this.sent.push(d); }
+  sent: string[] = [];
+  closed = false;
+  send(d: string) { if (this.closed) throw new Error('socket is closed'); this.sent.push(d); }
   close() { if (this.closed) return; this.closed = true; this.emit('close'); }
 }
 
-function fakeTerm() {
-  const t = {
-    killed: 0, written: [], resized: null,
+// A pty stand-in that also records what it was spawned WITH (`args`) and exposes the
+// listeners the handler installed (`_data` / `_exit`), so a test can drive output from
+// the pty side.
+interface FakeTerm extends TerminalPty {
+  killed: number;
+  written: string[];
+  resized: [number, number] | null;
+  args: Parameters<TerminalSpawn>;
+  _data?: (d: string) => void;
+  _exit?: (e: { exitCode: number }) => void;
+}
+function fakeTerm(args: Parameters<TerminalSpawn>): FakeTerm {
+  const t: FakeTerm = {
+    killed: 0, written: [], resized: null, args,
     onData(fn) { t._data = fn; },
     onExit(fn) { t._exit = fn; },
     write(d) { t.written.push(d); },
@@ -30,22 +44,28 @@ function fakeTerm() {
 
 // `ensureSplit` hands back a promise the test resolves when it wants the await to
 // finish; `terms` records every pty that was actually spawned.
-function harness({ session = { muxName: 'wts-x', worktreePath: '/wt' } } = {}) {
-  const terms = [];
-  let release;
-  const gate = new Promise((r) => { release = r; });
+const SESSION: TerminalSession = { muxName: 'wts-x', worktreePath: '/wt', repoPath: '/repo' };
+
+function harness({ session = SESSION }: { session?: TerminalSession } = {}) {
+  const terms: FakeTerm[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
   const manager = {
-    get: (id) => (id === 's1' ? session : null),
+    get: (id: string) => (id === 's1' ? session : null),
     mux: {
       ensureSplit: () => gate,
-      attachSpawn: (name, opts) => ({ file: 'tmux', args: ['attach-session', '-t', opts.group === 'split' ? `${name}-split` : name], env: {} }),
+      attachSpawn: (name: string, opts: { group?: string }) =>
+        ({ file: 'tmux', args: ['attach-session', '-t', opts.group === 'split' ? `${name}-split` : name], env: {} }),
     },
   };
-  const handler = createTerminalHandler({ manager, spawn: /** @type {any} */ ((/** @type {any[]} */ ...a) => { const t = fakeTerm(); t.args = a; terms.push(t); return t; }) });
+  const spawn: TerminalSpawn = (...a) => { const t = fakeTerm(a); terms.push(t); return t; };
+  const handler = createTerminalHandler({ manager, spawn });
   return { handler, terms, release, manager };
 }
 
-const req = (qs) => ({ url: `/ws/term?${qs}` });
+const req = (qs: string) => ({ url: `/ws/term?${qs}` });
+/** The pty the test just caused to be spawned. */
+const spawned = (terms: FakeTerm[], i = 0) => present(terms[i], `pty #${i}`);
 
 test('a split socket that closes during ensureSplit spawns no pty at all', async () => {
   const { handler, terms, release } = harness();
@@ -66,10 +86,10 @@ test('a split socket that survives ensureSplit gets its pty, and closing kills i
   release();
   await done;
   assert.equal(terms.length, 1, 'the pty is spawned once tmux has answered');
-  assert.deepEqual(terms[0].args[1], ['attach-session', '-t', 'wts-x-split'], 'attaches the -split session');
-  assert.equal(terms[0].killed, 0);
+  assert.deepEqual(spawned(terms).args[1], ['attach-session', '-t', 'wts-x-split'], 'attaches the -split session');
+  assert.equal(spawned(terms).killed, 0);
   ws.close();
-  assert.equal(terms[0].killed, 1, 'closing the socket kills the pty');
+  assert.equal(spawned(terms).killed, 1, 'closing the socket kills the pty');
 });
 
 test('the non-split path still spawns, forwards output and kills on close', async () => {
@@ -77,17 +97,17 @@ test('the non-split path still spawns, forwards output and kills on close', asyn
   const ws = new FakeSocket();
   await handler(ws, req('session=s1&cols=80&rows=24'));
   assert.equal(terms.length, 1);
-  assert.deepEqual(terms[0].args[1], ['attach-session', '-t', 'wts-x'], 'attaches the primary session');
-  assert.equal(terms[0].args[2].cols, 80);
-  assert.equal(terms[0].args[2].rows, 24);
-  terms[0]._data('hello');
+  assert.deepEqual(spawned(terms).args[1], ['attach-session', '-t', 'wts-x'], 'attaches the primary session');
+  assert.equal(spawned(terms).args[2].cols, 80);
+  assert.equal(spawned(terms).args[2].rows, 24);
+  present(spawned(terms)._data, 'the onData listener')('hello');
   assert.deepEqual(ws.sent, ['hello']);
   ws.emit('message', Buffer.from(JSON.stringify({ type: 'input', data: 'ls\r' })), false);
-  assert.deepEqual(terms[0].written, ['ls\r']);
+  assert.deepEqual(spawned(terms).written, ['ls\r']);
   ws.emit('message', Buffer.from(JSON.stringify({ type: 'resize', cols: 120, rows: 40 })), false);
-  assert.deepEqual(terms[0].resized, [120, 40]);
+  assert.deepEqual(spawned(terms).resized, [120, 40]);
   ws.close();
-  assert.equal(terms[0].killed, 1);
+  assert.equal(spawned(terms).killed, 1);
 });
 
 test('an unknown session closes the socket without spawning anything', async () => {

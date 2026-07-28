@@ -10,15 +10,20 @@ import path from 'path';
 import { createIdentity, compileBranchMatcher, firstCapture } from '../server/identity.ts';
 import { computeFeatures } from '../server/features.ts';
 import { featureFromPath } from '../server/servers.ts';
+import { present } from './helpers.ts';
+import type { Config, PartialDeep, Worktree } from '../server/types.ts';
 
-const wt = (repo, wtname, branch) => ({ repo, wtname, branch, path: `/r/${repo}/.worktrees/${wtname}`, running: false });
+// Only the four fields every identity strategy reads; `as Worktree` is the fixture
+// boundary, because filling in the other twelve would imply they matter here.
+const wt = (repo: string, wtname: string, branch: string | null) =>
+  ({ repo, wtname, branch, path: `/r/${repo}/.worktrees/${wtname}`, running: false } as Worktree);
 
 // A scan-shaped repo list, as server/git.ts emits it (worktrees carry `name`).
-const scan = (worktrees) => {
-  const byRepo = new Map();
+const scan = (worktrees: Worktree[]) => {
+  const byRepo = new Map<string, { name: string; worktrees: Array<{ path: string; name: string; branch: string | null }> }>();
   for (const w of worktrees) {
     if (!byRepo.has(w.repo)) byRepo.set(w.repo, { name: w.repo, worktrees: [] });
-    byRepo.get(w.repo).worktrees.push({ path: w.path, name: w.wtname, branch: w.branch });
+    present(byRepo.get(w.repo)).worktrees.push({ path: w.path, name: w.wtname, branch: w.branch });
   }
   return [...byRepo.values()];
 };
@@ -72,7 +77,7 @@ test('computeFeatures with the default identity is unchanged from grouping on wt
 
 // ------------------------------------------------------------------ branch
 
-const BRANCH_CFG = { featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' } };
+const BRANCH_CFG: PartialDeep<Config> = { featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' } };
 
 test('branch groups two differently-named worktrees that share a ticket number', () => {
   const id = createIdentity(BRANCH_CFG);
@@ -87,7 +92,7 @@ test('branch makes computeFeatures group across repos despite different basename
   const { features, groups } = computeFeatures(worktrees, [], id);
   const f = features.find((x) => x.name === '123');
   assert.ok(f, 'the ticket number is the feature');
-  assert.equal(f.members.length, 2);
+  assert.equal(present(f).members.length, 2);
   assert.deepEqual(groups.map((g) => g.name), ['123'], 'and it is a real multi-repo group');
 });
 
@@ -160,7 +165,7 @@ test('an invalid regex does not throw and falls back to basename', () => {
 test('a pattern with no capture group falls back to basename rather than matching nothing', () => {
   const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^fix/\\d+' } });
   assert.equal(id.strategy, 'basename');
-  assert.ok(/no capture group/.test(id.warning));
+  assert.ok(/no capture group/.test(String(id.warning)));
 });
 
 test('an empty branchPattern falls back to basename', () => {
@@ -169,9 +174,10 @@ test('an empty branchPattern falls back to basename', () => {
 });
 
 test('an unknown strategy falls back to basename', () => {
-  const id = createIdentity({ featureIdentity: { strategy: 'astrology' } });
+  // Outside the union on purpose — this test IS the unknown-strategy fallback.
+  const id = createIdentity({ featureIdentity: { strategy: 'astrology' as 'basename' } });
   assert.equal(id.strategy, 'basename');
-  assert.ok(/astrology/.test(id.warning));
+  assert.ok(/astrology/.test(String(id.warning)));
 });
 
 test('compileBranchMatcher reports the regex error instead of throwing', () => {
@@ -195,7 +201,7 @@ test('firstCapture skips undefined and empty groups', () => {
 const MANIFEST_CFG = {
   featureIdentity: { strategy: 'manifest' },
   groups: [{ name: 'Alpha', members: ['api/wt-a', 'fe/feature/alpha'] }],
-};
+} satisfies PartialDeep<Config>;
 
 test('manifest reads the EXISTING config.groups — no second config key', () => {
   const id = createIdentity(MANIFEST_CFG);
@@ -239,7 +245,7 @@ test('identity follows a non-default worktree layout', () => {
 });
 
 test('manifest picks up a live edit to config.groups (POST /settings replaces the array)', () => {
-  const cfg = { featureIdentity: { strategy: 'manifest' }, groups: [] };
+  const cfg: PartialDeep<Config> = { featureIdentity: { strategy: 'manifest' }, groups: [] };
   const id = createIdentity(cfg);
   const w = wt('api', 'wt-a', 'feature/alpha');
   id.reindex(scan([w]));

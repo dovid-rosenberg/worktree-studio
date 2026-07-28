@@ -29,7 +29,25 @@
 // Note what is NOT on the list: EADDRINUSE, EACCES, ENOENT, ENOSPC. Those say
 // the environment is not what the process needs, and continuing means running
 // half-configured.
-import type { NextFunction, Request, Response } from 'express';
+import type { ErrorRequestHandler, NextFunction } from 'express';
+
+/**
+ * The request and response typed by the four members this middleware touches, not by
+ * express's own `Request`/`Response` — those are ~100-member interfaces, and a test
+ * that wants to check WHAT gets logged and answered should not have to build one.
+ * Real express objects satisfy both. `routeErrors()` is still returned as an
+ * `ErrorRequestHandler`, so `app.use()` accepts it unchanged.
+ */
+export interface ErrorRequest {
+  method: string;
+  originalUrl?: string;
+  url?: string;
+}
+
+export interface ErrorResponse {
+  headersSent: boolean;
+  status(code: number): { json(body: unknown): unknown };
+}
 
 // Errors confined to one already-dead socket. `code` is the only reliable
 // discriminator — the message is localized/formatted and the class isn't
@@ -153,7 +171,7 @@ function guardListen(server: ListenErrorSource, { host, port }: Addr = {}, { log
 function routeErrors({ log = console.error }: Pick<Io, 'log'> = {}) {
   // Four arity, or express registers this as an ordinary middleware and never
   // hands it an error.
-  return (err: unknown, req: Request, res: Response, next: NextFunction) => {
+  const handler = (err: unknown, req: ErrorRequest, res: ErrorResponse, next: NextFunction) => {
     // Headers already out (an SSE stream, a half-written document): there is no
     // status left to set, and appending JSON to a body in flight corrupts it. Hand
     // it to express's default handler, which destroys the socket instead.
@@ -169,6 +187,7 @@ function routeErrors({ log = console.error }: Pick<Io, 'log'> = {}) {
     const status = Number(e && (e.status || e.statusCode));
     res.status(status >= 400 && status <= 599 ? status : 500).json({ error: e && e.message });
   };
+  return handler as typeof handler & ErrorRequestHandler;
 }
 
 export { install, guardListen, routeErrors, isConnectionError, listenErrorMessage, CONNECTION_ERROR_CODES };
