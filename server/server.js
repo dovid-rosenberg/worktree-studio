@@ -142,9 +142,8 @@ async function main() {
   // Every API route needs the boot token. The Origin/Host gate above only constrains
   // browsers; this is what stops any other local process — or a browser request that
   // carries no Origin at all — from driving the studio. It goes on the /api PREFIX
-  // rather than on the router below, so it also covers the routers other modules
-  // mount there themselves (transcript-routes); /api/v1 is nested under /api, so one
-  // line covers both prefixes.
+  // rather than on the router below, so it covers everything served under it however
+  // it got there; /api/v1 is nested under /api, so one line covers both prefixes.
   app.use('/api', guard.authed);
 
   // Every route below is registered once on this router and served at BOTH
@@ -537,8 +536,8 @@ async function main() {
     res.json({ ok: true });
   }));
 
-  require('./transcript-routes').register(app, { manager, cfg });
-  require('./routes-review').register(app, { manager, repos: () => repos, broadcast: scheduleBroadcast });
+  require('./transcript-routes').register(api, { manager, cfg });
+  require('./routes-review').register(api, { manager, repos: () => repos, broadcast: scheduleBroadcast });
 
   // ---- Claude Code hook receiver ----
   // Not under /api: the URL is baked into every session's generated settings file.

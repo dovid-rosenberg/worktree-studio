@@ -10,6 +10,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const express = require('express');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const orchestrator = require('../server/orchestrator');
 const { createForge } = require('../server/forge');
 const { createIdentity } = require('../server/identity');
@@ -206,4 +209,66 @@ test('the needsConfirm answer stays ok:true — the server is asking, not failin
     assert.equal(body.needsConfirm, true);
     assert.equal(body.ok, true, 'clients branch on needsConfirm before ok');
   });
+});
+
+// ---------------------------------------------------------------------------
+// The other two route modules ride the same router
+// ---------------------------------------------------------------------------
+//
+// routes-review and transcript-routes used to mount themselves — one by looping a
+// PREFIXES array against the raw app, one by app.use()-ing its own sub-router at each
+// prefix. Both now register onto the router server.js mounts twice, which is the only
+// one of the three idioms that is automatically correct. These tests are the proof
+// that the equivalence survived the change, end to end through express.
+
+// A manager with no sessions: every route below answers its own 404, which is exactly
+// what makes it observable that the route EXISTS under both prefixes.
+function routeModules() {
+  const app = express();
+  app.use(express.json());
+  const api = express.Router();
+  app.use('/api', api);
+  app.use('/api/v1', api);
+  const manager = { get: () => null, all: () => [], on: () => {} };
+  require('../server/routes-review').register(api, { manager, repos: () => [] });
+  // A throwaway state dir, so the real ~/.local/state index is never opened.
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-routing-'));
+  const { index } = require('../server/transcript-routes').register(api, { manager, cfg: { _stateDir: stateDir } });
+  return { app, index, cleanup: () => { index.close(); fs.rmSync(stateDir, { recursive: true, force: true }); } };
+}
+
+test('the review routes answer identically under /api and /api/v1', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      for (const route of ['/sessions/nope/diff', '/sessions/nope/hunks']) {
+        const { status, body } = await bothPrefixes(get, route);
+        assert.equal(status, 404, `${route} is the module's 404, not express's`);
+        assert.deepEqual(body, { error: 'no such session' });
+      }
+      for (const route of ['/sessions/nope/hunks/stage', '/sessions/nope/hunks/unstage']) {
+        const { status } = await bothPrefixes(get, route, post({ file: 'f.txt' }));
+        assert.equal(status, 404);
+      }
+    });
+  } finally { cleanup(); }
+});
+
+test('the transcript routes answer identically under /api and /api/v1', async () => {
+  const { app, cleanup } = routeModules();
+  try {
+    await serving(app, async (get) => {
+      for (const route of ['/sessions/nope/transcript', '/sessions/nope/transcript/search', '/sessions/nope/transcript/usage']) {
+        const { status, body } = await bothPrefixes(get, route);
+        assert.equal(status, 404);
+        assert.deepEqual(body, { error: 'no such session' });
+      }
+      for (const route of ['/transcripts/status', '/transcripts/usage', '/transcripts/search']) {
+        const { status } = await bothPrefixes(get, route);
+        assert.equal(status, 200, `${route} is registered under both prefixes`);
+      }
+      const { status } = await bothPrefixes(get, '/transcripts/reindex', post({}));
+      assert.equal(status, 200);
+    });
+  } finally { cleanup(); }
 });
