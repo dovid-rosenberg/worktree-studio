@@ -13,6 +13,7 @@
 
 import { TOKEN } from '$lib/api.js';
 import { adoptPricing } from './pricing.svelte.js';
+import type { FleetUsage, SearchResponse, StateSession, TranscriptStatus, Usage } from './types';
 
 const V1 = '/api/v1';
 
@@ -20,17 +21,14 @@ const V1 = '/api/v1';
 // cache-billing multipliers come from (pricing.svelte.js explains why the client must
 // not keep its own copy). Adopting it HERE rather than at each call site means a new
 // endpoint cannot forget to — there is no call site to remember it at.
-/** @param {any} json @returns {any} */
-function adopt(json) {
+function adopt(json: any): any {
   if (json && typeof json === 'object' && json.pricing) adoptPricing(json.pricing);
   return json;
 }
 
-/** @param {Record<string,string>} extra */
-const headers = (extra) => (TOKEN ? { ...extra, 'x-wts-token': TOKEN } : extra);
+const headers = (extra: Record<string, string>): Record<string, string> => (TOKEN ? { ...extra, 'x-wts-token': TOKEN } : extra);
 
-/** @param {string} url @param {AbortSignal} [signal] @returns {Promise<any>} */
-async function get(url, signal) {
+async function get(url: string, signal?: AbortSignal): Promise<any> {
   let res;
   try {
     res = await fetch(url, { signal, headers: headers({ accept: 'application/json' }) });
@@ -50,8 +48,7 @@ async function get(url, signal) {
   return adopt(json);
 }
 
-/** @param {string} url @param {any} body @param {AbortSignal} [signal] @returns {Promise<any>} */
-async function post(url, body, signal) {
+async function post(url: string, body: unknown, signal?: AbortSignal): Promise<any> {
   const res = await fetch(url, {
     method: 'POST',
     signal,
@@ -65,8 +62,7 @@ async function post(url, body, signal) {
   return adopt(json);
 }
 
-/** @param {Record<string, string|number|null|undefined>} params */
-const qs = (params) => {
+const qs = (params: Record<string, string | number | boolean | null | undefined>): string => {
   const s = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v === null || v === undefined || v === '') continue;
@@ -76,46 +72,52 @@ const qs = (params) => {
   return out ? `?${out}` : '';
 };
 
-/** Index health: backend, whether FTS5 is available, how much is indexed, price age.
- * @param {AbortSignal} [signal] @returns {Promise<import('./types.js').TranscriptStatus>} */
-export const transcriptStatus = (signal) => get(`${V1}/transcripts/status`, signal);
+/** Index health: backend, whether FTS5 is available, how much is indexed, price age. */
+export const transcriptStatus = (signal?: AbortSignal): Promise<TranscriptStatus> => get(`${V1}/transcripts/status`, signal);
 
 /**
  * Search. Always the global endpoint — passing `session` scopes it to one session AND
  * makes the server bring that session's index up to date first, so a scoped search is
  * never stale. The per-session endpoint is equivalent but omits per-hit session meta,
  * which the results list needs in order to render a hit from an unknown session.
- * @param {{ q: string, session?: string|null, role?: string|null, order?: string|null, limit?: number }} opts
- * @param {AbortSignal} [signal]
- * @returns {Promise<import('./types.js').SearchResponse>}
  */
-export const searchTranscripts = ({ q, session, role, order, limit = 40 }, signal) =>
+export interface SearchOpts {
+  q: string;
+  session?: string | null;
+  role?: string | null;
+  order?: string | null;
+  limit?: number;
+}
+
+export const searchTranscripts = (
+  { q, session, role, order, limit = 40 }: SearchOpts,
+  signal?: AbortSignal,
+): Promise<SearchResponse> =>
   get(`${V1}/transcripts/search${qs({ q, session, role, order, limit })}`, signal);
 
-/** One session's tokens + cost.
- * @param {string} id @param {AbortSignal} [signal]
- * @returns {Promise<import('./types.js').Usage>} */
-export const sessionUsage = (id, signal) =>
+/** One session's tokens + cost. */
+export const sessionUsage = (id: string, signal?: AbortSignal): Promise<Usage> =>
   get(`${V1}/sessions/${encodeURIComponent(id)}/transcript/usage`, signal);
 
-/** Where a session's transcript is, or why it can't be found.
- * @param {string} id @param {AbortSignal} [signal] */
-export const transcriptLocation = (id, signal) =>
+/** Where a session's transcript is, or why it can't be found. */
+export const transcriptLocation = (id: string, signal?: AbortSignal): Promise<any> =>
   get(`${V1}/sessions/${encodeURIComponent(id)}/transcript`, signal);
 
-/** Everything: per session, rolled up per feature, plus a grand total.
- * @param {{ refresh?: boolean }} [opts] @param {AbortSignal} [signal]
- * @returns {Promise<import('./types.js').FleetUsage>} */
-export const fleetUsage = ({ refresh } = {}, signal) =>
+/** Everything: per session, rolled up per feature, plus a grand total. */
+export const fleetUsage = (
+  { refresh }: { refresh?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<FleetUsage> =>
   get(`${V1}/transcripts/usage${qs({ refresh: refresh ? 1 : null })}`, signal);
 
-/** @param {{ session?: string|null, full?: boolean }} [opts] @param {AbortSignal} [signal] */
-export const reindex = ({ session, full } = {}, signal) =>
+export const reindex = (
+  { session, full }: { session?: string | null; full?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<any> =>
   post(`${V1}/transcripts/reindex`, { session, full }, signal);
 
-/** The session list, for the search scope picker and session titles.
- * @param {AbortSignal} [signal] @returns {Promise<import('./types.js').StateSession[]>} */
-export async function listSessions(signal) {
+/** The session list, for the search scope picker and session titles. */
+export async function listSessions(signal?: AbortSignal): Promise<StateSession[]> {
   const state = await get('/api/state', signal);
   return Array.isArray(state?.sessions) ? state.sessions : [];
 }
@@ -133,14 +135,13 @@ export async function listSessions(signal) {
 // instead of showing a blank list. Kept deliberately identical — if the server's
 // tokenizer changes, this must change with it.
 
-/** @param {string} q @returns {string[]} the literal phrases the server will AND together. */
-export function ftsTerms(q) {
+/** The literal phrases the server will AND together. */
+export function ftsTerms(q: string): string[] {
   const terms = String(q || '').match(/"[^"]*"|\S+/g) || [];
   return terms.map((t) => t.replace(/"/g, ' ').trim()).filter(Boolean);
 }
 
-/** Highlight-safe: the same terms, longest first, for client-side marking.
- * @param {string} q @returns {string[]} */
-export function highlightTerms(q) {
+/** Highlight-safe: the same terms, longest first, for client-side marking. */
+export function highlightTerms(q: string): string[] {
   return ftsTerms(q).sort((a, b) => b.length - a.length);
 }

@@ -18,14 +18,13 @@
 const OPEN = '«'; // «
 const CLOSE = '»'; // »
 
-/** @typedef {{ text: string, hit: boolean }} Segment */
+export interface Segment {
+  text: string;
+  hit: boolean;
+}
 
-/**
- * @param {string} snippet
- * @param {string[]} terms  query phrases, longest first
- * @returns {Segment[]}
- */
-export function segments(snippet, terms = []) {
+/** @param terms query phrases, longest first */
+export function segments(snippet: string, terms: string[] = []): Segment[] {
   const s = String(snippet || '');
   if (!s) return [];
   return s.includes(OPEN) ? fromMarkers(s) : fromTerms(s, terms);
@@ -33,10 +32,8 @@ export function segments(snippet, terms = []) {
 
 // Alternate on the server's delimiters. A « with no closing » (a snippet window that
 // cut mid-highlight) still terminates cleanly: the rest of the string is the hit.
-/** @param {string} s @returns {Segment[]} */
-function fromMarkers(s) {
-  /** @type {Segment[]} */
-  const out = [];
+function fromMarkers(s: string): Segment[] {
+  const out: Segment[] = [];
   let i = 0;
   while (i < s.length) {
     const open = s.indexOf(OPEN, i);
@@ -53,13 +50,11 @@ function fromMarkers(s) {
 // Longest-first, non-overlapping, case-insensitive. Longest-first matters: with terms
 // ["cache", "cache read"] the short one would otherwise claim the prefix and leave a
 // ragged half-highlight.
-/** @param {string} s @param {string[]} terms @returns {Segment[]} */
-function fromTerms(s, terms) {
+function fromTerms(s: string, terms: string[]): Segment[] {
   const list = (terms || []).filter(Boolean);
   if (!list.length) return [{ text: s, hit: false }];
   const hay = s.toLowerCase();
-  /** @type {[number, number][]} */
-  const ranges = [];
+  const ranges: [number, number][] = [];
   for (const raw of list) {
     const t = raw.toLowerCase();
     let from = 0;
@@ -72,8 +67,7 @@ function fromTerms(s, terms) {
   }
   if (!ranges.length) return [{ text: s, hit: false }];
   ranges.sort((a, b) => a[0] - b[0]);
-  /** @type {Segment[]} */
-  const out = [];
+  const out: Segment[] = [];
   let cursor = 0;
   for (const [a, b] of ranges) {
     push(out, s.slice(cursor, a), false);
@@ -84,8 +78,7 @@ function fromTerms(s, terms) {
   return out;
 }
 
-/** @param {Segment[]} out @param {string} text @param {boolean} hit */
-function push(out, text, hit) {
+function push(out: Segment[], text: string, hit: boolean): void {
   if (!text) return;
   // Merge runs so a snippet doesn't render as dozens of adjacent spans.
   const last = out[out.length - 1];
