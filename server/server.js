@@ -1,7 +1,5 @@
 'use strict';
-const fs = require('fs');
 const http = require('http');
-const path = require('path');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const pty = require('node-pty');
@@ -23,6 +21,7 @@ const { createForge } = require('./forge');
 const { createCiFeed } = require('./ci');
 const orchestrator = require('./orchestrator');
 const { createGuard } = require('./security');
+const webui = require('./webui');
 const { run, has, shq, A } = require('./util');
 
 async function main() {
@@ -129,16 +128,14 @@ async function main() {
   // The browser tab cannot be handed a header before it exists, so the boot token is
   // injected into the one document we hand it. That is safe precisely because of the
   // gate above: a cross-origin page cannot read this response body, and a rebinding
-  // page is refused before there is a body to read. no-store keeps the token out of
-  // the disk cache.
-  const INDEX = path.join(__dirname, '..', 'public', 'index.html');
-  app.get(['/', '/index.html'], (req, res) => {
-    let html;
-    try { html = fs.readFileSync(INDEX, 'utf8'); } catch { return res.status(500).send('index.html is missing'); }
-    return res.type('html').set('Cache-Control', 'no-store').send(html.replace('__WTS_TOKEN__', cfg._token));
-  });
-  // index:false so the directory listing never serves the un-injected index.html.
-  app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));
+  // page is refused before there is a body to read. See webui.js for which UI this is
+  // and what WTS_UI does; its SPA fallback is mounted after every route below.
+  // A UI that isn't on disk is a boot failure, not a 404 the user has to reverse-
+  // engineer: say what is missing and how to get it, and stop.
+  let ui;
+  try { ui = webui.resolve(); } catch (e) { console.error(`[wt-studio] ${e.message}`); process.exit(1); }
+  console.log(`[wt-studio] serving the ${ui.label}`);
+  webui.mount(app, { ui, token: cfg._token });
 
   // Every API route needs the boot token. The Origin/Host gate above only constrains
   // browsers; this is what stops any other local process — or a browser request that
@@ -555,6 +552,10 @@ async function main() {
     if (id) manager.applyHook(id, req.params.event, payload || {});
     res.json({ ok: true });
   });
+
+  // Client-side routes (/review, /search, /usage) reach the daemon on a deep link or a
+  // reload, and the daemon knows nothing about them. Last, so it shadows no route above.
+  webui.mountFallback(app, { ui, token: cfg._token });
 
   // ---- HTTP + WS ----
   const server = http.createServer(app);
