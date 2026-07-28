@@ -109,6 +109,40 @@ export interface ConcurrencyConfig {
 }
 
 /**
+ * Pacing overrides for server/watch.ts, merged over that module's DEFAULTS.
+ *
+ * Hand-added to config.json, like `sources.gitlab.project` below: defaults() never
+ * ships it, and without it watch.ts's own DEFAULTS are what is in force. It is named
+ * here anyway because watch.ts documents it as a supported knob, and a knob a user
+ * is invited to set belongs in the config contract rather than only in the module
+ * that reads it. Every key is optional — the merge is per-key.
+ */
+export interface WatchPacing {
+  /** scheduler heartbeat */
+  tickMs?: number;
+  /** how long a burst of fs events must be quiet before a scan */
+  debounceMs?: number;
+  /** …but a sustained stream still lands within this */
+  maxDebounceMs?: number;
+  /** hard ceiling on how often watching alone shells out to git */
+  minRescanMs?: number;
+  /** safety-net rescan, dashboard open */
+  netActiveMs?: number;
+  /** safety-net rescan, nobody looking */
+  netIdleMs?: number;
+  /** lsof sweep, dashboard open */
+  runningActiveMs?: number;
+  /** lsof sweep, nobody looking */
+  runningIdleMs?: number;
+  /** multiplexer liveness, dashboard open */
+  reconcileActiveMs?: number;
+  /** multiplexer liveness, nobody looking */
+  reconcileIdleMs?: number;
+  /** refuse to arm past this many fs watchers */
+  maxWatchers?: number;
+}
+
+/**
  * config.json as server/config.js hands it to everything else.
  *
  * `_file` and `_stateDir` are stamped on at load time and are not written back;
@@ -142,10 +176,28 @@ export interface Config {
   };
   notify: { waiting: boolean; sound: boolean; idle: boolean };
   concurrency: ConcurrencyConfig;
+  /** Absent from defaults(); see WatchPacing. */
+  watch?: WatchPacing;
   _file?: string;
-  _stateDir?: string;
-  /** The boot token, when one was minted. Never written back to config.json. */
-  _token?: string;
+  /**
+   * Where the state directory is. REQUIRED, unlike `_file`: load() stamps it
+   * unconditionally and every reader (servers.js, sessions.js, transcript-routes.js)
+   * joins a path onto it, so an absent one is a `path.join(undefined, …)` throw
+   * rather than a degraded mode. `_file` stays optional because save() has an
+   * explicit fallback for it and nothing here has one for this.
+   */
+  _stateDir: string;
+  /**
+   * The boot token. Never written back to config.json.
+   *
+   * REQUIRED for the same reason, and one more: security.js `createGuard` takes a
+   * `token: string`, and an undefined one would make the guard fail closed and 401
+   * every request — including the hook posts a live session depends on — with no
+   * error anywhere. load() always assigns `security.loadToken()`, which always
+   * returns a string, so the invariant is stated here rather than re-checked at each
+   * use. Hand-built configs are typed `PartialDeep<Config>`, which is unaffected.
+   */
+  _token: string;
 }
 
 // ---- sessions ---------------------------------------------------------------

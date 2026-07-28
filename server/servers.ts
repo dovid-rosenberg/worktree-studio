@@ -6,9 +6,119 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { run, readJsonState, writeJson, realpath, slug } from './util.ts';
 import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
 import { createIdentity } from './identity.ts';
+import type { Identity } from './identity.ts';
+import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, Worktree } from './types.ts';
+
+/**
+ * The config `Servers` reads.
+ *
+ * `PartialDeep<Config>` for everything it reads defensively (server.js hands it a
+ * whole config, every test hands it three keys), plus `concurrency` in its real
+ * shape: the entries of `concurrency.repos` go straight to server/concurrency.ts,
+ * which reads `portEnv[key]` as a number rather than re-checking each one.
+ */
+export type ServersConfig = PartialDeep<Config> & { concurrency?: ConcurrencyConfig };
+
+/**
+ * One launched dev server, as it is written to servers.json — and as it is read
+ * back, which is not the same thing: the file outlives upgrades, so a record may
+ * predate any field added since it was written.
+ */
+export interface TrackedServer {
+  /** Absent when spawn() never produced one. */
+  pid?: number;
+  repo?: string;
+  log?: string;
+  /** Absent in records written before the recycled-pid check existed — see _trackedPidState. */
+  startedAt?: number;
+}
+
+export type TrackedMap = Record<string, TrackedServer>;
+
+/**
+ * servers.json as it is read back. `tracked`/`slots` is today's shape; the index
+ * signature is the old flat file, whose keys are worktree paths.
+ */
+interface SavedServers {
+  tracked?: TrackedMap;
+  slots?: Record<string, unknown>;
+  [worktreePath: string]: unknown;
+}
+
+/** What a tracked record's pid names right now — see _trackedPidState. */
+export type TrackedPidState = 'ours' | 'gone' | 'stranger';
+
+/** A live process, as `ps` reports it. */
+export interface PsInfo {
+  startedAt: number;
+  command: string;
+}
+
+/** A listening process's cwd and the git worktree it resolves to. */
+export interface PidInfo {
+  cwd: string;
+  /** realpath of the git worktree top-level. */
+  top: string;
+}
+
+/** One discovered dev server: the listening pid and every non-ephemeral port it holds. */
+export interface RunningServer {
+  pid: number;
+  ports: number[];
+}
+
+/** A repo's launch command, once the string and object forms have been reconciled. */
+export interface StartCommand {
+  cmd: string;
+  ports: number[];
+}
+
+/** A slot, or why there isn't one. */
+export type SlotAllocation = { slot: number; error?: undefined } | { slot?: undefined; error: string };
+
+/**
+ * A config rewrite start() applies before spawning: which file, which sibling port
+ * families to shift, and to which slot. Distinct from the config's own
+ * `ConfigPatch`, which names the sibling REPO rather than its resolved ports.
+ */
+export interface ConfigPatchPlan {
+  file: string;
+  siblingPortEnv: Record<string, number>;
+  slot: number;
+}
+
+/** Launch env + ports for a repo at a feature's slot. */
+export interface LaunchOpts {
+  env: Record<string, string>;
+  ports: number[];
+  patch?: ConfigPatchPlan;
+}
+
+export type StartResult = { ok: false; error: string } | { ok: true; pid?: number; log: string };
+
+/** A record pruneTracked() dropped, for the boot-time log. */
+export interface DroppedRecord {
+  worktreePath: string;
+  pid?: number;
+}
+
+export interface LogsOptions {
+  offset?: number;
+  lines?: number;
+}
+
+export interface LogTail {
+  /** The byte position to pass to the next call. */
+  offset: number;
+  text: string;
+  size: number;
+  /** How many bytes the read cap dropped (0 normally). */
+  skipped: number;
+}
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
@@ -25,7 +135,7 @@ const PID_START_SKEW_MS = 10000;
 // Servers instance uses ITS OWN configured resolver (`this.identity`) instead, so
 // slot keys always match the grouping in server/features.js.
 const DEFAULT_IDENTITY = createIdentity({});
-function featureFromPath(worktreePath) { return DEFAULT_IDENTITY.ofPath(worktreePath); }
+function featureFromPath(worktreePath: string): string { return DEFAULT_IDENTITY.ofPath(worktreePath); }
 
 // Dev-server logs are appended to for the life of the worktree, so both their size
 // and what a single read of one may cost have to be bounded — and the read matters
@@ -41,7 +151,7 @@ const KEEP_LOG_BYTES = 4 * 1024 * 1024;
 const TAIL_MAX_BYTES = 512 * 1024;
 
 // Read a byte range [start, end) from a file as UTF-8 (used for incremental log tails).
-function readRange(file, start, end) {
+function readRange(file: string, start: number, end: number): string {
   const len = end - start;
   if (len <= 0) return '';
   const fd = fs.openSync(file, 'r');
@@ -53,8 +163,8 @@ function readRange(file, start, end) {
 // `maxBytes` — never the whole file. A first line the window clipped is dropped
 // rather than shown as a fragment, which also disposes of the half UTF-8 sequence
 // an arbitrary byte offset can land in the middle of.
-function readTail(file, lines, maxBytes = TAIL_MAX_BYTES) {
-  let size;
+function readTail(file: string, lines: number, maxBytes: number = TAIL_MAX_BYTES): string {
+  let size: number;
   try { size = fs.statSync(file).size; } catch { return ''; }
   const start = Math.max(0, size - maxBytes);
   let text = readRange(file, start, size);
@@ -72,11 +182,11 @@ function readTail(file, lines, maxBytes = TAIL_MAX_BYTES) {
 // file under a running child is safe: it appends after the kept tail instead of
 // leaving a sparse hole. A write landing between the read and the truncate is lost —
 // acceptable for a log, and the alternative is unbounded growth.
-function trimLog(file, max = MAX_LOG_BYTES, keep = KEEP_LOG_BYTES) {
-  let size;
+function trimLog(file: string, max: number = MAX_LOG_BYTES, keep: number = KEEP_LOG_BYTES): boolean {
+  let size: number;
   try { size = fs.statSync(file).size; } catch { return false; }
   if (size <= max) return false;
-  let fd;
+  let fd: number;
   try { fd = fs.openSync(file, 'r+'); } catch { return false; }
   try {
     const want = Math.min(keep, size); // a keep larger than the file would read from a negative offset
@@ -91,26 +201,40 @@ function trimLog(file, max = MAX_LOG_BYTES, keep = KEEP_LOG_BYTES) {
 }
 
 class Servers {
+  cfg: ServersConfig;
+  identity: Identity;
+  selfPort: number;
+  logDir: string;
+  lockDir: string;
+  file: string;
+  tracked: TrackedMap;
+  slots: Map<string, number>;
+  _pidInfoCache: Map<string, PidInfo>;
+  _starting: Map<string, number>;
+
   // `identity` is the shared server/identity.js resolver (server.js builds one and
   // hands the same instance to state.js/orchestrator.js). Passing it is what makes
   // "which feature is this worktree?" one answer instead of two.
-  constructor(cfg, identity) {
+  constructor(cfg: ServersConfig, identity?: Identity | null) {
     this.cfg = cfg;
     this.identity = identity || createIdentity(cfg);
     this.selfPort = (cfg.web && cfg.web.port) || 0;
-    this.logDir = path.join(cfg._stateDir, 'logs');
-    this.lockDir = path.join(cfg._stateDir, 'locks');
-    this.file = path.join(cfg._stateDir, 'servers.json');
+    // config.js stamps `_stateDir` onto every config it loads and every caller passes
+    // one; a config without it never reached this line, because path.join() threw on it.
+    const stateDir = cfg._stateDir!;
+    this.logDir = path.join(stateDir, 'logs');
+    this.lockDir = path.join(stateDir, 'locks');
+    this.file = path.join(stateDir, 'servers.json');
     fs.mkdirSync(this.logDir, { recursive: true });
     fs.mkdirSync(this.lockDir, { recursive: true });
     // servers.json shape: { tracked: { worktreePath → { pid, repo, log } }, slots: { feature → slot } }.
     // Back-compat: an old flat file (just the tracked object) still loads as `tracked`.
     // readJsonState: a corrupt servers.json is kept aside, not overwritten (see util.js).
-    const saved = readJsonState(this.file, {});
-    this.tracked = saved.tracked || saved; // worktreePath → { pid, repo, log }
+    const saved = readJsonState<SavedServers>(this.file, {});
+    this.tracked = (saved.tracked || saved) as TrackedMap; // worktreePath → { pid, repo, log }
     // featureName → slot (concurrency: one slot per feature, shared by its repos). Persisted
     // so a Studio restart while features run doesn't re-slot a running feature to slot 0.
-    this.slots = new Map(Object.entries(saved.slots || {}).map(([k, v]) => [k, Number(v)]));
+    this.slots = new Map(Object.entries(saved.slots || {}).map(([k, v]): [string, number] => [k, Number(v)]));
     // pid (string) → { cwd, top } — a process's cwd/git-toplevel never change, so we
     // resolve each listening pid once and reuse it across discoverRunning scans.
     this._pidInfoCache = new Map();
@@ -126,27 +250,31 @@ class Servers {
     this._starting = new Map();
   }
 
-  _save() { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
+  _save(): void { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
 
   // The feature a worktree path belongs to, under the configured identity
   // strategy. Every slot key in the app goes through here or through
   // `identity.of()` on the equivalent worktree object — the two agree by
   // construction (server/identity.js).
-  featureFor(worktreePath) { return this.identity.ofPath(worktreePath); }
+  featureFor(worktreePath: string): string { return this.identity.ofPath(worktreePath); }
 
   // ---- concurrency: per-feature slot allocation + derived launch env ----
-  _concEnabled() { return !!(this.cfg.concurrency && this.cfg.concurrency.enabled); }
-  _repoConc(repo) { const c = this.cfg.concurrency; return (c && c.repos && c.repos[repo]) || null; }
+  _concEnabled(): boolean { return !!(this.cfg.concurrency && this.cfg.concurrency.enabled); }
+  _repoConc(repo: string): RepoConcurrency | null { const c = this.cfg.concurrency; return (c && c.repos && c.repos[repo]) || null; }
   // A repo that gets a concurrency slot runs on its own (offset) ports per feature,
   // so running it in two worktrees at once does NOT collide.
-  isSlotted(repo) { return this._concEnabled() && !!this._repoConc(repo); }
+  isSlotted(repo: string): boolean { return this._concEnabled() && !!this._repoConc(repo); }
 
   // Allocate (or reuse) the slot for a feature. Returns { slot } or { error } when
   // all slots are busy. Slot 0 semantics when concurrency is off / no feature name.
-  allocSlotFor(feature) {
-    if (!this._concEnabled() || !feature) return { slot: 0 };
-    if (this.slots.has(feature)) return { slot: this.slots.get(feature) };
-    const max = this.cfg.concurrency.maxSlots || 1;
+  allocSlotFor(feature: string): SlotAllocation {
+    const conc = this.cfg.concurrency;
+    // Without a concurrency block `_concEnabled()` is already false, so the second
+    // test is that same condition restated where the type checker can see it.
+    if (!this._concEnabled() || !conc || !feature) return { slot: 0 };
+    const held = this.slots.get(feature);
+    if (held !== undefined) return { slot: held };
+    const max = conc.maxSlots || 1;
     const slot = allocSlot(new Set(this.slots.values()), max);
     if (slot === null) return { error: `no free concurrency slot (max ${max} running)` };
     this.slots.set(feature, slot);
@@ -154,16 +282,16 @@ class Servers {
     return { slot };
   }
 
-  releaseSlot(feature) { if (feature && this.slots.delete(feature)) this._save(); }
+  releaseSlot(feature: string): void { if (feature && this.slots.delete(feature)) this._save(); }
 
   // Mark a feature as having a launch in flight, so its slot is not reclaimable
   // while its ports are still coming up. Always paired in a finally.
-  _beginStart(feature) {
+  _beginStart(feature: string): void {
     if (!feature) return;
     this._starting.set(feature, (this._starting.get(feature) || 0) + 1);
   }
 
-  _endStart(feature) {
+  _endStart(feature: string): void {
     if (!feature) return;
     const left = (this._starting.get(feature) || 0) - 1;
     if (left > 0) this._starting.set(feature, left);
@@ -171,7 +299,7 @@ class Servers {
   }
 
   // Is a launch for this feature in flight right now?
-  isStarting(feature) { return this._starting.has(feature); }
+  isStarting(feature: string): boolean { return this._starting.has(feature); }
 
   // Self-heal the slot map against reality: drop any slot whose feature has no
   // running worktree in `runningMap` (Map(realpath → {pid,ports}) from discoverRunning).
@@ -181,7 +309,7 @@ class Servers {
   // "Reality" here is what is LISTENING, and a feature that is still starting is
   // legitimately not listening yet — see `_starting`. Reclaiming its slot would
   // hand the ports it is about to bind to somebody else.
-  reconcileSlots(runningMap) {
+  reconcileSlots(runningMap: Map<string, RunningServer>): void {
     let changed = false;
     for (const feature of [...this.slots.keys()]) {
       if (this._starting.has(feature)) continue; // launch in flight — not yet up ≠ gone
@@ -198,12 +326,14 @@ class Servers {
   // When the repo declares a `configPatch` (e.g. an FE that hardcodes accept-blue's
   // ports), return a `patch` descriptor that start() applies to the worktree's config
   // file — shifting ALL of the sibling repo's port families to this feature's slot.
-  launchOpts(repo, feature) {
-    if (!this._concEnabled()) return { env: {}, ports: [] };
+  launchOpts(repo: string, feature: string): LaunchOpts {
+    const conc = this.cfg.concurrency;
+    // As in allocSlotFor: no concurrency block means `_concEnabled()` already said no.
+    if (!this._concEnabled() || !conc) return { env: {}, ports: [] };
     const rc = this._repoConc(repo);
     if (!rc) return { env: {}, ports: [] };
-    const step = this.cfg.concurrency.offsetStep;
-    const slot = this.slots.has(feature) ? this.slots.get(feature) : 0;
+    const step = conc.offsetStep;
+    const slot = this.slots.get(feature) ?? 0;
     const { env, ports } = deriveEnv(rc, slot, step);
     const cp = rc.configPatch;
     if (cp) {
@@ -217,32 +347,38 @@ class Servers {
   // Rewrite a worktree's gitignored FE config to point at this slot's sibling ports.
   // Shifts every one of the sibling repo's port families (su/merchant/iso/…) uniformly.
   // Best-effort + file-exists guarded: silently no-op when the file isn't present.
-  applyConfigPatch(worktreePath, patch) {
+  applyConfigPatch(worktreePath: string, patch?: ConfigPatchPlan | null): void {
     if (!patch || !patch.file) return;
     try {
       const file = path.join(worktreePath, patch.file);
       if (!fs.existsSync(file)) return;
-      const step = this.cfg.concurrency.offsetStep;
-      const max = this.cfg.concurrency.maxSlots || 1;
+      const conc = this.cfg.concurrency;
+      if (!conc) return; // no concurrency block → nothing to shift the ports to
+      const step = conc.offsetStep;
+      const max = conc.maxSlots || 1;
       const text = fs.readFileSync(file, 'utf8');
       const out = rewriteAllSiblingPorts(text, patch.siblingPortEnv, step, max, patch.slot);
       if (out !== text) fs.writeFileSync(file, out);
     } catch { /* best-effort — never block a launch on a config rewrite */ }
   }
 
-  startCfg(repo) {
+  startCfg(repo: string): StartCommand | null {
     const s = this.cfg.start && Object.prototype.hasOwnProperty.call(this.cfg.start, repo) ? this.cfg.start[repo] : null;
     if (!s) return null;
     if (typeof s === 'string') return { cmd: s, ports: [] };
+    // An entry with no `cmd` is not a launchable config: canStart would advertise one
+    // and start() would then hand `undefined` to spawn(). POST /settings drops such
+    // rows, but a hand-edited config.json can still carry one.
+    if (!s.cmd) return null;
     return { cmd: s.cmd, ports: s.ports || [] };
   }
 
-  alive(pid) { try { process.kill(pid, 0); return true; } catch { return false; } }
+  alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch { return false; } }
 
   // { startedAt, command } for a live pid, or null when there is no such process.
   // `lstart` is a fixed-width ctime string — "Mon Jul 27 22:46:40 2026", 24 chars —
   // so the command is simply the rest of the line.
-  async _psInfo(pid) {
+  async _psInfo(pid: number): Promise<PsInfo | null> {
     const r = await run('ps', ['-o', 'lstart=,command=', '-p', String(pid)], { env: ENV });
     const line = (r.stdout || '').split('\n').find((l) => l.trim());
     if (!line) return null;
@@ -264,7 +400,7 @@ class Servers {
   // check at all from DELETE /sessions/:id and POST /sessions/:id/servers/stop.
   // A process's start time is fixed at exec and cannot be inherited with the pid,
   // which is what makes the record self-validating.
-  async _trackedPidState(t) {
+  async _trackedPidState(t?: TrackedServer | null): Promise<TrackedPidState> {
     if (!t || !t.pid) return 'gone';
     const info = await this._psInfo(t.pid);
     if (!info) return 'gone';
@@ -273,15 +409,15 @@ class Servers {
     // Fall back to the command we would have launched for that repo: weaker than a
     // start time, but it still tells a dev server from someone else's daemon, and
     // it is strictly better than trusting the bare number.
-    const sc = this.startCfg(t.repo);
+    const sc = t.repo ? this.startCfg(t.repo) : null; // a record with no repo has no command to match either
     return sc && sc.cmd && info.command.includes(sc.cmd) ? 'ours' : 'stranger';
   }
 
   // Drop every tracked record that no longer names a process we launched. Called at
   // boot, which is where the damage was: the map accumulated across restarts and
   // reboots, so entries written days ago were still live kill targets.
-  async pruneTracked() {
-    const dropped = [];
+  async pruneTracked(): Promise<DroppedRecord[]> {
+    const dropped: DroppedRecord[] = [];
     for (const [wt, t] of Object.entries(this.tracked)) {
       if (await this._trackedPidState(t) === 'ours') continue;
       dropped.push({ worktreePath: wt, pid: t.pid });
@@ -291,7 +427,7 @@ class Servers {
     return dropped;
   }
 
-  async portPid(port) {
+  async portPid(port: number): Promise<number | null> {
     const r = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { env: ENV });
     const pid = r.stdout.trim().split('\n').filter(Boolean)[0];
     return pid ? Number(pid) : null;
@@ -299,19 +435,20 @@ class Servers {
 
   // Parse `lsof -Fpn` LISTEN output into Map(pid(string) → Set(port:int)),
   // filtering ephemeral ports and Studio's own port.
-  async _listeningPids() {
-    const byPid = new Map();
+  async _listeningPids(): Promise<Map<string, Set<number>>> {
+    const byPid = new Map<string, Set<number>>();
     const r = await run('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'], { env: ENV });
     if (r.code !== 0 && !r.stdout) return byPid;
     // parse -F output: `p<pid>` starts a process block; `n<host>:<port>` are its sockets
-    let pid = null;
+    let pid: string | null = null;
     for (const line of r.stdout.split('\n')) {
       if (line[0] === 'p') { pid = line.slice(1); if (!byPid.has(pid)) byPid.set(pid, new Set()); }
       else if (line[0] === 'n' && pid) {
         const m = line.slice(1).match(/:(\d+)$/);
         if (m) {
           const port = Number(m[1]);
-          if (port < EPHEMERAL && port !== this.selfPort) byPid.get(pid).add(port);
+          // The `p` line that opened this block seeded the entry, so the lookup holds.
+          if (port < EPHEMERAL && port !== this.selfPort) byPid.get(pid)?.add(port);
         }
       }
     }
@@ -321,7 +458,7 @@ class Servers {
   // Resolve one pid → { cwd, top(=realpath git worktree top-level) }, or null if it
   // isn't inside a git worktree. The two lsof/git spawns here are what the per-pid
   // cache in discoverRunning elides on subsequent scans.
-  async _resolvePid(pid) {
+  async _resolvePid(pid: string): Promise<PidInfo | null> {
     const c = await run('lsof', ['-p', pid, '-a', '-d', 'cwd', '-Fn'], { env: ENV });
     const cwdLine = c.stdout.split('\n').find((l) => l[0] === 'n');
     if (!cwdLine) return null;
@@ -335,19 +472,19 @@ class Servers {
   // Returns Map(realpath(worktreeTopLevel) → { pid, ports:[int] }).
   // Per-pid cwd/toplevel resolution is cached (a process's cwd never changes), so
   // steady-state scans only re-run the single LISTEN lsof, not a git+lsof per pid.
-  async discoverRunning() {
-    const out = new Map();
+  async discoverRunning(): Promise<Map<string, RunningServer>> {
+    const out = new Map<string, RunningServer>();
     const byPid = await this._listeningPids();
     for (const [p, ports] of byPid) {
       if (!ports.size) continue;
-      let info = this._pidInfoCache.get(p);
+      let info: PidInfo | null | undefined = this._pidInfoCache.get(p);
       if (!info) {
         info = await this._resolvePid(p);
         if (!info) continue; // not in a git worktree — retry next scan (don't cache misses)
         this._pidInfoCache.set(p, info);
       }
       const key = info.top;
-      const cur = out.get(key) || { pid: Number(p), ports: [] };
+      const cur: RunningServer = out.get(key) || { pid: Number(p), ports: [] };
       cur.ports = [...new Set([...cur.ports, ...ports])].sort((a, b) => a - b);
       out.set(key, cur);
     }
@@ -357,7 +494,7 @@ class Servers {
   }
 
   // Attach running/pid/ports/canStart to a worktree object using a discovered map.
-  decorate(worktree, running) {
+  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart'> {
     const hit = running.get(realpath(worktree.path));
     return {
       running: !!hit,
@@ -370,7 +507,7 @@ class Servers {
   // Serialize concurrent launches of the SAME worktree (not the same repo — two
   // worktrees of one repo must start concurrently). Lock name is a filesystem-safe
   // slug + hash of the worktree path so distinct paths never share a lock.
-  _lock(worktreePath) {
+  _lock(worktreePath: string): string | null {
     const name = `${slug(worktreePath, 40)}-${crypto.createHash('sha1').update(String(worktreePath)).digest('hex').slice(0, 8)}`;
     const lock = path.join(this.lockDir, `${name}.lock`);
     try { fs.mkdirSync(lock); return lock; }
@@ -380,11 +517,11 @@ class Servers {
       return null;
     }
   }
-  _unlock(lock) { try { fs.rmdirSync(lock); } catch { /* */ } }
+  _unlock(lock: string): void { try { fs.rmdirSync(lock); } catch { /* */ } }
 
   // opts.env: per-call env merged over the base ENV (concurrency slot offsets).
   // opts.ports: derived (slot-offset) ports to pre-check/poll instead of sc.ports.
-  async start(repo, worktreePath, opts = {}) {
+  async start(repo: string, worktreePath: string, opts: Partial<LaunchOpts> = {}): Promise<StartResult> {
     const sc = this.startCfg(repo);
     if (!sc) return { ok: false, error: `no start config for repo '${repo}'` };
     const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
@@ -410,7 +547,7 @@ class Servers {
       // the process's real start time — that is what stops a recycled pid from
       // being signalled as though it were still this dev server.
       const startedAt = Date.now();
-      let child;
+      let child: ChildProcess;
       try {
         fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);
         child = spawn('bash', ['-lc', sc.cmd], { cwd: worktreePath, detached: true, stdio: ['ignore', fd, fd], env });
@@ -440,21 +577,23 @@ class Servers {
 
   // Ports a server in this worktree would be listening on: the feature's
   // slot-derived ports when concurrency-slotted, else the repo's configured ports.
-  _portsFor(repo, worktreePath) {
+  _portsFor(repo: string, worktreePath: string): number[] {
     const opts = this.launchOpts(repo, this.featureFor(worktreePath));
     if (opts.ports && opts.ports.length) return opts.ports;
     const sc = this.startCfg(repo);
     return sc ? sc.ports : [];
   }
 
-  async stop(repo, worktreePath) {
+  async stop(repo: string, worktreePath: string): Promise<{ ok: true; killed: boolean }> {
     let killed = false;
     const t = this.tracked[worktreePath];
     // Never signal a pid we cannot still prove is ours — see _trackedPidState.
     // `kill(-pid)` takes out a whole process group, so getting this wrong is not a
     // near miss.
     const state = t ? await this._trackedPidState(t) : 'gone';
-    if (state === 'ours') {
+    // A record with no pid can only be 'gone', so `t.pid` here is the pid that state
+    // was decided on.
+    if (state === 'ours' && t.pid) {
       try { process.kill(-t.pid, 'SIGTERM'); killed = true; } catch { try { process.kill(t.pid, 'SIGTERM'); killed = true; } catch { /* */ } }
     } else if (state === 'stranger') {
       // Loud, because it means this record was about to be used to kill something
@@ -473,7 +612,7 @@ class Servers {
     return { ok: true, killed };
   }
 
-  async restart(repo, worktreePath, opts = {}) {
+  async restart(repo: string, worktreePath: string, opts: Partial<LaunchOpts> = {}): Promise<StartResult> {
     // A restart is a window with nothing listening by design — the stop, the 800 ms
     // settle, and then start()'s own poll. The guard has to span the whole thing or
     // a sweep landing in the gap reclaims the slot the restart intends to reuse.
@@ -491,7 +630,7 @@ class Servers {
   // worktree, so it is cheap enough to hang off the periodic sweep — which is the
   // only thing that bounds a dev server that has been running for days without a
   // restart. Returns how many were trimmed.
-  trimLogs() {
+  trimLogs(): number {
     let trimmed = 0;
     for (const t of Object.values(this.tracked)) if (t && t.log && trimLog(t.log)) trimmed++;
     return trimmed;
@@ -502,17 +641,19 @@ class Servers {
   //  - opts.offset a number → return only the bytes written after that offset.
   // Always returns { offset, text, size, skipped } where `offset` is the byte position
   // to pass next and `skipped` is how many bytes the read cap dropped (0 normally).
-  logs(worktreePath, opts = {}) {
-    const incremental = typeof opts.offset === 'number' && Number.isFinite(opts.offset);
+  logs(worktreePath: string, opts: LogsOptions = {}): LogTail {
+    // Captured rather than re-read: "this call is incremental" and "the offset it is
+    // incremental from" are one fact, and null is the form that carries both.
+    const offset = typeof opts.offset === 'number' && Number.isFinite(opts.offset) ? opts.offset : null;
     const t = this.tracked[worktreePath];
     const log = t && t.log;
-    const empty = { offset: incremental ? opts.offset : 0, text: '', size: 0, skipped: 0 };
+    const empty = { offset: offset ?? 0, text: '', size: 0, skipped: 0 };
     if (!log || !fs.existsSync(log)) return empty;
-    let size;
+    let size: number;
     try { size = fs.statSync(log).size; } catch { return empty; }
-    if (incremental) {
+    if (offset !== null) {
       // a shrunken file means it was truncated/rotated — re-read from the start
-      const start = opts.offset > size ? 0 : Math.max(0, opts.offset);
+      const start = offset > size ? 0 : Math.max(0, offset);
       // A client that has been away — or a server that dumped a burst — must not be
       // able to make us allocate the whole gap in one Buffer. Skip forward to the
       // last TAIL_MAX_BYTES and report what that cost.

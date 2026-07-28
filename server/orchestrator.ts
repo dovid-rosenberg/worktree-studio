@@ -16,10 +16,9 @@ import * as worktree from './worktree.ts';
 import { run, shq } from './util.ts';
 
 // The collaborators below are typed by the surface these routes touch, not by the
-// classes server.js hands over — the same rule server/routes-review.ts follows, and
-// the only option while server/servers.js, server/sessions.js and server/state.js are
-// still untyped. It is also what lets test/api-routing.test.js drive the module with
-// a recording fake.
+// concrete objects server.js hands over — the same rule server/routes-review.ts
+// follows. It is what lets test/api-routing.test.js drive every verb with a recording
+// fake, and it is also the only option while server/state.js is still untyped.
 
 /**
  * One worktree row: a member of the resolved feature, or an entry in the flat list
@@ -104,12 +103,12 @@ function register(app: Router, deps: OrchestratorDeps): void {
   const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast, rescan } = deps;
 
   app.post('/group/start', async (req, res) => {
-    const { group, stopConflicts } = req.body || {};
+    const { group, stopConflicts }: GroupBody = req.body || {};
     const { group: g, flat } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const toStart = g.members.filter((m) => !m.running && m.canStart);
-    const conflicts = [];
-    const seen = new Set();
+    const conflicts: Member[] = [];
+    const seen = new Set<string>();
     for (const m of toStart) for (const c of conflictsFor(m, flat)) if (!seen.has(c.path)) { seen.add(c.path); conflicts.push(c); }
     if (conflicts.length && !stopConflicts) {
       return res.json({ ok: true, needsConfirm: true, conflicts, willStart: toStart });
@@ -126,7 +125,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
       const alloc = servers.allocSlotFor(servers.featureFor(m.path));
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
-    let started = 0; const failures = [];
+    let started = 0; const failures: Array<{ repo: string; error?: string }> = [];
     await Promise.all(toStart.map(async (m) => {
       const feat = servers.featureFor(m.path);
       const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, feat));
@@ -143,7 +142,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
   });
 
   app.post('/group/stop', async (req, res) => {
-    const { group } = req.body || {};
+    const { group }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
@@ -154,7 +153,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
   });
 
   app.post('/group/restart', async (req, res) => {
-    const { group } = req.body || {};
+    const { group }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const toRestart = g.members.filter((m) => m.running || m.canStart);
@@ -169,10 +168,13 @@ function register(app: Router, deps: OrchestratorDeps): void {
   });
 
   app.post('/group/open', async (req, res) => {
-    const { group, editor } = req.body || {};
+    const { group, editor }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
+    // String(): `editor` is whatever the body carried — it can be an array, an object,
+    // a number. A property access coerces the key exactly this way already, so naming
+    // the coercion cannot change which editor is picked.
+    const ed = (cfg.editors && (cfg.editors[String(editor)] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
     const paths = g.members.map((m) => m.path);
     // split/join, never replace(): the shell-quoted path is the REPLACEMENT string, and
@@ -199,17 +201,17 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
   app.post('/group/delete', async (req, res) => {
-    const { group, deleteBranches } = req.body || {};
+    const { group, deleteBranches }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(group);
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    const results = [];
+    const results: Array<{ repo: string; ok: boolean; error?: string }> = [];
     for (const m of g.members) {
       const repoObj = repos().find((r) => r.name === m.repo);
       if (!repoObj) { results.push({ repo: m.repo, ok: false, error: 'unknown repo' }); continue; }
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.close(m.session.id);
-      const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: deleteBranches });
-      results.push({ repo: m.repo, ok: rr.ok, error: rr.error });
+      const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: !!deleteBranches });
+      results.push({ repo: m.repo, ok: rr.ok, error: rr.ok ? undefined : rr.error });
     }
     for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // feature removed → free its slot
     await rescan();
@@ -226,6 +228,10 @@ function register(app: Router, deps: OrchestratorDeps): void {
     for (const m of members) { const s = manager.sessionForWorktree(m.path); if (s) return res.json({ ok: true, session: s, existed: true }); }
     const [primary, ...rest] = members;
     const pRepo = repos().find((r) => r.name === primary.repo);
+    // A repo the scan cache has not seen. The `rest` loop below already skips one;
+    // the primary went straight to `pRepo.path`, so the same miss was a TypeError —
+    // a 500 leaking an internal message where the caller's own 400 belongs.
+    if (!pRepo) return res.status(400).json({ error: 'unknown repo' });
     const session = await manager.adopt({ worktreePath: primary.path, repoName: primary.repo, repoPath: pRepo.path, branch: primary.branch, wtname: primary.wtname });
     if (session) {
       for (const m of rest) {
