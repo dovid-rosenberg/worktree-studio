@@ -163,7 +163,7 @@ function readRange(file: string, start: number, end: number): string {
 // `maxBytes` — never the whole file. A first line the window clipped is dropped
 // rather than shown as a fragment, which also disposes of the half UTF-8 sequence
 // an arbitrary byte offset can land in the middle of.
-function readTail(file: string, lines: number, maxBytes: number = TAIL_MAX_BYTES): string {
+function readTail(file: string, lines: number, maxBytes = TAIL_MAX_BYTES): string {
   let size: number;
   try { size = fs.statSync(file).size; } catch { return ''; }
   const start = Math.max(0, size - maxBytes);
@@ -182,7 +182,7 @@ function readTail(file: string, lines: number, maxBytes: number = TAIL_MAX_BYTES
 // file under a running child is safe: it appends after the kept tail instead of
 // leaving a sparse hole. A write landing between the read and the truncate is lost —
 // acceptable for a log, and the alternative is unbounded growth.
-function trimLog(file: string, max: number = MAX_LOG_BYTES, keep: number = KEEP_LOG_BYTES): boolean {
+function trimLog(file: string, max = MAX_LOG_BYTES, keep = KEEP_LOG_BYTES): boolean {
   let size: number;
   try { size = fs.statSync(file).size; } catch { return false; }
   if (size <= max) return false;
