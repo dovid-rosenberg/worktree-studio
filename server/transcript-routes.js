@@ -6,7 +6,7 @@
 // `api` is the ONE router server.js mounts at both /api and /api/v1, so every route
 // below is reachable under both prefixes without this module naming either of them.
 import path from 'path';
-import * as transcripts from './transcripts.js';
+import * as transcripts from './transcripts.ts';
 import * as pricing from './pricing.ts';
 import { STATE_DIR } from './config.js';
 import { TranscriptIndex, summarize } from './transcript-index.js';

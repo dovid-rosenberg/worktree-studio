@@ -7,7 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import { git, gitFull, slug } from './util.ts';
-import * as layoutMod from './layout.js';
+import * as layoutMod from './layout.ts';
 
 // Expand a shell-style pattern (e.g. "config/*-config.js", ".env.*.local")
 // relative to base. Supports `*` (any chars within one path segment). Segments

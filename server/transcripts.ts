@@ -8,6 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as pricing from './pricing.ts';
+import type { IsoTimestamp, TranscriptEntry, Usage, UsageByModel, UsageTotals } from './types.ts';
 
 const NL = 0x0a;
 const CR = 0x0d;
@@ -18,7 +19,82 @@ const CR = 0x0d;
 const BLOCK_CAP = 4000;
 const ENTRY_CAP = 12000;
 
-function projectsRoot(opts) {
+// ---- what a transcript line looks like from here ----------------------------
+//
+// A transcript is schema-drifting input written by another program, so every field
+// is optional. Anything the code below inspects before using it is `unknown` here —
+// the guard, not the declaration, is what makes it safe to read.
+
+interface RawCacheCreation {
+  ephemeral_1h_input_tokens?: unknown;
+  ephemeral_5m_input_tokens?: unknown;
+}
+
+interface RawServerToolUse {
+  web_search_requests?: unknown;
+  web_fetch_requests?: unknown;
+}
+
+interface RawUsage {
+  input_tokens?: unknown;
+  output_tokens?: unknown;
+  cache_creation_input_tokens?: unknown;
+  cache_creation?: unknown;
+  cache_read_input_tokens?: unknown;
+  server_tool_use?: unknown;
+  speed?: unknown;
+}
+
+interface RawBlock {
+  type?: string;
+  text?: unknown;
+  thinking?: unknown;
+  name?: unknown;
+  input?: unknown;
+  content?: unknown;
+}
+
+interface RawMessage {
+  role?: string;
+  id?: string;
+  model?: string;
+  content?: unknown;
+  usage?: unknown;
+}
+
+/** One parsed JSONL line, limited to the fields this module reads. */
+export interface TranscriptRecord {
+  type?: string;
+  message?: unknown;
+  timestamp?: unknown;
+  uuid?: string;
+  parentUuid?: string;
+  requestId?: string;
+  cwd?: string;
+  gitBranch?: string;
+  isSidechain?: unknown;
+}
+
+// ---- locating a transcript --------------------------------------------------
+
+export interface LocateOptions {
+  root?: string;
+}
+
+/** The session fields locate() reads. A full `Session` satisfies it. */
+export interface LocatableSession {
+  claudeSessionId?: string | null;
+  home?: string | null;
+  worktreePath?: string | null;
+  repoPath?: string | null;
+  repos?: Array<{ worktreePath?: string | null; repoPath?: string | null }> | null;
+}
+
+export type LocateResult =
+  | { found: true; file: string; cwd: string | null; slug: string; viaScan?: true }
+  | { found: false; reason: string };
+
+function projectsRoot(opts?: LocateOptions | null): string {
   return (opts && opts.root) || process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 }
 
@@ -30,7 +106,7 @@ function projectsRoot(opts) {
 //     → -Users-davidr-Desktop-code-worktree-studio
 //   /Users/davidr/Desktop/ab-code/ab-be/accept-blue/.worktrees/fix-recurring-deleted-pm
 //     → -Users-davidr-Desktop-ab-code-ab-be-accept-blue--worktrees-fix-recurring-deleted-pm
-function projectSlug(cwd) { return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-'); }
+function projectSlug(cwd: string | null | undefined): string { return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-'); }
 
 // A claudeSessionId is a uuid, and it is UNTRUSTED: it arrives verbatim in a
 // SessionStart hook payload (`session_id`) and is then joined into a filesystem path.
@@ -39,19 +115,19 @@ function projectSlug(cwd) { return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-
 // than sanitising it: anything that is not a uuid is not a session id, so there is
 // nothing to salvage.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isSessionId(id) { return typeof id === 'string' && UUID.test(id); }
+function isSessionId(id: unknown): id is string { return typeof id === 'string' && UUID.test(id); }
 
 // Where a session's transcript lives. `session.home` tracks the cwd claude is
 // actually running in (promote sends `/cd`, which relocates BOTH cwd and transcript),
 // but a promote whose `/cd` never landed leaves `home` pointing at the old dir — so we
 // try every directory this session has ever owned before falling back to a scan of the
 // project dirs. Claude session ids are uuids, so a filename match is unambiguous.
-function locate(session, opts = {}) {
-  const id = session && session.claudeSessionId;
-  if (!id) return { found: false, reason: 'session has no claudeSessionId yet' };
+function locate(session: LocatableSession | null | undefined, opts: LocateOptions = {}): LocateResult {
+  if (!session || !session.claudeSessionId) return { found: false, reason: 'session has no claudeSessionId yet' };
+  const id = session.claudeSessionId;
   if (!isSessionId(id)) return { found: false, reason: 'claudeSessionId is not a uuid' };
   const root = projectsRoot(opts);
-  const seen = new Set();
+  const seen = new Set<string>();
   const candidates = [session.home, session.worktreePath, session.repoPath];
   for (const r of session.repos || []) candidates.push(r.worktreePath, r.repoPath);
   for (const cwd of candidates) {
@@ -61,7 +137,7 @@ function locate(session, opts = {}) {
     const file = path.join(root, slug, `${id}.jsonl`);
     if (fs.existsSync(file)) return { found: true, file, cwd, slug };
   }
-  let entries;
+  let entries: string[];
   try { entries = fs.readdirSync(root); } catch { return { found: false, reason: `no projects dir at ${root}` }; }
   for (const slug of entries) {
     const file = path.join(root, slug, `${id}.jsonl`);
@@ -69,6 +145,26 @@ function locate(session, opts = {}) {
   }
   return { found: false, reason: 'transcript not found' };
 }
+
+// ---- streaming --------------------------------------------------------------
+
+export interface ScanOptions {
+  /** Byte offset to resume from. */
+  start?: number;
+}
+
+export interface ScanStats {
+  offset: number;
+  size: number;
+  lines: number;
+  parsed: number;
+  skipped: number;
+  truncatedTail: boolean;
+  stopped: boolean;
+}
+
+/** Returning false stops the read early. */
+type RecordSink = (rec: TranscriptRecord) => boolean | void;
 
 // Stream a JSONL file from a byte offset, invoking onRecord for each COMPLETE line.
 //
@@ -81,38 +177,39 @@ function locate(session, opts = {}) {
 //
 // onRecord may return false to stop early (search does; indexing must not, because a
 // short read would persist a bogus offset).
-function scan(file, opts = {}, onRecord) {
-  return new Promise((resolve, reject) => {
-    const out = { offset: 0, size: 0, lines: 0, parsed: 0, skipped: 0, truncatedTail: false, stopped: false };
-    let size;
+function scan(file: string, opts: ScanOptions = {}, onRecord?: RecordSink): Promise<ScanStats> {
+  return new Promise<ScanStats>((resolve, reject) => {
+    const out: ScanStats = { offset: 0, size: 0, lines: 0, parsed: 0, skipped: 0, truncatedTail: false, stopped: false };
+    let size: number;
     try { size = fs.statSync(file).size; } catch { return resolve(out); }
     out.size = size;
 
-    let start = Number.isFinite(opts.start) ? Math.max(0, Math.floor(opts.start)) : 0;
+    const from0 = opts.start;
+    let start = typeof from0 === 'number' && Number.isFinite(from0) ? Math.max(0, Math.floor(from0)) : 0;
     if (start > size) start = 0; // file shrank → re-read from the top
     out.offset = start;
     if (start >= size) return resolve(out);
 
     const stream = fs.createReadStream(file, { start, end: size - 1 });
-    let pending = [];
+    let pending: Buffer[] = [];
     let pendingLen = 0;
     let pos = start;
     let done = false;
 
     const finish = () => { if (done) return; done = true; resolve(out); };
 
-    const handle = (raw) => {
+    const handle = (raw: Buffer) => {
       let buf = raw;
       if (buf.length && buf[buf.length - 1] === CR) buf = buf.subarray(0, buf.length - 1);
       if (!buf.length) return;
       const text = buf.toString('utf8');
       if (!text.trim()) return;
       out.lines++;
-      let rec;
+      let rec: unknown;
       try { rec = JSON.parse(text); } catch { out.skipped++; return; }
       if (!rec || typeof rec !== 'object' || Array.isArray(rec)) { out.skipped++; return; }
       out.parsed++;
-      if (onRecord && onRecord(rec) === false) {
+      if (onRecord && onRecord(rec as TranscriptRecord) === false) {
         out.stopped = true;
         stream.destroy();
       }
@@ -120,13 +217,13 @@ function scan(file, opts = {}, onRecord) {
 
     // No encoding is set on the stream, so every chunk is a Buffer — which is what
     // lets us find the newline by byte and slice without re-decoding.
-    stream.on('data', (/** @type {Buffer} */ chunk) => {
+    stream.on('data', (chunk: Buffer) => {
       pending.push(chunk);
       pendingLen += chunk.length;
       if (chunk.indexOf(NL) === -1) return; // no line boundary yet — keep buffering
       const all = pending.length === 1 ? pending[0] : Buffer.concat(pending, pendingLen);
       let from = 0;
-      let i;
+      let i: number;
       while (!out.stopped && (i = all.indexOf(NL, from)) !== -1) {
         pos += (i - from) + 1;
         handle(all.subarray(from, i));
@@ -145,29 +242,30 @@ function scan(file, opts = {}, onRecord) {
 
 // ---- content extraction -----------------------------------------------------
 
-function safeJson(v) {
+function safeJson(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (typeof v === 'string') return v;
   try { return JSON.stringify(v); } catch { return ''; }
 }
 
-function blockText(b) {
+function blockText(b: unknown): string {
   if (typeof b === 'string') return b;
   if (!b || typeof b !== 'object') return '';
-  switch (b.type) {
-    case 'text': return String(b.text || '');
-    case 'thinking': return String(b.thinking || '');
-    case 'tool_use': return `[tool ${b.name || '?'}] ${safeJson(b.input)}`;
-    case 'tool_result': return contentText(b.content);
+  const blk = b as RawBlock;
+  switch (blk.type) {
+    case 'text': return String(blk.text || '');
+    case 'thinking': return String(blk.thinking || '');
+    case 'tool_use': return `[tool ${String(blk.name || '?')}] ${safeJson(blk.input)}`;
+    case 'tool_result': return contentText(blk.content);
     case 'image': return '[image]';
     default: return '';
   }
 }
 
-function contentText(c) {
+function contentText(c: unknown): string {
   if (typeof c === 'string') return c;
   if (!Array.isArray(c)) return '';
-  const parts = [];
+  const parts: string[] = [];
   for (const b of c) {
     const t = blockText(b);
     if (t) parts.push(t.length > BLOCK_CAP ? `${t.slice(0, BLOCK_CAP)}…` : t);
@@ -177,31 +275,32 @@ function contentText(c) {
 
 // ---- usage normalization ----------------------------------------------------
 
-const num = (v) => (Number.isFinite(v) ? v : 0);
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 
 // message.usage → a flat shape the price table understands. The per-TTL cache
 // breakdown matters: a 1h cache write costs 2x the base input rate and a 5m write
 // 1.25x, so pricing the lump `cache_creation_input_tokens` as 5m would understate
 // any session using the 1h cache (which this codebase's sessions do).
-function normalizeUsage(u) {
+function normalizeUsage(u: unknown): Usage | null {
   if (!u || typeof u !== 'object') return null;
-  const totalWrite = num(u.cache_creation_input_tokens);
-  const cc = u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : null;
+  const raw = u as RawUsage;
+  const totalWrite = num(raw.cache_creation_input_tokens);
+  const cc = raw.cache_creation && typeof raw.cache_creation === 'object' ? raw.cache_creation as RawCacheCreation : null;
   let w1h = cc ? num(cc.ephemeral_1h_input_tokens) : 0;
   let w5m = cc ? num(cc.ephemeral_5m_input_tokens) : 0;
   if (!cc) { w1h = 0; w5m = totalWrite; }
   else if (w1h + w5m !== totalWrite) w5m = Math.max(0, totalWrite - w1h);
-  const st = u.server_tool_use && typeof u.server_tool_use === 'object' ? u.server_tool_use : {};
+  const st: RawServerToolUse = raw.server_tool_use && typeof raw.server_tool_use === 'object' ? raw.server_tool_use as RawServerToolUse : {};
   return {
-    input: num(u.input_tokens),
-    output: num(u.output_tokens),
+    input: num(raw.input_tokens),
+    output: num(raw.output_tokens),
     cacheWrite5m: w5m,
     cacheWrite1h: w1h,
     cacheWrite: totalWrite,
-    cacheRead: num(u.cache_read_input_tokens),
+    cacheRead: num(raw.cache_read_input_tokens),
     webSearch: num(st.web_search_requests),
     webFetch: num(st.web_fetch_requests),
-    speed: typeof u.speed === 'string' ? u.speed : null,
+    speed: typeof raw.speed === 'string' ? raw.speed : null,
   };
 }
 
@@ -209,13 +308,13 @@ function normalizeUsage(u) {
 // types that carry no searchable text and no usage (mode, permission-mode,
 // last-prompt, ai-title, file-history-snapshot, queue-operation, …). Unknown types
 // are dropped the same way — the format grows and we should not crash on it.
-function toEntry(rec) {
+function toEntry(rec: TranscriptRecord): TranscriptEntry | null {
   const type = rec.type;
   if (type !== 'assistant' && type !== 'user') return null;
-  const msg = rec.message && typeof rec.message === 'object' ? rec.message : {};
+  const msg: RawMessage = rec.message && typeof rec.message === 'object' ? rec.message as RawMessage : {};
   let text = type === 'user' ? contentText(msg.content) : contentText(msg.content);
   if (text.length > ENTRY_CAP) text = `${text.slice(0, ENTRY_CAP)}…`;
-  const ts = typeof rec.timestamp === 'string' ? rec.timestamp : null;
+  const ts: IsoTimestamp | null = typeof rec.timestamp === 'string' ? rec.timestamp : null;
   const tsMs = ts ? Date.parse(ts) : NaN;
   const usage = type === 'assistant' ? normalizeUsage(msg.usage) : null;
   return {
@@ -238,9 +337,12 @@ function toEntry(rec) {
   };
 }
 
+/** Returning false stops the read early. */
+type EntrySink = (e: TranscriptEntry) => boolean | void;
+
 // Stream a transcript and hand normalized entries to `onEntry`. Same offset/early-stop
 // contract as scan().
-function readTranscript(file, opts = {}, onEntry) {
+function readTranscript(file: string, opts: ScanOptions = {}, onEntry?: EntrySink): Promise<ScanStats> {
   return scan(file, opts, (rec) => {
     const e = toEntry(rec);
     if (!e) return;
@@ -250,14 +352,20 @@ function readTranscript(file, opts = {}, onEntry) {
 
 // ---- aggregation ------------------------------------------------------------
 
-function blankTotals() {
+/** The token counters every accumulator carries — a `Usage` with no `speed`. */
+export type TokenTotals = Omit<Usage, 'speed'>;
+
+/** A per-model accumulator, before a rate has been applied to it. */
+type ModelAccum = Omit<UsageByModel, 'costUsd' | 'priced'>;
+
+function blankTotals(): TokenTotals {
   return {
     input: 0, output: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWrite: 0, cacheRead: 0,
     webSearch: 0, webFetch: 0,
   };
 }
 
-function addUsage(t, u) {
+function addUsage(t: TokenTotals, u: TokenTotals): void {
   t.input += u.input; t.output += u.output;
   t.cacheWrite5m += u.cacheWrite5m; t.cacheWrite1h += u.cacheWrite1h;
   t.cacheWrite += u.cacheWrite; t.cacheRead += u.cacheRead;
@@ -270,20 +378,20 @@ function addUsage(t, u) {
 // Summing lines over-counts by ~2.9x on a tool-heavy session (measured). Dedup on
 // the API message id; fall back to requestId, then the line uuid (always unique, so
 // a record with neither id degrades to counting once rather than being dropped).
-function usageKey(e) { return e.msgId || e.requestId || e.uuid; }
+function usageKey(e: TranscriptEntry): string | null { return e.msgId || e.requestId || e.uuid; }
 
 // Total tokens + derived cost for one transcript. Returns per-model breakdowns
 // because a single session routinely spans models (opus-4-8 + fable-5 subagents),
 // and cost is meaningless without knowing which rate applied.
-async function aggregate(file, opts = {}) {
-  const seen = new Set();
+async function aggregate(file: string, opts: ScanOptions = {}): Promise<UsageTotals> {
+  const seen = new Set<string>();
   const totals = blankTotals();
-  const models = new Map();
-  const unpriced = new Set();
+  const models = new Map<string, ModelAccum>();
+  const unpriced = new Set<string>();
   let assistantMessages = 0;
   let userMessages = 0;
-  let firstAt = null;
-  let lastAt = null;
+  let firstAt: number | null = null;
+  let lastAt: number | null = null;
 
   const stats = await readTranscript(file, opts, (e) => {
     if (e.tsMs) {
@@ -298,15 +406,15 @@ async function aggregate(file, opts = {}) {
     assistantMessages++;
     addUsage(totals, e.usage);
     const model = e.model || 'unknown';
-    if (!models.has(model)) models.set(model, { model, speed: e.speed, messages: 0, ...blankTotals() });
-    const m = models.get(model);
+    let m = models.get(model);
+    if (!m) { m = { model, speed: e.speed, messages: 0, ...blankTotals() }; models.set(model, m); }
     m.messages++;
     addUsage(m, e.usage);
   });
 
   let costUsd = 0;
   let allPriced = true;
-  const byModel = [];
+  const byModel: UsageByModel[] = [];
   for (const m of models.values()) {
     const { usd, priced } = pricing.costOf(m.model, m, { speed: m.speed });
     if (!priced) {
@@ -337,14 +445,31 @@ async function aggregate(file, opts = {}) {
 
 // ---- direct (unindexed) search ---------------------------------------------
 
+export interface SearchOptions {
+  query?: string;
+  limit?: number;
+}
+
+/** One hit, as the file-scan backend reports it. */
+export interface SearchHit {
+  uuid: string | null;
+  role: string;
+  model: string | null;
+  ts: IsoTimestamp | null;
+  tsMs: number | null;
+  gitBranch: string | null;
+  sidechain: boolean;
+  snippet: string;
+}
+
 // Case-insensitive substring search straight off the file. The sqlite/FTS5 index in
 // transcript-index.js is the fast path; this exists so search still works before a
 // session has been indexed (and so the reader is testable without sqlite).
-async function search(file, opts = {}) {
+async function search(file: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
   const q = String(opts.query || '').toLowerCase();
   const limit = Math.max(1, Math.min(500, opts.limit || 50));
   if (!q) return [];
-  const hits = [];
+  const hits: SearchHit[] = [];
   await readTranscript(file, {}, (e) => {
     if (!e.text) return;
     const i = e.text.toLowerCase().indexOf(q);
@@ -359,7 +484,7 @@ async function search(file, opts = {}) {
   return hits;
 }
 
-function excerpt(text, at, len, pad = 90) {
+function excerpt(text: string, at: number, len: number, pad = 90): string {
   const start = Math.max(0, at - pad);
   const end = Math.min(text.length, at + len + pad);
   return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}`;

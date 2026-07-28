@@ -10,8 +10,40 @@
 // index as the pre-image makes the partially-staged case just work, and is exactly
 // what `git add -p` / `git reset -p` do.
 import { spawn } from 'child_process';
-import { git, gitFull } from './util.ts';
+import { git, gitFull, type RunResult } from './util.ts';
 import { parsePatch, formatFilePatch } from './diff.ts';
+import type { DiffFile } from './types.ts';
+
+// What a stdin-fed `git apply` can report back: run()'s result minus the parts only
+// execFile knows about.
+type ApplyResult = Pick<RunResult, 'code' | 'stdout' | 'stderr'>;
+
+/** Both sides of one working file, as fileHunks() hands them back. */
+export interface FileHunks {
+  file: string;
+  untracked: boolean;
+  unstaged: DiffFile | null;
+  staged: DiffFile | null;
+}
+
+/** Which hunks a request is acting on. Indexes arrive from the wire, so a string
+ *  index is as ordinary as a number one. */
+type HunkSelection = number | string | Array<number | string>;
+
+export interface HunkApplyOptions {
+  /** repo-relative path */
+  file?: string;
+  /** index(es) into that file's diff */
+  hunks?: HunkSelection;
+  /** true unstages instead of staging */
+  reverse?: boolean;
+  /** the `@@` header(s) the caller rendered */
+  expect?: string | string[];
+}
+
+export type HunkApplyResult =
+  | { ok: false; error: string }
+  | ({ ok: true; hunks: number[] } & FileHunks);
 
 // Canonical diff flags: force `a/`+`b/` prefixes and plain output so neither the user's
 // global git config (diff.mnemonicPrefix gives `c/`+`w/`, diff.noprefix gives none) nor
@@ -20,7 +52,7 @@ const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-pre
 
 // git apply reads the patch on stdin — nothing hits the disk, and a patch that would
 // half-apply never gets written anywhere. util.run() can't feed stdin, hence spawn.
-function gitApply(cwd, args, patch) {
+function gitApply(cwd: string, args: string[], patch: string): Promise<ApplyResult> {
   return new Promise((resolve) => {
     const p = spawn('git', ['-C', cwd, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
@@ -38,7 +70,7 @@ function gitApply(cwd, args, patch) {
 // so synthesize the /dev/null → file patch git itself would produce for `git add -N`;
 // `git apply --cached` on it creates the blob + index entry, i.e. stages exactly the
 // selected lines of a brand-new file.
-async function unstagedDiff(worktreePath, file) {
+async function unstagedDiff(worktreePath: string, file: string): Promise<string> {
   const r = await gitFull(worktreePath, ['diff', ...DIFF_FLAGS, '--', file]);
   if (r.stdout) return r.stdout;
   const st = await git(worktreePath, ['status', '--porcelain', '--', file]);
@@ -49,11 +81,11 @@ async function unstagedDiff(worktreePath, file) {
 }
 
 // Staged changes for one file: HEAD → index.
-async function stagedDiff(worktreePath, file) {
+async function stagedDiff(worktreePath: string, file: string): Promise<string> {
   return (await gitFull(worktreePath, ['diff', '--cached', ...DIFF_FLAGS, '--', file])).stdout;
 }
 
-function parseOne(patch, file) {
+function parseOne(patch: string, file: string): DiffFile | null {
   const files = parsePatch(patch);
   if (!files.length) return null;
   // Match on path so a rename (old ≠ new name) resolves from either side; a single-file
@@ -64,7 +96,7 @@ function parseOne(patch, file) {
 // fileHunks(worktreePath, file) → both sides of one working file, structured.
 // `unstaged` is what can be staged, `staged` is what can be unstaged; hunk indexes in
 // stage()/unstage() refer to the matching side.
-async function fileHunks(worktreePath, file) {
+async function fileHunks(worktreePath: string, file: string): Promise<FileHunks> {
   const [unstagedRaw, stagedRaw] = await Promise.all([unstagedDiff(worktreePath, file), stagedDiff(worktreePath, file)]);
   const porcelain = await git(worktreePath, ['status', '--porcelain', '--', file]);
   return {
@@ -77,8 +109,7 @@ async function fileHunks(worktreePath, file) {
 
 // Why a hunk can't be staged as a patch. Returned as a plain message so the caller can
 // point the user at file-level staging, which handles all of these.
-function unstageableReason(fd, scope) {
-  if (!fd) return `no ${scope} changes for this file`;
+function unstageableReason(fd: DiffFile, scope: string): string | null {
   if (fd.binary) return 'binary file — stage or unstage the whole file instead';
   if (fd.unsupported === 'combined') return 'combined (merge) diff — hunk staging is not supported';
   if (fd.modeOnly) return 'mode-only change — stage or unstage the whole file instead';
@@ -92,23 +123,18 @@ function unstageableReason(fd, scope) {
 // diff is re-read here, so between the client rendering it and this call the file may
 // have moved under us; without the guard a stale index would silently stage the WRONG
 // hunk. With it we refuse and tell the caller to reload.
-/**
- * @param {string} worktreePath
- * @param {object} [sel]
- * @param {string} [sel.file]                repo-relative path
- * @param {number|string|Array<number|string>} [sel.hunks] index(es) into that file's diff
- * @param {boolean} [sel.reverse]            true unstages instead of staging
- * @param {string|string[]} [sel.expect]     the `@@` header(s) the caller rendered
- */
-async function apply(worktreePath, { file, hunks, reverse = false, expect } = {}) {
+async function apply(
+  worktreePath: string, { file, hunks, reverse = false, expect }: HunkApplyOptions = {},
+): Promise<HunkApplyResult> {
   if (!file) return { ok: false, error: 'file is required' };
   const scope = reverse ? 'staged' : 'unstaged';
   const raw = reverse ? await stagedDiff(worktreePath, file) : await unstagedDiff(worktreePath, file);
   const fd = raw ? parseOne(raw, file) : null;
+  if (!fd) return { ok: false, error: `no ${scope} changes for this file` };
   const why = unstageableReason(fd, scope);
   if (why) return { ok: false, error: why };
 
-  const list = (Array.isArray(hunks) ? hunks : [hunks]).map((n) => (typeof n === 'number' ? n : parseInt(n, 10)));
+  const list = (Array.isArray(hunks) ? hunks : [hunks]).map((n) => (typeof n === 'number' ? n : parseInt(String(n), 10)));
   if (!list.length || list.some((n) => !Number.isInteger(n) || n < 0 || n >= fd.hunks.length)) {
     return { ok: false, error: `hunks must be indexes into the ${scope} diff (0…${fd.hunks.length - 1})` };
   }
@@ -129,10 +155,10 @@ async function apply(worktreePath, { file, hunks, reverse = false, expect } = {}
   if (check.code !== 0) return { ok: false, error: (check.stderr || check.stdout).trim() || 'patch does not apply' };
   const done = await gitApply(worktreePath, args, patch);
   if (done.code !== 0) return { ok: false, error: (done.stderr || done.stdout).trim() || 'git apply failed' };
-  return { ok: true, file, hunks: list, ...(await fileHunks(worktreePath, file)) };
+  return { ok: true, hunks: list, ...(await fileHunks(worktreePath, file)) };
 }
 
-const stage = (worktreePath, opts) => apply(worktreePath, { ...opts, reverse: false });
-const unstage = (worktreePath, opts) => apply(worktreePath, { ...opts, reverse: true });
+const stage = (worktreePath: string, opts: HunkApplyOptions) => apply(worktreePath, { ...opts, reverse: false });
+const unstage = (worktreePath: string, opts: HunkApplyOptions) => apply(worktreePath, { ...opts, reverse: true });
 
 export { fileHunks, stage, unstage, apply, unstagedDiff, stagedDiff, DIFF_FLAGS };

@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
-import * as hunks from '../server/hunks.js';
+import * as hunks from '../server/hunks.ts';
 import { parsePatch, formatFilePatch } from '../server/diff.ts';
 
 function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }

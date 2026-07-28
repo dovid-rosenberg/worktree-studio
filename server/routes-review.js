@@ -6,8 +6,8 @@
 // calls) and /api/v1 (the versioned path new clients should use). Registering onto it
 // is what makes every route below answer identically under both prefixes — the module
 // never spells a prefix, so it cannot register a route under one and miss the other.
-import * as review from './review.js';
-import * as hunks from './hunks.js';
+import * as review from './review.ts';
+import * as hunks from './hunks.ts';
 
 // Resolve :id + ?repo (or body.repo) to the worktree the operation runs in. Returns
 // { entry } or { status, error } so each handler bails the same way.

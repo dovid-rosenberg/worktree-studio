@@ -25,7 +25,7 @@
 //   manifest  explicit mapping, read from the EXISTING config.groups manual groups
 //             (see the note on MANIFEST below — this is not a second config surface)
 import path from 'path';
-import * as layoutMod from './layout.js';
+import * as layoutMod from './layout.ts';
 import { createRealpathCache } from './util.ts';
 
 const STRATEGIES = ['basename', 'branch', 'manifest'];

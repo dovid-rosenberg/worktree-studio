@@ -3,8 +3,8 @@
 // list(cfg, {repoPath, q}) → [{ id, title, subtitle }]  (for the picker)
 // seed(cfg, {repoPath, id, text }) → seed
 import freetext from './freetext.ts';
-import github from './github.js';
-import gitlab from './gitlab.js';
+import github from './github.ts';
+import gitlab from './gitlab.ts';
 import asana from './asana.ts';
 
 const ADAPTERS = { freetext, github, gitlab, asana };

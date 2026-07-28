@@ -9,8 +9,8 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import * as worktree from '../server/worktree.js';
-import * as layoutMod from '../server/layout.js';
-import * as gitMod from '../server/git.js';
+import * as layoutMod from '../server/layout.ts';
+import * as gitMod from '../server/git.ts';
 import * as config from '../server/config.js';
 
 function sh(cwd, cmd, args) { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }

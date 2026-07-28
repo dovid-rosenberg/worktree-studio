@@ -38,7 +38,7 @@
 //     Node 20, so every recursive arm falls back to a flat one on throw.
 import fs from 'fs';
 import path from 'path';
-import * as gitMod from './git.js';
+import * as gitMod from './git.ts';
 
 const DEFAULTS = {
   tickMs: 2000, // scheduler heartbeat: decides what is due, spawns nothing itself

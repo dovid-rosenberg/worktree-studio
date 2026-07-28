@@ -1,14 +1,24 @@
 // GitHub issues via the `gh` CLI (uses your existing gh auth; no token config).
+import type { SourceAdapter } from '../types.ts';
 import { run, has } from '../util.ts';
 
 const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
-export default {
+/** The issue fields the two `gh --json` calls below ask for, optional where the code guards. */
+interface GithubIssue {
+  number: number;
+  title: string;
+  url: string;
+  body?: string;
+  labels?: Array<{ name: string }>;
+}
+
+const adapter: SourceAdapter = {
   id: 'github',
   label: 'GitHub',
   needsRepo: true,
   isEnabled(cfg) {
-    return (cfg.sources && cfg.sources.github && cfg.sources.github.enabled !== false) && has('gh');
+    return !!(cfg.sources && cfg.sources.github && cfg.sources.github.enabled !== false) && has('gh');
   },
   async list(cfg, { repoPath, q }) {
     if (!repoPath) return [];
@@ -20,7 +30,7 @@ export default {
     if (q) { args.push('--search', String(q)); }
     const r = await run('gh', args, { cwd: repoPath, env: ENV });
     if (r.code !== 0) throw new Error(r.stderr.trim() || 'gh issue list failed');
-    const items = JSON.parse(r.stdout || '[]');
+    const items = JSON.parse(r.stdout || '[]') as GithubIssue[];
     return items.map((it) => ({
       id: String(it.number),
       title: it.title,
@@ -30,7 +40,9 @@ export default {
   async seed(cfg, { repoPath, id }) {
     const r = await run('gh', ['issue', 'view', String(id), '--json', 'number,title,body,url'], { cwd: repoPath, env: ENV });
     if (r.code !== 0) throw new Error(r.stderr.trim() || 'gh issue view failed');
-    const it = JSON.parse(r.stdout);
+    const it = JSON.parse(r.stdout) as GithubIssue;
     return { source: 'github', id: String(it.number), title: it.title, body: it.body || '', url: it.url };
   },
 };
+
+export default adapter;

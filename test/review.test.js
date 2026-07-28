@@ -4,7 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import * as review from '../server/review.js';
+import * as review from '../server/review.ts';
 
 function sh(cwd, args) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
 

@@ -133,7 +133,10 @@ export interface Config {
   popout: { terminal: string };
   sources: {
     github?: { enabled: boolean };
-    gitlab?: { enabled: boolean; host: string; token: string };
+    // `project` is read by the REST fallback in sources/gitlab.ts and gated on by its
+    // isEnabled(), but defaults() never ships it — it is hand-added to config.json,
+    // which is why it is the one optional key in this block.
+    gitlab?: { enabled: boolean; host: string; token: string; project?: string };
     asana?: { enabled: boolean; token: string; workspace: string };
     [id: string]: unknown;
   };

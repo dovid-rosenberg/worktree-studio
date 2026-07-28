@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import os from 'os';
-import * as layout from '../server/layout.js';
+import * as layout from '../server/layout.ts';
 
 const nested = layout.resolve({});
 

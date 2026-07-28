@@ -13,7 +13,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as orchestrator from '../server/orchestrator.js';
-import { createForge } from '../server/forge.js';
+import { createForge } from '../server/forge.ts';
 import { createIdentity } from '../server/identity.js';
 import * as crash from '../server/crash.ts';
 import * as pricing from '../server/pricing.ts';

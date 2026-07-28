@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import * as transcripts from '../server/transcripts.js';
+import * as transcripts from '../server/transcripts.ts';
 import * as pricing from '../server/pricing.ts';
 
 // ---- fixtures ---------------------------------------------------------------

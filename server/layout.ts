@@ -15,18 +15,29 @@
 // git never sees them.
 import path from 'path';
 import { expandTilde } from './util.ts';
+import type { Config, PartialDeep, WorktreeLayout } from './types.ts';
 
-const MODES = ['nested', 'sibling', 'external'];
+type LayoutMode = WorktreeLayout['layout'];
+
+/** cfg.worktrees, normalized — what every function below is handed. */
+export interface ResolvedLayout {
+  mode: LayoutMode;
+  dir: string;
+  root: string;
+}
+
+const MODES: LayoutMode[] = ['nested', 'sibling', 'external'];
 const DEFAULT_DIR = '.worktrees';
 
 // Normalize cfg.worktrees into { mode, dir, root }. Unknown/missing values fall
 // back to today's behavior rather than throwing: this is a local dev tool and a
 // typo in config.json must not stop it booting.
-function resolve(cfg) {
-  const w = (cfg && cfg.worktrees) || {};
-  let mode = String(w.layout || 'nested');
-  if (!MODES.includes(mode)) {
-    console.warn(`[wt-studio] worktrees.layout '${mode}' is not one of ${MODES.join('/')} — using 'nested'.`);
+function resolve(cfg?: PartialDeep<Config> | null): ResolvedLayout {
+  const w: PartialDeep<WorktreeLayout> = (cfg && cfg.worktrees) || {};
+  const want = String(w.layout || 'nested');
+  let mode = MODES.find((m) => m === want);
+  if (!mode) {
+    console.warn(`[wt-studio] worktrees.layout '${want}' is not one of ${MODES.join('/')} — using 'nested'.`);
     mode = 'nested';
   }
   // A leading/trailing slash in `dir` would produce an absolute or trailing-empty
@@ -41,20 +52,20 @@ function resolve(cfg) {
 }
 
 // The directory new worktrees of `repoPath` are created in.
-function containerFor(layout, repoPath) {
+function containerFor(layout: ResolvedLayout, repoPath: string): string {
   if (layout.mode === 'sibling') return path.dirname(repoPath);
   if (layout.mode === 'external') return path.join(layout.root, path.basename(repoPath));
   return path.join(repoPath, layout.dir);
 }
 
 // Absolute path of the worktree named `name` in `repoPath`.
-function destFor(layout, repoPath, name) {
+function destFor(layout: ResolvedLayout, repoPath: string, name: string): string {
   return path.join(containerFor(layout, repoPath), name);
 }
 
 // The repo-relative path that must be gitignored for this layout, or null when
 // the layout puts worktrees outside the working tree (nothing to ignore).
-function ignorePath(layout) {
+function ignorePath(layout: ResolvedLayout): string | null {
   return layout.mode === 'nested' ? layout.dir : null;
 }
 
@@ -65,7 +76,7 @@ function ignorePath(layout) {
 // (a process cwd, say) still resolves to the worktree, not to a subdirectory. A
 // path with no container segment (a main checkout) falls back to its basename,
 // which is the repo name — exactly what featureFromPath() has always returned.
-function nameFromPath(layout, worktreePath) {
+function nameFromPath(layout: ResolvedLayout, worktreePath: string | null | undefined): string {
   const p = String(worktreePath || '');
   if (layout.mode === 'nested') {
     const parts = p.split(path.sep);

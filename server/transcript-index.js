@@ -9,7 +9,7 @@
 // 22MB transcript on every Stop hook would be the obvious wrong thing.
 import fs from 'fs';
 import path from 'path';
-import * as transcripts from './transcripts.js';
+import * as transcripts from './transcripts.ts';
 import * as pricing from './pricing.ts';
 
 // node:sqlite is experimental in Node 22 (it prints an ExperimentalWarning on first

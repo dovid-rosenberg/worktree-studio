@@ -7,7 +7,7 @@ import path from 'path';
 import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } from './util.ts';
 import * as status from './status.ts';
 import * as worktree from './worktree.js';
-import * as layoutMod from './layout.js';
+import * as layoutMod from './layout.ts';
 import { createIdentity } from './identity.js';
 const { worktreeCopyOpts } = worktree;
 

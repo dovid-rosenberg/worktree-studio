@@ -9,21 +9,30 @@
 //   create → { ok:true, url } or { ok:false, stderr }
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
+import { run, has } from './util.ts';
+import type { CiChecks, CiRepo, SessionRepo } from './types.ts';
+import type { Router } from 'express';
+
 // The interface above, made checkable — a provider injected by a test is held to
 // exactly this and nothing more.
-/**
- * @typedef {{ passed: number, running: number, failed: number, total: number }} Checks
- * @typedef {{ hasPR: boolean, provider?: string, number?: any, url?: any, state?: any, checks?: Checks }} PrView
- * @typedef {object} Provider
- * @property {string} id
- * @property {string} cli
- * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<PrView|null>} view
- * @property {(branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<{ ok: boolean, url?: string, stderr?: string }>} create
- */
-import { run, has } from './util.ts';
 
-/** @type {NodeJS.ProcessEnv} */
-const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+/** A `view()` answer: the wire shape minus the `repo`, which ciForRepo stamps on. */
+export type PrView = Omit<CiRepo, 'repo'>;
+
+export interface CreateResult {
+  ok: boolean;
+  url?: string;
+  stderr?: string;
+}
+
+export interface Provider {
+  id: string;
+  cli: string;
+  view: (branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<PrView | null>;
+  create: (branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<CreateResult>;
+}
+
+const ENV: NodeJS.ProcessEnv = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
 
 // gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
 // on the client any more (server/ci.js pushes instead), but the cache still bounds
@@ -47,11 +56,21 @@ const VIEW_TIMEOUT_MS = 20000;
 const PUSH_TIMEOUT_MS = 120000;
 const CREATE_TIMEOUT_MS = 60000;
 
+// One statusCheckRollup node. CheckRun and StatusContext are two GraphQL types
+// spelling the same idea, which is why all three keys are read; the values are
+// whatever the CLI's JSON carried, hence the String() coercions below.
+interface RollupNode {
+  conclusion?: unknown;
+  status?: unknown;
+  state?: unknown;
+}
+
 // Tally a GitHub statusCheckRollup (mixed CheckRun / StatusContext nodes) into
 // { passed, running, failed, total }. Neutral/skipped count toward total only.
-function ghChecks(rollup) {
-  const c = { passed: 0, running: 0, failed: 0, total: 0 };
-  for (const n of (Array.isArray(rollup) ? rollup : [])) {
+function ghChecks(rollup: unknown): CiChecks {
+  const c: CiChecks = { passed: 0, running: 0, failed: 0, total: 0 };
+  const nodes: RollupNode[] = Array.isArray(rollup) ? rollup : [];
+  for (const n of nodes) {
     c.total++;
     const conclusion = String(n.conclusion || '').toUpperCase();
     const status = String(n.status || n.state || '').toUpperCase();
@@ -63,7 +82,7 @@ function ghChecks(rollup) {
 }
 
 // Map a single GitLab pipeline status into the same { passed, running, failed, total } shape.
-function glChecks(status) {
+function glChecks(status: unknown): CiChecks {
   const s = String(status || '').toLowerCase();
   if (!s) return { passed: 0, running: 0, failed: 0, total: 0 };
   if (s === 'success') return { passed: 1, running: 0, failed: 0, total: 1 };
@@ -72,14 +91,35 @@ function glChecks(status) {
   return { passed: 0, running: 0, failed: 0, total: 0 };
 }
 
-/** @type {Provider} */
-const github = {
+// The slices of each CLI's JSON that are read below. Every field is optional
+// because the shape belongs to somebody else: a key that moves becomes a missing
+// value here rather than a parse that lied about what it got.
+interface GhPr {
+  number?: number;
+  url?: string;
+  state?: string;
+  statusCheckRollup?: unknown;
+}
+
+interface GlPipeline {
+  status?: string;
+}
+
+interface GlMr {
+  iid?: number;
+  web_url?: string;
+  state?: string;
+  pipeline?: GlPipeline | null;
+  head_pipeline?: GlPipeline | null;
+}
+
+const github: Provider = {
   id: 'github',
   cli: 'gh',
   async view(branch, cwd, env) {
     const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], { cwd, env, timeout: VIEW_TIMEOUT_MS });
     if (r.code !== 0 || !r.stdout.trim()) return null;
-    const j = JSON.parse(r.stdout);
+    const j: GhPr = JSON.parse(r.stdout);
     return { hasPR: true, provider: 'github', number: j.number, url: j.url, state: j.state, checks: ghChecks(j.statusCheckRollup) };
   },
   async create(branch, cwd, env) {
@@ -90,15 +130,14 @@ const github = {
   },
 };
 
-/** @type {Provider} */
-const gitlab = {
+const gitlab: Provider = {
   id: 'gitlab',
   cli: 'glab',
   async view(branch, cwd, env) {
     const r = await run('glab', ['mr', 'view', branch, '-F', 'json'], { cwd, env, timeout: VIEW_TIMEOUT_MS });
     if (r.code !== 0 || !r.stdout.trim()) return null;
-    const j = JSON.parse(r.stdout);
-    const pipe = j.pipeline || j.head_pipeline || {};
+    const j: GlMr = JSON.parse(r.stdout);
+    const pipe: GlPipeline = j.pipeline || j.head_pipeline || {};
     return { hasPR: true, provider: 'gitlab', number: j.iid, url: j.web_url, state: j.state, checks: glChecks(pipe.status) };
   },
   async create(branch, cwd, env) {
@@ -109,12 +148,40 @@ const gitlab = {
   },
 };
 
-/** @type {Provider[]} */
-const PROVIDERS = [github, gitlab];
+const PROVIDERS: Provider[] = [github, gitlab];
+
+/**
+ * A feature member as the PR path uses it — the three fields this file reads,
+ * rather than `Worktree` (server/types.ts), because what gets a PR opened for it
+ * is whatever the injected `resolveGroup` hands back.
+ */
+export interface PrMember {
+  repo: string;
+  path: string;
+  branch: string;
+}
+
+/**
+ * What a push is read out of. A `RunResult` satisfies it, and a double standing
+ * in for `pushBranch` owes nothing beyond the fields read below.
+ */
+export interface PushResult {
+  code: number;
+  stdout?: string;
+  stderr?: string;
+  timedOut?: boolean;
+}
+
+/** One member's outcome from POST /group/pr: a URL when it opened, else a reason. */
+export interface PrResult {
+  repo: string;
+  url?: string;
+  error?: string;
+}
 
 // Push a member's branch to origin. Split out (and injectable via createForge) so
 // the push half of openPullRequest can be driven without a remote.
-function pushBranchToOrigin(member, env, timeoutMs = PUSH_TIMEOUT_MS) {
+function pushBranchToOrigin(member: PrMember, env?: NodeJS.ProcessEnv, timeoutMs = PUSH_TIMEOUT_MS): Promise<PushResult> {
   return run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env, timeout: timeoutMs });
 }
 
@@ -122,7 +189,7 @@ function pushBranchToOrigin(member, env, timeoutMs = PUSH_TIMEOUT_MS) {
 // ("To github.com:acme/api.git") with the actual complaint, and the complaint is
 // rarely first — so pick the first line that IS one, rather than blindly taking
 // line 1 and showing the user a remote URL as an error message.
-function pushFailureLine(r) {
+function pushFailureLine(r: PushResult): string {
   // A child killed on its timeout exits with no code and usually says nothing at
   // all, so the generic fallback below would report "git push exited 1" for the one
   // failure the user can actually do something about.
@@ -131,26 +198,51 @@ function pushFailureLine(r) {
   return lines.find((l) => /^(?:error|fatal|remote)\b/i.test(l) || l.startsWith('!')) || lines[0] || `git push exited ${r.code}`;
 }
 
+/**
+ * What a lookup needs of a session's repo. `SessionRepo` satisfies it; its two
+ * worktree fields stay null until promote(), which is the miss ciForRepo's first
+ * guard answers.
+ */
+export interface CiEntry {
+  repo: string;
+  worktreePath?: string | null;
+  branch?: string | null;
+}
+
+/** The SessionManager, typed by the one method the routes below call. */
+interface SessionLookup {
+  get: (id: string) => { repos?: SessionRepo[] } | undefined;
+}
+
+/** `resolveGroup` (server/state.js), typed by what POST /group/pr reads of it. */
+type ResolveGroup = (name: string) => Promise<{ group?: { members: PrMember[] } | null }>;
+
+interface ForgeDeps {
+  /** the SessionManager, typed by the one method the routes below call */
+  manager?: SessionLookup;
+  resolveGroup?: ResolveGroup;
+  providers?: Provider[];
+  isInstalled?: (p: Provider) => boolean;
+  pushBranch?: (member: PrMember, env?: NodeJS.ProcessEnv, timeoutMs?: number) => Promise<PushResult>;
+  onChanged?: () => void;
+}
+
+/** One provider's refusal, plus whether it was ever in a position to answer. */
+interface CreateFailure {
+  installed: boolean;
+  stderr: string;
+}
+
 // `providers` / `isInstalled` are injectable so tests can drive the provider contract
 // on a machine without gh or glab. CLI presence is probed once, at startup, exactly
 // as before — a `has()` per request would shell out on every poll.
 // `onChanged` is how the push side (server/ci.js) hears that *this* module just did
 // something that changes a branch's PR state — opening one. Everything else that can
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
-/**
- * @param {object} [deps]
- * @param {{ get: (id: string) => any }} [deps.manager] the SessionManager, typed by the
- *        one method the routes below call
- * @param {(name: string) => Promise<{ group?: any }>} [deps.resolveGroup]
- * @param {Provider[]} [deps.providers]
- * @param {(p: Provider) => boolean} [deps.isInstalled]
- * @param {typeof pushBranchToOrigin} [deps.pushBranch]
- * @param {() => void} [deps.onChanged]
- */
-function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), pushBranch = pushBranchToOrigin, onChanged = () => {} } = {}) {
+function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), pushBranch = pushBranchToOrigin, onChanged = () => {} }: ForgeDeps = {}) {
   const installed = providers.filter(isInstalled);
   const installedSet = new Set(installed); // membership test for failure attribution
-  const ciCache = new Map();
+  const ciCache = new Map<string, { at: number, data: CiRepo }>();
 
   // Drop every cached answer. Called when something is known to have changed the
   // truth (a new commit, a push, a PR just opened) — without it a refresh triggered
@@ -159,13 +251,13 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
 
   // Look up a single repo's PR/MR + checks (GitHub first, then GitLab). Never
   // throws — returns { repo, hasPR:false } on any miss/failure. Cached per key.
-  async function ciForRepo(entry, env = ENV) {
+  async function ciForRepo(entry: CiEntry, env: NodeJS.ProcessEnv = ENV): Promise<CiRepo> {
     const { repo, worktreePath, branch } = entry;
     if (!worktreePath || !branch) return { repo, hasPR: false };
     const key = `${worktreePath}\n${branch}`;
     const hit = ciCache.get(key);
     if (hit && Date.now() - hit.at < CI_TTL) return { ...hit.data, repo };
-    let data = { repo, hasPR: false };
+    let data: CiRepo = { repo, hasPR: false };
     try {
       for (const p of installed) {
         const found = await p.view(branch, worktreePath, env);
@@ -189,7 +281,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   // repo is on). Only when no installed provider had anything to say do we fall
   // back, and a machine with no forge CLI at all gets told exactly that instead
   // of a sentence implying its CLI refused.
-  function failureReason(failures) {
+  function failureReason(failures: CreateFailure[]): string {
     const ran = failures.find((f) => f.installed && f.stderr);
     if (ran) return ran.stderr;
     if (failures.some((f) => f.installed)) return 'gh/glab unavailable or failed';
@@ -199,7 +291,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   }
 
   // Push the branch, then open a PR/MR with the first provider that accepts it.
-  async function openPullRequest(member, env) {
+  async function openPullRequest(member: PrMember, env?: NodeJS.ProcessEnv): Promise<PrResult> {
     // The push result used to be discarded. It can't be: a rejected push (no
     // `origin`, no upstream, non-fast-forward) means the branch the PR would be
     // opened from is not on the forge, so `gh pr create` fails too — with a
@@ -210,7 +302,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
     // Creation is attempted for every provider, installed or not (a missing CLI
     // simply fails and the next one gets its turn) — but whether it was installed
     // is what decides whose failure is worth reporting.
-    const failures = [];
+    const failures: CreateFailure[] = [];
     for (const p of providers) {
       const r = await p.create(member.branch, member.path, env);
       if (r.ok) return { repo: member.repo, url: r.url };
@@ -220,13 +312,13 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   }
 
   // `app` here is the API router — server.js mounts it at both /api and /api/v1.
-  /**
-   * @param {import('express').Router} app
-   * @param {{ manager?: { get: (id: string) => any }, resolveGroup?: (name: string) => Promise<{ group?: any }> }} [deps]
-   */
-  function register(app, deps = {}) {
-    const mgr = deps.manager || manager;
-    const resolve = deps.resolveGroup || resolveGroup;
+  function register(app: Router, deps: Pick<ForgeDeps, 'manager' | 'resolveGroup'> = {}) {
+    // Each route needs its collaborator, and the one createForge() call that has
+    // them is the same one whose register() mounts the routes — so a route reached
+    // without one is a wiring bug, and it stays as loud as it has always been
+    // rather than being softened into a 404 that would read as "no such session".
+    const mgr = (deps.manager || manager)!;
+    const resolve = (deps.resolveGroup || resolveGroup)!;
 
     app.get('/sessions/:id/ci', async (req, res) => {
       const s = mgr.get(req.params.id);
@@ -247,7 +339,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
     app.post('/group/pr', async (req, res) => {
       const { group: g } = await resolve(req.body && req.body.group);
       if (!g) return res.status(404).json({ error: 'no such feature' });
-      const results = [];
+      const results: PrResult[] = [];
       for (const m of g.members) results.push(await openPullRequest(m, ENV));
       // A branch that had no PR a second ago now has one, and its cached "hasPR:
       // false" says otherwise. Drop it and tell the push side to re-look, so the
