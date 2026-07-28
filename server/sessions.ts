@@ -777,7 +777,15 @@ class SessionManager extends EventEmitter {
       if (!s.muxName) continue;
       if (s.active === false) continue;
       try {
-        if (await this.mux.hasSession(s.muxName)) { s.activity = 'reattached'; await this._syncTabs(s); continue; }
+        if (await this.mux.hasSession(s.muxName)) {
+          // No activity string: this is a boot-time fact ("its tmux session outlived the
+          // daemon, so we reattached rather than relaunching"), and nothing clears it
+          // until the next Claude hook — so it used to sit on every card indefinitely,
+          // saying something about the daemon rather than about the session.
+          s.activity = '';
+          await this._syncTabs(s);
+          continue;
+        }
         // A promoted session whose worktree is gone can't be resumed meaningfully —
         // flag it rather than launch a dead pane and claim success.
         if (s.worktreePath && !fs.existsSync(s.worktreePath)) {

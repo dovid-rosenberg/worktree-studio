@@ -21,7 +21,7 @@ import { promote, startSessionServers } from '$lib/ops.svelte.js';
 const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
   ['⌘N', 'New session'],
-  ['⌘\\', 'Toggle the Overview pane'],
+  ['⌘\\', 'Toggle Insights'],
   ['⌘1–9', 'Jump to the Nth rail row'],
   ['⌘↵', 'Promote current to worktree'],
   ['⌘D', 'Review changes'],
@@ -53,7 +53,7 @@ export function handleShortcut(e: KeyboardEvent): void {
 
   const s = ui.selected;
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); overlays.openIntake(); return; }
-  if (e.key === '\\') { e.preventDefault(); ui.toggleOverview(); return; }
+  if (e.key === '\\') { e.preventDefault(); ui.toggleUsage(); return; }
   if (e.key >= '1' && e.key <= '9') {
     // The rail draws agents then features, and a feature may have no session — so a row
     // is picked by what it IS, not by a session id it might not have.

@@ -45,15 +45,21 @@ type QueryValue = Request['query'][string];
 interface SessionMeta {
   id: string;
   title: string;
-  feature: string;
-  branch: string | null;
-  repo: string;
-  active: boolean;
-  state: SessionState;
+  /**
+   * Optional from here down: an ARCHIVED row — a session the index still has telemetry
+   * for but which no longer exists — can only honestly report the id and the branch its
+   * messages carried. Making these required would force the archive to invent a repo and
+   * a state for work that finished.
+   */
+  feature?: string;
+  branch?: string | null;
+  repo?: string;
+  active?: boolean;
+  state?: SessionState;
 }
 
 /** One session's telemetry row in the fleet-wide rollup. */
-type SessionUsage = UsageSummary & { session: SessionMeta; indexed: boolean };
+type SessionUsage = UsageSummary & { session: SessionMeta; indexed: boolean; archived?: boolean };
 
 /** A feature's rollup, accumulated across its sessions before pricing is rounded. */
 interface FeatureUsage extends TokenTotals {
@@ -136,7 +142,16 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
     if (!REINDEX_ON.has(event)) return;
     enqueue(manager.get(id));
   });
-  manager.on('change', (c: { type?: string; id?: string } | null) => { if (c && c.type === 'session-removed' && c.id) index.forget(c.id); });
+  /*
+   * A removed session KEEPS its telemetry.
+   *
+   * This used to call index.forget(id), which deletes the session's messages, usage and
+   * file rows. That made cost history a property of the live session list: delete a
+   * worktree and what it cost you was gone. Telemetry is the record of work that already
+   * happened — it should outlive the worktree, which is the whole reason to look at it
+   * afterwards. The index is an archive now, and /transcripts/usage renders rows with no
+   * live session as archived. index.forget() stays for a real purge.
+   */
 
   // Catch up on everything already on disk, once, off the boot path.
   setTimeout(() => { for (const s of manager.all()) enqueue(s); }, 2000).unref?.();
@@ -269,10 +284,29 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
       }
     }
 
+    /*
+     * The INDEX is the outer loop, not the live session list.
+     *
+     * Iterating `sessions` meant a session's spend vanished from this view the moment
+     * the session was deleted, even with its rows on disk — you could not ask what last
+     * month's finished work had cost. Every indexed session appears; one with no live
+     * counterpart is reported as archived, carrying the identity the index recorded.
+     * Live sessions with no rows yet still appear (indexed: false), as before.
+     */
+    const live = new Map(sessions.map((s) => [s.id, s]));
+    const ids = new Set<string>([...live.keys(), ...bySession.keys()]);
+
     const out: SessionUsage[] = [];
-    for (const s of sessions) {
-      const rows = bySession.get(s.id) || [];
-      out.push({ session: meta(s), ...summarize(rows), indexed: rows.length > 0 });
+    for (const id of ids) {
+      const s = live.get(id);
+      const rows = bySession.get(id) || [];
+      if (!s && !rows.length) continue;
+      out.push({
+        session: s ? meta(s) : index.archivedMeta(id),
+        ...summarize(rows),
+        indexed: rows.length > 0,
+        archived: !s,
+      });
     }
 
     const features = new Map<string, FeatureUsage>();

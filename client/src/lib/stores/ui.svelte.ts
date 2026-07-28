@@ -66,8 +66,8 @@ const RAIL_DEFAULT = 320;
  * The app-level views are the two that render with nothing selected. Everything else
  * in DockView is a panel of the selected session.
  */
-export type DockView = 'term' | 'changes' | 'logs' | 'insights' | 'overview' | 'usage';
-const APP_VIEWS: DockView[] = ['overview', 'usage'];
+export type DockView = 'term' | 'changes' | 'logs' | 'insights' | 'usage';
+const APP_VIEWS: DockView[] = ['usage'];
 
 function savedDock(): DockView {
   try {
@@ -275,13 +275,14 @@ class UI {
     try { localStorage.setItem(DOCK_KEY, APP_VIEWS.includes(v) ? v : 'term'); } catch { /* private mode */ }
   }
 
-  /** ⌘\ — Overview is a pane you toggle, not a mode you get stuck in. */
-  toggleOverview(): void {
-    this.setDockView(this.dockView === 'overview' ? 'term' : 'overview');
-  }
-
-  /** Fleet-wide token/cost telemetry, as a peer of Overview. */
+  /**
+   * Fleet-wide token/cost telemetry. Entering it CLEARS the selection: Insights is about
+   * every session that ever ran, not the one you happen to have open, and leaving a
+   * selection standing left the ActionBar offering Stop stack / Delete feature for
+   * something no longer on screen.
+   */
   toggleUsage(): void {
+    if (this.dockView !== 'usage') { this.selectedId = null; this.selectedFeatureName = null; }
     this.setDockView(this.dockView === 'usage' ? 'term' : 'usage');
   }
 
