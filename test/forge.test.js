@@ -11,8 +11,8 @@ const path = require('path');
 const express = require('express');
 const { createForge, ghChecks, glChecks, PROVIDERS } = require('../server/forge');
 
-// A worktree path that is deliberately NOT a git repo: openPullRequest pushes first,
-// and a failed push is ignored exactly as it always was.
+// A worktree path that is deliberately NOT a git repo — used to drive the real
+// `git push` failure path end to end.
 const NOT_A_REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-forge-'));
 
 // A stand-in provider whose view/create are scripted per call.
@@ -20,8 +20,14 @@ function provider(id, { view = async () => null, create = async () => ({ ok: fal
   return { id, cli: id, view, create };
 }
 
+// openPullRequest pushes before it creates, and a failed push now short-circuits.
+// Tests about the PROVIDER contract inject a push that succeeded, so they exercise
+// the half they are about; the push half has its own tests below (including one
+// that uses the real git).
+const OK_PUSH = async () => ({ code: 0, stdout: '', stderr: '' });
+
 function forge(providers) {
-  return createForge({ providers, isInstalled: () => true });
+  return createForge({ providers, isInstalled: () => true, pushBranch: OK_PUSH });
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +137,7 @@ test('an uninstalled CLI is never consulted', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// openPullRequest — same order, last word on failure
+// openPullRequest — push first, then provider order, then failure attribution
 // ---------------------------------------------------------------------------
 
 const MEMBER = { repo: 'api', path: NOT_A_REPO, branch: 'feature/a' };
@@ -174,6 +180,7 @@ test('an uninstalled provider\'s silence never overwrites the reason from one th
       provider('gitlab', { create: async () => ({ ok: false, stderr: '' }) }), // ENOENT — never ran
     ],
     isInstalled: (p) => p.id === 'github',
+    pushBranch: OK_PUSH,
   });
   assert.deepEqual(await f.openPullRequest(MEMBER, {}), { repo: 'api', error: 'gh: No commits between main and feature/a' });
 });
@@ -185,6 +192,7 @@ test('with no forge CLI installed at all, that is what the user is told', async 
       provider('gitlab', { create: async () => ({ ok: false, stderr: '' }) }),
     ],
     isInstalled: () => false,
+    pushBranch: OK_PUSH,
   });
   const r = await f.openPullRequest(MEMBER, {});
   assert.match(r.error, /no forge CLI installed/, 'a CLI that was never there did not "fail"');
@@ -202,6 +210,7 @@ test('creation is attempted even for a CLI that is not installed', async () => {
   const f = createForge({
     providers: [provider('github', { create: async () => { asked = true; return { ok: true, url: 'u' }; } })],
     isInstalled: () => false,
+    pushBranch: OK_PUSH,
   });
   assert.deepEqual(await f.openPullRequest(MEMBER, {}), { repo: 'api', url: 'u' });
   assert.equal(asked, true);
@@ -241,6 +250,7 @@ test('opening a PR invalidates the cache and tells the push side to re-look', as
       create: async () => ({ ok: true, url: 'https://gh/pr/1' }),
     })],
     isInstalled: () => true,
+    pushBranch: OK_PUSH,
     resolveGroup: async () => ({ group: GROUP }),
     onChanged: () => { pokes++; },
   });
@@ -260,6 +270,7 @@ test('a group whose PRs all failed to open changes nothing', async () => {
   const f = createForge({
     providers: [provider('github', { create: async () => ({ ok: false, stderr: 'gh: not authenticated' }) })],
     isInstalled: () => true,
+    pushBranch: OK_PUSH,
     resolveGroup: async () => ({ group: GROUP }),
     onChanged: () => { pokes++; },
   });
@@ -273,6 +284,7 @@ test('a push listener that throws cannot break the PR route', async () => {
   const f = createForge({
     providers: [provider('github', { create: async () => ({ ok: true, url: 'https://gh/pr/1' }) })],
     isInstalled: () => true,
+    pushBranch: OK_PUSH,
     resolveGroup: async () => ({ group: GROUP }),
     onChanged: () => { throw new Error('feed is on fire'); },
   });
@@ -281,4 +293,61 @@ test('a push listener that throws cannot break the PR route', async () => {
     assert.equal(res.status, 200);
     assert.equal((await res.json()).ok, true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// the push half — a branch that never reached the remote has no PR to open
+// ---------------------------------------------------------------------------
+
+test('a rejected push stops before any PR is attempted and reports git\'s reason', async () => {
+  let created = false;
+  const f = createForge({
+    providers: [provider('github', { create: async () => { created = true; return { ok: true, url: 'https://gh/pr/1' }; } })],
+    isInstalled: () => true,
+    pushBranch: async () => ({
+      code: 1,
+      stdout: '',
+      // real non-fast-forward output: the complaint is not the first line
+      stderr: 'To github.com:acme/api.git\n ! [rejected]        feature/a -> feature/a (fetch first)\nerror: failed to push some refs\n',
+    }),
+  });
+  const r = await f.openPullRequest(MEMBER, {});
+  assert.equal(created, false, 'a branch that is not on the remote cannot have a PR opened against it');
+  assert.match(r.error, /^git push failed: /, r.error);
+  assert.match(r.error, /\[rejected\]/, 'git\'s own complaint, not the progress line');
+  assert.ok(!/github\.com:acme/.test(r.error.replace(/\[rejected\][\s\S]*/, '')), 'the "To <remote>" progress line is not the error');
+});
+
+test('a real failing git push surfaces git\'s message instead of a PR-creation symptom', async () => {
+  // No injection: this is `git -C <not a repo> push -u origin feature/a`.
+  let created = false;
+  const f = createForge({
+    providers: [provider('github', { create: async () => { created = true; return { ok: false, stderr: 'gh: No commits between main and feature/a' }; } })],
+    isInstalled: () => true,
+  });
+  const r = await f.openPullRequest(MEMBER, {});
+  assert.equal(created, false);
+  assert.match(r.error, /git push failed: fatal: not a git repository/i, r.error);
+});
+
+test('POST /group/pr reports a push failure as the failure', async () => {
+  const f = createForge({
+    providers: [provider('github', { create: async () => ({ ok: true, url: 'https://gh/pr/1' }) })],
+    isInstalled: () => true,
+    pushBranch: async () => ({ code: 128, stdout: '', stderr: "fatal: 'origin' does not appear to be a git repository\n" }),
+    resolveGroup: async () => ({ group: GROUP }),
+  });
+  await serving((api) => f.register(api), async (post) => {
+    const r = await (await post('/api/group/pr', { group: 'feat-a' })).json();
+    assert.equal(r.ok, false);
+    assert.match(r.results[0].error, /git push failed: fatal: 'origin' does not appear/);
+  });
+});
+
+test('pushFailureLine picks the complaint out of git\'s progress noise', () => {
+  const { pushFailureLine } = require('../server/forge');
+  assert.equal(pushFailureLine({ stderr: 'To github.com:a/b.git\nerror: failed to push some refs\n' }), 'error: failed to push some refs');
+  assert.equal(pushFailureLine({ stderr: "fatal: 'origin' does not appear to be a git repository" }), "fatal: 'origin' does not appear to be a git repository");
+  assert.equal(pushFailureLine({ stderr: 'remote: Permission to a/b.git denied' }), 'remote: Permission to a/b.git denied');
+  assert.equal(pushFailureLine({ stderr: '', stdout: '', code: 3 }), 'git push exited 3', 'a mute failure still says something');
 });

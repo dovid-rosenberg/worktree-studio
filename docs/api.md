@@ -666,6 +666,11 @@ Otherwise the first member is adopted and the rest are attached to it via
 For each member: push the branch (`git push -u origin <branch>`), then open a PR
 with `gh pr create --fill`, falling back to `glab mr create --fill --yes`.
 
+A member whose push is rejected (no `origin`, no upstream, non-fast-forward) is
+reported as `{ repo, error: "git push failed: <git's own line>" }` and no PR is
+attempted for it — the branch isn't on the forge, so creation could only fail
+with a downstream symptom.
+
 ```jsonc
 { "ok": true, "results": [ { "repo": "api", "url": "https://github.com/…/pull/412" },
                            { "repo": "fe",  "error": "glab: not authenticated" } ] }

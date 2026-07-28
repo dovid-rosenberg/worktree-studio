@@ -90,13 +90,28 @@ const gitlab = {
 
 const PROVIDERS = [github, gitlab];
 
+// Push a member's branch to origin. Split out (and injectable via createForge) so
+// the push half of openPullRequest can be driven without a remote.
+function pushBranchToOrigin(member, env) {
+  return run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env });
+}
+
+// The one line of a failed `git push` worth showing. git interleaves progress
+// ("To github.com:acme/api.git") with the actual complaint, and the complaint is
+// rarely first — so pick the first line that IS one, rather than blindly taking
+// line 1 and showing the user a remote URL as an error message.
+function pushFailureLine(r) {
+  const lines = `${r.stderr || ''}\n${r.stdout || ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /^(?:error|fatal|remote)\b/i.test(l) || l.startsWith('!')) || lines[0] || `git push exited ${r.code}`;
+}
+
 // `providers` / `isInstalled` are injectable so tests can drive the provider contract
 // on a machine without gh or glab. CLI presence is probed once, at startup, exactly
 // as before — a `has()` per request would shell out on every poll.
 // `onChanged` is how the push side (server/ci.js) hears that *this* module just did
 // something that changes a branch's PR state — opening one. Everything else that can
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
-function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), onChanged = () => {} } = {}) {
+function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), pushBranch = pushBranchToOrigin, onChanged = () => {} } = {}) {
   const installed = providers.filter(isInstalled);
   const installedSet = new Set(installed); // membership test for failure attribution
   const ciCache = new Map();
@@ -149,7 +164,13 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
 
   // Push the branch, then open a PR/MR with the first provider that accepts it.
   async function openPullRequest(member, env) {
-    await run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env });
+    // The push result used to be discarded. It can't be: a rejected push (no
+    // `origin`, no upstream, non-fast-forward) means the branch the PR would be
+    // opened from is not on the forge, so `gh pr create` fails too — with a
+    // downstream symptom ("No commits between…") that hides the real cause.
+    // Stop here and report what git actually said.
+    const pushed = await pushBranch(member, env);
+    if (pushed.code !== 0) return { repo: member.repo, error: `git push failed: ${pushFailureLine(pushed)}` };
     // Creation is attempted for every provider, installed or not (a missing CLI
     // simply fails and the next one gets its turn) — but whether it was installed
     // is what decides whose failure is worth reporting.
@@ -199,4 +220,4 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
   return { register, ciForRepo, openPullRequest, invalidate, installed };
 }
 
-module.exports = { createForge, PROVIDERS, github, gitlab, ghChecks, glChecks };
+module.exports = { createForge, PROVIDERS, github, gitlab, ghChecks, glChecks, pushFailureLine };
