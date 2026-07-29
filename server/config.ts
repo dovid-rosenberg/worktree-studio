@@ -262,7 +262,12 @@ function load(): Config {
     const d = defaults();
     for (const [k, v] of Object.entries(d)) if (!(k in cfg)) cfg[k] = v;
     if (!cfg.web) cfg.web = d.web;
-    if (!cfg.web.port) cfg.web.port = d.web.port;
+    // `== null`, not `!`: port 0 is a legitimate value meaning "let the OS pick a free
+    // one", and a falsy test silently rewrote it to 7788 — so a config asking for an
+    // ephemeral port got the default and then refused to boot against whatever was
+    // already listening there. Same for host: '' is not a reason to override.
+    if (cfg.web.port == null) cfg.web.port = d.web.port;
+    if (cfg.web.host == null) cfg.web.host = d.web.host;
     // Targeted deep-merge for the `.default` pattern lists only: the shallow merge
     // above skips them whenever the on-disk config already has a (possibly stale)
     // copyPatterns/copyAlways key, so newly-shipped default patterns would never
