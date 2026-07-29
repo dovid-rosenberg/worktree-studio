@@ -1,12 +1,22 @@
 <script lang="ts">
   /*
-   * The application header: brand, multiplexer badge, the fleet-wide summary, the
-   * Overview toggle (carrying the waiting-count attention badge), and global actions.
+   * The application header: brand, the Insights toggle (carrying the waiting-count
+   * attention badge), the fleet-wide summary, and global actions.
    *
-   * The summary counts and the stack-wide buttons used to live in Fleet's own summary
-   * bar, which meant they were only visible while Fleet was. They belong here: they
-   * describe the whole fleet, not one view of it, and the numbers are the reason you
-   * would open Overview in the first place.
+   * TWO VOCABULARIES, SAID SEPARATELY. `running` counts dev SERVERS; `working` and
+   * `waiting` count AGENTS. Printed as one comma-run they read as parts of one total
+   * and did not add up — `7 features · 1 running · 4 working · 0 waiting` invites the
+   * arithmetic and then fails it. They are two groups now, each labelled by what it
+   * counts.
+   *
+   * AND THEY WERE COUNTED PER MEMBER, NOT PER AGENT. `flat` is every member worktree
+   * across every feature, so a 3-repo feature with one working agent contributed THREE
+   * to `working` — the numbers were inflated by exactly how multi-repo your work is.
+   * Agent states count distinct sessions now; only the server count is per worktree,
+   * which is correct because each worktree runs its own.
+   *
+   * Zeros are hidden: a count of zero takes the same space as a real one and says
+   * nothing.
    *
    * The `actions` snippet is kept from the foundation version so a caller can inject
    * extra controls without this component learning about them.
@@ -21,10 +31,11 @@
   let { actions = undefined } = $props();
 
   const feats = $derived(world.features);
-  const flat = $derived(feats.flatMap((f) => liveMembers(f)));
-  const running = $derived(flat.filter((m) => m.running).length);
-  const working = $derived(flat.filter((m) => m.session && m.session.state === 'working').length);
-  const waiting = $derived(flat.filter((m) => m.session && m.session.state === 'waiting').length);
+  /** Per WORKTREE: each one runs its own dev server, so this is the honest denominator. */
+  const running = $derived(feats.flatMap((f) => liveMembers(f)).filter((m) => m.running).length);
+  /** Per AGENT: one session drives a whole feature, however many repos it spans. */
+  const working = $derived(world.sessions.filter((s) => s.state === 'working').length);
+  const waiting = $derived(world.sessions.filter((s) => s.state === 'waiting').length);
   const unpromoted = $derived(world.sessions.filter((s) => !s.worktreePath).length);
 
   const runningFeats = () => feats.filter((f) => liveMembers(f).some((m) => m.running));
@@ -48,9 +59,21 @@
   <div class="counts" aria-label="Fleet summary">
     <span class="c"><b>{feats.length}</b> features</span>
     {#if unpromoted}<span class="c"><span class="pi">✦</span><b>{unpromoted}</b> unpromoted</span>{/if}
-    <span class="c"><span class="dot done"></span><b>{running}</b> running</span>
-    <span class="c"><span class="dot working"></span><b>{working}</b> working</span>
-    <span class="c"><span class="dot waiting"></span><b>{waiting}</b> waiting</span>
+
+    {#if working || waiting}
+      <span class="grp" aria-label="Agents">
+        <span class="lbl">agents</span>
+        {#if working}<span class="c"><span class="dot working"></span><b>{working}</b> working</span>{/if}
+        {#if waiting}<span class="c"><span class="dot waiting"></span><b>{waiting}</b> waiting</span>{/if}
+      </span>
+    {/if}
+
+    {#if running}
+      <span class="grp" aria-label="Dev servers">
+        <span class="lbl">servers</span>
+        <span class="c"><span class="dot done"></span><b>{running}</b> up</span>
+      </span>
+    {/if}
   </div>
 
   {#if anyRunning}
@@ -85,6 +108,9 @@
   .counts .c { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--border); border-radius:20px; padding:2px 9px; background:var(--elevated); }
   .counts .c b { color:var(--ink); font-variant-numeric:tabular-nums; }
   .counts .pi { font-size:9px; font-style:normal; }
+  /* Each group names what it counts, so the two never read as one total. */
+  .counts .grp { display:inline-flex; align-items:center; gap:6px; padding-left:9px; border-left:1px solid var(--border); }
+  .counts .lbl { font-size:9px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
 
   /* Attention badge: the number of sessions currently waiting. */
   .attn { position:relative; }
