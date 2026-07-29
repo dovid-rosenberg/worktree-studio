@@ -462,6 +462,40 @@ async function main() {
   // ---- review (commits, per-commit diffs & commit) ----
   // The branch's commits per repo (+ an uncommitted summary), and one commit's inline
   // per-file diffs on demand.
+  /*
+   * The same rollup for a FEATURE rather than a session.
+   *
+   * /sessions/:id/commits is keyed on a session, so a feature with no agent — the exact
+   * case the dock's feature pane exists for — could not answer "what is in here, and is
+   * it merged?" without starting one. Same shape, so the client renders both the same
+   * way.
+   */
+  api.get('/group/:name/commits', async (req, res) => {
+    const { group: g } = await resolveGroup(String(req.params.name || ''));
+    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const out = [];
+    for (const m of g.members) {
+      if (!m.path) continue;
+      const def = defaultBranchOf(m.repo);
+      const { base, commits } = await review.commits(m.path, def);
+      const wc = await review.working(m.path);
+      out.push({
+        repo: m.repo,
+        worktreePath: m.path,
+        branch: m.branch,
+        base,
+        defaultBranch: def,
+        commits,
+        uncommitted: {
+          fileCount: wc.files.length,
+          added: wc.files.reduce((n, f) => n + (f.added || 0), 0),
+          deleted: wc.files.reduce((n, f) => n + (f.deleted || 0), 0),
+        },
+      });
+    }
+    res.json({ repos: out });
+  });
+
   api.get('/sessions/:id/commits', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
