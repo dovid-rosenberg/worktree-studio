@@ -8,6 +8,29 @@ watched at a glance), not by area.
 
 ---
 
+## Status 2026-07-29
+
+**P0, P1 and P2 are done.** P3 is most of the way there: the client has a test runner
+and 62 tests, the server has a smoke suite that boots a real daemon, and identity has
+property tests. What is left is listed at the bottom under "Still open".
+
+### Still open
+
+- **`/group/pr` loops members serially** (P3 #16). Deliberately NOT changed: verifying
+  a parallel version means opening real pull requests, and the path is network-mutating
+  with documented secondary-rate-limit risk on concurrent mutations. Timeouts already
+  bound each member, so the cost is cumulative latency, not a hang. Worth doing with a
+  small concurrency cap when someone can watch it against a real remote.
+- **The two unreproduced test failures** from the v2 build-out (P3 #16). Still not
+  reproduced; nothing to act on until they recur.
+- **Component coverage** for Dock and FeaturePane. FeaturePane now fetches, so it needs
+  an api mock.
+- **Property tests for hunk math** (P3 #15). Lower value than identity was: every hunk
+  subset already round-trips through `git apply --check` in hunks.test.ts, which is a
+  stronger check than a property could state.
+
+---
+
 ## Done since this was written (2026-07-28)
 
 - **P0 entirely** — flat rail, two signals per card, actions at the bottom only.
