@@ -12,9 +12,10 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
  * constructs, so the plugin has to process them before Vitest sees them. Without it,
  * importing world.svelte.ts throws on the first `$state`.
  *
- * `environment: 'node'` on purpose — these are the store and pure-logic tests, which
- * need no DOM. Component rendering (jsdom + testing-library) is the next layer and can
- * add its own environment when it lands.
+ * Two projects, because the two layers want different environments and mixing them
+ * costs every store test a jsdom it does not use:
+ *   stores — node, no DOM, the pure logic and the SSE stitching
+ *   components — jsdom, @testing-library/svelte, what actually renders
  */
 export default defineConfig({
   plugins: [svelte()],
@@ -27,7 +28,20 @@ export default defineConfig({
     conditions: ['browser'],
   },
   test: {
-    environment: 'node',
-    include: ['src/**/*.test.ts'],
+    projects: [
+      {
+        extends: true,
+        test: { name: 'stores', environment: 'node', include: ['src/lib/stores/**/*.test.ts'] },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'components',
+          environment: 'jsdom',
+          include: ['src/lib/components/**/*.test.ts'],
+          setupFiles: ['./vitest.setup.ts'],
+        },
+      },
+    ],
   },
 });

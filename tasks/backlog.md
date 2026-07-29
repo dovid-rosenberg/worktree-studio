@@ -10,6 +10,15 @@ watched at a glance), not by area.
 
 ## Done since this was written (2026-07-28)
 
+- **P0 entirely** — flat rail, two signals per card, actions at the bottom only.
+- **P1 entirely** — Overview deleted, Insights decoupled and archived, split closable
+  from inside, FeaturePane reads instead of duplicating.
+- **P2 #9–#13** — mux badge, `reattached`, terminal theming, summary-bar counts, one
+  verb for starting servers.
+- **P3 #14 started** — the client has a test runner and 33 tests across two layers.
+- **Not on this list when it was written**: `canStart` is deps-aware, and the six
+  worktrees missing node_modules are installed.
+
 - **`startFeatureSession` selection bug** — wrote `selectedId` without clearing
   `selectedFeatureName`, so starting an agent from a sessionless feature left the
   feature table on screen. Fixed.
