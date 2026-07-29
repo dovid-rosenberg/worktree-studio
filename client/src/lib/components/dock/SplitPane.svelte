@@ -12,6 +12,7 @@
   import { activatable } from '$lib/actions/activatable.js';
   import { api } from '$lib/api.js';
   import { toast } from '$lib/stores/toasts.svelte.js';
+  import { ui } from '$lib/stores/ui.svelte.js';
 
   /*
    * Takes the session ID, not the session object. The object is replaced on every
@@ -65,8 +66,19 @@
     finally { busyAdd = false; }
   }
 
-  /** @param {number} i */
+  /**
+   * Closing the LAST split tab closes the split.
+   *
+   * The ✕ used to be hidden on the last tab, so the only way out of the split was the
+   * ⊟ Split toggle in the strip above — a different control, in a different place, for
+   * what reads as the same act. Worse, you could close every tab but one and be left
+   * with a half-width pane you had no way to dismiss from inside it.
+   *
+   * The tmux `-split` session is deliberately left alive: reopening the split reattaches
+   * to whatever was running there. Closing the pane is a view decision, not a kill.
+   */
   async function close(i: number) {
+    if (shown.length <= 1) { ui.toggleSplit(sessionId); return; }
     try {
       await api('POST', `/api/sessions/${sessionId}/split/close-tab`, { index: i });
       await fetchTabs(sessionId);
@@ -80,14 +92,12 @@
       {#each shown as t, i (i)}
         <span class="tab sm" class:on={i === activeIndex} use:activatable={() => select(i)}>
           {t.title}
-          {#if shown.length > 1}
-            <span
-              class="tabclose"
-              title="Close tab"
-              aria-label="Close tab"
-              use:activatable={(e) => { e?.stopPropagation(); close(i); }}
-            >✕</span>
-          {/if}
+          <span
+            class="tabclose"
+            title={shown.length > 1 ? 'Close tab' : 'Close the split'}
+            aria-label={shown.length > 1 ? `Close tab ${t.title}` : 'Close the split'}
+            use:activatable={(e) => { e?.stopPropagation(); close(i); }}
+          >✕</span>
         </span>
       {/each}
       <span class="tab sm" aria-label="New split tab" use:activatable={add}><span class="newtab">＋</span></span>
