@@ -151,7 +151,7 @@ test('depsMissing is true only for a package.json with no node_modules', () => {
 });
 
 test('canStart is false when the deps a start command needs are absent', () => {
-  const s = servers({ start: { demo: { cmd: 'npm run dev', ports: [4321] } } });
+  const s = servers({ start: { demo: { cmd: 'npm run dev' } } });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-deps2-'));
   fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
 
@@ -163,4 +163,56 @@ test('canStart is false when the deps a start command needs are absent', () => {
   const ready = s.decorate({ path: dir, repo: 'demo' }, new Map());
   assert.equal(ready.depsMissing, false);
   assert.equal(ready.canStart, true);
+});
+
+// ---- pruneTracked ----------------------------------------------------------
+//
+// A tracked record says "this worktree has a dev server, pid N". When that process
+// dies on its own — crashed, or killed from a terminal — nothing tells the daemon.
+// Pruning used to run at boot ONLY, so the record survived for the rest of the
+// daemon's lifetime and the UI kept claiming the server was up. It runs on the
+// discovery sweep now, which is what these pin.
+
+test('pruneTracked drops a record whose process is gone, and keeps a live one', async () => {
+  const s = servers();
+  const dead = tempWorktree();
+  const live = tempWorktree();
+
+  // A record only counts as ours when its startedAt MATCHES the process's real start
+  // time — that is the recycled-pid guard, and a fabricated timestamp is exactly what
+  // it is built to reject. So ask for the real one.
+  const mine = await s._psInfo(process.pid);
+  assert.ok(mine, 'this process must be visible to ps for the test to mean anything');
+
+  // A pid that cannot exist: 2^22 is above every platform's pid_max.
+  s.tracked[dead] = { pid: 4194304, startedAt: Date.now() };
+  s.tracked[live] = { pid: process.pid, startedAt: mine.startedAt };
+
+  const dropped = await s.pruneTracked();
+
+  assert.deepEqual(dropped.map((d) => d.worktreePath), [dead]);
+  assert.equal(dropped[0].pid, 4194304, 'the dropped record reports the pid it named');
+  assert.ok(!(dead in s.tracked), 'the dead record is gone');
+  assert.ok(live in s.tracked, 'the live one is untouched');
+});
+
+test('pruneTracked is a no-op when everything it tracks is alive', async () => {
+  const s = servers();
+  const live = tempWorktree();
+  const mine = await s._psInfo(process.pid);
+  s.tracked[live] = { pid: process.pid, startedAt: mine!.startedAt };
+
+  assert.deepEqual(await s.pruneTracked(), []);
+  assert.ok(live in s.tracked);
+});
+
+test('pruneTracked is safe to call repeatedly — the sweep runs it every few seconds', async () => {
+  const s = servers();
+  const dead = tempWorktree();
+  s.tracked[dead] = { pid: 4194304, startedAt: Date.now() };
+
+  assert.equal((await s.pruneTracked()).length, 1);
+  // Second pass has nothing left to drop, so it must not report or write again.
+  assert.deepEqual(await s.pruneTracked(), []);
+  assert.deepEqual(await s.pruneTracked(), []);
 });

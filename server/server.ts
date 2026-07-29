@@ -114,6 +114,13 @@ async function main() {
     try {
       runningCache = await servers.discoverRunning();
       servers.reconcileSlots(runningCache); // self-heal leaked/stale slots against reality
+      // Drop records whose process is gone. This used to run at boot ONLY, so a dev
+      // server that died on its own — crashed, or killed from a terminal — left a
+      // tracked record for the rest of the daemon's lifetime: the strip kept claiming
+      // it was up until someone restarted the app. pruneTracked writes only when it
+      // actually drops something, so on the common path this is a pid check per
+      // tracked worktree and nothing else.
+      if ((await servers.pruneTracked()).length) runningSig = '';
     } catch { return; }
     // Nothing else bounds a dev server that has been running for days without a
     // restart: it appends to its log the whole time, and only a sweep is ever going
