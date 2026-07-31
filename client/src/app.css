@@ -91,8 +91,9 @@ button { font-family:inherit; }
 .btn.primary:hover { filter:brightness(1.06); }
 .btn.danger { background:#e5484d; border-color:#e5484d; color:#fff; }
 .btn.danger:hover { filter:brightness(1.06); border-color:#e5484d; }
-.btn.go { background:var(--done); border-color:var(--done); color:#06180d; }
-.btn.go:hover { filter:brightness(1.08); border-color:var(--done); }
+/* No `.btn.go`. Green is a STATE in this app — a running server, a merged branch — and
+   a green button made it mean "start this" as well, so the same colour answered two
+   different questions. Actions are the brand hue; only status wears --done. */
 .btn.ghost { background:transparent; border-color:transparent; color:var(--muted); }
 .btn.ghost:hover { color:var(--ink); border-color:var(--border); }
 .btn.sm { font-size:11.5px; padding:5px 10px; }

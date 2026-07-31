@@ -87,7 +87,7 @@
     {/each}
     {#if anyStopped}
       <button
-        class="btn sm go"
+        class="btn sm primary"
         disabled={busyStart}
         onclick={async () => { busyStart = true; try { await startSessionServers(session); } finally { busyStart = false; } }}
       >{anyRunning ? 'Run rest' : 'Run all'}</button>

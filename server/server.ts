@@ -576,6 +576,19 @@ async function main() {
   });
 
   // ---- dev servers ----
+  // Install a worktree's dependencies. Long-running by nature — the response is the
+  // OUTCOME, not an acknowledgement, so the client can report success or the npm exit
+  // code rather than guessing from a later sweep.
+  api.post('/worktrees/install-deps', async (req, res) => {
+    const { worktreePath } = req.body || {};
+    if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
+    const r = await servers.installDeps(String(worktreePath));
+    // The worktree's canStart/depsMissing just changed, so push the topology half.
+    await refreshRunning();
+    broadcastTopology();
+    res.json(r);
+  });
+
   api.post('/servers/start', async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const feature = servers.featureFor(worktreePath);

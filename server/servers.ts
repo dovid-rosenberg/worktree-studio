@@ -494,6 +494,57 @@ class Servers {
   }
 
   /**
+   * Worktrees with an install running right now.
+   *
+   * In memory, not in servers.json: an install that was interrupted by a daemon
+   * restart is finished or dead either way, and a persisted "installing" flag would
+   * outlive the process that set it and permanently disable the button.
+   */
+  installing = new Set<string>();
+
+  /**
+   * Install a worktree's dependencies.
+   *
+   * `git worktree add` cannot bring node_modules across — the directory is gitignored —
+   * so every worktree this app creates starts unable to run its own dev server. This is
+   * the button that fixes it, rather than making promote itself slow for the cases that
+   * do not need it.
+   *
+   * Logs beside the dev-server logs so a failed install is readable in the same place,
+   * and resolves when npm exits so the caller can report a real outcome.
+   */
+  async installDeps(worktreePath: string): Promise<{ ok: boolean; error?: string; log?: string }> {
+    if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: false, error: 'no such worktree' };
+    if (!fs.existsSync(path.join(worktreePath, 'package.json'))) return { ok: false, error: 'no package.json here' };
+    if (this.installing.has(worktreePath)) return { ok: false, error: 'already installing' };
+
+    this.installing.add(worktreePath);
+    const log = path.join(this.logDir, `install__${path.basename(worktreePath)}.log`);
+    try {
+      trimLog(log);
+      const fd = fs.openSync(log, 'a');
+      let child: ChildProcess;
+      try {
+        fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: npm install @ ${worktreePath} =====\n`);
+        child = spawn('npm', ['install', '--no-audit', '--no-fund'], {
+          cwd: worktreePath, stdio: ['ignore', fd, fd], env: ENV,
+        });
+      } finally { fs.closeSync(fd); }
+
+      const code = await new Promise<number>((resolve) => {
+        child.once('error', () => resolve(-1));
+        child.once('exit', (c) => resolve(c ?? -1));
+      });
+      if (code !== 0) return { ok: false, error: `npm install exited ${code}`, log };
+      return { ok: true, log };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message, log };
+    } finally {
+      this.installing.delete(worktreePath);
+    }
+  }
+
+  /**
    * Whether this worktree is missing the dependencies its start command needs.
    *
    * A worktree created by `git worktree add` has the repo's files and none of its
@@ -514,7 +565,7 @@ class Servers {
   }
 
   // Attach running/pid/ports/canStart to a worktree object using a discovered map.
-  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing'> {
+  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling'> {
     const hit = running.get(realpath(worktree.path));
     const deps = this.depsMissing(worktree.path);
     return {
@@ -526,6 +577,7 @@ class Servers {
       // will work" — /group/start filters `toStart` on it — so it now means that.
       canStart: !!this.startCfg(worktree.repo) && !deps,
       depsMissing: deps,
+      depsInstalling: this.installing.has(worktree.path),
     };
   }
 

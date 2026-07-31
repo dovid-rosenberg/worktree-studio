@@ -371,3 +371,38 @@ test('a corrupt servers.json is kept aside too', () => {
   assert.deepEqual(s.tracked, {});
   assert.ok(fs.readdirSync(stateDir).some((f) => f.startsWith('servers.json.corrupt-')));
 });
+
+// ---- decorate()'s answer must survive the trip ------------------------------
+//
+// topology() used to copy four named fields off decorate()'s result — running, pid,
+// ports, canStart — so `depsMissing`, added to decorate() later, was computed and then
+// silently dropped here. The rail's "deps missing" pill could never render, and nothing
+// failed anywhere: an absent boolean reads as false at every consumer.
+//
+// This asserts the general rule rather than that one field, so the next thing decorate()
+// learns cannot be lost the same way.
+
+test('every field decorate() returns reaches the worktree row', () => {
+  const marker = 'x-decorate-marker';
+  const servers = {
+    slots: new Map(),
+    startCfg: () => ({ cmd: 'x', ports: [] }),
+    isSlotted: () => false,
+    decorate: () => ({
+      running: false, pid: null, ports: [], canStart: true,
+      depsMissing: true,
+      depsInstalling: true,
+      // A field state.ts has never heard of: if topology() is picking names, this is
+      // what goes missing, and this test is what notices.
+      [marker]: 'kept',
+    }),
+  } as unknown as StateServers;
+
+  const { state } = build({ servers });
+  const wt = state.topology().repos[0].worktrees.find((w) => !w.isMain);
+  const row = present(wt, 'a linked worktree') as unknown as Record<string, unknown>;
+
+  assert.equal(row.depsMissing, true, 'depsMissing must reach the client');
+  assert.equal(row.depsInstalling, true, 'depsInstalling must reach the client');
+  assert.equal(row[marker], 'kept', 'topology() must not hand-pick decorate()’s fields');
+});

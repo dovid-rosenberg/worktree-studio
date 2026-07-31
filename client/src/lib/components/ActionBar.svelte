@@ -24,8 +24,8 @@
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
-    deleteFeature, openEditor, openGroup, pending, prFeature, promote, renameSession,
-    restartStack, runStack, startFeatureSession, stopStack,
+    deleteFeature, installDeps, openEditor, openGroup, pending, prFeature, promote,
+    renameSession, restartStack, runStack, startFeatureSession, stopStack,
   } from '$lib/ops.svelte.js';
 
   const session = $derived(ui.selected);
@@ -41,6 +41,9 @@
   const ms = $derived(target ? liveMembers(target) : []);
   const anyRunning = $derived(ms.some((m) => m.running));
   const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
+  /** Members that cannot start until their dependencies exist. */
+  const needDeps = $derived(ms.filter((m) => m.depsMissing));
+  const installingDeps = $derived(ms.some((m) => m.depsInstalling));
   const webApps = $derived(webAppsFor(ms));
   const isPending = $derived(!!target && pending.has(target.name));
 
@@ -76,11 +79,24 @@
     {:else}
       <!-- Stack verbs: identical whether you got here via the feature or its agent. -->
       {#if target}
+        <!-- One verb per concept, and colour means STATE not action: the start verb is
+             the brand hue like every other action, because green here used to mean both
+             "is running" and "start this". -->
         {#if anyRunning}
           <button class="btn sm danger" onclick={() => stopStack(target.name)}>Stop stack</button>
-          <button class="btn sm" onclick={() => restartStack(target.name)}>Restart</button>
+          <button class="btn sm" onclick={() => restartStack(target.name)}>Restart stack</button>
         {:else if anyStartable}
-          <button class="btn sm go" onclick={() => runStack(target.name)}>Run stack</button>
+          <button class="btn sm primary" onclick={() => runStack(target.name)}>Run stack</button>
+        {/if}
+
+        <!-- Offered where the problem is visible, rather than letting Run stack half-fail. -->
+        {#if needDeps.length}
+          <button
+            class="btn sm"
+            disabled={installingDeps}
+            title="{needDeps.map((m) => m.repo).join(', ')} cannot start until their dependencies are installed"
+            onclick={() => needDeps.forEach((m) => installDeps({ repo: m.repo, path: m.path }))}
+          >{installingDeps ? 'Installing…' : `Install deps (${needDeps.length})`}</button>
         {/if}
         {#each webApps as web (web.repo)}
           <button class="btn sm" onclick={() => openApp(web.port)}>Open {web.repo} ↗</button>
@@ -96,12 +112,12 @@
           {@const wt = session.worktreePath}
           <button class="btn sm" onclick={() => openEditor(wt)}>Open in editor</button>
         {:else}
-          <button class="btn sm primary" disabled={busy} onclick={() => guard(() => promote(session))}>⤴ Promote to worktree</button>
+          <button class="btn sm primary" disabled={busy} onclick={() => guard(() => promote(session))}>Promote to worktree</button>
         {/if}
         <button class="btn sm" title="Add another repo to this feature" onclick={() => addRepoToSession(session)}>＋ repo</button>
         <button class="btn sm ghost" title="Rename" aria-label="Rename session" onclick={() => renameSession(session)}>✐</button>
         {#if session.active === false}
-          <button class="btn sm go" disabled={busy} onclick={() => guard(() => activateSession(session))}>↻ Resume</button>
+          <button class="btn sm primary" disabled={busy} onclick={() => guard(() => activateSession(session))}>Resume</button>
         {:else}
           <button
             class="btn sm ghost"
@@ -112,7 +128,7 @@
         {/if}
         <button class="btn sm ghost dangertext" aria-label="Delete session" title="Delete session" onclick={() => closeSession(session)}>🗑</button>
       {:else if feature}
-        <button class="btn sm primary" onclick={() => startFeatureSession(feature)}>Start session here</button>
+        <button class="btn sm primary" onclick={() => startFeatureSession(feature)}>Start session</button>
         <button class="btn sm" onclick={() => openGroup(feature.name)}>Open in editor</button>
         <button class="btn sm" onclick={() => prFeature(feature.name)}>Open PR / MR</button>
         {#if anyRunning}

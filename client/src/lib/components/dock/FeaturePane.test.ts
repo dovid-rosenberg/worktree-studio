@@ -102,7 +102,7 @@ describe('FeaturePane', () => {
   it('grows no action buttons back — the ActionBar owns those', async () => {
     render(FeaturePane, { feature: feature() });
     await waitFor(() => expect(api).toHaveBeenCalled());
-    for (const gone of ['Start session here', 'Run stack', 'Open in editor', 'Delete feature…']) {
+    for (const gone of ['Start session', 'Run stack', 'Open in editor', 'Delete feature…']) {
       expect(screen.queryByText(gone)).not.toBeInTheDocument();
     }
   });
