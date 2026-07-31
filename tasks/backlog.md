@@ -23,8 +23,8 @@ property tests. What is left is listed at the bottom under "Still open".
   small concurrency cap when someone can watch it against a real remote.
 - **The two unreproduced test failures** from the v2 build-out (P3 #16). Still not
   reproduced; nothing to act on until they recur.
-- **Component coverage** for Dock and FeaturePane. FeaturePane now fetches, so it needs
-  an api mock.
+- ~~Component coverage for Dock and FeaturePane~~ — done. Every surface that took
+  feedback now has a test that fails if it regresses; 87 client tests across ten files.
 - **Property tests for hunk math** (P3 #15). Lower value than identity was: every hunk
   subset already round-trips through `git apply --check` in hunks.test.ts, which is a
   stronger check than a property could state.
