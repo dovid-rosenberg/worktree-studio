@@ -95,7 +95,7 @@ describe('ActionBar', () => {
     give([feature()], []);
     ui.selectedFeatureName = 'token-race-fix';
     render(ActionBar);
-    expect(screen.getByText('Start session here')).toBeInTheDocument();
+    expect(screen.getByText('Start session')).toBeInTheDocument();
     expect(screen.getByText('Open PR / MR')).toBeInTheDocument();
     // Session-only verbs must not appear for something with no session.
     expect(screen.queryByText('Deactivate')).not.toBeInTheDocument();

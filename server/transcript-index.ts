@@ -43,7 +43,17 @@ CREATE TABLE IF NOT EXISTS files (
   offset            INTEGER NOT NULL DEFAULT 0,
   size              INTEGER NOT NULL DEFAULT 0,
   entries           INTEGER NOT NULL DEFAULT 0,
-  indexed_at        INTEGER
+  indexed_at        INTEGER,
+  -- Who this session WAS, recorded at index time.
+  --
+  -- The index outlives the session: telemetry is the record of work that already
+  -- happened, so deleting a worktree must not delete what it cost. But without these,
+  -- an archived row could only be labelled by its id and whatever branch its messages
+  -- mentioned — so "what did last month's work cost" answered with a uuid.
+  title             TEXT,
+  feature           TEXT,
+  branch            TEXT,
+  repo              TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +169,15 @@ export interface IndexStatus {
 /** The session fields index() reads. A full `Session` satisfies it. */
 export interface IndexableSession extends LocatableSession {
   id?: string | null;
+  /*
+   * Identity, recorded alongside the transcript so an ARCHIVED row still reads as
+   * something after the session is gone. All optional: index() is also called for
+   * sessions reconstructed from disk, which may know less than a live one does.
+   */
+  title?: string;
+  feature?: string;
+  branch?: string | null;
+  repoName?: string;
 }
 
 export interface IndexOptions {
@@ -246,6 +265,7 @@ class TranscriptIndex {
       this.db = new sqlite.DatabaseSync(this.file);
       this.db.exec('PRAGMA journal_mode = WAL');
       this.db.exec(SCHEMA);
+      this._migrate(this.db); // reach databases written before the identity columns existed
       this.fts = ftsAvailable(this.db);
       if (this.fts) this.db.exec(FTS_SCHEMA);
       this.ready = true;
@@ -302,7 +322,7 @@ class TranscriptIndex {
 
     this._indexing.add(id);
     try {
-      return await this._ingest(db, id, loc.file, session.claudeSessionId, start);
+      return await this._ingest(db, id, loc.file, session.claudeSessionId, start, session);
     } finally {
       this._indexing.delete(id);
     }
@@ -311,12 +331,27 @@ class TranscriptIndex {
   // The handle is passed in rather than re-read off `this`: index() has already
   // established that the index is open, and threading it through keeps that fact
   // true by construction here.
+  /**
+   * Add columns an older index is missing.
+   *
+   * servers.json and this database both outlive upgrades, so a schema change has to
+   * reach files written before it. ALTER TABLE ADD COLUMN is a no-op-if-present here
+   * only because we swallow the duplicate-column error — sqlite has no IF NOT EXISTS
+   * for columns.
+   */
+  _migrate(db: DatabaseSync): void {
+    for (const col of ['title', 'feature', 'branch', 'repo']) {
+      try { db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`); } catch { /* already there */ }
+    }
+  }
+
   async _ingest(
     db: DatabaseSync,
     id: string,
     file: string,
     claudeSessionId: string | null | undefined,
     start: number,
+    session?: { title?: string; feature?: string; branch?: string | null; repoName?: string },
   ): Promise<IndexPass> {
     const insMsg = db.prepare(
       'INSERT OR IGNORE INTO messages (session_id, uuid, role, ts, ts_ms, model, git_branch, sidechain, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -350,13 +385,23 @@ class TranscriptIndex {
         }
       });
       db.prepare(
-        `INSERT INTO files (session_id, path, claude_session_id, offset, size, entries, indexed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO files (session_id, path, claude_session_id, offset, size, entries, indexed_at,
+                            title, feature, branch, repo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            path=excluded.path, claude_session_id=excluded.claude_session_id,
            offset=excluded.offset, size=excluded.size,
-           entries=files.entries+excluded.entries, indexed_at=excluded.indexed_at`
-      ).run(id, file, claudeSessionId || null, stats.offset, stats.size, added, Date.now());
+           entries=files.entries+excluded.entries, indexed_at=excluded.indexed_at,
+           -- COALESCE, not excluded: a later pass with no session in hand must not
+           -- erase the identity an earlier one recorded.
+           title=COALESCE(excluded.title, files.title),
+           feature=COALESCE(excluded.feature, files.feature),
+           branch=COALESCE(excluded.branch, files.branch),
+           repo=COALESCE(excluded.repo, files.repo)`
+      ).run(
+        id, file, claudeSessionId || null, stats.offset, stats.size, added, Date.now(),
+        session?.title || null, session?.feature || null, session?.branch || null, session?.repoName || null,
+      );
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
@@ -377,13 +422,25 @@ class TranscriptIndex {
    * Better a row labelled by its branch than a spend figure that silently disappears
    * when the worktree is deleted.
    */
-  archivedMeta(sessionId: string): { id: string; title: string; branch?: string } {
+  archivedMeta(sessionId: string): { id: string; title: string; feature?: string; branch?: string; repo?: string } {
     const db = this._handle();
+    if (!db) return { id: sessionId, title: sessionId };
     const row = db
-      ? db.prepare('SELECT git_branch FROM messages WHERE session_id = ? AND git_branch IS NOT NULL ORDER BY ts_ms DESC LIMIT 1').get(sessionId) as { git_branch?: string } | undefined
-      : undefined;
-    const branch = row?.git_branch || undefined;
-    return { id: sessionId, title: branch || sessionId, branch };
+      .prepare('SELECT title, feature, branch, repo FROM files WHERE session_id = ?')
+      .get(sessionId) as { title?: string; feature?: string; branch?: string; repo?: string } | undefined;
+    // Fall back to the branch its messages carried, for rows indexed before identity
+    // was recorded — those exist and should still read as something.
+    const legacy = row?.branch ? undefined : (db
+      .prepare('SELECT git_branch FROM messages WHERE session_id = ? AND git_branch IS NOT NULL ORDER BY ts_ms DESC LIMIT 1')
+      .get(sessionId) as { git_branch?: string } | undefined)?.git_branch;
+    const branch = row?.branch || legacy || undefined;
+    return {
+      id: sessionId,
+      title: row?.title || branch || sessionId,
+      feature: row?.feature || undefined,
+      branch,
+      repo: row?.repo || undefined,
+    };
   }
 
   /** Purge one session's rows. No longer called on session removal — see the note in

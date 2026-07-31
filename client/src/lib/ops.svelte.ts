@@ -314,6 +314,23 @@ export async function deleteFeature(f: Feature) {
   });
 }
 
+/**
+ * Install a worktree's dependencies.
+ *
+ * `git worktree add` cannot bring node_modules across, so every worktree this app makes
+ * starts unable to run its own dev server. Doing it on demand rather than during
+ * promote keeps promote fast for the many features that never run a server.
+ */
+export async function installDeps(w: { repo: string; path: string }): Promise<void> {
+  return pending.run(`deps:${w.path}`, async () => {
+    toast(`Installing dependencies in ${w.repo}…`);
+    try {
+      const r = await api('POST', '/api/worktrees/install-deps', { worktreePath: w.path });
+      toast(r.ok ? `${w.repo} is ready` : (r.error || 'install failed'), !r.ok);
+    } catch (e) { toast(errMessage(e), true); }
+  });
+}
+
 export async function stopMainServer(w: { repo: string; path: string }): Promise<void> {
   try {
     await api('POST', '/api/servers/stop', { repo: w.repo, worktreePath: w.path });

@@ -88,6 +88,11 @@
 
 <div class="panewrap">
   <div class="panehd">
+    <!-- Labelled, and deliberately NOT merged into the strip above. The split is a
+         separate multiplexer session with its own window list, so one strip would be a
+         single control surface with two owners — closing "a tab" would mean different
+         things depending on which half of it you clicked. -->
+    <span class="panelabel" title="An independent shell in this worktree — its own multiplexer session">shell</span>
     <div class="splittabs">
       {#each shown as t, i (i)}
         <span class="tab sm" class:on={i === activeIndex} use:activatable={() => select(i)}>
@@ -111,6 +116,7 @@
 <style>
   .panewrap { display:flex; flex-direction:column; min-width:0; min-height:0; }
   .panehd { font-family:var(--mono); font-size:10.5px; color:var(--muted); padding:5px 10px; background:var(--elevated); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px; flex:none; }
+  .panelabel { font-family:var(--mono); font-size:9px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); padding:0 8px 0 2px; flex:none; }
   .splittabs { display:flex; align-items:center; gap:3px; flex-wrap:wrap; }
   .tab.sm { font-size:10.5px; padding:2px 8px; border-radius:5px; border:1px solid transparent; cursor:pointer; color:var(--muted); display:inline-flex; align-items:center; gap:5px; }
   .tab.sm:hover { color:var(--ink); }

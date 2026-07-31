@@ -166,7 +166,12 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }: S
           repo: repo.name, wtname: w.name, branch: w.branch, path: w.path,
           isMain: w.isMain, detached: w.detached, merged: w.merged,
           baseBranch: repo.defaultBranch, baseDir: baseDirOf(repo.path),
-          running: dec.running, pid: dec.pid, ports: dec.ports, canStart: dec.canStart,
+          // Spread, not a hand-picked list. This was `running, pid, ports, canStart`,
+          // so `depsMissing` — added later — was computed by decorate() and then
+          // silently dropped here: the rail's "deps missing" pill could never render,
+          // and nothing failed, because an absent field reads as false everywhere.
+          // Spreading means the next field decorate() learns arrives on its own.
+          ...dec,
           session: sess ? { id: sess.id, state: sess.state, activity: sess.activity, muxName: sess.muxName } : null,
         };
         wts.push(wt);

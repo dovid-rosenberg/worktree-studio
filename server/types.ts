@@ -336,6 +336,8 @@ export interface Worktree {
   missing?: false;
   /** package.json present, node_modules absent — the start command cannot succeed. */
   depsMissing?: boolean;
+  /** An install is running for this worktree right now. */
+  depsInstalling?: boolean;
 }
 
 /**
