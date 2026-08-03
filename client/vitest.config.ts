@@ -38,7 +38,9 @@ export default defineConfig({
         test: {
           name: 'components',
           environment: 'jsdom',
-          include: ['src/lib/components/**/*.test.ts'],
+          // `src/lib/*.test.ts` too: shortcuts.svelte.ts is not a component but needs a
+          // DOM to build KeyboardEvents against.
+          include: ['src/lib/components/**/*.test.ts', 'src/lib/*.test.ts'],
           setupFiles: ['./vitest.setup.ts'],
         },
       },
