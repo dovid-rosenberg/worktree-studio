@@ -165,6 +165,29 @@ test('canStart is false when the deps a start command needs are absent', () => {
   assert.equal(ready.canStart, true);
 });
 
+test('says which half of canStart is false — deps, or no start command at all', () => {
+  /*
+   * canStart is `!!startCfg && !depsMissing`, and only the deps half could explain
+   * itself on screen. A repo simply absent from `config.start` produced no button and
+   * no reason; the natural guess was stale deps, and only an API query said otherwise.
+   * Both halves now report, so an absent button can carry a reason.
+   */
+  const s = servers({ start: { demo: { cmd: 'npm run dev' } } });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-nostart-'));
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+
+  const configured = s.decorate({ path: dir, repo: 'demo' }, new Map());
+  assert.equal(configured.canStart, true);
+  assert.equal(configured.noStartCmd, false, 'this repo has a command');
+
+  // Same worktree, a repo nobody configured: startable is false for a different reason.
+  const unconfigured = s.decorate({ path: dir, repo: 'ab-su' }, new Map());
+  assert.equal(unconfigured.canStart, false);
+  assert.equal(unconfigured.noStartCmd, true, 'and it must be able to say so');
+  assert.equal(unconfigured.depsMissing, false, 'blaming deps here is what misled');
+});
+
 // ---- pruneTracked ----------------------------------------------------------
 //
 // A tracked record says "this worktree has a dev server, pid N". When that process

@@ -20,6 +20,20 @@
   const ms = $derived(liveMembers(feature));
 
   /** @param {any} m */
+  /*
+   * Why this member is not running, in the words of the actual blocker.
+   *
+   * `canStart` is `!!startCfg && !depsMissing`, and only the deps half ever explained
+   * itself. A repo absent from `config.start` produced no button and no reason, so the
+   * natural guess was stale deps — wrong, and only an API query said so.
+   */
+  const memberWhy = (m: Worktree) => {
+    if (m.running) return 'running';
+    if (m.depsMissing) return 'deps missing';
+    if (m.noStartCmd) return `no start command for ${m.repo}`;
+    return 'stopped';
+  };
+
   const memberState = (m: Worktree) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
 
   interface RepoRoll {
@@ -78,7 +92,7 @@
           <tr>
             <td class="r">{m.repo}</td>
             <td>{m.branch || m.wtname}{#if m.merged}<span class="badge merged">✓ merged</span>{/if}</td>
-            <td>{m.running ? 'running' : (m.depsMissing ? 'deps missing' : 'stopped')}</td>
+            <td>{memberWhy(m)}</td>
             <td class="ports">{(m.ports || []).length ? m.ports.map((p: number) => m.repo + ':' + p).join(' ') : '—'}</td>
             <td><span class="pill {memberState(m)}">{memberState(m)}</span></td>
           </tr>

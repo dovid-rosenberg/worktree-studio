@@ -92,6 +92,31 @@ export async function promote(s: Session) {
         ...(bringChanges || bringCommits ? { bringChanges, bringCommits } : { confirm: true }),
       });
     }
+    /*
+     * The feature may already own worktrees in other repos — made with `wt`, outside
+     * Studio, so the session never learned about them. Left alone this is invisible
+     * until Changes renders an empty diff (it is session-scoped) or the agent finds it
+     * cannot write to a repo it was started for. Offer, rather than attach silently:
+     * each attach sends /add-dir into a live session.
+     */
+    const attachable: { repo: string; worktreePath: string }[] = r.attachable || [];
+    if (attachable.length) {
+      const names = attachable.map((a) => a.repo);
+      const ok = await uiConfirm(
+        `This feature already has worktrees in ${names.join(', ')}, but the session cannot see `
+        + `them — Changes would show nothing for those repos and the agent could not edit them. `
+        + `Attach ${names.length === 1 ? 'it' : 'them'}?`,
+        { title: 'Other repos in this feature', okLabel: 'Attach' },
+      );
+      if (ok) {
+        for (const a of attachable) {
+          // Serially: each grants /add-dir to the same live session.
+          try { await api('POST', `/api/sessions/${s.id}/add-repo`, { repo: a.repo }); }
+          catch (e) { toast(`${a.repo}: ${errMessage(e)}`, true); }
+        }
+      }
+    }
+
     const w = r.worktree || {};
     const warn = (w.warnings || []).find((x: string) => /taken/.test(x));
     // Say what came along; silence would leave the user to go and check.

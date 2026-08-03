@@ -78,4 +78,44 @@ function memberRunning(group: ComputedFeature): number {
   return (group.members || []).filter((m) => m && !m.missing && m.running).length;
 }
 
-export { computeFeatures, isLinked, resolveRef };
+
+/**
+ * Worktrees belonging to `feature` that a session's `repos` does not include.
+ *
+ * Feature membership and SESSION membership are different records. A feature groups
+ * worktrees by identity; a session's `repos` is what the agent was granted with
+ * /add-dir. A worktree made outside Studio (a plain `wt`) joins the feature and not the
+ * session, and nothing notices — until Changes, which is session-scoped, renders an
+ * empty diff, or the agent finds it cannot write to a repo it was started for.
+ *
+ * Identity is asked, not assumed: `of()` is what computeFeatures groups by, so this
+ * reconciles on the same answer under `branch` and `manifest` as under `basename`,
+ * rather than on names matching by luck.
+ *
+ * @param repos    the scan — repos each carrying their worktrees
+ * @param feature  the session's feature identity
+ * @param known    repo paths the session already has
+ * @param of       the identity resolver's `of()`
+ */
+function attachableWorktrees(
+  repos: { name: string; path: string; worktrees?: { name?: string; branch?: string | null; path: string; isMain?: boolean }[] }[],
+  feature: string | null | undefined,
+  known: Set<string>,
+  of: (input: { repo: string; wtname?: string; branch?: string | null; path: string }) => string,
+): { repo: string; repoPath: string; worktreePath: string; branch: string | null }[] {
+  if (!feature) return [];
+  const out = [];
+  for (const repo of repos) {
+    if (known.has(repo.path)) continue;
+    for (const w of repo.worktrees || []) {
+      if (w.isMain) continue;
+      if (of({ repo: repo.name, wtname: w.name, branch: w.branch, path: w.path }) !== feature) continue;
+      // One worktree per repo is what a feature member is.
+      out.push({ repo: repo.name, repoPath: repo.path, worktreePath: w.path, branch: w.branch ?? null });
+      break;
+    }
+  }
+  return out;
+}
+
+export { computeFeatures, isLinked, resolveRef, attachableWorktrees };

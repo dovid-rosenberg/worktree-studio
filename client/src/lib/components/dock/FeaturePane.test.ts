@@ -54,6 +54,18 @@ describe('FeaturePane', () => {
     expect(screen.getByText('deps missing')).toBeInTheDocument();
   });
 
+  it('says a missing start command is why, instead of a bare "stopped"', () => {
+    // The asymmetry that misled: deps had a reason on screen, a missing config entry
+    // had none, so an absent Run stack button looked like stale deps.
+    render(FeaturePane, { feature: feature({ members: [member('ab-su', { noStartCmd: true })] }) });
+    expect(screen.getByText('no start command for ab-su')).toBeInTheDocument();
+  });
+
+  it('blames deps first when both are true — deps is the one you can fix in a click', () => {
+    render(FeaturePane, { feature: feature({ members: [member('ab-su', { noStartCmd: true, depsMissing: true })] }) });
+    expect(screen.getByText('deps missing')).toBeInTheDocument();
+  });
+
   it('labels ports with their repo, so several members are tellable apart', () => {
     render(FeaturePane, { feature: feature({ members: [member('accept-blue', { running: true, ports: [1233] })] }) });
     expect(screen.getByText('accept-blue:1233')).toBeInTheDocument();

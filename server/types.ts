@@ -338,6 +338,8 @@ export interface Worktree {
   depsMissing?: boolean;
   /** An install is running for this worktree right now. */
   depsInstalling?: boolean;
+  /** No `config.start` entry for this repo — the other reason `canStart` is false. */
+  noStartCmd?: boolean;
 }
 
 /**

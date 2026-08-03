@@ -565,9 +565,10 @@ class Servers {
   }
 
   // Attach running/pid/ports/canStart to a worktree object using a discovered map.
-  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling'> {
+  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling' | 'noStartCmd'> {
     const hit = running.get(realpath(worktree.path));
     const deps = this.depsMissing(worktree.path);
+    const configured = !!this.startCfg(worktree.repo);
     return {
       running: !!hit,
       pid: hit ? hit.pid : null,
@@ -575,9 +576,19 @@ class Servers {
       // `canStart` used to mean "a start command is configured", so it stayed true for a
       // worktree that could not possibly start. Every caller reads it as "starting this
       // will work" — /group/start filters `toStart` on it — so it now means that.
-      canStart: !!this.startCfg(worktree.repo) && !deps,
+      canStart: configured && !deps,
       depsMissing: deps,
       depsInstalling: this.installing.has(worktree.path),
+      /*
+       * Why `canStart` is false, for the half that could not say so.
+       *
+       * Missing deps already explain themselves with a pill. A missing start command
+       * did not: the repo is simply absent from `config.start`, the button does not
+       * render, and nothing on screen says why. Diagnosing it took an API query, and
+       * the natural guess ("stale deps") was wrong. Reporting the other half lets the
+       * absent button carry a reason.
+       */
+      noStartCmd: !configured,
     };
   }
 

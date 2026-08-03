@@ -31,6 +31,7 @@
   const anyMerged = $derived(ms.some((m) => m.merged));
   /** Members whose start command cannot succeed — no node_modules in the worktree. */
   const noDeps = $derived(ms.filter((m) => m.depsMissing).length);
+  const noStart = $derived(ms.filter((m) => m.noStartCmd).length);
 
   const selected = $derived(
     sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name,
@@ -72,6 +73,9 @@
         {#if !sess}<span class="noagent">no agent</span>{/if}
         {#if noDeps}
           <span class="pill nodeps" title="{noDeps} of {ms.length} worktree(s) have no node_modules — their dev server cannot start until deps are installed">deps missing</span>
+        {/if}
+        {#if noStart}
+          <span class="pill nostart" title="{noStart} of {ms.length} worktree(s) have no start command in config.start — add one to run their dev server">no start cmd</span>
         {/if}
         {#if ms.length > 1}<span class="nrepos">{ms.length} repos</span>{/if}
       </div>
@@ -116,6 +120,9 @@
   .noagent { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
   /* Waiting-hue, not an error: it is a thing to do, not a thing that broke. */
   .pill.nodeps { color:var(--waiting); background:var(--waiting-bg); }
+  /* Same amber as deps: both say "configured wrong, not broken", and both are fixed
+     by the user rather than by waiting. */
+  .pill.nostart { color:var(--waiting); background:var(--waiting-bg); }
   .nrepos { font-family:var(--mono); font-size:10px; color:var(--faint); }
 
   .mchip { display:flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10.5px;
