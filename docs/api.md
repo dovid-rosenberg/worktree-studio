@@ -436,18 +436,19 @@ their concurrency slots, kill the multiplexer session (unless `kill=false`), and
 delete the record and its generated settings file. Worktrees are **kept** — use
 `/group/delete` to remove those. `{ ok: true }`, or `{ ok: false }` if unknown.
 
-### `POST /sessions/:id/popout`
-
-Open a native macOS Terminal window attached to the same multiplexer session.
-`{ ok: true, cmd }`, or `404`.
-
 ### Tabs
 
 | Route                              | Body               | Returns                                    |
 | ---------------------------------- | ------------------ | ------------------------------------------ |
-| `POST /sessions/:id/tabs`          | `{ title?, cmd? }` | `{ ok }` — new multiplexer window.          |
-| `POST /sessions/:id/select-tab`    | `{ index }`        | `{ ok }`                                    |
-| `POST /sessions/:id/close-tab`     | `{ index }`        | `{ ok }`; refuses to close the last tab.    |
+| `POST /sessions/:id/tabs`          | `{ title?, cmd? }` | `{ ok, id }` — new multiplexer window.       |
+| `POST /sessions/:id/select-tab`    | `{ tab }`          | `{ ok }`                                    |
+| `POST /sessions/:id/rename-tab`    | `{ tab, title }`   | `{ ok, title }`                             |
+| `POST /sessions/:id/close-tab`     | `{ tab }`          | `{ ok }`; refuses to close the last tab.    |
+
+`tab` is the multiplexer's **window id** (`@7`), not a position. tmux runs with
+`renumber-windows on`, so an index is a slot that is reassigned whenever an earlier
+window closes — an index held across a close names a different terminal. `index` is
+still accepted as a legacy positional form.
 
 The **split pane** is a separate multiplexer session (`<muxName>-split`) in the
 same worktree with its own independent tabs, created on demand. tmux is the

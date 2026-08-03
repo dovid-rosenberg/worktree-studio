@@ -9,15 +9,18 @@ embedded terminal backed by a persistent tmux session. When it's clearly real wo
 and the *same session continues into it*. Status is pushed by Claude Code hooks;
 sessions survive a shutdown and resume where they left off.
 
-## Two views, one engine
+## One surface
 
-The app has one engine (this server) and two focused surfaces you toggle between:
+One engine (this server) and one screen — there is no view to toggle:
 
-- **Work** — the session cockpit: feature-grouped rail + embedded terminal + intake + promote.
-- **Fleet** — a terminal-free manager of **all** worktrees under your base dirs, grouped into
-  **features** (BE+FE by shared name + manual groups). Group-level start / stop / restart /
-  stop&switch, cleanup (merged → remove), and "Start session here". This is the worktree-dash
-  role, absorbed. The SwiftBar menubar + Alfred read the same `/api/state` (no more `core.sh`).
+- a **rail** of everything you are working on, one row per thing, active first;
+- a **dock** showing the selected session's terminal, its changes, its logs, or —
+  with nothing selected — fleet-wide **Insights**;
+- an **action bar** along the bottom holding every action for whatever is selected.
+
+Worktrees sharing a name across repos group into a **feature** (BE+FE by shared name,
+plus manual groups), which is what start / stop / restart / stop&switch act on. The
+SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
 
 ## What it does
 
@@ -31,13 +34,12 @@ The app has one engine (this server) and two focused surfaces you toggle between
   "also touches" multi-select) or **on the fly** (the "＋ repo" button, or claude itself via
   `wt-studio add-repo <repo>`). Adding a repo creates a same-named worktree there and grants the live
   session access via claude's `/add-dir` — so one conversation edits multiple repos, all tracked as
-  one feature in Fleet + the menubar.
+  one feature in the rail + the menubar.
 - **Session management.** Rename, deactivate (stop the process, keep it resumable) / reactivate,
   delete. A **⚙ Connections** panel configures GitHub (via `gh`) / GitLab / Asana.
 - **Sessions are real `claude` processes** inside **tmux** (dedicated socket, chrome-free
-  config so it reads native). Embedded xterm terminal, multiple tabs, and a **Pop out**
-  button that opens the *same live session* in a native terminal window via a grouped
-  tmux session — closing it never orphans the embedded terminal.
+  config so it reads native). Embedded xterm terminal, multiple tabs addressed by their
+  tmux window id, and a split pane that is its own independent shell in the same worktree.
 - **Baked-in worktrees.** No external `wt` script — creation is native: `git worktree add`
   off the default branch, plus copying the gitignored bits a plain add drops
   (`.idea/runConfigurations/*.xml`, `.env`, `config/*-config.js`).
@@ -101,21 +103,21 @@ a wrong choice fails in ways that are not obvious from the key name.
 
 ```
 server/
-  server.js            Express + SSE + WebSocket terminals
-  config.js            config load/seed
-  git.js               repo + worktree discovery
-  worktree.js          native `wt` (create/remove + copy gitignored files)
+  server.ts            Express + SSE + WebSocket terminals
+  config.ts            config load/seed
+  git.ts               repo + worktree discovery
+  worktree.ts          native `wt` (create/remove + copy gitignored files)
   multiplexer/         index (tmux selector) · tmux driver
-  sessions.js          session lifecycle: create / promote / popout / restore
-  status.js            hook-settings generator + event→state machine
-  servers.js           dev-server start/stop/status
-  identity.js          which worktrees are "the same feature"
-  broadcast.js         the SSE fan-out (topology · session-state · ci)
-  review.js hunks.js diff.js   commits, structured diffs, hunk-level staging
-  transcripts.js transcript-index.js   transcript reader + sqlite search/telemetry
-  pricing.js           the maintained price table every dollar figure derives from
+  sessions.ts          session lifecycle: create / promote / restore
+  status.ts            hook-settings generator + event→state machine
+  servers.ts           dev-server start/stop/status
+  identity.ts          which worktrees are "the same feature"
+  broadcast.ts         the SSE fan-out (topology · session-state · ci)
+  review.ts hunks.js diff.js   commits, structured diffs, hunk-level staging
+  transcripts.ts transcript-index.js   transcript reader + sqlite search/telemetry
+  pricing.ts           the maintained price table every dollar figure derives from
   sources/             freetext · github · gitlab · asana adapters
-  webui.js             which frontend is served, and the boot-token injector
+  webui.ts             which frontend is served, and the boot-token injector
 client/                the served UI (SvelteKit → client/build); see client/README.md
 ```
 
