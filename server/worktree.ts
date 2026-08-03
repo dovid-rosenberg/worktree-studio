@@ -31,6 +31,13 @@ export interface WorktreeCreateOptions extends Partial<WorktreeCopyOpts> {
   fetchTimeoutMs?: number;
   /** a server/layout.ts descriptor; defaults to nested `.worktrees` */
   layout?: ResolvedLayout;
+  /**
+   * What the new branch is cut from. Defaults to `origin/HEAD` — the pushed base,
+   * so a new feature starts from what the team has rather than from whatever local
+   * state the main checkout happens to be in. Promote overrides it with `HEAD` when
+   * the user chooses to bring commits already made in the main checkout along.
+   */
+  base?: string;
 }
 
 export interface WorktreeCreateSuccess {
@@ -240,7 +247,7 @@ async function create(
     const r = await gitFull(repoPath, ['worktree', 'add', dest, branch]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'git worktree add failed', path: dest, name: wtName, branch };
   } else {
-    base = await defaultBase(repoPath);
+    base = opts.base || await defaultBase(repoPath);
     const r = await gitFull(repoPath, ['worktree', 'add', '-b', branch, dest, base]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'git worktree add -b failed', path: dest, name: wtName, branch };
     created = true;

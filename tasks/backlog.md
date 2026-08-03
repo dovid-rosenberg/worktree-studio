@@ -145,6 +145,15 @@ it merged?" without starting an agent.
 
 ## P2 — noise and wording
 
+- [ ] **Say why a member can't start, when the reason is "no start command".**
+  `canStart` is `!!startCfg && !depsMissing`. The deps half explains itself — the
+  FeaturePane shows a "deps missing" pill. The startCfg half is silent: the repo is
+  simply absent from `config.start`, so Run stack does not render and nothing on
+  screen says why. Found live on `su-mfa-cleanup` (repo `ab-su`), where the natural
+  guess was stale deps; the API said `depsMissing: false` and the real cause was a
+  three-word config omission. Give it the same treatment as the deps pill — "no start
+  command for ab-su" — so the absent button has a stated reason.
+
 ### 9. Drop `mux: tmux` from the TopBar
 tmux is the only driver. It was a badge when zellij was still a possibility.
 
