@@ -180,9 +180,14 @@
      * Shift+Enter has to be spelled differently from Enter, or it does not exist.
      *
      * xterm has no binding for it: both emit a bare CR, so an app on the other end of
-     * the pty cannot tell them apart — Claude never saw a Shift+Enter to ignore. The
-     * distinguishable spelling is ESC+CR, which is what Claude Code's own
-     * `/terminal-setup` installs into iTerm2 and VS Code for exactly this key.
+     * the pty cannot tell them apart — Claude never saw a Shift+Enter to ignore.
+     *
+     * It sends LF (0x0A). That is exactly what Ctrl+J puts on the wire, and Ctrl+J is
+     * Claude Code's documented "insert a newline" key, so this is the spelling the TUI
+     * already understands rather than one it has to be configured for. ESC+CR (the
+     * meta-Enter spelling `/terminal-setup` installs into iTerm2) was tried first and
+     * did not take — and `cat -v` in a scratch tmux window confirms ESC survives the
+     * multiplexer, so the sequence was arriving and simply is not what Claude reads.
      *
      * Returning false stops xterm's default handling; the sequence goes out through the
      * same socket send onData uses, so ordering with ordinary typing is preserved.
@@ -191,7 +196,7 @@
       if (ev.type !== 'keydown') return true;
       if (ev.key === 'Enter' && ev.shiftKey && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
         if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(new TextEncoder().encode('\x1b\r'));
+          socket.send(new TextEncoder().encode('\n'));
         }
         return false;
       }
