@@ -35,36 +35,72 @@ export async function promote(s: Session) {
   try {
     let r = await api('POST', `/api/sessions/${s.id}/promote`, { branch });
     /*
-     * Dirty main is a question, not a failure. It used to have one answer — strand the
-     * edits — which is rarely what was wanted: you start editing in the main checkout,
-     * realise it is real work, and promote. The edits ARE the work.
+     * A promote can strand work two ways, and both are questions rather than failures.
      *
-     * "Bring them" stashes with --include-untracked and pops in the new worktree. A
-     * conflict there leaves the stash intact and says so, so the worst case is a
-     * message naming where the work is, never a loss.
+     * Uncommitted edits: you start editing in the main checkout, realise it is real
+     * work, and promote. The edits ARE the work. Bringing them stashes with
+     * --include-untracked and pops in the new worktree; a conflict leaves the stash
+     * intact and says so, so the worst case names where the work is, never loses it.
+     *
+     * Commits: the new worktree is cut from the pushed base, so commits already made in
+     * the main checkout are not in it either. That half used to be silent — no dialog
+     * at all. Bringing them cuts the branch from HEAD instead, which COPIES them; they
+     * stay on the original branch too, which the dialog says out loud so nobody assumes
+     * their branch was rewound.
      */
     if (r.needsConfirm) {
-      const n = (r.dirty || []).length;
-      const choice = await uiDialog({
-        title: 'Uncommitted changes in main',
-        message: `Your main checkout has ${n} uncommitted change(s). The new worktree branches off `
-          + `the default branch, so they stay in main unless you bring them.`,
-        fields: [{
-          type: 'checkbox',
-          label: 'Bring them into the new worktree',
+      const dirty = (r.dirty || []).length;
+      const ahead = r.ahead || { commits: [], branch: '', base: '' };
+      const commits: string[] = ahead.commits || [];
+
+      const fields = [];
+      const lines: string[] = [];
+      if (dirty) {
+        lines.push(`${dirty} uncommitted change(s)`);
+        fields.push({ type: 'checkbox' as const, label: 'Bring the uncommitted changes', value: true });
+      }
+      if (commits.length) {
+        lines.push(`${commits.length} commit(s) on ${ahead.branch} that ${ahead.base} does not have`);
+        fields.push({
+          type: 'checkbox' as const,
+          // Said plainly: this copies. The commits remain on the branch you are on.
+          label: `Bring the commits (copied — they stay on ${ahead.branch} too)`,
           value: true,
-        }],
+        });
+      }
+      // Newest first, and only a few: the list is for recognising the work, not reading it.
+      const preview = commits.slice(0, 5).map((c) => `  ${c}`).join('\n');
+
+      const choice = await uiDialog({
+        title: 'Work that would stay in main',
+        message: `The new worktree branches off ${ahead.base || 'the default branch'}, so `
+          + `${lines.join(' and ')} would stay behind.`
+          + (preview ? `\n\n${preview}${commits.length > 5 ? `\n  …and ${commits.length - 5} more` : ''}` : ''),
+        fields,
         okLabel: 'Promote',
       });
       if (!choice || !Array.isArray(choice)) return;
-      const bring = choice[0] === true;
-      r = await api('POST', `/api/sessions/${s.id}/promote`, bring
-        ? { branch, bringChanges: true }
-        : { branch, confirm: true });
+
+      // Field order follows the order they were pushed above, so read them back the same way.
+      let i = 0;
+      const bringChanges = dirty ? choice[i++] === true : false;
+      const bringCommits = commits.length ? choice[i++] === true : false;
+      r = await api('POST', `/api/sessions/${s.id}/promote`, {
+        branch,
+        // `confirm` is what says "I have seen this and want neither" — without it the
+        // server would just ask again.
+        ...(bringChanges || bringCommits ? { bringChanges, bringCommits } : { confirm: true }),
+      });
     }
     const w = r.worktree || {};
     const warn = (w.warnings || []).find((x: string) => /taken/.test(x));
-    toast(warn ? `Promoted as “${w.name}” — ${warn}` : `Promoted → ${w.branch || branch}`);
+    // Say what came along; silence would leave the user to go and check.
+    const carried = [
+      r.brought ? `${r.brought} change(s)` : '',
+      r.broughtCommits ? `${r.broughtCommits} commit(s)` : '',
+    ].filter(Boolean).join(' and ');
+    if (warn) toast(`Promoted as “${w.name}” — ${warn}`);
+    else toast(`Promoted → ${w.branch || branch}${carried ? `, brought ${carried}` : ''}`);
   } catch (e) { toast(errMessage(e), true); }
 }
 

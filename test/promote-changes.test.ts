@@ -153,3 +153,101 @@ test('refuses to move when the worktree container is not gitignored', async (t) 
   assert.equal(list.stdout.trim(), '', 'nothing was stashed — the worktree is untouched');
   assert.ok(existsSync(join(wt, 'kept.txt')), 'and the other checkout is still on disk');
 });
+
+/*
+ * The commits half.
+ *
+ * A promote cuts the new branch from `origin/HEAD`, so commits already made in the main
+ * checkout are not in the worktree either. That was silent — dirty files at least got a
+ * dialog. These pin the two behaviours the fix depends on: that the default base really
+ * does leave commits behind, and that cutting from HEAD really does carry them.
+ */
+
+/** A repo with an `origin` to be the base, so `base..HEAD` means something. */
+async function repoWithOrigin() {
+  const { dir, g, cleanup } = await repo();
+  const remote = `${dir}-origin`;
+  await run('git', ['init', '-q', '--bare', remote]);
+  await g('remote', 'add', 'origin', remote);
+  await g('push', '-q', '-u', 'origin', 'main');
+  await g('remote', 'set-head', 'origin', 'main');
+  return { dir, g, cleanup: async () => { await cleanup(); await rm(remote, { recursive: true, force: true }); } };
+}
+
+const aheadOf = async (dir: string) => {
+  const r = await run('git', ['-C', dir, 'log', '--oneline', '--no-decorate', 'origin/main..HEAD']);
+  return r.stdout.split('\n').filter(Boolean);
+};
+
+test('commits made in main are detected as ahead of the base', async (t) => {
+  const { dir, g, cleanup } = await repoWithOrigin();
+  t.after(cleanup);
+  await writeFile(join(dir, 'kept.txt'), 'committed work\n');
+  await g('commit', '-qam', 'real work done in main');
+
+  const ahead = await aheadOf(dir);
+  assert.equal(ahead.length, 1);
+  assert.match(ahead[0], /real work done in main/);
+});
+
+test('the default base leaves those commits behind — the silent case', async (t) => {
+  const { dir, g, cleanup } = await repoWithOrigin();
+  t.after(cleanup);
+  await writeFile(join(dir, 'kept.txt'), 'committed work\n');
+  await g('commit', '-qam', 'work in main');
+
+  const wt = join(dir, '.worktrees', 'feat');
+  await g('worktree', 'add', '-q', '-b', 'feature/x', wt, 'origin/main');
+
+  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'base\n',
+    'the worktree is at the pushed base, without the commit');
+});
+
+test('cutting from HEAD carries the commits into the worktree', async (t) => {
+  const { dir, g, cleanup } = await repoWithOrigin();
+  t.after(cleanup);
+  await writeFile(join(dir, 'kept.txt'), 'committed work\n');
+  await g('commit', '-qam', 'work in main');
+
+  const wt = join(dir, '.worktrees', 'feat');
+  await g('worktree', 'add', '-q', '-b', 'feature/x', wt, 'HEAD');
+
+  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'committed work\n',
+    'the commit came along');
+  const log = await run('git', ['-C', wt, 'log', '--oneline', '--no-decorate']);
+  assert.match(log.stdout, /work in main/);
+});
+
+test('bringing commits copies them — the original branch keeps them', async (t) => {
+  // The dialog promises this in so many words, so it is worth pinning: promote must not
+  // rewind the branch the user is standing on.
+  const { dir, g, cleanup } = await repoWithOrigin();
+  t.after(cleanup);
+  await writeFile(join(dir, 'kept.txt'), 'committed work\n');
+  await g('commit', '-qam', 'work in main');
+  const before = await aheadOf(dir);
+
+  const wt = join(dir, '.worktrees', 'feat');
+  await g('worktree', 'add', '-q', '-b', 'feature/x', wt, 'HEAD');
+
+  assert.deepEqual(await aheadOf(dir), before, 'main is exactly where it was');
+  assert.equal((await run('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim(), 'main');
+});
+
+test('commits and uncommitted changes can come along together', async (t) => {
+  const { dir, g, cleanup } = await repoWithOrigin();
+  t.after(cleanup);
+  await writeFile(join(dir, 'kept.txt'), 'committed work\n');
+  await g('commit', '-qam', 'work in main');
+  await writeFile(join(dir, 'kept.txt'), 'committed work, then edited\n');
+  await writeFile(join(dir, 'new.txt'), 'brand new\n');
+
+  const wt = join(dir, '.worktrees', 'feat');
+  await g('worktree', 'add', '-q', '-b', 'feature/x', wt, 'HEAD');
+  const r = await moveDirtyInto(dir, wt);
+
+  assert.equal(r.ok, true);
+  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'committed work, then edited\n',
+    'the edit sits on top of the commit, in one worktree');
+  assert.ok(existsSync(join(wt, 'new.txt')));
+});

@@ -151,6 +151,16 @@ export interface PromoteResult {
   needsConfirm?: boolean;
   /** The uncommitted paths that raised `needsConfirm`. */
   dirty?: string[];
+  /**
+   * Commits on the main checkout's current branch that the default base lacks — the
+   * other thing a promote leaves behind. `commits` is `git log --oneline` lines, newest
+   * first, so the dialog can show what would be stranded rather than only a count.
+   */
+  ahead?: { branch: string; base: string; commits: string[] };
+  /** How many commits came along, when the caller asked to bring them. */
+  broughtCommits?: number;
+  /** How many uncommitted paths were moved into the worktree. */
+  brought?: number;
   session?: Session;
   worktree?: WorktreeCreateResult;
   /** Carried through from a failed `worktree.create()`. */
@@ -533,6 +543,35 @@ class SessionManager extends EventEmitter {
   }
 
   /**
+   * Commits sitting on the main checkout's CURRENT branch that the default base does
+   * not have yet.
+   *
+   * This is the other half of "what stays behind when you promote", and the half that
+   * used to be silent. A new worktree is cut from `origin/HEAD`, so work you already
+   * COMMITTED in the main checkout is not in it either — and unlike dirty files, that
+   * got no warning at all. Reading the list lets promote say what would be left, and
+   * offer to cut from HEAD instead.
+   *
+   * Empty is the normal, healthy answer: it means the main checkout has nothing the
+   * base is missing, so branching from either point gives the same tree.
+   */
+  async _aheadOfBase(repoPath: string): Promise<{ branch: string; base: string; commits: string[] }> {
+    const empty = { branch: '', base: '', commits: [] };
+    try {
+      const head = await run('git', ['-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD']);
+      const branch = head.stdout.trim();
+      // Detached HEAD has no branch to be "ahead" of and no sensible thing to offer.
+      if (!branch || branch === 'HEAD') return empty;
+      const sym = await run('git', ['-C', repoPath, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+      const base = sym.stdout.trim();
+      if (!base) return empty;
+      const log = await run('git', ['-C', repoPath, 'log', '--oneline', '--no-decorate', `${base}..HEAD`]);
+      if (log.code !== 0) return empty;
+      return { branch, base, commits: log.stdout.split('\n').filter(Boolean) };
+    } catch { return empty; }
+  }
+
+  /**
    * Carry the main checkout's uncommitted work into a freshly made worktree.
    *
    * Stash, then pop in the worktree — one git operation each way, and the stash is the
@@ -587,8 +626,8 @@ class SessionManager extends EventEmitter {
 
   async promote(
     id: string,
-    { branch, name, confirm, bringChanges }:
-      { branch?: string; name?: string; confirm?: boolean; bringChanges?: boolean } = {},
+    { branch, name, confirm, bringChanges, bringCommits }:
+      { branch?: string; name?: string; confirm?: boolean; bringChanges?: boolean; bringCommits?: boolean } = {},
   ): Promise<PromoteResult> {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
@@ -596,9 +635,14 @@ class SessionManager extends EventEmitter {
     // Claude launched with cwd in the main checkout; the worktree is branched clean
     // off the default branch, so pre-promote edits stay in main unless asked to come
     // along. Warn (don't strand silently) unless the caller has already decided.
-    if (!confirm && !bringChanges) {
+    const ahead = await this._aheadOfBase(s.repoPath);
+    if (!confirm && !bringChanges && !bringCommits) {
       const dirty = await this._dirtyMain(s.repoPath);
-      if (dirty.length) return { ok: false, needsConfirm: true, dirty };
+      // One question covering both halves of what would be left behind, because both
+      // can be true at once and answering them in two dialogs reads as a nag.
+      if (dirty.length || ahead.commits.length) {
+        return { ok: false, needsConfirm: true, dirty, ahead };
+      }
     }
     const wtName = name || s.suggestedName;
     // `suggestedBranch` is nullable — a session adopted without a branch carries
@@ -609,6 +653,14 @@ class SessionManager extends EventEmitter {
     const res = await worktree.create(s.repoPath, br, wtName, {
       unique: true, // auto-suffix on collision rather than fail
       layout: this.layout,
+      /*
+       * Cutting from HEAD is what carries the existing commits: the new branch starts
+       * at main's current commit instead of the pushed base. It COPIES rather than
+       * moves — the commits stay on `ahead.branch` too, which is deliberate. Rewinding
+       * the branch the user is standing on is not something a promote should do behind
+       * their back, and duplicate commits merge cleanly anyway.
+       */
+      ...(bringCommits && ahead.commits.length ? { base: 'HEAD' } : {}),
       ...worktreeCopyOpts(this.cfg, s.repoName),
     });
     if (!res.ok) return res;
@@ -646,7 +698,15 @@ class SessionManager extends EventEmitter {
       try { await this.addRepo(id, pr); } catch { /* */ }
     }
     s.pendingRepos = [];
-    return { ok: true, session: s, worktree: res };
+    // Report what actually came along so the toast can say it. Both are undefined when
+    // not asked for, which keeps "promoted" the quiet default it was.
+    return {
+      ok: true,
+      session: s,
+      worktree: res,
+      ...(brought ? { brought } : {}),
+      ...(bringCommits && ahead.commits.length ? { broughtCommits: ahead.commits.length } : {}),
+    };
   }
 
   async addTab(id: string, { title, cmd }: { title?: string; cmd?: string } = {}) {
