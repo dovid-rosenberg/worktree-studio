@@ -176,6 +176,28 @@
     t.open(el);
     try { f.fit(); } catch { /* not laid out yet — the observer refits */ }
 
+    /*
+     * Shift+Enter has to be spelled differently from Enter, or it does not exist.
+     *
+     * xterm has no binding for it: both emit a bare CR, so an app on the other end of
+     * the pty cannot tell them apart — Claude never saw a Shift+Enter to ignore. The
+     * distinguishable spelling is ESC+CR, which is what Claude Code's own
+     * `/terminal-setup` installs into iTerm2 and VS Code for exactly this key.
+     *
+     * Returning false stops xterm's default handling; the sequence goes out through the
+     * same socket send onData uses, so ordering with ordinary typing is preserved.
+     */
+    t.attachCustomKeyEventHandler((ev) => {
+      if (ev.type !== 'keydown') return true;
+      if (ev.key === 'Enter' && ev.shiftKey && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(new TextEncoder().encode('\x1b\r'));
+        }
+        return false;
+      }
+      return true;
+    });
+
     const data = t.onData((d) => {
       if (socket && socket.readyState === WebSocket.OPEN) socket.send(new TextEncoder().encode(d));
     });

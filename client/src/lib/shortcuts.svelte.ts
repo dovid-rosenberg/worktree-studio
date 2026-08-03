@@ -1,15 +1,33 @@
 /*
  * Global keyboard shortcuts, and the cheatsheet that documents them.
  *
- * Precedence, unchanged from app.js:
- *   1. ⌘K always toggles the palette — even from inside a text field.
- *   2. Escape closes the topmost overlay. (A uiDialog handles its own Escape, since it
- *      outranks everything and can be opened from inside another overlay.)
+ * Precedence:
+ *   1. ⌘K toggles the palette, even from inside a text field.
+ *   2. Escape closes the topmost overlay — but ONLY if one is open, so a bare Escape
+ *      still reaches the shell. (A uiDialog handles its own Escape, since it outranks
+ *      everything and can be opened from inside another overlay.)
  *   3. ? opens the cheatsheet, but never while typing or over an overlay.
  *   4. Everything else stands down while typing or while an overlay is up.
  *
+ * Two rules this file gets wrong easily, both found by using it:
+ *
+ * CTRL BELONGS TO THE SHELL — when a shell has focus. The modifier used to be
+ * `metaKey || ctrlKey`, which made every shortcut answer to Ctrl as well; and since the
+ * ⌘K branch runs before the typing-target check, Ctrl+K opened the palette with a shell
+ * focused, costing readline its kill-to-end-of-line.
+ *
+ * The rule is about focus, not platform. Sniffing the OS was the first attempt and it
+ * was worse: it made behaviour differ between environments for a reason nothing on
+ * screen explains. Cmd is always the app's; Ctrl is the app's only where no text field
+ * or terminal is listening for it.
+ *
+ * PREVENTDEFAULT IS NOT CONDITIONAL. Each shortcut used to cancel the browser default
+ * only when its precondition held, so ⌘R reloaded the page whenever nothing suitable
+ * was selected, ⌘D bookmarked, and ⌘1–9 switched browser tabs. A shortcut this app
+ * claims is claimed always: failing to act is a no-op, not a fallthrough to the browser.
+ *
  * The terminal counts as a typing target implicitly: xterm puts focus on a textarea, so
- * the isTypingTarget() check below already keeps ⌘D and friends out of a live shell.
+ * isTypingTarget() keeps ⌘D and friends out of a live shell.
  */
 
 import { ui } from '$lib/stores/ui.svelte.js';
@@ -26,6 +44,7 @@ const ROWS: [string, string][] = [
   ['⌘↵', 'Promote current to worktree'],
   ['⌘D', 'Review changes'],
   ['⌘R', 'Run stack'],
+  ['⇧↵', 'New line in the terminal (sent as ESC+CR)'],
   ['?', 'This help'],
 ];
 
@@ -41,35 +60,40 @@ function isTypingTarget(el: EventTarget | null): boolean {
 }
 
 export function handleShortcut(e: KeyboardEvent): void {
-  const meta = e.metaKey || e.ctrlKey;
+  const typing = isTypingTarget(e.target);
+  // Cmd is always ours. Ctrl is ours only when nothing is listening for control codes.
+  const mod = e.metaKey || (e.ctrlKey && !typing);
 
-  if (meta && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); overlays.togglePalette(); return; }
+  if (mod && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); overlays.togglePalette(); return; }
 
-  if (e.key === 'Escape') { overlays.escape(); return; }
+  // Only swallow Escape when there is something to close. A bare Escape is how you
+  // interrupt the agent, and it has to reach the pty.
+  if (e.key === 'Escape') { if (overlays.any) { e.preventDefault(); overlays.escape(); } return; }
 
-  if (e.key === '?' && !isTypingTarget(e.target) && !overlays.any) { e.preventDefault(); showShortcuts(); return; }
+  if (e.key === '?' && !typing && !overlays.any) { e.preventDefault(); showShortcuts(); return; }
 
-  if (isTypingTarget(e.target) || overlays.any || !meta) return;
+  if (typing || overlays.any || !mod) return;
 
   const s = ui.selected;
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); overlays.openIntake(); return; }
   if (e.key === '\\') { e.preventDefault(); ui.toggleUsage(); return; }
   if (e.key >= '1' && e.key <= '9') {
+    e.preventDefault();
     // The rail draws agents then features, and a feature may have no session — so a row
     // is picked by what it IS, not by a session id it might not have.
     const pick = ui.railOrder[Number(e.key) - 1];
     if (!pick) return;
-    e.preventDefault();
     if (pick.id) ui.goToSession(pick.id);
     else ui.selectFeature(world.features.find((f) => f.name === pick.name));
     return;
   }
-  if (e.key === 'Enter') { if (s && !s.worktreePath) { e.preventDefault(); promote(s); } return; }
+  if (e.key === 'Enter') { e.preventDefault(); if (s && !s.worktreePath) promote(s); return; }
   if (e.key === 'd' || e.key === 'D') {
-    if (s && s.worktreePath) { e.preventDefault(); ui.goToSession(s.id); ui.dockView = 'changes'; }
+    e.preventDefault();
+    if (s && s.worktreePath) { ui.goToSession(s.id); ui.dockView = 'changes'; }
     return;
   }
   // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the
   // session-addressed op, which is the same worktrees without the conflict handling.
-  if (e.key === 'r' || e.key === 'R') { if (s && s.worktreePath && s.feature) { e.preventDefault(); runStack(s.feature); } }
+  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (s && s.worktreePath && s.feature) runStack(s.feature); }
 }
