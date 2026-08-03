@@ -64,7 +64,6 @@ describe('preventDefault is unconditional', () => {
   it.each([
     ['r', 'reloading the page'],
     ['d', 'bookmarking'],
-    ['1', 'switching browser tabs'],
     ['Enter', 'submitting something'],
   ])('⌘%s does nothing rather than %s when there is no selection', (key) => {
     const e = press(key, { metaKey: true });
@@ -84,5 +83,33 @@ describe('Escape', () => {
     const e = press('Escape');
     expect(e.defaultPrevented).toBe(true);
     expect(overlays.any).toBe(false);
+  });
+});
+
+describe('⌘ works where you actually are — with the terminal focused', () => {
+  // isTypingTarget used to stand every shortcut down whenever xterm's textarea had
+  // focus, which is nearly always. ⌘D quietly did nothing until you clicked away, and
+  // that state is invisible. ⌘ never reaches a shell, so it has no reason to defer.
+  it.each(['d', 'r', 'n', '\\'])('⌘%s still fires from the terminal', (key) => {
+    const e = press(key, { metaKey: true }, textarea());
+    expect(e.defaultPrevented).toBe(true);
+  });
+});
+
+describe('⌥1–9 for the rail', () => {
+  it('matches the physical key, since ⌥1 types “¡” on macOS', () => {
+    // Keying off e.key would find '¡' and never match — the bug this guards.
+    const e = press('¡', { altKey: true, code: 'Digit1' } as KeyboardEventInit);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it('no longer answers to ⌘1, which Chrome reserves for its own tabs', () => {
+    const e = press('1', { metaKey: true, code: 'Digit1' } as KeyboardEventInit);
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it('ignores ⌥ combined with another modifier', () => {
+    const e = press('¡', { altKey: true, ctrlKey: true, code: 'Digit1' } as KeyboardEventInit);
+    expect(e.defaultPrevented).toBe(false);
   });
 });
