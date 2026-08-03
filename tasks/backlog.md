@@ -103,6 +103,32 @@ title, branch, state.
 
 ## P1 — things that are the wrong shape
 
+### On promote, offer to attach the feature's other worktrees
+A feature groups worktrees by shared basename. Session membership is a SEPARATE
+record. Nothing keeps them in step, so a feature can look complete on its card while
+the session inside it knows about one repo.
+
+Hit live on `fix-google-pay-mobile`. Three worktrees (`ab-libraries`, `merchant-v3`,
+`payment-pages`) were created with `wt`, then a session in `accept-blue` was promoted
+into the same name. The feature card showed 4 repos and looked right. The session's
+`repos` had only `accept-blue`, so:
+
+- **Changes showed nothing.** `ReviewMount` is session-scoped, and the one repo the
+  session knew about was genuinely clean — the 4 modified files were in the three it
+  did not. An empty diff of a real empty worktree, which reads as "no changes".
+- **The agent had no write access to 3 of its 4 repos.** `/add-dir` is granted by
+  `addRepo`/`attachRepo`; a worktree made with `wt` never goes through either.
+
+The session brief tells the agent to use `wt-studio add-repo`, but a worktree created
+directly with `wt` bypasses that, and nothing notices afterwards.
+
+Fix: after `promote()` resolves the feature, look for same-named worktrees in other
+repos that the session's `repos` lacks, and offer to attach them — `addRepo` already
+does the right thing (create fails "already exists" → `attachRepo`, no duplicate). The
+same reconciliation would suit a session adopted into an existing feature. Worth
+considering whether the rail should mark the mismatch, since today it is invisible
+until a diff comes back empty.
+
 ### 5. Delete the Overview view — confirmed redundant
 `Fleet.svelte` mounted as a dock pane. Once the rail is fixed (1–3) it shows the same
 information in a second place, which is the problem it was meant to solve. Removing it
