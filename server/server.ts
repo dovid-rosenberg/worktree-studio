@@ -19,6 +19,7 @@ import * as orchestrator from './orchestrator.ts';
 import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
+import { attachableWorktrees } from './features.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
 import { run, has, shq, slug, expandTilde } from './util.ts';
@@ -29,7 +30,7 @@ import * as routesReview from './routes-review.ts';
 import type { Request } from 'express';
 import type { ScannedRepo } from './git.ts';
 import type { RunningServer } from './servers.ts';
-import type { EditorConfig, GroupConfig, SessionRepo, StartConfig } from './types.ts';
+import type { EditorConfig, GroupConfig, Session, SessionRepo, StartConfig } from './types.ts';
 
 /**
  * One value off a query string. Express hands back a string, an array (`?a=1&a=2`)
@@ -348,6 +349,10 @@ async function main() {
   api.post('/sessions/:id/deactivate', async (req, res) => { res.json(await manager.deactivate(req.params.id)); });
   api.post('/sessions/:id/activate', async (req, res) => { res.json(await manager.activate(req.params.id)); });
 
+  /** Feature worktrees this session has no record of — see features.ts for why. */
+  const attachableFor = (s: Session | undefined) =>
+    attachableWorktrees(repos, s?.feature, new Set((s?.repos || []).map((r: SessionRepo) => r.repoPath)), (i) => identity.of(i));
+
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
   api.post('/sessions/:id/add-repo', async (req, res) => {
@@ -365,7 +370,19 @@ async function main() {
     if (out.needsConfirm) return res.json(out);
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the new worktree(s) so features update immediately
-    res.json(out);
+    /*
+     * Feature membership and SESSION membership are two different records, and nothing
+     * kept them in step. A feature groups worktrees by identity; a session's `repos` is
+     * what the agent was granted with /add-dir. Promote into a feature whose other
+     * worktrees were made outside Studio (a plain `wt`), and the feature card shows
+     * every repo while the session knows only its own — so Changes, which is
+     * session-scoped, renders an empty diff of a genuinely empty worktree, and the
+     * agent cannot write to the repos it was started for.
+     *
+     * Report the gap rather than closing it silently: attaching sends /add-dir into a
+     * live session, which is the user's call.
+     */
+    res.json({ ...out, attachable: attachableFor(out.session) });
   });
 
   api.post('/sessions/:id/tabs', async (req, res) => {
