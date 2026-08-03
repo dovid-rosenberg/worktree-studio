@@ -532,14 +532,71 @@ class SessionManager extends EventEmitter {
     } catch { return []; }
   }
 
-  async promote(id: string, { branch, name, confirm }: { branch?: string; name?: string; confirm?: boolean } = {}): Promise<PromoteResult> {
+  /**
+   * Carry the main checkout's uncommitted work into a freshly made worktree.
+   *
+   * Stash, then pop in the worktree — one git operation each way, and the stash is the
+   * receipt. That matters because the worktree is branched off the DEFAULT branch while
+   * main is usually on something else, so the replay can genuinely conflict.
+   *
+   * On conflict the stash is LEFT INTACT and the failure is reported. Never
+   * `stash drop` on a failed pop: the entry is the only remaining copy of that work,
+   * and dropping it to keep the return shape tidy would destroy it. A user told
+   * "couldn't apply — your changes are in stash@{0}" has lost nothing.
+   */
+  async _moveDirtyInto(repoPath: string, worktreePath: string): Promise<{ ok: boolean; error?: string; moved?: number }> {
+    const before = await this._dirtyMain(repoPath);
+    if (!before.length) return { ok: true, moved: 0 };
+
+    /*
+     * Refuse rather than sweep up a worktree. A `nested` layout puts checkouts inside
+     * the repo, and worktree.create() only WARNS when that directory is not gitignored
+     * — so on a repo that ignored the warning, the dirty list contains the other
+     * worktrees themselves. Stashing that with --include-untracked would move every
+     * one of them into the stash and delete them from disk. Bailing out costs the user
+     * one gitignore line; the alternative costs them their checkouts.
+     */
+    const container = path.basename(path.dirname(worktreePath));
+    const swept = before.find((l) => l.slice(3).replace(/^"|"$/g, '').startsWith(`${container}/`));
+    if (swept) {
+      return {
+        ok: false,
+        error: `refusing to move changes: "${container}/" is not gitignored in ${repoPath}, `
+          + `so it shows as uncommitted work and would be stashed along with your edits. `
+          + `Add "${container}/" to .gitignore, then promote again.`,
+      };
+    }
+
+    const label = `wt-studio: promote ${new Date().toISOString()}`;
+    // --include-untracked: a new file is the commonest thing to be sitting on, and
+    // leaving those behind while moving the edits would split one change in half.
+    const push = await run('git', ['-C', repoPath, 'stash', 'push', '--include-untracked', '-m', label]);
+    if (push.code !== 0) return { ok: false, error: `could not stash: ${push.stderr.trim() || push.stdout.trim()}` };
+
+    const pop = await run('git', ['-C', worktreePath, 'stash', 'pop']);
+    if (pop.code !== 0) {
+      return {
+        ok: false,
+        error: `worktree created, but your changes could not be replayed onto ${worktreePath}: `
+          + `${pop.stderr.trim() || pop.stdout.trim()}. They are safe in the stash — `
+          + `\`git stash list\` shows "${label}"; \`git stash pop\` in either checkout retries.`,
+      };
+    }
+    return { ok: true, moved: before.length };
+  }
+
+  async promote(
+    id: string,
+    { branch, name, confirm, bringChanges }:
+      { branch?: string; name?: string; confirm?: boolean; bringChanges?: boolean } = {},
+  ): Promise<PromoteResult> {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
     if (s.worktreePath) return { ok: false, error: 'already promoted' };
     // Claude launched with cwd in the main checkout; the worktree is branched clean
-    // off the default branch, so pre-promote edits stay in main. Warn (don't strand
-    // silently) unless the caller has already confirmed.
-    if (!confirm) {
+    // off the default branch, so pre-promote edits stay in main unless asked to come
+    // along. Warn (don't strand silently) unless the caller has already decided.
+    if (!confirm && !bringChanges) {
       const dirty = await this._dirtyMain(s.repoPath);
       if (dirty.length) return { ok: false, needsConfirm: true, dirty };
     }
@@ -555,6 +612,17 @@ class SessionManager extends EventEmitter {
       ...worktreeCopyOpts(this.cfg, s.repoName),
     });
     if (!res.ok) return res;
+
+    // After the worktree exists, before the session is told about it: a failed replay
+    // must not leave a session pointing at a worktree the user has not been told is
+    // missing their work.
+    let brought: number | undefined;
+    if (bringChanges) {
+      const moved = await this._moveDirtyInto(s.repoPath, res.path);
+      if (!moved.ok) return { ok: false, error: moved.error, worktree: res, path: res.path };
+      brought = moved.moved;
+    }
+
     s.worktree = res.name;
     s.worktreePath = res.path;
     s.branch = res.branch;

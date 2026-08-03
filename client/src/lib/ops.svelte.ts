@@ -34,15 +34,33 @@ export async function promote(s: Session) {
   if (!branch) return;
   try {
     let r = await api('POST', `/api/sessions/${s.id}/promote`, { branch });
-    // Dirty main → warn before stranding pre-promote edits (they stay in main).
+    /*
+     * Dirty main is a question, not a failure. It used to have one answer — strand the
+     * edits — which is rarely what was wanted: you start editing in the main checkout,
+     * realise it is real work, and promote. The edits ARE the work.
+     *
+     * "Bring them" stashes with --include-untracked and pops in the new worktree. A
+     * conflict there leaves the stash intact and says so, so the worst case is a
+     * message naming where the work is, never a loss.
+     */
     if (r.needsConfirm) {
       const n = (r.dirty || []).length;
-      const ok = await uiConfirm(
-        `Your main checkout has ${n} uncommitted change(s) that will stay in main, not move to the new worktree. Promote anyway?`,
-        { title: 'Uncommitted changes in main', okLabel: 'Promote anyway', danger: true },
-      );
-      if (!ok) return;
-      r = await api('POST', `/api/sessions/${s.id}/promote`, { branch, confirm: true });
+      const choice = await uiDialog({
+        title: 'Uncommitted changes in main',
+        message: `Your main checkout has ${n} uncommitted change(s). The new worktree branches off `
+          + `the default branch, so they stay in main unless you bring them.`,
+        fields: [{
+          type: 'checkbox',
+          label: 'Bring them into the new worktree',
+          value: true,
+        }],
+        okLabel: 'Promote',
+      });
+      if (!choice || !Array.isArray(choice)) return;
+      const bring = choice[0] === true;
+      r = await api('POST', `/api/sessions/${s.id}/promote`, bring
+        ? { branch, bringChanges: true }
+        : { branch, confirm: true });
     }
     const w = r.worktree || {};
     const warn = (w.warnings || []).find((x: string) => /taken/.test(x));
