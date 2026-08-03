@@ -14,5 +14,4 @@ case "${wtaction:-open}" in
   finder) /usr/bin/open "$path" ;;
   start)  "$ACT" server-start "$repo" "$worktreePath" ;;
   stop)   "$ACT" server-stop  "$repo" "$worktreePath" ;;
-  popout) [ -n "$sessionId" ] && "$ACT" popout "$sessionId" ;;
 esac

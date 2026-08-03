@@ -282,7 +282,6 @@ had before those conventions were configurable.
 | `webRepos` | `merchant-v3`, `ab-iso-fe`, `ab-su` | Repos that get an “Open ‹repo› ↗” button |
 | `groups` | `[]` | Manual feature groups `{name, members:["repo/branch"]}` |
 | `runConfigs` | `{}` | Editor run-config import mapping |
-| `popout.terminal` | `Terminal` | macOS app used for Pop-out |
 | `sources.github.enabled` | `true` | GitHub intake |
 | `sources.gitlab` | `{enabled:false, host, token}` | GitLab intake |
 | `sources.asana` | `{enabled:false, token, workspace}` | Asana intake |
@@ -346,7 +345,7 @@ one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred a
 - `DELETE /api/sessions/:id` — delete (stops servers, frees slot; `?kill=false` to keep tmux).
 - `POST /api/sessions/:id/promote` — promote to a worktree (`{branch, name, confirm}`).
 - `POST /api/sessions/:id/activate` · `/deactivate` — resume / stop.
-- `POST /api/sessions/:id/rename` · `/popout` · `/add-repo`.
+- `POST /api/sessions/:id/rename` · `/add-repo`.
 - `POST /api/sessions/:id/tabs` · `/select-tab` · `/close-tab` — primary-terminal tabs.
 - `GET/POST /api/sessions/:id/split/tabs` · `/split/select-tab` · `/split/close-tab` — split-pane tabs.
 - `POST /api/sessions/:id/servers/start` · `/servers/stop`.

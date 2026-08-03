@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Worktree Studio installer — deps, vendored assets, and (optionally) the
+# Worktree Studio installer — deps, the client build, and (optionally) the
 # SwiftBar plugin symlink. Idempotent.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "→ npm install (builds node-pty, fixes spawn-helper, vendors xterm)"
+echo "→ npm install (builds node-pty, fixes spawn-helper, builds the client)"
 npm install
 
 # SwiftBar plugin symlink (if SwiftBar's plugin dir exists)
