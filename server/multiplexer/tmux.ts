@@ -119,9 +119,39 @@ function persistCmd(cmd?: string): string {
 // 1024 routinely; the cut lands mid-single-quote and the shell then sits at `quote>`
 // forever, waiting for a closing quote that was thrown away. claude never starts and
 // nothing reports an error, because from tmux's side the keys were delivered.
-// One file per pane, rewritten each launch: bounded, no cleanup, and `cat`-able when
-// a launch needs debugging.
+// One file per pane, rewritten each launch, and `cat`-able when a launch needs debugging.
+//
+// This was "bounded, no cleanup", which was only half true: bounded PER PANE, but a pane
+// name carries a session id, and ids die. 85 files had accumulated, most of them for
+// features finished weeks earlier. reapLaunchScripts() below is the missing half.
 const LAUNCH_DIR = path.join(CONFIG_DIR, 'launch');
+
+/**
+ * Delete launch scripts older than `maxAgeMs` (default 24h). Called once at boot.
+ *
+ * Age is the right key, not liveness: the file is `.`-sourced ONCE, by the shell tmux
+ * just started, and is dead weight from that moment on. So an old file cannot be in use
+ * by definition, and a session that is later resumed writes a fresh one. The window only
+ * needs to outlive a launch, and a launch is measured in seconds.
+ *
+ * Returns how many it removed, for the boot log.
+ */
+export function reapLaunchScripts(maxAgeMs = 24 * 60 * 60 * 1000): number {
+  let removed = 0;
+  const cutoff = Date.now() - maxAgeMs;
+  let names: string[];
+  try { names = fs.readdirSync(LAUNCH_DIR); } catch { return 0; } // never created yet
+  for (const name of names) {
+    if (!name.endsWith('.sh')) continue;
+    const file = path.join(LAUNCH_DIR, name);
+    try {
+      if (fs.statSync(file).mtimeMs >= cutoff) continue;
+      fs.unlinkSync(file);
+      removed++;
+    } catch { /* raced with something else, or unreadable — leave it */ }
+  }
+  return removed;
+}
 export function launchKeys(target: string, cmd?: string): string {
   const line = persistCmd(cmd);
   try {

@@ -6,6 +6,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { SessionManager } from '../server/sessions.ts';
 import { shq } from '../server/util.ts';
+import { CONFIG_DIR } from '../server/config.ts';
 import type { Session, Worktree } from '../server/types.ts';
 import type { PartialDeep, Config } from '../server/types.ts';
 import { expectOk, muxStub, present, session, sessionRepo } from './helpers.ts';
@@ -289,6 +290,17 @@ test('tmux sendText sends the body literally (-l) then submits with a separate E
   } finally {
     await tmux.kill(name);
     fs.rmSync(outFile, { force: true });
+    /*
+     * Remove the launch script this created.
+     *
+     * This test drives the REAL tmux, so tmux.ensure() → launchKeys() writes into the
+     * real CONFIG_DIR — tmux.ts resolves it at module load, and a static import is
+     * hoisted above any env var this file could set. So every `npm test` used to leak
+     * one file into ~/.config/worktree-studio/launch/, which is most of what had
+     * accumulated there. The boot reaper would clear them within a day; not creating
+     * them is better.
+     */
+    fs.rmSync(path.join(CONFIG_DIR, 'launch', `${name}-0.sh`), { force: true });
   }
 });
 

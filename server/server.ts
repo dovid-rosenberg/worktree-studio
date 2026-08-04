@@ -23,7 +23,7 @@ import * as webui from './webui.ts';
 import * as crash from './crash.ts';
 import { run, has, shq, slug, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
-import tmux from './multiplexer/tmux.ts';
+import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import type { Request } from 'express';
@@ -740,6 +740,13 @@ async function main() {
   // process we launched before anything can use them as a kill target.
   for (const d of await servers.pruneTracked()) {
     console.warn(`[wt-studio] dropped stale tracked pid ${d.pid} for ${d.worktreePath}`);
+  }
+  // Launch scripts are sourced once, by the shell tmux just started, and are dead weight
+  // afterwards — but nothing ever removed them, so they accumulated one per pane per
+  // session for the life of the install.
+  {
+    const reaped = reapLaunchScripts();
+    if (reaped) console.log(`[wt-studio] reaped ${reaped} stale launch script(s)`);
   }
   await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   // restore() guards each session on its own, so a rejection here means the whole
