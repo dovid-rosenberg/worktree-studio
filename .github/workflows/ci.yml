@@ -39,5 +39,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Enforced, not advisory. A formatter nobody runs is a style guide, and a style
+      # guide is the thing this repo kept failing at.
+      - name: Formatting
+        run: npm run format:check
+
       - name: Typecheck and tests
         run: npm test

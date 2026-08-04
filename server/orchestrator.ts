@@ -90,9 +90,7 @@ interface Servers {
    * Allocate every slot, then launch every target. One implementation of a sequence three
    * routes used to spell out independently — see servers.ts.
    */
-  startAll(
-    targets: Array<{ repo: string; worktreePath: string }>,
-  ): Promise<
+  startAll(targets: Array<{ repo: string; worktreePath: string }>): Promise<
     | { ok: false; slotError: string }
     | {
         ok: true;
