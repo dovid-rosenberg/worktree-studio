@@ -16,7 +16,7 @@ dashboard with a single page at **http://127.0.0.1:7788**.
 2. [Install & run](#install--run)
 3. [The feature lifecycle](#the-feature-lifecycle) — the spine of the tool
 4. [Feature reference](#feature-reference)
-5. [Views: Work vs Fleet](#views-work-vs-fleet)
+5. [The layout](#the-layout)
 6. [Keyboard shortcuts](#keyboard-shortcuts)
 7. [Running features concurrently (slots)](#running-features-concurrently-slots)
 8. [Configuration reference](#configuration-reference)
@@ -99,9 +99,14 @@ Studio creates a same-named worktree in that repo and grants the session access 
 `/add-dir`. All repos of a feature share the worktree **name**, which is how they group.
 
 ### 4. Run the dev servers
-In the session’s **server bar** (or Fleet), **Run all** / **Run stack** starts the
-configured dev servers for the feature’s repos. Running frontends get an **Open ‹repo› ↗**
-button that opens `localhost:<port>`. Stop/restart from the same place.
+**Run stack** in the action bar starts the configured dev servers for every repo of the
+feature; **Stop stack** and **Restart stack** replace it once they are up. Running
+frontends get an **Open ‹repo› ↗** button beside it. The server bar above shows the ports
+they bound but has no buttons of its own — one verb, one place.
+
+If a repo cannot start, the result says so by name rather than reporting the rest as a
+success: `Skipped ab-libraries — no start command configured`, or `dependencies not
+installed`, which the **Install deps** button next to it fixes.
 
 ### 5. Review, commit, PR
 Open the **✎ Changes** tab (or `⌘D`):
@@ -114,7 +119,7 @@ Open the **✎ Changes** tab (or `⌘D`):
   (with amend) — it targets that repo’s worktree.
 
 ### 6. Close or delete the feature
-From **Fleet → ⋯**:
+From the action bar, with the feature selected:
 - **Close feature** — stops servers, deactivates the session, **keeps** the worktree/branch.
 - **Delete feature** — stops servers, kills the session, **removes** the worktree(s)
   (optionally the branch too).
@@ -142,15 +147,14 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
 - One-click promote with automatic branch/name suggestion and collision auto-suffixing.
 - Local-config copy on create (`copyPatterns`), so FE worktrees build immediately.
 - **Adopt** an existing worktree as a session (start Claude in a worktree that already exists).
-- Manual worktree create/delete via the API/Fleet.
+- Manual worktree create/delete via the API.
 
 ### Dev servers
 - **Auto-discovery** of running servers by matching listening ports to worktree paths
   (`lsof` → cwd), cached and refreshed on a timer (not on every event).
-- Start / stop / restart per session or per feature (stack).
+- Start / stop / restart the whole feature (stack) from the action bar.
 - **Per-worktree log files**, tailed live in the **▸ Logs** tab.
-- **Open ‹frontend› ↗** buttons wherever a web repo is running (session bar **and** the
-  Fleet “Servers running” section).
+- **Open ‹frontend› ↗** in the action bar wherever a web repo is running.
 
 ### Changes / commits / diff
 - Aggregated across all repos of a feature, grouped by repo.
@@ -171,7 +175,7 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
 
 ### Notifications
 - Desktop **Notification** + optional sound when a session flips to **waiting** (and
-  optionally **idle**). Tab-title prefix + a Fleet badge show the waiting count.
+  optionally **idle**). Tab-title prefix + a top-bar badge show the waiting count.
 - Preferences in Settings (`notify.waiting`, `notify.sound`, `notify.idle`).
 
 ### Command palette & keyboard
@@ -185,23 +189,27 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
 
 ---
 
-## Views: Work vs Fleet
+## The layout
 
-Toggle with the header segmented control or **⌘\\**.
+One screen, four regions. There is no view to switch between — Work and Fleet were
+merged, because Fleet was the same three lists the rail already drew.
 
-**Work** — the session cockpit. A left rail of sessions grouped by feature; the selected
-session’s terminal, tabs, server bar, and the Changes/Logs dock.
+**The rail** (left) — one flat list, one row per thing: features, unpromoted sessions,
+and dev servers running from a repo's main checkout. Active first (a live agent or a
+running server), then alphabetical, with an `idle · N` divider marking where the quiet
+ones start. Filter by repo at the top. Cards are readouts; they carry no buttons.
 
-**Fleet** — the mission-control overview, in three sections (top to bottom):
-1. **⇅ Servers running** — every feature with a live dev server: its ports, **Open ‹fe› ↗**,
-   Go to session, Stop stack. This is where you watch running work.
-2. **✦ Agents · no worktree** — unpromoted sessions. Promote, go to, resume, or delete.
-3. **⎇ Worktrees** — every feature (grouped, manual + auto). Per feature: agent/servers
-   status pills, concurrency slot badge, Go to session / Start session, Run/Stop stack,
-   Open ‹fe›, and a **⋯** menu (Open in editor, Restart stack, Open PR/MR, Close/Delete).
+**The dock** (right) — the selected session's identity header, its terminal tabs, the
+Changes and Logs panels, and the server bar.
 
-Fleet also has a summary bar (feature/running/working/waiting counts) with **Stop all** /
-**Restart all**.
+**The server bar** (under the dock) — a READOUT: every repo the session owns, its ports,
+and the PR/CI pills. No buttons.
+
+**The action bar** (bottom) — every verb for whatever is selected. The rule: the top says
+what you are looking at, the bottom does something to it.
+
+**Insights** (**⌘\\** or ◔ in the top bar) — one destination: a fleet-wide cost overview
+you drill into. Picking a session shows its token breakdown and transcript search.
 
 ---
 
@@ -211,8 +219,8 @@ Fleet also has a summary bar (feature/running/working/waiting counts) with **Sto
 |-----|--------|
 | `⌘K` | Command palette (works even while typing) |
 | `⌘N` | New session |
-| `⌘\` | Toggle Work / Fleet |
-| `⌘1`–`⌘9` | Jump to the Nth session in the rail |
+| `⌘\` | Insights (fleet cost overview) |
+| `⌥1`–`⌥9` | Jump to the Nth row in the rail |
 | `⌘↵` | Promote current session to a worktree |
 | `⌘D` | Review changes (open the ✎ Changes tab) |
 | `⌘R` | Run the current feature’s dev servers |
@@ -237,7 +245,13 @@ Redis DB are offset by `slot × offsetStep` (default 100).
   (The `__` is nconf’s nested-key separator.)
 - **Frontends** (`merchant-v3` vite :3030, `ab-iso-fe` webpack :9000, `ab-su` vite :8000)
   are wired per slot by patching the gitignored local config in the worktree
-  (`src/config.js` or `src/config/config.js`) to point at that slot’s backend.
+  (`src/config.js` or `src/config/config.js`) to point at that slot’s backend. That half
+  works with no repo change.
+  
+  Their OWN listening port does not shift unless the repo reads `WTS_FE_PORT`. None of
+  the three currently does, so today a second feature's frontend collides on the shared
+  port even though its backend is correctly offset. Studio detects and names this rather
+  than failing silently — see the troubleshooting entry.
 
 Slots are persisted in `servers.json` and self-heal against reality on restart, so a
 frontend never silently points at the wrong backend after a restart. The **shared dev
@@ -282,6 +296,7 @@ had before those conventions were configurable.
 | `webRepos` | `merchant-v3`, `ab-iso-fe`, `ab-su` | Repos that get an “Open ‹repo› ↗” button |
 | `groups` | `[]` | Manual feature groups `{name, members:["repo/branch"]}` |
 | `runConfigs` | `{}` | Editor run-config import mapping |
+| `watch` | see `server/watch.ts` | fs-watch pacing; undocumented elsewhere, hand-edit only |
 | `sources.github.enabled` | `true` | GitHub intake |
 | `sources.gitlab` | `{enabled:false, host, token}` | GitLab intake |
 | `sources.asana` | `{enabled:false, token, workspace}` | Asana intake |
@@ -293,13 +308,42 @@ had before those conventions were configurable.
 
 **Per-repo concurrency wiring** (`concurrency.repos.<repo>`):
 - `portEnv` — env vars → base ports (offset by slot). Backend: `api__port_*`, `redis__db`.
-  Frontends use `WTS_FE_PORT`.
+  Frontends: `WTS_FE_PORT`.
+
+  **The repo has to actually read the variable.** Studio sets it in the launch
+  environment; it cannot make a dev server listen anywhere. `accept-blue` works because
+  its config calls `nconf.env({separator: '__'})`, which maps `api__port_su` to
+  `api.port_su`. A frontend whose vite/webpack config ignores `WTS_FE_PORT` binds its
+  hardcoded port on every slot — so a second feature's frontend hits `EADDRINUSE`, and a
+  stack start reports `started on port N instead of the port this feature's slot expects`.
 - `slotEnv` — extra keys offset by slot index (e.g. `redis__db`).
 - `configPatch` — `{ file, siblingRepo }`: the gitignored config file in a FE worktree to
   rewrite so it targets its slot’s backend.
 
-Everything is also overridable by environment variables using nconf’s `__` nesting (e.g.
-`web__port=7799`), which is how the isolated test harness runs a second instance.
+**There are no `web__port`-style env overrides.** This document used to claim config was
+overridable by environment variables using nconf's `__` nesting — that is the accept.blue
+backend's config system, not Studio's. Studio has no nconf dependency and reads exactly
+three environment variables, all of them paths:
+
+| Variable | Overrides |
+|----------|-----------|
+| `WT_STUDIO_CONFIG_DIR` | the directory holding `config.json` |
+| `WT_STUDIO_CONFIG` | the config file itself |
+| `WT_STUDIO_STATE` | the state directory (`~/.local/state/worktree-studio`) |
+
+Everything else is the JSON file.
+
+### Config is read once, at boot
+
+`load()` runs at startup and the result is held in memory for the life of the process.
+**A hand-edit to `config.json` does nothing until you restart the daemon.** The Settings
+UI is the exception: it mutates the in-memory config as well as the file, so those changes
+take effect immediately.
+
+Settings can edit: `baseDirs`, `start.<repo>`, `editors` (name + `open`), `groups`,
+`sources`, `notify`. Everything else — including `worktrees`, `featureIdentity`,
+`concurrency`, `copyPatterns`, `copyAlways`, `webRepos`, `web.port` and `scanDepth` — is
+hand-edit-only, and needs the restart.
 
 ---
 
@@ -383,7 +427,6 @@ one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred a
   session close).
 - `logs/<repo>__<feature>.log` — per-worktree dev-server logs.
 - `locks/` — per-worktree operation locks.
-- `server.log` — Studio’s own log.
 
 **Worktrees** — `<repo>/.worktrees/<name>` (gitignored), created by Studio.
 
@@ -430,12 +473,18 @@ worktree.
 **Resume shows `No conversation found with session ID`.**
 The session was resumed from a directory other than where its transcript lives. Fixed by the
 `/cd`-on-promote flow (home tracks the worktree). If you see it on an older session, resume
-it once from Fleet — the self-heal re-anchors it.
+it once — the self-heal re-anchors it.
 
-**“Open ‹frontend›” button missing in Fleet.**
-The button needs a **detected port**. If the running frontend shows its `:port` chip but had
-no button, that’s fixed (the Servers-running section now renders it). If it shows **no port
-chip**, the dev server’s port isn’t being discovered — check `start.<repo>.ports`.
+**“Open ‹frontend›” button missing.**
+The button needs a **detected port**. If the row shows **no port chip**, the dev server's
+port isn't being discovered — check `start.<repo>.ports`.
+
+**A stack start reports “started on port N instead of the port this feature's slot
+expects”.**
+The server is up, on the wrong port. Studio derives a per-slot port from
+`concurrency.repos.<repo>.portEnv` and passes it as an env var; that repo does not read
+it, so it bound its hardcoded port. Until the repo reads the variable, only one feature at
+a time can run it.
 
 **Ghost commands typed into the terminal.**
 Studio waits for Claude to be ready before injecting anything and sends slash commands
