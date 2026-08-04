@@ -1,7 +1,6 @@
 import http from 'http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import * as muxSelect from './multiplexer/index.ts';
 import * as gitMod from './git.ts';
 import * as watchMod from './watch.ts';
 import * as worktree from './worktree.ts';
@@ -24,7 +23,7 @@ import * as webui from './webui.ts';
 import * as crash from './crash.ts';
 import { run, has, shq, slug, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
-import tmux from './multiplexer/tmux.ts';
+import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import type { Request } from 'express';
@@ -72,7 +71,9 @@ interface SettingsBody {
 
 async function main() {
   const cfg = configMod.load();
-  const mux = await muxSelect.select();
+  // Was `muxSelect.select()` in an 11-line module that returned tmux-or-null — and
+  // server.ts imported tmux directly as well, so the indirection was already bypassed.
+  const mux = (await tmux.available()) ? tmux : null;
   if (!mux) {
     console.error('[wt-studio] tmux not found — install it (brew install tmux) and retry.');
   } else {
@@ -401,32 +402,6 @@ async function main() {
     res.json(await manager.renameTab(req.params.id, b.tab ?? b.index ?? 0, b.title));
   });
 
-  // The split pane is a standalone `-split` session with its own tabs. These operate on
-  // it directly through the mux (tmux is the source of truth for its window list).
-  api.get('/sessions/:id/split/tabs', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
-    res.json({ tabs: await manager.mux.listTabs(`${s.muxName}-split`) });
-  });
-  api.post('/sessions/:id/split/tabs', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
-    const r = await manager.mux.newTab(`${s.muxName}-split`, { title: (req.body && req.body.title) || 'shell', cwd: s.worktreePath || s.repoPath });
-    res.json(r);
-  });
-  api.post('/sessions/:id/split/select-tab', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    res.json({ ok: await manager.mux.selectTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
-  });
-  api.post('/sessions/:id/split/close-tab', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    res.json({ ok: await manager.mux.closeTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
-  });
-
   api.post('/sessions/:id/close-tab', async (req, res) => {
     const b = req.body || {};
     res.json(await manager.closeTab(req.params.id, b.tab ?? b.index ?? 0));
@@ -437,29 +412,24 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const toStart = (s.repos || []).filter(promoted).filter((x) => servers.startCfg(x.repo));
-    // Key the slot on the per-worktree feature identity (server/identity.ts) — the
-    // one canonical key used everywhere. A session's repos resolve to the same
-    // identity → one slot.
-    for (const r of toStart) {
-      const alloc = servers.allocSlotFor(servers.featureFor(r.worktreePath));
-      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    }
-    const results = [];
-    for (const r of toStart) {
-      const feat = servers.featureFor(r.worktreePath);
-      results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, feat))) });
-    }
+    // Slot keys come from the per-worktree feature identity (server/identity.ts) inside
+    // startAll — the one canonical key used everywhere.
+    const out = await servers.startAll(toStart);
+    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
     await refreshRunning();
     broadcastTopology();
-    res.json({ ok: results.some((r) => r.ok), results });
+    res.json({ ok: out.results.some((r) => r.ok), results: out.results });
   });
   api.post('/sessions/:id/servers/stop', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const owned = (s.repos || []).filter(promoted);
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
-    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath)); // whole stack stopped → free the feature's slot
+    // Refresh BEFORE releasing: the guard reads what is still listening, so it has to see
+    // the world after the stops. A session's repos can be a strict subset of its feature's
+    // members, so "I stopped mine" is not "the feature is down" — see releaseSlotIfIdle.
     await refreshRunning();
+    for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), runningCache);
     broadcastTopology();
     res.json({ ok: true });
   });
@@ -472,8 +442,11 @@ async function main() {
     const owned: PromotedRepo[] = s ? (s.repos || []).filter(promoted) : [];
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
-    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath));
-    if (owned.length) { await refreshRunning(); broadcastTopology(); }
+    if (owned.length) {
+      await refreshRunning(); // the guard below reads the post-stop world
+      for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), runningCache);
+      broadcastTopology();
+    }
     res.json(out);
   });
 
@@ -608,21 +581,18 @@ async function main() {
 
   api.post('/servers/start', async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const feature = servers.featureFor(worktreePath);
-    const alloc = servers.allocSlotFor(feature);
-    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    const out = await servers.start(repo, worktreePath, servers.launchOpts(repo, feature));
+    const out = await servers.startAll([{ repo, worktreePath }]);
+    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
     await refreshRunning();
     broadcastTopology();
-    res.json(out);
+    res.json(out.results[0]);
   });
   api.post('/servers/stop', async (req, res) => {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.stop(repo, worktreePath);
     await refreshRunning();
-    // only free the feature's slot once no sibling repo of the feature is still running
-    const feature = servers.featureFor(worktreePath);
-    if (![...runningCache.keys()].some((p) => servers.featureFor(p) === feature)) servers.releaseSlot(feature);
+    // This route already had the right rule; it is now the shared one (releaseSlotIfIdle).
+    servers.releaseSlotIfIdle(servers.featureFor(worktreePath), runningCache);
     broadcastTopology();
     res.json(out);
   });
@@ -643,7 +613,11 @@ async function main() {
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
   orchestrator.register(api, {
-    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast: broadcastTopology, rescan,
+    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning,
+    // A getter, not the Map: refreshRunning() REPLACES runningCache rather than mutating
+    // it, so a captured reference would be the pre-refresh map every time.
+    running: () => runningCache,
+    scheduleBroadcast: broadcastTopology, rescan,
   });
 
   // GET /sessions/:id/ci (still an on-demand answer for SwiftBar/Alfred and any
@@ -766,6 +740,13 @@ async function main() {
   // process we launched before anything can use them as a kill target.
   for (const d of await servers.pruneTracked()) {
     console.warn(`[wt-studio] dropped stale tracked pid ${d.pid} for ${d.worktreePath}`);
+  }
+  // Launch scripts are sourced once, by the shell tmux just started, and are dead weight
+  // afterwards — but nothing ever removed them, so they accumulated one per pane per
+  // session for the life of the install.
+  {
+    const reaped = reapLaunchScripts();
+    if (reaped) console.log(`[wt-studio] reaped ${reaped} stale launch script(s)`);
   }
   await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
   // restore() guards each session on its own, so a rejection here means the whole

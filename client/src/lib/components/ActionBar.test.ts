@@ -14,7 +14,8 @@ import type { Feature, Session } from '../../../../server/types';
 const ops = vi.hoisted(() => Object.fromEntries([
   'activateSession', 'addRepoToSession', 'closeFeature', 'closeSession', 'deactivateSession',
   'deleteFeature', 'installDeps', 'openEditor', 'openGroup', 'openSessionRepos', 'prFeature',
-  'promote', 'renameSession', 'restartStack', 'runStack', 'startFeatureSession', 'stopStack',
+  'promote', 'renameSession', 'restartStack', 'runStack', 'startFeatureSession',
+  'stopMainServer', 'stopStack',
 ].map((k) => [k, vi.fn()])));
 vi.mock('$lib/ops.svelte.js', () => ({ ...ops, pending: new Set() }));
 
@@ -50,8 +51,7 @@ function give(features: Feature[], sessions: Session[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  ui.selectedId = null;
-  ui.selectedFeatureName = null;
+  ui.clearSelection();
   ui.repoFilter = '';
   give([], []);
 });
@@ -59,12 +59,12 @@ beforeEach(() => {
 describe('ActionBar', () => {
   it('prompts rather than sitting empty when nothing is selected', () => {
     render(ActionBar);
-    expect(screen.getByText(/Select a feature or agent/)).toBeInTheDocument();
+    expect(screen.getByText(/Select a feature, session or server/)).toBeInTheDocument();
   });
 
   it('offers exactly one verb for starting dev servers', () => {
     give([feature()], [session()]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     render(ActionBar);
     expect(screen.getByText('Run stack')).toBeInTheDocument();
     // The duplicate that started the same worktrees by the weaker route.
@@ -74,7 +74,7 @@ describe('ActionBar', () => {
 
   it('shows stack verbs for a selected SESSION by resolving its feature', () => {
     give([feature({ members: [member('accept-blue', { running: true })] })], [session()]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     render(ActionBar);
     screen.getByText('Stop stack').click();
     expect(ops.stopStack).toHaveBeenCalledWith('token-race-fix');
@@ -82,7 +82,7 @@ describe('ActionBar', () => {
 
   it('offers Promote, not Open in editor, before there is a worktree', () => {
     give([], [session({ worktreePath: null, feature: null })]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     render(ActionBar);
     expect(screen.getByText(/Promote to worktree/)).toBeInTheDocument();
     expect(screen.queryByText('Open in editor')).not.toBeInTheDocument();
@@ -98,7 +98,7 @@ describe('ActionBar', () => {
       repos: [sessionRepo('accept-blue', { primary: true }), sessionRepo('ab-iso-fe')],
     });
     give([], [s]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     render(ActionBar);
     // The count is on the button, so a two-repo feature says so before it is clicked.
     screen.getByText(/Open in editor \(2\)/).click();
@@ -107,14 +107,34 @@ describe('ActionBar', () => {
 
   it('does not count-label a single-repo session', () => {
     give([], [session()]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     render(ActionBar);
     expect(screen.getByText('Open in editor')).toBeInTheDocument();
   });
 
+  /*
+   * MainServerCard used to carry Open ↗ and Stop itself — the only buttons in the rail,
+   * and an admitted exception to the rule that the rail never has any. The row could not
+   * be selected, so the bar had nothing to act on. It is a selection kind now.
+   */
+  it('acts on a main-checkout server, whose card no longer carries its own buttons', () => {
+    world.topology = {
+      features: [], groups: [], webRepos: [],
+      repos: [{ name: 'ab-su', path: '/ab-su', worktrees: [
+        { repo: 'ab-su', path: '/ab-su', isMain: true, running: true, ports: [8000] },
+      ] }],
+    } as never;
+    world.sessionHalf = { sessions: [], servers: {} } as never;
+    ui.selectMainServer('/ab-su');
+    render(ActionBar);
+    expect(screen.getByText('Open ab-su ↗')).toBeInTheDocument();
+    screen.getByText('Stop server').click();
+    expect(ops.stopMainServer).toHaveBeenCalled();
+  });
+
   it('offers Resume for a deactivated session and Deactivate for a live one', () => {
     give([], [session({ active: false })]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     const { unmount } = render(ActionBar);
     expect(screen.getByText(/Resume/)).toBeInTheDocument();
     unmount();
@@ -126,7 +146,7 @@ describe('ActionBar', () => {
 
   it('gives a sessionless feature its own verbs, starting with the one that matters', () => {
     give([feature()], []);
-    ui.selectedFeatureName = 'token-race-fix';
+    ui.selectFeature({ name: 'token-race-fix' } as never);
     render(ActionBar);
     expect(screen.getByText('Start session')).toBeInTheDocument();
     expect(screen.getByText('Open PR / MR')).toBeInTheDocument();
@@ -135,11 +155,18 @@ describe('ActionBar', () => {
     expect(screen.queryByLabelText('Delete session')).not.toBeInTheDocument();
   });
 
-  it('names what it is acting on, so the bar is never ambiguous', () => {
+  /*
+   * The bar used to open with the selection's name and branch. DockHead already shows
+   * both for a session, and FeaturePane's heading shows the name for a feature — three
+   * readouts of one selection stacked down the screen. The bar is buttons now.
+   */
+  it('does not name what it is acting on — the dock header does that', () => {
     give([feature()], [session()]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     const { container } = render(ActionBar);
-    expect(container.querySelector('.who .nm')?.textContent).toBe('token-race-fix');
-    expect(container.querySelector('.who .sb')?.textContent).toContain('fix/x');
+    expect(container.querySelector('.who')).toBeNull();
+    // Still acting on the right thing, which is the part that matters.
+    screen.getByText('Run stack').click();
+    expect(ops.runStack).toHaveBeenCalledWith('token-race-fix');
   });
 });

@@ -59,7 +59,7 @@ SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
 ## Run
 
 ```sh
-cd ~/worktree-studio
+cd /path/to/worktree-studio   # wherever you cloned it
 npm install          # node-pty + spawn-helper perms, BUILDS THE FRONTEND
 npm start            # → http://127.0.0.1:7788
 ```

@@ -33,7 +33,6 @@
     session.tabs && session.tabs.length ? session.tabs : [{ id: '0', title: 'claude' }],
   );
   const promoted = $derived(!!session.worktreePath);
-  const splitOn = $derived(ui.splitOn(session.id));
 
   /**
    * The selected tab, resolved against tabs that actually exist. If the stored id is
@@ -166,21 +165,7 @@
     {/if}
 
     <!-- Available for any session: a transcript exists before a worktree does. -->
-    <button
-      type="button" class="pill-tab" class:on={ui.dockView === 'insights'} role="tab"
-      aria-selected={ui.dockView === 'insights'} onclick={() => (ui.dockView = 'insights')}
-    >◔ Insights</button>
   </div>
-
-  {#if ui.dockView === 'term'}
-    <button
-      class="btn xs split-toggle"
-      class:on={splitOn}
-      aria-pressed={splitOn}
-      title="Open an independent working shell in this worktree, beside the Claude terminal"
-      onclick={() => ui.toggleSplit(session.id)}
-    >⊟ Split</button>
-  {/if}
 </div>
 
 <style>
@@ -218,6 +203,4 @@
   .pill-tab.on { color:var(--brand); border-color:var(--border); background:var(--panel); }
 
   .cbadge { font-family:var(--mono); font-size:9.5px; font-weight:700; background:var(--brand); color:var(--brand-ink); border-radius:999px; padding:0 5px; min-width:15px; text-align:center; }
-  .split-toggle { margin-bottom:4px; }
-  .split-toggle.on { border-color:var(--brand); color:var(--brand); }
 </style>

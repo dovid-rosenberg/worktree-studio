@@ -63,12 +63,16 @@ interface HarnessOpts {
   startListening?: boolean;
   /** Ports the worktree turned out to hold instead of the expected ones. */
   boundElsewhere?: number[];
+  /** Feature names that still have something listening, so their slot must be held. */
+  stillRunning?: string[];
 }
-function harness({ group, flat = [], conflicts = [], allocError = null, startError = null, startListening, boundElsewhere }: HarnessOpts = {}) {
+function harness({ group, flat = [], conflicts = [], allocError = null, startError = null, startListening, boundElsewhere, stillRunning = [] }: HarnessOpts = {}) {
   const calls = {
     stopped: [] as Array<[string, string]>,
     started: [] as Array<[string, string]>,
     released: [] as string[],
+    /** Features whose slot was deliberately NOT freed because something still runs. */
+    heldSlots: [] as string[],
     allocated: [] as string[],
     broadcasts: 0,
   };
@@ -76,12 +80,37 @@ function harness({ group, flat = [], conflicts = [], allocError = null, startErr
     identity,
     featureFor: (p: string) => identity.ofPath(p),
     allocSlotFor: (f: string) => { calls.allocated.push(f); return allocError ? { error: allocError } : { slot: 0 }; },
-    releaseSlot: (f: string) => calls.released.push(f),
+    releaseSlot: (f: string) => { calls.released.push(f); },
+    /*
+     * The guarded release. `stillRunning` lets a test say "a member of this feature is
+     * still listening" and assert the slot is NOT freed — the bug being pinned is a slot
+     * going back in the pool while something still holds its ports.
+     */
+    releaseSlotIfIdle: (f: string) => {
+      if (stillRunning.includes(f)) { calls.heldSlots.push(f); return false; }
+      calls.released.push(f);
+      return true;
+    },
     launchOpts: () => ({ env: {}, ports: [] }),
     stop: async (repo: string, p: string) => { calls.stopped.push([repo, p]); return { ok: true }; },
     start: async (repo: string, p: string) => {
       calls.started.push([repo, p]);
       return startError ? { ok: false, error: startError } : { ok: true, listening: startListening, boundElsewhere };
+    },
+    // Mirrors servers.startAll: allocate every slot first (so a slot failure spawns
+    // nothing), then launch. The fake records the same calls the old inline loop did.
+    startAll: async (targets: Array<{ repo: string; worktreePath: string }>) => {
+      for (const t2 of targets) {
+        calls.allocated.push(identity.ofPath(t2.worktreePath));
+        if (allocError) return { ok: false as const, slotError: allocError };
+      }
+      const results = targets.map((t2) => {
+        calls.started.push([t2.repo, t2.worktreePath] as [string, string]);
+        return startError
+          ? { repo: t2.repo, ok: false, error: startError }
+          : { repo: t2.repo, ok: true, listening: startListening, boundElsewhere };
+      });
+      return { ok: true as const, results };
     },
     restart: async (repo: string, p: string) => { calls.started.push([repo, p]); return startError ? { ok: false, error: startError } : { ok: true }; },
   };
@@ -102,6 +131,9 @@ function harness({ group, flat = [], conflicts = [], allocError = null, startErr
     resolveGroup: async (name: string) => (group && name === group.name ? { group, flat } : { group: null, flat: [] }),
     conflictsFor: () => conflicts,
     refreshRunning: async () => {},
+    // The fake decides "still running" by feature name (see stillRunning), so the map
+    // itself is never read — only its identity as the argument.
+    running: () => new Map<string, { pid: number; ports: number[] }>(),
     scheduleBroadcast: () => { calls.broadcasts++; },
     rescan: async () => {},
   };
@@ -408,6 +440,53 @@ test('group/restart reports ok:false when a member fails to come back', async ()
     assert.equal(body.started, 0);
     assert.equal(body.failures.length, 2);
   });
+});
+
+// ---------------------------------------------------------------------------
+// A slot is freed only when the feature is really down
+//
+// Three routes used to free slots three different ways. Only /servers/stop guarded on
+// "nothing of this feature is still listening"; /group/stop and /sessions/:id/servers/stop
+// released as soon as they had stopped what THEY knew about. A feature can own a worktree
+// the caller never enumerated — a plain `wt` worktree joins the feature but not the
+// session — so the slot went back in the pool while its ports were still held, and the
+// next feature bound the same ones.
+// ---------------------------------------------------------------------------
+
+test('group/stop holds the slot when something of the feature is still listening', async () => {
+  const { app, calls } = harness({ group: FEATURE, stillRunning: ['feat-a'] });
+  await serving(app, async (get) => {
+    await get('/api/v1/group/stop', post({ group: 'feat-a' }));
+  });
+  assert.deepEqual(calls.released, [], 'nothing may be freed while a member still holds its ports');
+  assert.ok(calls.heldSlots.length > 0, 'and the guard is what held it');
+});
+
+test('group/stop frees the slot once the feature is quiet', async () => {
+  const { app, calls } = harness({ group: FEATURE });
+  await serving(app, async (get) => {
+    await get('/api/v1/group/stop', post({ group: 'feat-a' }));
+  });
+  assert.deepEqual(calls.released, ['feat-a', 'feat-a'], 'one release attempt per member, all idle');
+  assert.deepEqual(calls.heldSlots, []);
+});
+
+test('group/close guards its slot release too', async () => {
+  const { app, calls } = harness({ group: FEATURE, stillRunning: ['feat-a'] });
+  await serving(app, async (get) => {
+    await get('/api/v1/group/close', post({ group: 'feat-a' }));
+  });
+  assert.deepEqual(calls.released, [], 'close released against a stale map and did not refresh at all');
+});
+
+test('group/delete frees the slot unconditionally — the worktrees are gone', async () => {
+  // The one place the bare release is right: guarding would leak the slot forever if a
+  // stray process still held a port from a path that no longer exists.
+  const { app, calls } = harness({ group: FEATURE, stillRunning: ['feat-a'] });
+  await serving(app, async (get) => {
+    await get('/api/v1/group/delete', post({ group: 'feat-a' }));
+  });
+  assert.ok(calls.released.includes('feat-a'), 'a deleted feature always gives its slot back');
 });
 
 test('the needsConfirm answer stays ok:true — the server is asking, not failing', async () => {

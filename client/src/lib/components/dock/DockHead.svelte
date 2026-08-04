@@ -52,7 +52,6 @@
 <style>
   .dock-head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; flex-wrap:wrap; }
   .dock-title { font-weight:650; font-size:15px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .dock-actions { display:flex; gap:7px; align-items:center; margin-left:auto; flex-wrap:wrap; }
   .repochips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   .repochip2 { font-family:var(--mono); font-size:10.5px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:2px 7px; }
   .repochip2.primary { color:var(--brand); border-color:var(--brand); }

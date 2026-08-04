@@ -34,8 +34,7 @@ function give(features: Feature[], sessions: Session[] = [], repos: unknown[] = 
 
 beforeEach(() => {
   ui.repoFilter = '';
-  ui.selectedId = null;
-  ui.selectedFeatureName = null;
+  ui.clearSelection();
   give([]);
 });
 

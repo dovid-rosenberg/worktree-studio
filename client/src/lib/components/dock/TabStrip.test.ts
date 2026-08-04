@@ -47,8 +47,10 @@ describe('TabStrip', () => {
     const lists = container.querySelectorAll('[role="tablist"]');
     expect(lists).toHaveLength(2);
     expect(within(lists[0] as HTMLElement).getAllByRole('tab')).toHaveLength(3);
-    // Changes / Logs / Insights — views of the session, owning no process.
-    expect(within(lists[1] as HTMLElement).getAllByRole('tab')).toHaveLength(3);
+    // Changes / Logs — views of the session, owning no process. Insights used to be a
+    // third here, scoped to the session, while a fleet-wide view of the same name lived
+    // behind ⌘\. They are one destination now, reached from the top bar.
+    expect(within(lists[1] as HTMLElement).getAllByRole('tab')).toHaveLength(2);
   });
 
   it('selects by window id, not by position', () => {
@@ -102,7 +104,11 @@ describe('TabStrip', () => {
   it('hides the worktree-only panels for an unpromoted session', () => {
     render(TabStrip, { session: session({ worktreePath: null }) });
     expect(screen.queryByRole('tab', { name: /Changes/ })).not.toBeInTheDocument();
-    // Insights is not gated on promotion: a transcript exists before a worktree does.
-    expect(screen.getByRole('tab', { name: /Insights/ })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Logs/ })).not.toBeInTheDocument();
+  });
+
+  it('has no Insights tab — Insights is one destination, not a per-session panel', () => {
+    render(TabStrip, { session: session() });
+    expect(screen.queryByRole('tab', { name: /Insights/ })).not.toBeInTheDocument();
   });
 });

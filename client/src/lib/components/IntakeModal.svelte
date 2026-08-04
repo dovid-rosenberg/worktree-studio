@@ -57,7 +57,7 @@
     if (loading) return;
     loading = true;
     try {
-      const out = await api('GET', `/api/sources/${source}/items?repo=${encodeURIComponent(repo)}`);
+      const out = await api('GET', `/api/v1/sources/${source}/items?repo=${encodeURIComponent(repo)}`);
       if (!out.ok) throw new Error(out.error || 'failed');
       issues = out.items || [];
       if (!issues.length) toast('No items found.');
@@ -86,7 +86,7 @@
     if (extra.size) body.additionalRepos = [...extra];
     starting = true;
     try {
-      const s = await api('POST', '/api/sessions', body);
+      const s = await api('POST', '/api/v1/sessions', body);
       overlays.closeIntake();
       ui.goToSession(s.id);
       toast(`Session started — ${s.title}`);

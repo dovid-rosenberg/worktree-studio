@@ -38,7 +38,7 @@
     let alive = true;
     (async () => {
       try {
-        const d = await api('GET', '/api/settings');
+        const d = await api('GET', '/api/v1/settings');
         if (!alive) return;
         const src = d.sources || {};
         baseDirs = (d.baseDirs || []).join('\n');
@@ -99,7 +99,7 @@
 
     notify.prefs = { ...notify.prefs, ...nt };
     try {
-      await api('POST', '/api/settings', {
+      await api('POST', '/api/v1/settings', {
         sources: {
           gitlab: { enabled: gl.enabled, host: gl.host.trim(), project: gl.project.trim(), token: gl.token.trim() },
           asana: { enabled: as.enabled, token: as.token.trim(), workspace: as.workspace.trim() },

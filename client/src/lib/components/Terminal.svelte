@@ -5,11 +5,11 @@
    * This replaces the duplicated globals in public/app.js — term/term2, fit/fit2,
    * ws/ws2, ro/ro2 and their parallel open/connect/resize/destroy functions. Every
    * instance owns its xterm, socket, fit addon and ResizeObserver privately, so the
-   * primary pane and the split pane are the same code with different props and
+   * every terminal on screen is the same code with different props and
    * neither can reach into the other's state. Mount it twice to get a split.
    *
    * Wire protocol (server/server.js, wss.on('connection')) — unchanged:
-   *   GET /ws/term?session=<id>[&pane=split][&tab=<i>]&cols=<n>&rows=<n>
+   *   GET /ws/term?session=<id>[&tab=<i>]&cols=<n>&rows=<n>
    *   client → server: raw bytes (written straight to the pty), or JSON
    *                    {type:'resize',cols,rows} / {type:'input',data}
    *   server → client: raw pty output, text or binary frames
@@ -25,8 +25,6 @@
   let {
     /** Session id from /api/state. */
     sessionId,
-    /** `'split'` attaches the standalone `-split` session; null/undefined is the primary. */
-    pane = null,
     /** Optional pane/window index, forwarded as `tab`. */
     tab = null,
     /** False while the pane is hidden — suppresses fitting against a zero-sized box. */
@@ -113,7 +111,6 @@
     if (gen !== generation) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const qs = new URLSearchParams({ session: sessionId, cols: String(t.cols), rows: String(t.rows) });
-    if (pane) qs.set('pane', pane);
     if (tab != null) qs.set('tab', String(tab));
     // A WebSocket handshake cannot carry a header, so the boot token rides in the query
     // string — the form server/security.js accepts for exactly this reason. Without it
@@ -236,7 +233,7 @@
     // `file` classify this source as binary, and every -I grep (ripgrep, ugrep,
     // git grep) then skipped the file SILENTLY — a search for anything in here
     // came back empty rather than wrong, which is the worse failure.
-    const target = `${sessionId}\0${pane ?? ''}\0${tab ?? ''}`;
+    const target = `${sessionId}\0${tab ?? ''}`;
     const t = term;
     if (!t || !sessionId) return;
 
@@ -249,7 +246,7 @@
     return () => closeSocket();
   });
 
-  // Re-theme in place. app.js only ever re-themed the primary terminal, so a split pane
+  // Re-theme in place. app.js only ever re-themed the primary terminal, so a second one
   // kept the old palette until it was torn down; here every instance follows.
   $effect(() => {
     const t = term;
@@ -290,7 +287,7 @@
   }
 </script>
 
-<div class="term-wrap" bind:this={host} data-session={sessionId} data-pane={pane ?? 'main'}></div>
+<div class="term-wrap" bind:this={host} data-session={sessionId}></div>
 
 <style>
   /* Follows the theme via --term-bg. That token and TERM_THEMES in theme.svelte.ts

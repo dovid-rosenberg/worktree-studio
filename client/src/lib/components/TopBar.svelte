@@ -17,9 +17,6 @@
    *
    * Zeros are hidden: a count of zero takes the same space as a real one and says
    * nothing.
-   *
-   * The `actions` snippet is kept from the foundation version so a caller can inject
-   * extra controls without this component learning about them.
    */
   import { theme, toggleTheme } from '$lib/theme.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
@@ -27,8 +24,6 @@
   import { overlays } from '$lib/stores/overlays.svelte.js';
   import { notify } from '$lib/stores/notify.svelte.js';
   import { restartStack, stopStack } from '$lib/ops.svelte.js';
-
-  let { actions = undefined } = $props();
 
   const feats = $derived(world.features);
   /** Per WORKTREE: each one runs its own dev server, so this is the honest denominator. */
@@ -82,7 +77,6 @@
   {/if}
 
   <span class="spacer"></span>
-  {@render actions?.()}
 
   <button class="btn ghost" title="Command palette (⌘K)" aria-label="Command palette" onclick={() => overlays.togglePalette()}>⌘K</button>
   <button class="btn ghost" title="Connections & settings" aria-label="Connections & settings" onclick={() => overlays.openSettings()}>⚙</button>

@@ -73,14 +73,27 @@ type LaunchOpts = unknown;
 interface Servers {
   featureFor(worktreePath: string): string;
   allocSlotFor(feature: string): { slot?: number; error?: string };
+  /**
+   * Release only when nothing of the feature is still listening. Replaces the bare
+   * releaseSlot() these routes used to call: stopping every member this route knows about
+   * is not the same as the feature being down, because a feature can own a worktree the
+   * caller never enumerated. See servers.ts.
+   */
+  releaseSlotIfIdle(feature: string, running: Map<string, { pid: number; ports: number[] }>): boolean;
+  /** Unconditional. Only /group/delete may use it — the worktrees are gone by then. */
   releaseSlot(feature: string): void;
   launchOpts(repo: string, feature: string): LaunchOpts;
   // `listening` is the strong verdict: true = every expected port bound, false = the
   // poll window expired with one still down, undefined = nothing to check. See
   // servers.ts's StartResult for why the third case is not folded into the others.
-  start(repo: string, worktreePath: string, opts: LaunchOpts): Promise<{
-    ok: boolean; error?: string; listening?: boolean; boundElsewhere?: number[];
-  }>;
+  /**
+   * Allocate every slot, then launch every target. One implementation of a sequence three
+   * routes used to spell out independently — see servers.ts.
+   */
+  startAll(targets: Array<{ repo: string; worktreePath: string }>): Promise<
+    | { ok: false; slotError: string }
+    | { ok: true; results: Array<{ repo: string; ok: boolean; error?: string; listening?: boolean; boundElsewhere?: number[] }> }
+  >;
   stop(repo: string, worktreePath: string): Promise<unknown>;
   // Was `Promise<unknown>` while /group/restart threw the result away and answered a
   // hardcoded `ok: true`. The verdict is only reportable if the type admits it exists.
@@ -118,6 +131,8 @@ interface OrchestratorDeps {
   resolveGroup: (name: string) => Promise<{ group: ResolvedGroup | null; flat: Member[] }>;
   conflictsFor: (member: Member, flat: Member[]) => Member[];
   refreshRunning: () => Promise<unknown>;
+  /** The discovered running map, read AFTER refreshRunning() so slot release can be guarded. */
+  running: () => Map<string, { pid: number; ports: number[] }>;
   scheduleBroadcast: () => void;
   rescan: () => Promise<unknown>;
 }
@@ -135,7 +150,16 @@ interface GroupBody {
 
 // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
 function register(app: Router, deps: OrchestratorDeps): void {
-  const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast, rescan } = deps;
+  const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, running, scheduleBroadcast, rescan } = deps;
+
+  /**
+   * Free the feature's slot for every member, but only if the feature is genuinely down.
+   * Always called AFTER refreshRunning(), because the guard reads what is still listening.
+   */
+  const releaseIdleSlots = (members: Member[]): void => {
+    const live = running();
+    for (const m of members) servers.releaseSlotIfIdle(servers.featureFor(m.path), live);
+  };
 
   app.post('/group/start', async (req, res) => {
     const { group, stopConflicts }: GroupBody = req.body || {};
@@ -169,15 +193,14 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // Members of a real feature resolve to the same identity → one slot; under the
     // default `basename` strategy a degenerate mixed-name manual group gets a
     // per-worktree slot each (the `manifest` strategy is what fixes that).
-    for (const m of toStart) {
-      const alloc = servers.allocSlotFor(servers.featureFor(m.path));
-      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    }
+    // Slots first, then launches — servers.startAll owns that sequence for all three
+    // routes that need it, so they cannot drift apart again.
+    const out = await servers.startAll(toStart.map((m) => ({ repo: m.repo, worktreePath: m.path })));
+    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
+
     let started = 0; const failures: Array<{ repo: string; error?: string }> = [];
-    await Promise.all(toStart.map(async (m) => {
-      const feat = servers.featureFor(m.path);
-      const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, feat));
-      if (!r.ok) { failures.push({ repo: m.repo, error: r.error }); return; }
+    for (const r of out.results) {
+      if (!r.ok) { failures.push({ repo: r.repo, error: r.error }); continue; }
       // Spawned but never bound. This used to count as a start, which is the precise
       // shape of "it said it started and nothing is running": the process was created,
       // so `ok` was true, and whether it survived long enough to listen was never asked.
@@ -186,15 +209,15 @@ function register(app: Router, deps: OrchestratorDeps): void {
         // message: a server on an unexpected port is UP and misconfigured (its repo does
         // not read the slot's port env var), where one on no port at all is down.
         failures.push({
-          repo: m.repo,
+          repo: r.repo,
           error: r.boundElsewhere?.length
             ? `started on port ${r.boundElsewhere.join(', ')} instead of the port this feature's slot expects — this repo does not appear to read its configured port env var, so a second feature cannot run it`
             : 'started but no port was listening — check its log',
         });
-        return;
+        continue;
       }
       started++;
-    }));
+    }
     await refreshRunning();
     scheduleBroadcast();
     /*
@@ -223,8 +246,11 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
-    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
+    // Refresh first, then release: the guard reads what is still listening, and this
+    // released the slot BEFORE looking — so a member that refused to die still took its
+    // ports while the slot went back in the pool.
     await refreshRunning();
+    releaseIdleSlots(g.members);
     scheduleBroadcast();
     res.json({ ok: true });
   });
@@ -290,7 +316,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.deactivate(m.session.id);
     }
-    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
+    // Close had no refresh at all, so it released against a stale map.
+    await refreshRunning();
+    releaseIdleSlots(g.members);
     scheduleBroadcast();
     res.json({ ok: true });
   });
@@ -309,7 +337,10 @@ function register(app: Router, deps: OrchestratorDeps): void {
       const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: !!deleteBranches });
       results.push({ repo: m.repo, ok: rr.ok, error: rr.ok ? undefined : rr.error });
     }
-    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // feature removed → free its slot
+    // Unconditional, and the ONE place that is right: the worktrees are gone, so the
+    // feature no longer exists. Guarding here would leak the slot forever if some stray
+    // process were still holding a port from a path that has been deleted.
+    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path));
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   });

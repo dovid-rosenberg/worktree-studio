@@ -108,7 +108,7 @@ describe('FeaturePane', () => {
   it('fetches the rollup for the feature, by name', async () => {
     render(FeaturePane, { feature: feature() });
     await waitFor(() => expect(api).toHaveBeenCalled());
-    expect(api).toHaveBeenCalledWith('GET', '/api/group/token-race-fix/commits');
+    expect(api).toHaveBeenCalledWith('GET', '/api/v1/group/token-race-fix/commits');
   });
 
   it('grows no action buttons back — the ActionBar owns those', async () => {

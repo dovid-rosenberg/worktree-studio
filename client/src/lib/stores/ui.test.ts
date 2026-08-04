@@ -45,8 +45,7 @@ function give({ features = [] as Feature[], sessions = [] as Session[], repos = 
 beforeEach(() => {
   give({});
   ui.repoFilter = '';
-  ui.selectedId = null;
-  ui.selectedFeatureName = null;
+  ui.clearSelection();
 });
 
 describe('featureActive', () => {
@@ -192,7 +191,7 @@ describe('selection', () => {
     // Selection happens when the create call returns; the session arrives with the next
     // SSE frame. That window used to render "No session selected".
     give({ sessions: [] });
-    ui.selectedId = 'brand-new';
+    ui.select('brand-new');
     expect(ui.selectionPending).toBe(true);
 
     give({ sessions: [session('brand-new')] });

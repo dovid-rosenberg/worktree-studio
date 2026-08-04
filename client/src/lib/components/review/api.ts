@@ -9,7 +9,7 @@
  *   POST /sessions/:id/hunks/stage | /unstage      { repo, file, hunks, expect }
  */
 
-import { TOKEN } from '$lib/api.js';
+import { request } from '$lib/api.js';
 
 /*
  * The diff shapes come from the SERVER, not a second description of them. server/diff.ts
@@ -61,37 +61,24 @@ export interface FileHunks {
 
 const api = (id: string): string => `/api/v1/sessions/${encodeURIComponent(id)}`;
 
-/**
- * The daemon's boot token, from the one module that resolves it.
+/*
+ * Transport — auth, parsing, and turning a non-2xx into a thrown Error carrying the
+ * server's own message — comes from $lib/api.js's `request`.
  *
- * This panel keeps its own request/response plumbing (its routes and its error shape
- * are its own), but NOT its own answer to auth: resolving the token means knowing that
- * the injected value may still be the un-substituted placeholder and that dev gets it
- * from Vite instead. Two copies of that means one of them is wrong — and it was: this
- * file read `globalThis.WTS_TOKEN` with neither guard, so in dev it sent the literal
- * placeholder and every call 401'd.
+ * This module used to do all three itself, and the auth half was WRONG: it read
+ * `globalThis.WTS_TOKEN` with none of the placeholder guards, so in dev it sent the
+ * literal `__WTS_TOKEN__` and every call 401'd. That is what two copies of one answer
+ * costs.
+ *
+ * The error text matters here: the hunk routes answer 400 with `{ ok:false, error }` for
+ * every refusal that is the caller's to fix (stale hunk, binary file, nothing to stage),
+ * and that text is written for a human — which is exactly what `request` surfaces.
  */
-function authHeaders() {
-  return TOKEN ? { 'x-wts-token': TOKEN } : undefined;
-}
-
-/**
- * One place that turns a non-2xx into a thrown Error carrying the server's own message.
- * The hunk routes answer 400 with `{ ok:false, error }` for every refusal that is the
- * caller's to fix (stale hunk, binary file, nothing to stage) — that text is written for
- * a human, so it is exactly what the UI should show.
- */
-async function unwrap(res: Response): Promise<any> {
-  let body = null;
-  try { body = await res.json(); } catch { /* empty or non-JSON body */ }
-  if (!res.ok) throw new Error((body && body.error) || `HTTP ${res.status} ${res.statusText}`);
-  return body;
-}
 
 /**
  */
 export async function fetchCommits(sessionId: string, signal?: AbortSignal): Promise<{ repos: RepoCommits[] }> {
-  return unwrap(await fetch(`${api(sessionId)}/commits`, { signal, headers: authHeaders() }));
+  return request('GET', `${api(sessionId)}/commits`, { signal });
 }
 
 /**
@@ -99,7 +86,7 @@ export async function fetchCommits(sessionId: string, signal?: AbortSignal): Pro
  */
 export async function fetchCommitDetail(sessionId: string, repo: string, sha: string, signal?: AbortSignal): Promise<{ files: DetailFile[] }> {
   const q = `?repo=${encodeURIComponent(repo)}&sha=${encodeURIComponent(sha)}`;
-  return unwrap(await fetch(`${api(sessionId)}/commit-detail${q}`, { signal, headers: authHeaders() }));
+  return request('GET', `${api(sessionId)}/commit-detail${q}`, { signal });
 }
 
 /**
@@ -107,7 +94,7 @@ export async function fetchCommitDetail(sessionId: string, repo: string, sha: st
  */
 export async function fetchHunks(sessionId: string, repo: string, file: string, signal?: AbortSignal): Promise<FileHunks> {
   const q = `?repo=${encodeURIComponent(repo)}&file=${encodeURIComponent(file)}`;
-  return unwrap(await fetch(`${api(sessionId)}/hunks${q}`, { signal, headers: authHeaders() }));
+  return request('GET', `${api(sessionId)}/hunks${q}`, { signal });
 }
 
 /**
@@ -122,10 +109,5 @@ export async function fetchHunks(sessionId: string, repo: string, file: string, 
  *
  */
 export async function applyHunks(op: 'stage' | 'unstage', sessionId: string, sel: { repo: string; file: string; hunks: number[]; expect: string[] }): Promise<FileHunks & { ok: true; hunks: number[] }> {
-  const res = await fetch(`${api(sessionId)}/hunks/${op}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: JSON.stringify(sel),
-  });
-  return unwrap(res);
+  return request('POST', `${api(sessionId)}/hunks/${op}`, { body: sel });
 }

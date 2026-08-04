@@ -10,7 +10,19 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 CFG="${WT_STUDIO_CONFIG:-$HOME/.config/worktree-studio/config.json}"
 PORT="$(jq -r '.web.port // 7788' "$CFG" 2>/dev/null || echo 7788)"
 BASE="http://127.0.0.1:$PORT"
-ACT="$HOME/worktree-studio/swiftbar/wts-action.sh"
+# Where this checkout lives. Derived from the script's own path rather than hardcoded:
+# it used to assume ~/worktree-studio, so on a checkout anywhere else both the action
+# helper and the "Start it" item below pointed at a directory that does not exist and
+# silently did nothing. SwiftBar normally SYMLINKS plugins into its own folder, hence
+# the resolve loop. WT_STUDIO_HOME overrides it.
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  LINK_DIR="$(cd -P "$(dirname "$SELF")" && pwd)"
+  SELF="$(readlink "$SELF")"
+  case "$SELF" in /*) ;; *) SELF="$LINK_DIR/$SELF" ;; esac
+done
+REPO="${WT_STUDIO_HOME:-$(cd -P "$(dirname "$SELF")/.." && pwd)}"
+ACT="$REPO/swiftbar/wts-action.sh"
 # The API needs the boot token; it lives in the state dir at mode 0600, so only
 # processes running as this user can read it.
 STATE_DIR="${WT_STUDIO_STATE:-$HOME/.local/state/worktree-studio}"
@@ -27,7 +39,7 @@ if ! echo "$STATE" | jq -e 'has("sessions")' >/dev/null 2>&1; then
     echo "$(echo "$STATE" | jq -r '.error // "unexpected response"') — check $STATE_DIR/token"
   else
     echo "Worktree Studio not running | color=#d05f30"
-    echo "Start it | bash=/bin/bash param1=-lc param2=cd $HOME/worktree-studio && npm start terminal=true"
+    echo "Start it | bash=/bin/bash param1=-lc param2=cd $REPO && npm start terminal=true"
   fi
   exit 0
 fi

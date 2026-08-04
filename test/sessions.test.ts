@@ -6,6 +6,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { SessionManager } from '../server/sessions.ts';
 import { shq } from '../server/util.ts';
+import { CONFIG_DIR } from '../server/config.ts';
 import type { Session, Worktree } from '../server/types.ts';
 import type { PartialDeep, Config } from '../server/types.ts';
 import { expectOk, muxStub, present, session, sessionRepo } from './helpers.ts';
@@ -210,6 +211,25 @@ test('claudeCmd appends the seed as the final positional arg on a FRESH launch, 
   assert.ok(resumed.includes(`-r ${shq('sid-9')}`), `resume should still add -r <id>: ${resumed}`);
 });
 
+test('the add-repo CLI path in the system prompt actually exists on disk', () => {
+  /*
+   * The bug: the hint was built as `bin/wt-studio.js` while the file is `bin/wt-studio.ts`
+   * — the CLI moved with the TypeScript migration and this string did not. Every session's
+   * --append-system-prompt told the agent to run a path that does not exist, so `add-repo`
+   * failed from inside a session with a module-not-found nobody could place.
+   *
+   * Asserting the extension would just re-encode the mistake, so this stats the file the
+   * prompt actually names: rename the CLI again and this fails.
+   */
+  const m = manager();
+  const s = session({ settingsFile: '/tmp/s.settings.json', feature: 'f', repos: [sessionRepo({ primary: true })] });
+  const cmd = m.claudeCmd(s);
+
+  const found = cmd.match(/(\S*bin\/wt-studio\.\w+)/);
+  assert.ok(found, `the prompt should name the add-repo CLI: ${cmd}`);
+  assert.ok(fs.existsSync(found[1]), `the prompt names a CLI that does not exist: ${found[1]}`);
+});
+
 test('activate/restore resume cwd resolves to home (transcript dir) for a promoted session', async () => {
   const m = manager();
   const home = tempRepo('home');
@@ -270,6 +290,17 @@ test('tmux sendText sends the body literally (-l) then submits with a separate E
   } finally {
     await tmux.kill(name);
     fs.rmSync(outFile, { force: true });
+    /*
+     * Remove the launch script this created.
+     *
+     * This test drives the REAL tmux, so tmux.ensure() → launchKeys() writes into the
+     * real CONFIG_DIR — tmux.ts resolves it at module load, and a static import is
+     * hoisted above any env var this file could set. So every `npm test` used to leak
+     * one file into ~/.config/worktree-studio/launch/, which is most of what had
+     * accumulated there. The boot reaper would clear them within a day; not creating
+     * them is better.
+     */
+    fs.rmSync(path.join(CONFIG_DIR, 'launch', `${name}-0.sh`), { force: true });
   }
 });
 

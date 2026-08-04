@@ -313,6 +313,31 @@ class Servers {
 
   releaseSlot(feature: string): void { if (feature && this.slots.delete(feature)) this._save(); }
 
+  /**
+   * Release a feature's slot only if nothing of that feature is still listening.
+   *
+   * The safe form of releaseSlot, and the only one callers should reach for. Three routes
+   * used to free slots three different ways: `/servers/stop` guarded on this condition,
+   * while `/sessions/:id/servers/stop` and `/group/stop` released unconditionally once
+   * they had stopped what THEY knew about.
+   *
+   * Unconditional release is only correct if the caller stopped every member of the
+   * feature, and a caller cannot assume that. A session's `repos` can be a strict subset
+   * of its feature's members — a worktree made with a plain `wt` joins the feature but
+   * not the session — so stopping the session's repos can leave a sibling running. The
+   * slot then goes back in the pool, the next feature is handed it, and both bind the
+   * same ports.
+   *
+   * `running` is the discovered map (realpath → {pid,ports}) from discoverRunning();
+   * callers pass the cache they have just refreshed.
+   */
+  releaseSlotIfIdle(feature: string, running: Map<string, RunningServer>): boolean {
+    if (!feature) return false;
+    for (const p of running.keys()) if (this.featureFor(p) === feature) return false;
+    this.releaseSlot(feature);
+    return true;
+  }
+
   // Mark a feature as having a launch in flight, so its slot is not reclaimable
   // while its ports are still coming up. Always paired in a finally.
   _beginStart(feature: string): void {
@@ -714,6 +739,37 @@ class Servers {
       }
       return { ok: true, pid: child.pid, log, listening, boundElsewhere };
     } finally { this._endStart(feature); this._unlock(lock); }
+  }
+
+  /**
+   * Allocate the slots, then launch — the whole sequence, once.
+   *
+   * Three routes spelled this out independently (`/sessions/:id/servers/start`,
+   * `/servers/start`, `/group/start`): featureFor → allocSlotFor → 409 on error →
+   * start(repo, path, launchOpts(repo, feature)). Three copies is how the stop
+   * counterparts came to disagree about when a slot may be released, and it is how the
+   * next divergence would have arrived too.
+   *
+   * ALL slots are allocated before ANY launch, deliberately. Allocating as you go means
+   * a stack that runs out of slots half way has already spawned the first half, and the
+   * caller's 409 then describes a state it has partly created.
+   *
+   * Launches run concurrently: start() takes a per-worktree lock, so distinct worktrees
+   * never contend, and a multi-repo stack should not pay the sum of its members' boot
+   * times. (The session route used to do this serially, for no stated reason.)
+   */
+  async startAll(
+    targets: Array<{ repo: string; worktreePath: string }>,
+  ): Promise<{ ok: false; slotError: string } | { ok: true; results: Array<{ repo: string } & StartResult> }> {
+    for (const t of targets) {
+      const alloc = this.allocSlotFor(this.featureFor(t.worktreePath));
+      if (alloc.error) return { ok: false, slotError: alloc.error };
+    }
+    const results = await Promise.all(targets.map(async (t) => {
+      const feature = this.featureFor(t.worktreePath);
+      return { repo: t.repo, ...(await this.start(t.repo, t.worktreePath, this.launchOpts(t.repo, feature))) };
+    }));
+    return { ok: true, results };
   }
 
   // Ports a server in this worktree would be listening on: the feature's

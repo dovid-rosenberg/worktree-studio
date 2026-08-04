@@ -59,8 +59,7 @@ export interface TmuxDriver {
   available(): Promise<boolean>;
   hasSession(name: string): Promise<boolean>;
   ensure(name: string, opts?: TmuxLaunchOptions): Promise<TmuxEnsureResult>;
-  attachSpawn(name: string, opts?: { group?: string }): AttachSpec;
-  ensureSplit(name: string, opts?: { cwd?: string }): Promise<void>;
+  attachSpawn(name: string): AttachSpec;
   newTab(name: string, opts?: TmuxNewTabOptions): Promise<TmuxNewTabResult>;
   listTabs(name: string): Promise<TmuxTab[]>;
   capture(name: string, target?: string): Promise<string>;
@@ -120,9 +119,39 @@ function persistCmd(cmd?: string): string {
 // 1024 routinely; the cut lands mid-single-quote and the shell then sits at `quote>`
 // forever, waiting for a closing quote that was thrown away. claude never starts and
 // nothing reports an error, because from tmux's side the keys were delivered.
-// One file per pane, rewritten each launch: bounded, no cleanup, and `cat`-able when
-// a launch needs debugging.
+// One file per pane, rewritten each launch, and `cat`-able when a launch needs debugging.
+//
+// This was "bounded, no cleanup", which was only half true: bounded PER PANE, but a pane
+// name carries a session id, and ids die. 85 files had accumulated, most of them for
+// features finished weeks earlier. reapLaunchScripts() below is the missing half.
 const LAUNCH_DIR = path.join(CONFIG_DIR, 'launch');
+
+/**
+ * Delete launch scripts older than `maxAgeMs` (default 24h). Called once at boot.
+ *
+ * Age is the right key, not liveness: the file is `.`-sourced ONCE, by the shell tmux
+ * just started, and is dead weight from that moment on. So an old file cannot be in use
+ * by definition, and a session that is later resumed writes a fresh one. The window only
+ * needs to outlive a launch, and a launch is measured in seconds.
+ *
+ * Returns how many it removed, for the boot log.
+ */
+export function reapLaunchScripts(maxAgeMs = 24 * 60 * 60 * 1000): number {
+  let removed = 0;
+  const cutoff = Date.now() - maxAgeMs;
+  let names: string[];
+  try { names = fs.readdirSync(LAUNCH_DIR); } catch { return 0; } // never created yet
+  for (const name of names) {
+    if (!name.endsWith('.sh')) continue;
+    const file = path.join(LAUNCH_DIR, name);
+    try {
+      if (fs.statSync(file).mtimeMs >= cutoff) continue;
+      fs.unlinkSync(file);
+      removed++;
+    } catch { /* raced with something else, or unreadable — leave it */ }
+  }
+  return removed;
+}
 export function launchKeys(target: string, cmd?: string): string {
   const line = persistCmd(cmd);
   try {
@@ -160,26 +189,8 @@ const tmux: TmuxDriver = {
   },
 
   // For node-pty: attach an interactive client to the session.
-  //  - split: attach the embedded second pane to the `-split` session — a SEPARATE,
-  //    standalone tmux session (not grouped) with its own window list. It's just
-  //    "another terminal" in the same worktree, with its own independent tabs, so
-  //    nothing mirrors the primary. Call ensureSplit(name, {cwd}) first.
-  //  - default: attach the embedded primary client to the session.
-  attachSpawn(name, { group } = {}) {
-    const base = ['-L', SOCK];
-    if (group === 'split') {
-      return { file: 'tmux', args: [...base, 'attach-session', '-t', `${name}-split`], env: ENV };
-    }
-    return { file: 'tmux', args: [...base, 'attach-session', '-t', name], env: ENV };
-  },
-
-  // Ensure the standalone `-split` session exists with its own shell window. It is
-  // independent of the primary (not grouped): its own tabs, no shared windows. Tab
-  // ops (newTab/selectTab/closeTab/listTabs) target `${name}-split` and just work.
-  async ensureSplit(name, { cwd } = {}) {
-    if (await this.hasSession(`${name}-split`)) return;
-    await T(['new-session', '-d', '-s', `${name}-split`, '-n', 'shell', '-x', '220', '-y', '50', '-c', cwd || HOME]);
-    await T(['set-option', '-t', `${name}-split`, 'remain-on-exit', 'off']);
+  attachSpawn(name) {
+    return { file: 'tmux', args: ['-L', SOCK, 'attach-session', '-t', name], env: ENV };
   },
 
   // `-P -F #{window_id}` returns tmux's STABLE window id (@7), not its index.
@@ -244,7 +255,8 @@ const tmux: TmuxDriver = {
 
   async kill(name) {
     await T(['kill-session', '-t', `=${name}`]);
-    // still killed: sessions created before pop-out was removed may have one alive
+    // Still killed, and deliberately: sessions created before pop-out and the split pane
+    // were removed may have one of these alive, and nothing else would ever reap them.
     await T(['kill-session', '-t', `=${name}-popout`]);
     await T(['kill-session', '-t', `=${name}-split`]);
     return true;

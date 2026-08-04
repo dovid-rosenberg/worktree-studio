@@ -111,58 +111,6 @@ function defaults(): ShippedConfig {
   };
 }
 
-// One-time migration, and the reason `concurrency.repos` can safely ship empty.
-//
-// Until now this port map lived in defaults(), and defaults() is merged into the
-// on-disk config at load time — so an install whose config.json never wrote a
-// `concurrency` key was silently *running on it*. Emptying the defaults would
-// therefore turn concurrency off under that install's feet: every dev server back
-// on slot-0 ports, and "stop & switch" conflicts back for repos that used to run
-// side by side. So a config that predates the key gets the old block written into
-// it, once, and owns it from then on.
-//
-// A config created from today's defaults() always HAS a `concurrency` key (with an
-// empty `repos`), so a new install never matches this branch and never sees these
-// values. Delete this once no pre-0.2 config remains.
-const LEGACY_CONCURRENCY = (): ConcurrencyConfig => ({
-  enabled: true,
-  offsetStep: 100,
-  maxSlots: 3,
-  repos: {
-    'accept-blue': {
-      portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
-      slotEnv: ['redis__db'],
-    },
-    // The FE repos hardcode accept-blue's slot-0 ports in a gitignored, per-worktree
-    // config file. On stack-start Studio shifts ALL of the sibling's port families in
-    // that file to this feature's slot (ab-su references su/merchant/iso, so a single
-    // per-port key is wrong — every referenced accept-blue port moves by slot*step).
-    'merchant-v3': {
-      portEnv: { WTS_FE_PORT: 3030 }, // vite; localhost:1239 (merchant)
-      configPatch: { file: 'src/config.ts', siblingRepo: 'accept-blue' },
-    },
-    'ab-iso-fe': {
-      portEnv: { WTS_FE_PORT: 9000 }, // webpack-dev-server; iso 1232 + merchant 1239
-      configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' },
-    },
-    'ab-su': {
-      portEnv: { WTS_FE_PORT: 8000 }, // vite; su 1231 + merchant 1239 + iso 1232
-      configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' },
-    },
-  },
-});
-
-// Mutates `raw` (the config exactly as it sits on disk, before any default merge)
-// and returns true when something changed and it should be written back. Writing
-// back is what makes the migration one-time: the key is then present forever.
-function migrate(raw: OnDiskConfig | null | undefined): boolean {
-  if (raw && typeof raw === 'object' && !('concurrency' in raw)) {
-    raw.concurrency = LEGACY_CONCURRENCY();
-    return true;
-  }
-  return false;
-}
-
 // Non-fatal sanity check of the concurrency block (this is a local dev tool — warn,
 // never throw). Flags two footguns:
 //   - maxSlots > 16: redis__db is set to the slot index; redis ships 16 DBs (0..15),
@@ -257,7 +205,6 @@ function load(): Config {
   } else {
     // Seed keys that used to be supplied by defaults() BEFORE the merge below, and
     // persist them, so emptying a default can never silently change behavior.
-    if (migrate(cfg)) writeJson(CONFIG_FILE, cfg);
     // shallow-merge missing top-level keys from defaults (forward-compat)
     const d = defaults();
     for (const [k, v] of Object.entries(d)) if (!(k in cfg)) cfg[k] = v;
@@ -312,4 +259,4 @@ function save(cfg: Config): void {
   writeJson(cfg._file || CONFIG_FILE, out);
 }
 
-export { load, save, defaults, migrate, validateConcurrency, CONFIG_FILE, CONFIG_DIR, STATE_DIR };
+export { load, save, defaults, validateConcurrency, CONFIG_FILE, CONFIG_DIR, STATE_DIR };
