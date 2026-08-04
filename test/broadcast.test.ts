@@ -23,7 +23,10 @@ interface MiniWorld {
 const asDeps = (w: MiniWorld): BroadcastDeps => w as unknown as BroadcastDeps;
 
 /** One parsed SSE frame. */
-interface Frame { event: string; data: Mini }
+interface Frame {
+  event: string;
+  data: Mini;
+}
 
 // A stand-in for the express response: records everything written to it.
 function fakeClient() {
@@ -33,13 +36,16 @@ function fakeClient() {
 
 // Parse an SSE byte stream into [{ event, data }], ignoring `:` comments.
 function parse(text: string): Frame[] {
-  return text.split('\n\n').filter(Boolean).flatMap((block): Frame[] => {
-    const lines = block.split('\n').filter((l) => l && !l.startsWith(':'));
-    if (!lines.length) return [];
-    const event = (lines.find((l) => l.startsWith('event: ')) || '').slice(7);
-    const data = (lines.find((l) => l.startsWith('data: ')) || '').slice(6);
-    return [{ event, data: JSON.parse(data) }];
-  });
+  return text
+    .split('\n\n')
+    .filter(Boolean)
+    .flatMap((block): Frame[] => {
+      const lines = block.split('\n').filter((l) => l && !l.startsWith(':'));
+      if (!lines.length) return [];
+      const event = (lines.find((l) => l.startsWith('event: ')) || '').slice(7);
+      const data = (lines.find((l) => l.startsWith('data: ')) || '').slice(6);
+      return [{ event, data: JSON.parse(data) }];
+    });
 }
 
 // A mutable world producing the same two halves state.ts does — including the
@@ -81,9 +87,12 @@ function refClient() {
   let sess: any = {};
   let state: any = {};
   return {
-    get state() { return state; },
+    get state() {
+      return state;
+    },
     apply(frame: Frame) {
-      if (frame.event === 'session-state') sess = frame.data; else topo = frame.data;
+      if (frame.event === 'session-state') sess = frame.data;
+      else topo = frame.data;
       const next = { ...topo, ...sess };
       const byId = new Map<unknown, any>((next.sessions || []).map((s: any) => [s.id, s]));
       const fresh = (e: any) => {
@@ -91,14 +100,20 @@ function refClient() {
         const s = byId.get(e.id);
         return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName } : null;
       };
-      const feat = (list: any[]) => (list || []).map((f: any) => ({
-        ...f,
-        session: fresh(f.session),
-        members: (f.members || []).map((m: any) => (m && !m.missing ? { ...m, session: fresh(m.session) } : m)),
-      }));
+      const feat = (list: any[]) =>
+        (list || []).map((f: any) => ({
+          ...f,
+          session: fresh(f.session),
+          members: (f.members || []).map((m: any) =>
+            m && !m.missing ? { ...m, session: fresh(m.session) } : m,
+          ),
+        }));
       state = {
         ...next,
-        repos: (next.repos || []).map((r: any) => ({ ...r, worktrees: (r.worktrees || []).map((w: any) => ({ ...w, session: fresh(w.session) })) })),
+        repos: (next.repos || []).map((r: any) => ({
+          ...r,
+          worktrees: (r.worktrees || []).map((w: any) => ({ ...w, session: fresh(w.session) })),
+        })),
         features: feat(next.features),
         groups: feat(next.groups),
       };
@@ -112,11 +127,20 @@ test('a subscriber gets a full snapshot — one frame of each half — before it
   const c = fakeClient();
   bus.subscribe(c);
   const frames = c.frames();
-  assert.deepEqual(frames.map((f) => f.event), ['topology', 'session-state']);
-  assert.deepEqual({ ...present(frames[0]).data, ...present(frames[1]).data }, world().buildState(),
-    'the pair is exactly the payload GET /state returns');
-  assert.deepEqual(Object.keys(present(frames[1]).data), ['sessions', 'servers'],
-    'the hot half is only the sessions and their servers');
+  assert.deepEqual(
+    frames.map((f) => f.event),
+    ['topology', 'session-state'],
+  );
+  assert.deepEqual(
+    { ...present(frames[0]).data, ...present(frames[1]).data },
+    world().buildState(),
+    'the pair is exactly the payload GET /state returns',
+  );
+  assert.deepEqual(
+    Object.keys(present(frames[1]).data),
+    ['sessions', 'servers'],
+    'the hot half is only the sessions and their servers',
+  );
   assert.equal(bus.clients.size, 1);
 });
 
@@ -126,10 +150,13 @@ test('hook traffic sends the session half only', () => {
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
-  bus.schedule();          // what manager.on('change') does — every Claude hook
+  bus.schedule(); // what manager.on('change') does — every Claude hook
   bus.flush();
-  assert.deepEqual(c.frames().map((f) => f.event), ['session-state'],
-    'a tool call must never make the server re-serialize every repo');
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['session-state'],
+    'a tool call must never make the server re-serialize every repo',
+  );
 });
 
 test('a topology-flagged broadcast sends both halves', () => {
@@ -140,7 +167,10 @@ test('a topology-flagged broadcast sends both halves', () => {
   c.chunks.length = 0;
   bus.schedule({ topology: true });
   bus.flush();
-  assert.deepEqual(c.frames().map((f) => f.event), ['topology', 'session-state']);
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['topology', 'session-state'],
+  );
 });
 
 test('a burst is coalesced into one flush, 80 ms later by default', (t) => {
@@ -154,7 +184,11 @@ test('a burst is coalesced into one flush, 80 ms later by default', (t) => {
   t.mock.timers.tick(79);
   assert.equal(c.chunks.length, 0, 'nothing goes out during the debounce window');
   t.mock.timers.tick(1);
-  assert.deepEqual(c.frames().map((f) => f.event), ['session-state'], '25 hooks → one frame');
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['session-state'],
+    '25 hooks → one frame',
+  );
 });
 
 test('a topology flag raised anywhere in the window survives the coalescing', (t) => {
@@ -164,16 +198,22 @@ test('a topology flag raised anywhere in the window survives the coalescing', (t
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
-  bus.schedule();                    // a hook opens the window
-  bus.schedule({ topology: true });  // a rescan lands inside it
+  bus.schedule(); // a hook opens the window
+  bus.schedule({ topology: true }); // a rescan lands inside it
   bus.schedule();
   t.mock.timers.tick(80);
-  assert.deepEqual(c.frames().map((f) => f.event), ['topology', 'session-state']);
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['topology', 'session-state'],
+  );
   // and the flag is consumed, not sticky
   c.chunks.length = 0;
   bus.schedule();
   t.mock.timers.tick(80);
-  assert.deepEqual(c.frames().map((f) => f.event), ['session-state']);
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['session-state'],
+  );
 });
 
 test('a closed session disappears — a replacement reports removals for free', () => {
@@ -209,8 +249,16 @@ test('a session-state frame refreshes the agent state embedded in the topology',
   bus.schedule();
   bus.flush();
   c.frames().forEach(client.apply);
-  assert.equal(client.state.repos[0].worktrees[0].session.state, 'waiting', 'the Fleet row follows the agent');
-  assert.equal(client.state.features[0].members[0].session.state, 'waiting', 'and so does the feature member');
+  assert.equal(
+    client.state.repos[0].worktrees[0].session.state,
+    'waiting',
+    'the Fleet row follows the agent',
+  );
+  assert.equal(
+    client.state.features[0].members[0].session.state,
+    'waiting',
+    'and so does the feature member',
+  );
 });
 
 test('connect snapshot + subsequent events converge on exactly a full rebuild', () => {
@@ -224,9 +272,19 @@ test('connect snapshot + subsequent events converge on exactly a full rebuild', 
   // a stream of hooks, a worktree appearing, the old session closing and a new one
   // adopting the new worktree — i.e. both halves changing, independently
   const steps = [
-    () => { w.sessions[0].state = 'working'; w.sessions[0].activity = 'Bash(npm test)'; bus.schedule(); },
-    () => { w.sessions[0].state = 'waiting'; bus.schedule(); },
-    () => { w.worktrees.push({ wtname: 'feat-b', path: '/w/b', sessionId: null }); bus.schedule({ topology: true }); },
+    () => {
+      w.sessions[0].state = 'working';
+      w.sessions[0].activity = 'Bash(npm test)';
+      bus.schedule();
+    },
+    () => {
+      w.sessions[0].state = 'waiting';
+      bus.schedule();
+    },
+    () => {
+      w.worktrees.push({ wtname: 'feat-b', path: '/w/b', sessionId: null });
+      bus.schedule({ topology: true });
+    },
     () => {
       w.sessions = [{ id: 's_2', state: 'idle', activity: 'starting…', muxName: 'm2', title: 'B' }];
       w.servers = { s_2: { repos: [] } };
@@ -234,9 +292,18 @@ test('connect snapshot + subsequent events converge on exactly a full rebuild', 
       w.worktrees[1].sessionId = 's_2';
       bus.schedule({ topology: true });
     },
-    () => { w.sessions[0].state = 'working'; w.sessions[0].activity = 'Edit(app.js)'; bus.schedule(); },
+    () => {
+      w.sessions[0].state = 'working';
+      w.sessions[0].activity = 'Edit(app.js)';
+      bus.schedule();
+    },
   ];
-  for (const step of steps) { early.chunks.length = 0; step(); bus.flush(); early.frames().forEach(client.apply); }
+  for (const step of steps) {
+    early.chunks.length = 0;
+    step();
+    bus.flush();
+    early.frames().forEach(client.apply);
+  }
 
   assert.deepEqual(client.state, buildState(), 'the streamed client matches GET /state exactly');
 
@@ -273,20 +340,35 @@ test('a reconnecting client re-snapshots instead of drifting on what it missed',
 test('a client that went away does not break the fan-out for the others', () => {
   const { topology, sessionState } = world();
   const bus = createBroadcast(asDeps({ topology, sessionState }));
-  const dead = { write() { throw new Error('EPIPE'); } };
+  const dead = {
+    write() {
+      throw new Error('EPIPE');
+    },
+  };
   const live = fakeClient();
   bus.subscribe(dead);
   bus.subscribe(live);
   live.chunks.length = 0;
   bus.schedule({ topology: true });
   bus.flush();
-  assert.deepEqual(live.frames().map((f) => f.event), ['topology', 'session-state']);
+  assert.deepEqual(
+    live.frames().map((f) => f.event),
+    ['topology', 'session-state'],
+  );
 });
 
 test('with nobody listening, a flush builds nothing', () => {
   let builds = 0;
   const { topology, sessionState } = world();
-  const bus = createBroadcast(asDeps({ topology: () => { builds++; return topology(); }, sessionState }));
+  const bus = createBroadcast(
+    asDeps({
+      topology: () => {
+        builds++;
+        return topology();
+      },
+      sessionState,
+    }),
+  );
   bus.schedule({ topology: true });
   bus.flush();
   assert.equal(builds, 0);
@@ -296,7 +378,21 @@ test('with nobody listening, a flush builds nothing', () => {
 // the ci half — a third event precisely so it does NOT ride the hook half
 // ---------------------------------------------------------------------------
 
-const CI = () => ({ ci: { s_1: [{ repo: 'api', hasPR: true, provider: 'github', number: 4, url: 'https://gh/4', state: 'OPEN', checks: { passed: 1, running: 0, failed: 0, total: 1 } }] } });
+const CI = () => ({
+  ci: {
+    s_1: [
+      {
+        repo: 'api',
+        hasPR: true,
+        provider: 'github',
+        number: 4,
+        url: 'https://gh/4',
+        state: 'OPEN',
+        checks: { passed: 1, running: 0, failed: 0, total: 1 },
+      },
+    ],
+  },
+});
 
 test('a subscriber gets the CI half in its snapshot too', () => {
   const { topology, sessionState } = world();
@@ -304,24 +400,39 @@ test('a subscriber gets the CI half in its snapshot too', () => {
   const c = fakeClient();
   bus.subscribe(c);
   const frames = c.frames();
-  assert.deepEqual(frames.map((f) => f.event), ['topology', 'session-state', 'ci']);
+  assert.deepEqual(
+    frames.map((f) => f.event),
+    ['topology', 'session-state', 'ci'],
+  );
   assert.deepEqual(present(frames[2]).data, CI());
 });
 
 test('hook traffic never re-sends the CI half', () => {
   let builds = 0;
   const { topology, sessionState } = world();
-  const bus = createBroadcast(asDeps({ topology, sessionState, ci: () => { builds++; return CI(); } }));
+  const bus = createBroadcast(
+    asDeps({
+      topology,
+      sessionState,
+      ci: () => {
+        builds++;
+        return CI();
+      },
+    }),
+  );
   const c = fakeClient();
   bus.subscribe(c);
   const afterSnapshot = builds;
   c.chunks.length = 0;
-  for (let i = 0; i < 10; i++) bus.schedule();     // ten tool calls
+  for (let i = 0; i < 10; i++) bus.schedule(); // ten tool calls
   bus.flush();
-  bus.schedule({ topology: true });                // …and a git rescan
+  bus.schedule({ topology: true }); // …and a git rescan
   bus.flush();
-  assert.deepEqual(c.frames().map((f) => f.event), ['session-state', 'topology', 'session-state'],
-    'CI changes on a different timescale — it must not be dragged along by either');
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['session-state', 'topology', 'session-state'],
+    'CI changes on a different timescale — it must not be dragged along by either',
+  );
   assert.equal(builds, afterSnapshot, 'and it is not even serialized');
 });
 
@@ -333,11 +444,18 @@ test('a ci-flagged broadcast sends the CI half, and the flag is consumed', () =>
   c.chunks.length = 0;
   bus.schedule({ ci: true });
   bus.flush();
-  assert.deepEqual(c.frames().map((f) => f.event), ['session-state', 'ci']);
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['session-state', 'ci'],
+  );
   c.chunks.length = 0;
   bus.schedule();
   bus.flush();
-  assert.deepEqual(c.frames().map((f) => f.event), ['session-state'], 'not sticky');
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['session-state'],
+    'not sticky',
+  );
 });
 
 test('a ci flag raised inside a debounce window survives the coalescing', (t) => {
@@ -347,11 +465,14 @@ test('a ci flag raised inside a debounce window survives the coalescing', (t) =>
   const c = fakeClient();
   bus.subscribe(c);
   c.chunks.length = 0;
-  bus.schedule();                    // a hook opens the window
-  bus.schedule({ ci: true });        // a sweep lands inside it
+  bus.schedule(); // a hook opens the window
+  bus.schedule({ ci: true }); // a sweep lands inside it
   bus.schedule({ topology: true });
   t.mock.timers.tick(80);
-  assert.deepEqual(c.frames().map((f) => f.event), ['topology', 'session-state', 'ci']);
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['topology', 'session-state', 'ci'],
+  );
 });
 
 test('a bus wired without a CI half behaves exactly as it did with two events', () => {
@@ -359,11 +480,18 @@ test('a bus wired without a CI half behaves exactly as it did with two events', 
   const bus = createBroadcast(asDeps({ topology, sessionState }));
   const c = fakeClient();
   bus.subscribe(c);
-  assert.deepEqual(c.frames().map((f) => f.event), ['topology', 'session-state']);
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['topology', 'session-state'],
+  );
   c.chunks.length = 0;
   bus.schedule({ ci: true });
   bus.flush();
-  assert.deepEqual(c.frames().map((f) => f.event), ['session-state'], 'a ci flag with no ci half is a no-op');
+  assert.deepEqual(
+    c.frames().map((f) => f.event),
+    ['session-state'],
+    'a ci flag with no ci half is a no-op',
+  );
 });
 
 test('the CI half is read at write time, so a subscriber and a flush cannot disagree', () => {
@@ -380,6 +508,19 @@ test('the CI half is read at write time, so a subscriber and a flush cannot disa
   bus.flush();
   const late = fakeClient();
   bus.subscribe(late);
-  assert.deepEqual(present(early.frames().find((f) => f.event === 'ci'), 'a ci frame').data, snapshot);
-  assert.deepEqual(present(late.frames().find((f) => f.event === 'ci'), 'a ci frame').data, snapshot, 'late joiner === streamed client');
+  assert.deepEqual(
+    present(
+      early.frames().find((f) => f.event === 'ci'),
+      'a ci frame',
+    ).data,
+    snapshot,
+  );
+  assert.deepEqual(
+    present(
+      late.frames().find((f) => f.event === 'ci'),
+      'a ci frame',
+    ).data,
+    snapshot,
+    'late joiner === streamed client',
+  );
 });

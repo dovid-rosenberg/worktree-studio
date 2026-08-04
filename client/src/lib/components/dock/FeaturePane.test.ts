@@ -17,20 +17,39 @@ vi.mock('$lib/api.js', () => ({ api }));
 const { default: FeaturePane } = await import('./FeaturePane.svelte');
 
 const member = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo, wtname: 'token-race-fix', path: `/${repo}/wt`, branch: 'fix/token-create-race',
-  running: false, canStart: true, ports: [], isMain: false, session: null, merged: false, ...over,
+  repo,
+  wtname: 'token-race-fix',
+  path: `/${repo}/wt`,
+  branch: 'fix/token-create-race',
+  running: false,
+  canStart: true,
+  ports: [],
+  isMain: false,
+  session: null,
+  merged: false,
+  ...over,
 });
 
-const feature = (over: Record<string, unknown> = {}): Feature => ({
-  name: 'token-race-fix', auto: true, members: [member('accept-blue')], session: null, ...over,
-} as unknown as Feature);
+const feature = (over: Record<string, unknown> = {}): Feature =>
+  ({
+    name: 'token-race-fix',
+    auto: true,
+    members: [member('accept-blue')],
+    session: null,
+    ...over,
+  }) as unknown as Feature;
 
 const roll = (repo: string, over: Record<string, unknown> = {}) => ({
   repo,
   branch: 'fix/token-create-race',
   base: 'develop',
   commits: [
-    { sha: '6d9b13a8b0', subject: 'Match payment type in the duplicate-token check', author: 'd', when: 'today' },
+    {
+      sha: '6d9b13a8b0',
+      subject: 'Match payment type in the duplicate-token check',
+      author: 'd',
+      when: 'today',
+    },
     { sha: 'a21a3bf8d0', subject: 'Fix race in token creation', author: 'd', when: 'today' },
   ],
   uncommitted: { fileCount: 0, added: 0, deleted: 0 },
@@ -62,12 +81,16 @@ describe('FeaturePane', () => {
   });
 
   it('blames deps first when both are true — deps is the one you can fix in a click', () => {
-    render(FeaturePane, { feature: feature({ members: [member('ab-su', { noStartCmd: true, depsMissing: true })] }) });
+    render(FeaturePane, {
+      feature: feature({ members: [member('ab-su', { noStartCmd: true, depsMissing: true })] }),
+    });
     expect(screen.getByText('deps missing')).toBeInTheDocument();
   });
 
   it('labels ports with their repo, so several members are tellable apart', () => {
-    render(FeaturePane, { feature: feature({ members: [member('accept-blue', { running: true, ports: [1233] })] }) });
+    render(FeaturePane, {
+      feature: feature({ members: [member('accept-blue', { running: true, ports: [1233] })] }),
+    });
     expect(screen.getByText('accept-blue:1233')).toBeInTheDocument();
   });
 
@@ -86,7 +109,9 @@ describe('FeaturePane', () => {
   });
 
   it('reports uncommitted work with its line counts', async () => {
-    api.mockResolvedValue({ repos: [roll('accept-blue', { uncommitted: { fileCount: 3, added: 42, deleted: 7 } })] });
+    api.mockResolvedValue({
+      repos: [roll('accept-blue', { uncommitted: { fileCount: 3, added: 42, deleted: 7 } })],
+    });
     render(FeaturePane, { feature: feature() });
     await waitFor(() => expect(screen.getByText(/uncommitted file/)).toBeInTheDocument());
     expect(screen.getByText('+42')).toBeInTheDocument();

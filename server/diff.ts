@@ -11,9 +11,7 @@
 // reproduces the input patch verbatim. That property is the whole safety net — if a
 // round trip is byte-identical, `git apply` sees exactly what git itself produced.
 
-import type {
-  DiffFile, DiffHunk, DiffHunkHeader, DiffLine, DiffLineType, DiffRow,
-} from './types.ts';
+import type { DiffFile, DiffHunk, DiffHunkHeader, DiffLine, DiffLineType, DiffRow } from './types.ts';
 
 // "\ No newline at end of file" — the message is translatable, the "\ " prefix is not,
 // so match on the prefix and keep the original text for re-serialization.
@@ -40,9 +38,16 @@ function unquotePath(p: string): string {
   const body = p.slice(1, -1);
   const bytes: number[] = [];
   for (let i = 0; i < body.length; i++) {
-    if (body[i] !== '\\') { bytes.push(body.charCodeAt(i) & 0xff); continue; }
+    if (body[i] !== '\\') {
+      bytes.push(body.charCodeAt(i) & 0xff);
+      continue;
+    }
     const c = body[++i];
-    if (c >= '0' && c <= '7') { bytes.push(parseInt(body.substr(i, 3), 8) & 0xff); i += 2; continue; }
+    if (c >= '0' && c <= '7') {
+      bytes.push(parseInt(body.substr(i, 3), 8) & 0xff);
+      i += 2;
+      continue;
+    }
     const esc: Record<string, number> = { n: 10, t: 9, r: 13, f: 12, b: 8, a: 7, v: 11 };
     bytes.push(c in esc ? esc[c] : c.charCodeAt(0) & 0xff);
   }
@@ -71,16 +76,27 @@ function alignRows(lines: Array<{ type: DiffLineType }>): DiffRow[] {
   const rows: DiffRow[] = [];
   let i = 0;
   while (i < lines.length) {
-    if (lines[i].type === 'context') { rows.push({ type: 'context', left: i, right: i }); i += 1; continue; }
+    if (lines[i].type === 'context') {
+      rows.push({ type: 'context', left: i, right: i });
+      i += 1;
+      continue;
+    }
     const dels: number[] = [];
     while (i < lines.length && lines[i].type === 'del') dels.push(i++);
     const adds: number[] = [];
     while (i < lines.length && lines[i].type === 'add') adds.push(i++);
-    if (!dels.length && !adds.length) { i += 1; continue; } // unreachable guard: never spin
+    if (!dels.length && !adds.length) {
+      i += 1;
+      continue;
+    } // unreachable guard: never spin
     for (let k = 0; k < Math.max(dels.length, adds.length); k++) {
       const left = k < dels.length ? dels[k] : null;
       const right = k < adds.length ? adds[k] : null;
-      rows.push({ type: left !== null && right !== null ? 'change' : left !== null ? 'del' : 'add', left, right });
+      rows.push({
+        type: left !== null && right !== null ? 'change' : left !== null ? 'del' : 'add',
+        left,
+        right,
+      });
     }
   }
   return rows;
@@ -97,7 +113,10 @@ function alignRows(lines: Array<{ type: DiffLineType }>): DiffRow[] {
  *        how many lines to consume
  */
 function parseHunkBody(
-  lines: string[], start: number, end: number, hunk: DiffHunkHeader,
+  lines: string[],
+  start: number,
+  end: number,
+  hunk: DiffHunkHeader,
 ): { lines: DiffLine[]; next: number } {
   const out: DiffLine[] = [];
   let i = start;
@@ -107,11 +126,18 @@ function parseHunkBody(
   let newLine = hunk.newStart;
   const attachNoNewline = (text: string) => {
     const prev = out[out.length - 1];
-    if (prev) { prev.noNewline = true; prev.noNewlineText = text; }
+    if (prev) {
+      prev.noNewline = true;
+      prev.noNewlineText = text;
+    }
   };
   while (i < end) {
     const raw = lines[i];
-    if (raw.startsWith(NO_NEWLINE_PREFIX) || raw === '\\') { attachNoNewline(raw); i += 1; continue; }
+    if (raw.startsWith(NO_NEWLINE_PREFIX) || raw === '\\') {
+      attachNoNewline(raw);
+      i += 1;
+      continue;
+    }
     if (oldLeft <= 0 && newLeft <= 0) break;
     const marker = raw[0];
     if (marker === '-') {
@@ -123,7 +149,12 @@ function parseHunkBody(
     } else if (marker === ' ' || raw === '') {
       // A bare empty line is an empty context line some tools emit without the leading
       // space; remember which form it was so a round trip stays byte-identical.
-      const line: DiffLine = { type: 'context', text: raw === '' ? '' : raw.slice(1), oldLine: oldLine++, newLine: newLine++ };
+      const line: DiffLine = {
+        type: 'context',
+        text: raw === '' ? '' : raw.slice(1),
+        oldLine: oldLine++,
+        newLine: newLine++,
+      };
       if (raw === '') line.bare = true;
       out.push(line);
       oldLeft -= 1;
@@ -140,9 +171,18 @@ function parseHunkBody(
 // what kind of change it is, and its hunks.
 function parseFile(lines: string[], start: number, end: number): DiffFile {
   const file: DiffFile = {
-    path: null, oldPath: null, newPath: null, status: 'modified',
-    binary: false, oldMode: null, newMode: null, similarity: null,
-    header: [], hunks: [], added: 0, deleted: 0,
+    path: null,
+    oldPath: null,
+    newPath: null,
+    status: 'modified',
+    binary: false,
+    oldMode: null,
+    newMode: null,
+    similarity: null,
+    header: [],
+    hunks: [],
+    added: 0,
+    deleted: 0,
   };
   let i = start;
   if (lines[i]?.startsWith('diff --git ')) file.header.push(lines[i++]);
@@ -156,14 +196,26 @@ function parseFile(lines: string[], start: number, end: number): DiffFile {
     file.header.push(l);
     if (l.startsWith('old mode ')) file.oldMode = l.slice(9).trim();
     else if (l.startsWith('new mode ')) file.newMode = l.slice(9).trim();
-    else if (l.startsWith('new file mode ')) { file.status = 'added'; file.newMode = l.slice(14).trim(); }
-    else if (l.startsWith('deleted file mode ')) { file.status = 'deleted'; file.oldMode = l.slice(18).trim(); }
-    else if (l.startsWith('similarity index ')) file.similarity = parseInt(l.slice(17), 10);
-    else if (l.startsWith('rename from ')) { file.status = 'renamed'; file.oldPath = unquotePath(l.slice(12)); }
-    else if (l.startsWith('rename to ')) { file.status = 'renamed'; file.newPath = unquotePath(l.slice(10)); }
-    else if (l.startsWith('copy from ')) { file.status = 'copied'; file.oldPath = unquotePath(l.slice(10)); }
-    else if (l.startsWith('copy to ')) { file.status = 'copied'; file.newPath = unquotePath(l.slice(8)); }
-    else if (l.startsWith('--- ')) file.oldPath = stripPrefix(l.slice(4));
+    else if (l.startsWith('new file mode ')) {
+      file.status = 'added';
+      file.newMode = l.slice(14).trim();
+    } else if (l.startsWith('deleted file mode ')) {
+      file.status = 'deleted';
+      file.oldMode = l.slice(18).trim();
+    } else if (l.startsWith('similarity index ')) file.similarity = parseInt(l.slice(17), 10);
+    else if (l.startsWith('rename from ')) {
+      file.status = 'renamed';
+      file.oldPath = unquotePath(l.slice(12));
+    } else if (l.startsWith('rename to ')) {
+      file.status = 'renamed';
+      file.newPath = unquotePath(l.slice(10));
+    } else if (l.startsWith('copy from ')) {
+      file.status = 'copied';
+      file.oldPath = unquotePath(l.slice(10));
+    } else if (l.startsWith('copy to ')) {
+      file.status = 'copied';
+      file.newPath = unquotePath(l.slice(8));
+    } else if (l.startsWith('--- ')) file.oldPath = stripPrefix(l.slice(4));
     else if (l.startsWith('+++ ')) file.newPath = stripPrefix(l.slice(4));
   }
 
@@ -171,7 +223,10 @@ function parseFile(lines: string[], start: number, end: number): DiffFile {
   // (mode-only and binary changes have none).
   if (!file.oldPath && !file.newPath && file.header[0]) {
     const m = /^diff --git (.+) (.+)$/.exec(file.header[0]);
-    if (m) { file.oldPath = stripPrefix(m[1]); file.newPath = stripPrefix(m[2]); }
+    if (m) {
+      file.oldPath = stripPrefix(m[1]);
+      file.newPath = stripPrefix(m[2]);
+    }
   }
   file.path = file.newPath || file.oldPath;
 
@@ -180,7 +235,10 @@ function parseFile(lines: string[], start: number, end: number): DiffFile {
     if (!m) {
       // `@@@` = a combined (merge) diff. We can render neither side-by-side rows nor a
       // subset patch from it, so flag it rather than mis-parsing it.
-      if (lines[i].startsWith('@@')) { file.unsupported = 'combined'; break; }
+      if (lines[i].startsWith('@@')) {
+        file.unsupported = 'combined';
+        break;
+      }
       i += 1;
       continue;
     }
@@ -237,7 +295,10 @@ function parsePatch(text: string): DiffFile[] {
 // `@@ -a,b +c,d @@section` — git omits the `,count` when the count is 1, and we match
 // that exactly so a full round trip is byte-identical.
 function formatHunkHeader(
-  oldStart: number, oldLines: number, newStart: number, newLines: number,
+  oldStart: number,
+  oldLines: number,
+  newStart: number,
+  newLines: number,
   section?: string | null,
 ): string {
   const at = (start: number, count: number) => (count === 1 ? `${start}` : `${start},${count}`);
@@ -288,7 +349,9 @@ function normalizeSelection(selection: HunkSelection, count: number): number[] {
  * @returns a patch `git apply` accepts
  */
 function formatFilePatch(
-  file: DiffFile, selection?: HunkSelection, opts: { reverse?: boolean } = {},
+  file: DiffFile,
+  selection?: HunkSelection,
+  opts: { reverse?: boolean } = {},
 ): string {
   const reverse = !!opts.reverse;
   const sel = new Set(normalizeSelection(selection, file.hunks.length));
@@ -298,11 +361,15 @@ function formatFilePatch(
   for (const h of file.hunks) {
     if (sel.has(h.index)) {
       const shift = keptDelta - allDelta;
-      out.push(formatHunkHeader(
-        reverse ? h.oldStart - shift : h.oldStart, h.oldLines,
-        reverse ? h.newStart : h.newStart + shift, h.newLines,
-        h.section,
-      ));
+      out.push(
+        formatHunkHeader(
+          reverse ? h.oldStart - shift : h.oldStart,
+          h.oldLines,
+          reverse ? h.newStart : h.newStart + shift,
+          h.newLines,
+          h.section,
+        ),
+      );
       out.push(...hunkBodyLines(h));
       keptDelta += h.newLines - h.oldLines;
     }
@@ -311,4 +378,13 @@ function formatFilePatch(
   return `${out.join('\n')}\n`;
 }
 
-export { parsePatch, formatFilePatch, formatHunkHeader, alignRows, splitLines, stripPrefix, unquotePath, normalizeSelection };
+export {
+  parsePatch,
+  formatFilePatch,
+  formatHunkHeader,
+  alignRows,
+  splitLines,
+  stripPrefix,
+  unquotePath,
+  normalizeSelection,
+};

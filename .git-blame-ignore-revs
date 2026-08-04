@@ -1,0 +1,7 @@
+# Revisions that changed formatting only. Ignore them in blame:
+#   git blame --ignore-revs-file .git-blame-ignore-revs <file>
+# Or configure it once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# Apply the formatter to the whole tree (Biome).
+5b6144a11e6d51e7c71b139215fa45d3fa37324b

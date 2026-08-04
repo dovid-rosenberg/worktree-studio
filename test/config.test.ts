@@ -65,13 +65,15 @@ test('a syntax error in config.json is refused loudly and the file is left alone
   const original = '{\n  "baseDirs": ["~/code"],\n  "start": { "api": "npm run dev" },\n}\n'; // trailing comma
   fs.writeFileSync(FILE, original);
   assert.throws(() => load(), /is not valid JSON/, 'load() must not answer a broken config with defaults');
-  assert.equal(fs.readFileSync(FILE, 'utf8'), original, 'the user\'s config is byte-for-byte untouched');
+  assert.equal(fs.readFileSync(FILE, 'utf8'), original, "the user's config is byte-for-byte untouched");
 });
 
 test('the refusal names the file and says the config was not modified', () => {
   fs.writeFileSync(FILE, '{ "baseDirs": [oops] }');
-  try { load(); assert.fail('expected a throw'); }
-  catch (e) {
+  try {
+    load();
+    assert.fail('expected a throw');
+  } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     assert.ok(m.includes(FILE), m);
     assert.match(m, /has NOT been modified/);

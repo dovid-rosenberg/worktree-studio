@@ -24,7 +24,11 @@ import type { UsageByModel } from './types.ts';
 // make every importer of this file async for a value we need synchronously here.
 let sqlite: typeof import('node:sqlite') | null = null;
 let loadError: string | null = null;
-try { sqlite = process.getBuiltinModule('node:sqlite'); } catch (e) { loadError = (e as Error).message; }
+try {
+  sqlite = process.getBuiltinModule('node:sqlite');
+} catch (e) {
+  loadError = (e as Error).message;
+}
 if (!sqlite && !loadError) loadError = 'not built into this node';
 
 function ftsAvailable(db: DatabaseSync): boolean {
@@ -32,7 +36,9 @@ function ftsAvailable(db: DatabaseSync): boolean {
     db.exec('CREATE VIRTUAL TABLE IF NOT EXISTS _fts_probe USING fts5(x)');
     db.exec('DROP TABLE IF EXISTS _fts_probe');
     return true;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 const SCHEMA = `
@@ -226,9 +232,7 @@ export type IndexSearchResult =
 // Double-quoted runs in the user's input are preserved as phrases.
 function ftsQuery(q: string | null | undefined): string | null {
   const terms = String(q || '').match(/"[^"]*"|\S+/g) || [];
-  const cleaned = terms
-    .map((t) => t.replace(/"/g, ' ').trim())
-    .filter(Boolean);
+  const cleaned = terms.map((t) => t.replace(/"/g, ' ').trim()).filter(Boolean);
   if (!cleaned.length) return null;
   return cleaned.map((t) => `"${t}"`).join(' AND ');
 }
@@ -259,7 +263,10 @@ class TranscriptIndex {
   }
 
   open(): void {
-    if (!sqlite) { this.error = `node:sqlite unavailable (${loadError})`; return; }
+    if (!sqlite) {
+      this.error = `node:sqlite unavailable (${loadError})`;
+      return;
+    }
     try {
       if (this.file !== ':memory:') fs.mkdirSync(path.dirname(this.file), { recursive: true });
       this.db = new sqlite.DatabaseSync(this.file);
@@ -278,9 +285,21 @@ class TranscriptIndex {
   // `ready` and `db` are separate fields that open() sets together, so every query
   // path reconciles them here once: a non-null handle IS the ready check, and the
   // types then carry that fact into the statements instead of re-testing a flag.
-  _handle(): DatabaseSync | null { return this.ready ? this.db : null; }
+  _handle(): DatabaseSync | null {
+    return this.ready ? this.db : null;
+  }
 
-  close(): void { if (this.db) { try { this.db.close(); } catch { /* */ } this.db = null; this.ready = false; } }
+  close(): void {
+    if (this.db) {
+      try {
+        this.db.close();
+      } catch {
+        /* */
+      }
+      this.db = null;
+      this.ready = false;
+    }
+  }
 
   status(): IndexStatus {
     const db = this._handle();
@@ -308,14 +327,20 @@ class TranscriptIndex {
     const loc = transcripts.locate(session, { root: this.root || undefined });
     if (!loc.found) return { ok: false, reason: loc.reason };
 
-    const prev = db.prepare('SELECT path, offset FROM files WHERE session_id = ?').get(id) as FileRow | undefined;
+    const prev = db.prepare('SELECT path, offset FROM files WHERE session_id = ?').get(id) as
+      | FileRow
+      | undefined;
     // A relocated transcript (promote moves it) means the new file holds the whole
     // history — the old offset would silently skip everything before the move.
     let start = prev && prev.path === loc.file && !opts.full ? prev.offset : 0;
     if (opts.full) start = 0;
 
     let size = 0;
-    try { size = fs.statSync(loc.file).size; } catch { return { ok: false, reason: 'transcript vanished' }; }
+    try {
+      size = fs.statSync(loc.file).size;
+    } catch {
+      return { ok: false, reason: 'transcript vanished' };
+    }
     if (start === size && prev && prev.path === loc.file) {
       return { ok: true, file: loc.file, added: 0, offset: start, size, upToDate: true };
     }
@@ -341,7 +366,11 @@ class TranscriptIndex {
    */
   _migrate(db: DatabaseSync): void {
     for (const col of ['title', 'feature', 'branch', 'repo']) {
-      try { db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`); } catch { /* already there */ }
+      try {
+        db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
+      } catch {
+        /* already there */
+      }
     }
   }
 
@@ -354,10 +383,10 @@ class TranscriptIndex {
     session?: { title?: string; feature?: string; branch?: string | null; repoName?: string },
   ): Promise<IndexPass> {
     const insMsg = db.prepare(
-      'INSERT OR IGNORE INTO messages (session_id, uuid, role, ts, ts_ms, model, git_branch, sidechain, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT OR IGNORE INTO messages (session_id, uuid, role, ts, ts_ms, model, git_branch, sidechain, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
     const insUsage = db.prepare(
-      'INSERT OR IGNORE INTO usage (session_id, msg_id, ts_ms, model, speed, input, output, cache_write_5m, cache_write_1h, cache_read, web_search, web_fetch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT OR IGNORE INTO usage (session_id, msg_id, ts_ms, model, speed, input, output, cache_write_5m, cache_write_1h, cache_read, web_search, web_fetch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
     // Insert inside the reader's callback rather than collecting every entry first.
     // Incrementally that made no difference — a Stop hook appends one turn — but a full
@@ -379,8 +408,20 @@ class TranscriptIndex {
         if (e.usage) {
           const key = transcripts.usageKey(e);
           if (key) {
-            insUsage.run(id, key, e.tsMs, e.model, e.speed, e.usage.input, e.usage.output,
-              e.usage.cacheWrite5m, e.usage.cacheWrite1h, e.usage.cacheRead, e.usage.webSearch, e.usage.webFetch);
+            insUsage.run(
+              id,
+              key,
+              e.tsMs,
+              e.model,
+              e.speed,
+              e.usage.input,
+              e.usage.output,
+              e.usage.cacheWrite5m,
+              e.usage.cacheWrite1h,
+              e.usage.cacheRead,
+              e.usage.webSearch,
+              e.usage.webFetch,
+            );
           }
         }
       });
@@ -397,10 +438,19 @@ class TranscriptIndex {
            title=COALESCE(excluded.title, files.title),
            feature=COALESCE(excluded.feature, files.feature),
            branch=COALESCE(excluded.branch, files.branch),
-           repo=COALESCE(excluded.repo, files.repo)`
+           repo=COALESCE(excluded.repo, files.repo)`,
       ).run(
-        id, file, claudeSessionId || null, stats.offset, stats.size, added, Date.now(),
-        session?.title || null, session?.feature || null, session?.branch || null, session?.repoName || null,
+        id,
+        file,
+        claudeSessionId || null,
+        stats.offset,
+        stats.size,
+        added,
+        Date.now(),
+        session?.title || null,
+        session?.feature || null,
+        session?.branch || null,
+        session?.repoName || null,
       );
       db.exec('COMMIT');
     } catch (e) {
@@ -408,8 +458,13 @@ class TranscriptIndex {
       throw e;
     }
     return {
-      ok: true, file, added, offset: stats.offset, size: stats.size,
-      malformedLines: stats.skipped, truncatedTail: stats.truncatedTail,
+      ok: true,
+      file,
+      added,
+      offset: stats.offset,
+      size: stats.size,
+      malformedLines: stats.skipped,
+      truncatedTail: stats.truncatedTail,
     };
   }
 
@@ -422,7 +477,13 @@ class TranscriptIndex {
    * Better a row labelled by its branch than a spend figure that silently disappears
    * when the worktree is deleted.
    */
-  archivedMeta(sessionId: string): { id: string; title: string; feature?: string; branch?: string; repo?: string } {
+  archivedMeta(sessionId: string): {
+    id: string;
+    title: string;
+    feature?: string;
+    branch?: string;
+    repo?: string;
+  } {
     const db = this._handle();
     if (!db) return { id: sessionId, title: sessionId };
     const row = db
@@ -430,9 +491,15 @@ class TranscriptIndex {
       .get(sessionId) as { title?: string; feature?: string; branch?: string; repo?: string } | undefined;
     // Fall back to the branch its messages carried, for rows indexed before identity
     // was recorded — those exist and should still read as something.
-    const legacy = row?.branch ? undefined : (db
-      .prepare('SELECT git_branch FROM messages WHERE session_id = ? AND git_branch IS NOT NULL ORDER BY ts_ms DESC LIMIT 1')
-      .get(sessionId) as { git_branch?: string } | undefined)?.git_branch;
+    const legacy = row?.branch
+      ? undefined
+      : (
+          db
+            .prepare(
+              'SELECT git_branch FROM messages WHERE session_id = ? AND git_branch IS NOT NULL ORDER BY ts_ms DESC LIMIT 1',
+            )
+            .get(sessionId) as { git_branch?: string } | undefined
+        )?.git_branch;
     const branch = row?.branch || legacy || undefined;
     return {
       id: sessionId,
@@ -454,7 +521,9 @@ class TranscriptIndex {
       db.prepare('DELETE FROM usage WHERE session_id = ?').run(sessionId);
       db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
       db.exec('COMMIT');
-    } catch { db.exec('ROLLBACK'); }
+    } catch {
+      db.exec('ROLLBACK');
+    }
   }
 
   // Search returns enough to be actionable without opening the transcript: the
@@ -484,9 +553,18 @@ class TranscriptIndex {
       args.push(likePattern(query));
     }
 
-    if (opts.sessionId) { where.push('m.session_id = ?'); args.push(opts.sessionId); }
-    if (opts.role) { where.push('m.role = ?'); args.push(opts.role); }
-    if (opts.since) { where.push('m.ts_ms >= ?'); args.push(Number(opts.since)); }
+    if (opts.sessionId) {
+      where.push('m.session_id = ?');
+      args.push(opts.sessionId);
+    }
+    if (opts.role) {
+      where.push('m.role = ?');
+      args.push(opts.role);
+    }
+    if (opts.since) {
+      where.push('m.ts_ms >= ?');
+      args.push(Number(opts.since));
+    }
     if (where.length) sql += ` AND ${where.join(' AND ')}`;
     sql += opts.order === 'recent' || !this.fts ? ' ORDER BY m.ts_ms DESC' : ' ORDER BY rank';
     sql += ' LIMIT ?';
@@ -506,7 +584,9 @@ class TranscriptIndex {
         tsMs: r.ts_ms,
         gitBranch: r.git_branch,
         sidechain: !!r.sidechain,
-        snippet: String(r.snippet || '').replace(/\s+/g, ' ').trim(),
+        snippet: String(r.snippet || '')
+          .replace(/\s+/g, ' ')
+          .trim(),
       })),
       total: rows.length,
     };
@@ -558,11 +638,14 @@ function summarize(rows: UsageRow[]): UsageSummary {
     // unpricedModels, so byModel names it the same way rather than emitting null.
     const model = r.model || 'unknown';
     const u = {
-      input: r.input || 0, output: r.output || 0,
-      cacheWrite5m: r.cw5m || 0, cacheWrite1h: r.cw1h || 0,
+      input: r.input || 0,
+      output: r.output || 0,
+      cacheWrite5m: r.cw5m || 0,
+      cacheWrite1h: r.cw1h || 0,
       cacheWrite: (r.cw5m || 0) + (r.cw1h || 0),
       cacheRead: r.cache_read || 0,
-      webSearch: r.web_search || 0, webFetch: r.web_fetch || 0,
+      webSearch: r.web_search || 0,
+      webFetch: r.web_fetch || 0,
     };
     transcripts.addUsage(totals, u);
     messages += r.messages || 0;

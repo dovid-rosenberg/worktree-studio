@@ -68,9 +68,7 @@ export interface WorktreeRemoveOptions {
   deleteBranch?: boolean;
 }
 
-export type WorktreeRemoveResult =
-  | { ok: true; branchDeleted: boolean }
-  | { ok: false; error: string };
+export type WorktreeRemoveResult = { ok: true; branchDeleted: boolean } | { ok: false; error: string };
 
 // Expand a shell-style pattern (e.g. "config/*-config.ts", ".env.*.local")
 // relative to base. Supports `*` (any chars within one path segment). Segments
@@ -89,7 +87,11 @@ function expandPattern(base: string, pattern: string): string[] {
       const abs = path.join(base, d);
       if (re) {
         let entries: fs.Dirent[];
-        try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { continue; }
+        try {
+          entries = fs.readdirSync(abs, { withFileTypes: true });
+        } catch {
+          continue;
+        }
         for (const e of entries) {
           if (!re.test(e.name)) continue;
           if (last ? e.isFile() : e.isDirectory()) next.push(path.join(d, e.name));
@@ -99,7 +101,9 @@ function expandPattern(base: string, pattern: string): string[] {
         try {
           const st = fs.statSync(cand);
           if (last ? st.isFile() : st.isDirectory()) next.push(path.join(d, seg));
-        } catch { /* missing */ }
+        } catch {
+          /* missing */
+        }
       }
     }
     dirs = next;
@@ -132,7 +136,8 @@ const FETCH_TIMEOUT_MS = 60000;
 // keeps the historical unconditional run-config copy; an explicit one is obeyed,
 // empty array included.
 function worktreeCopyOpts(cfg: PartialDeep<Config> | null | undefined, repo: string): WorktreeCopyOpts {
-  const pick = (m?: Record<string, string[] | undefined> | null): string[] => (m && (m[repo] || m.default)) || [];
+  const pick = (m?: Record<string, string[] | undefined> | null): string[] =>
+    (m && (m[repo] || m.default)) || [];
   return {
     copyPatterns: pick(cfg?.copyPatterns),
     copyAlways: cfg?.copyAlways ? pick(cfg.copyAlways) : DEFAULT_COPY_ALWAYS,
@@ -146,7 +151,12 @@ function copyMatches(repoPath: string, dest: string, pattern: string): number {
     const src = path.join(repoPath, rel);
     const target = path.join(dest, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    try { fs.copyFileSync(src, target); n++; } catch { /* */ }
+    try {
+      fs.copyFileSync(src, target);
+      n++;
+    } catch {
+      /* */
+    }
   }
   return n;
 }
@@ -172,7 +182,12 @@ async function populate(
       if (!(await isIgnored(repoPath, rel))) continue; // tracked files arrive with checkout
       const target = path.join(dest, rel);
       fs.mkdirSync(path.dirname(target), { recursive: true });
-      try { fs.copyFileSync(src, target); copied.files++; } catch { /* */ }
+      try {
+        fs.copyFileSync(src, target);
+        copied.files++;
+      } catch {
+        /* */
+      }
     }
   }
   return copied;
@@ -182,7 +197,12 @@ async function populate(
 async function branchExists(repoPath: string, branch: string): Promise<boolean> {
   const local = await gitFull(repoPath, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
   if (local.code === 0) return true;
-  const remote = await gitFull(repoPath, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
+  const remote = await gitFull(repoPath, [
+    'show-ref',
+    '--verify',
+    '--quiet',
+    `refs/remotes/origin/${branch}`,
+  ]);
   return remote.code === 0;
 }
 
@@ -226,30 +246,54 @@ async function create(
   }
 
   if (fs.existsSync(dest)) {
-    return { ok: false, error: `worktree "${wtName}" already exists in ${path.basename(repoPath)}`, path: dest, name: wtName, branch };
+    return {
+      ok: false,
+      error: `worktree "${wtName}" already exists in ${path.basename(repoPath)}`,
+      path: dest,
+      name: wtName,
+      branch,
+    };
   }
   // Only a layout that puts worktrees INSIDE the repo needs ignoring; sibling and
   // external checkouts are outside the working tree and git never sees them.
   const ignoreRel = layoutMod.ignorePath(layout);
   if (ignoreRel) {
     const ign = await gitFull(repoPath, ['check-ignore', '-q', ignoreRel]);
-    if (ign.code !== 0) warnings.push(`${ignoreRel}/ is not gitignored here; checkouts will show as untracked`);
+    if (ign.code !== 0)
+      warnings.push(`${ignoreRel}/ is not gitignored here; checkouts will show as untracked`);
   }
   // git worktree add creates the leaf, not the tree above it (sibling/external
   // layouts point outside the repo, where nothing has made the parent yet).
   fs.mkdirSync(path.dirname(dest), { recursive: true });
 
-  if (opts.fetch !== false) await gitFull(repoPath, ['fetch', '--prune', 'origin'], { timeout: opts.fetchTimeoutMs || FETCH_TIMEOUT_MS });
+  if (opts.fetch !== false)
+    await gitFull(repoPath, ['fetch', '--prune', 'origin'], {
+      timeout: opts.fetchTimeoutMs || FETCH_TIMEOUT_MS,
+    });
 
   let created = false;
   let base: string | null = null;
   if (await branchExists(repoPath, branch)) {
     const r = await gitFull(repoPath, ['worktree', 'add', dest, branch]);
-    if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'git worktree add failed', path: dest, name: wtName, branch };
+    if (r.code !== 0)
+      return {
+        ok: false,
+        error: r.stderr.trim() || 'git worktree add failed',
+        path: dest,
+        name: wtName,
+        branch,
+      };
   } else {
-    base = opts.base || await defaultBase(repoPath);
+    base = opts.base || (await defaultBase(repoPath));
     const r = await gitFull(repoPath, ['worktree', 'add', '-b', branch, dest, base]);
-    if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'git worktree add -b failed', path: dest, name: wtName, branch };
+    if (r.code !== 0)
+      return {
+        ok: false,
+        error: r.stderr.trim() || 'git worktree add -b failed',
+        path: dest,
+        name: wtName,
+        branch,
+      };
     created = true;
   }
 
@@ -257,7 +301,11 @@ async function create(
   return { ok: true, path: dest, branch, name: wtName, base, created, copied, warnings };
 }
 
-async function remove(repoPath: string, worktreePath: string, opts: WorktreeRemoveOptions = {}): Promise<WorktreeRemoveResult> {
+async function remove(
+  repoPath: string,
+  worktreePath: string,
+  opts: WorktreeRemoveOptions = {},
+): Promise<WorktreeRemoveResult> {
   const r = await gitFull(repoPath, ['worktree', 'remove', worktreePath]);
   if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'worktree remove failed (use force?)' };
   let branchDeleted = false;
@@ -269,6 +317,13 @@ async function remove(repoPath: string, worktreePath: string, opts: WorktreeRemo
 }
 
 export {
-  create, remove, populate, branchExists, defaultBase,
-  expandPattern, worktreeCopyOpts, DEFAULT_COPY_ALWAYS, FETCH_TIMEOUT_MS,
+  create,
+  remove,
+  populate,
+  branchExists,
+  defaultBase,
+  expandPattern,
+  worktreeCopyOpts,
+  DEFAULT_COPY_ALWAYS,
+  FETCH_TIMEOUT_MS,
 };

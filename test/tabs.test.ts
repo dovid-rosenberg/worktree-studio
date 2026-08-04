@@ -25,9 +25,13 @@ function windowedMux(initial: { id: string; title: string }[]) {
   let nextId = 100;
   return {
     calls,
-    get windows() { return windows; },
+    get windows() {
+      return windows;
+    },
     mux: muxStub({
-      async listTabs() { return windows.map((w) => ({ ...w })); },
+      async listTabs() {
+        return windows.map((w) => ({ ...w }));
+      },
       async newTab(_name: string, opts?: { title?: string }) {
         const id = `@${nextId++}`;
         windows.push({ id, title: opts?.title || 'shell', active: false });
@@ -70,8 +74,12 @@ function managerWith(mux: ReturnType<typeof windowedMux>['mux'] | ReturnType<typ
 /** Put a session into the manager without going through the mux launch path. */
 function seed(mgr: SessionManager, tabs: SessionTab[]) {
   const s = session({
-    id: 's_tabs', repoName: 'r', repoPath: '/tmp/r', home: '/tmp/r',
-    muxName: 'mux-tabs', tabs: tabs.map((t) => ({ ...t })),
+    id: 's_tabs',
+    repoName: 'r',
+    repoPath: '/tmp/r',
+    home: '/tmp/r',
+    muxName: 'mux-tabs',
+    tabs: tabs.map((t) => ({ ...t })),
   });
   mgr.sessions.set(s.id, s);
   return s;
@@ -103,13 +111,22 @@ test('closing a middle tab keeps every surviving tab on its own terminal', async
 });
 
 test('close targets the window id even when it differs from the array position', async () => {
-  const w = windowedMux([{ id: '@1', title: 'claude' }, { id: '@9', title: 'shell' }]);
+  const w = windowedMux([
+    { id: '@1', title: 'claude' },
+    { id: '@9', title: 'shell' },
+  ]);
   const mgr = managerWith(w.mux);
-  const s = seed(mgr, [{ id: '@1', title: 'claude' }, { id: '@9', title: 'shell' }]);
+  const s = seed(mgr, [
+    { id: '@1', title: 'claude' },
+    { id: '@9', title: 'shell' },
+  ]);
 
   await mgr.closeTab(s.id, '@9');
   assert.deepEqual(w.calls, [{ op: 'close', target: '@9' }]);
-  assert.deepEqual(s.tabs.map((t: SessionTab) => t.id), ['@1']);
+  assert.deepEqual(
+    s.tabs.map((t: SessionTab) => t.id),
+    ['@1'],
+  );
 });
 
 test('the only tab cannot be closed', async () => {
@@ -124,11 +141,23 @@ test('the only tab cannot be closed', async () => {
 });
 
 test('a close the multiplexer refuses does not remove the tab', async () => {
-  const mgr = managerWith(muxStub({
-    async closeTab() { return false; },
-    async listTabs() { return [{ id: '@1', title: 'claude', active: true }, { id: '@2', title: 'shell', active: false }]; },
-  }));
-  const s = seed(mgr, [{ id: '@1', title: 'claude' }, { id: '@2', title: 'shell' }]);
+  const mgr = managerWith(
+    muxStub({
+      async closeTab() {
+        return false;
+      },
+      async listTabs() {
+        return [
+          { id: '@1', title: 'claude', active: true },
+          { id: '@2', title: 'shell', active: false },
+        ];
+      },
+    }),
+  );
+  const s = seed(mgr, [
+    { id: '@1', title: 'claude' },
+    { id: '@2', title: 'shell' },
+  ]);
 
   const r = await mgr.closeTab(s.id, '@2');
   assert.equal(r.ok, false);
@@ -148,9 +177,15 @@ test('addTab records the id the multiplexer assigned', async () => {
 });
 
 test('rename goes to the window id and is trimmed, and refuses an empty name', async () => {
-  const w = windowedMux([{ id: '@1', title: 'claude' }, { id: '@2', title: 'shell' }]);
+  const w = windowedMux([
+    { id: '@1', title: 'claude' },
+    { id: '@2', title: 'shell' },
+  ]);
   const mgr = managerWith(w.mux);
-  const s = seed(mgr, [{ id: '@1', title: 'claude' }, { id: '@2', title: 'shell' }]);
+  const s = seed(mgr, [
+    { id: '@1', title: 'claude' },
+    { id: '@2', title: 'shell' },
+  ]);
 
   const ok = await mgr.renameTab(s.id, '@2', '  api  ');
   assert.equal(ok.ok, true);
@@ -163,9 +198,15 @@ test('rename goes to the window id and is trimmed, and refuses an empty name', a
 });
 
 test('an unknown tab reference is refused rather than resolved to a neighbour', async () => {
-  const w = windowedMux([{ id: '@1', title: 'claude' }, { id: '@2', title: 'shell' }]);
+  const w = windowedMux([
+    { id: '@1', title: 'claude' },
+    { id: '@2', title: 'shell' },
+  ]);
   const mgr = managerWith(w.mux);
-  const s = seed(mgr, [{ id: '@1', title: 'claude' }, { id: '@2', title: 'shell' }]);
+  const s = seed(mgr, [
+    { id: '@1', title: 'claude' },
+    { id: '@2', title: 'shell' },
+  ]);
 
   assert.equal((await mgr.selectTab(s.id, '@404')).ok, false);
   assert.equal((await mgr.renameTab(s.id, '@404', 'x')).ok, false);
@@ -175,11 +216,16 @@ test('an unknown tab reference is refused rather than resolved to a neighbour', 
 
 test('_syncTabs keeps titles with their window across a tmux-side renumber', async () => {
   // tmux renumbered: the window formerly at index 2 is now index 1, but its id is fixed.
-  const mgr = managerWith(muxStub({
-    async listTabs() {
-      return [{ id: '@1', title: 'claude', active: true }, { id: '@3', title: 'zsh', active: false }];
-    },
-  }));
+  const mgr = managerWith(
+    muxStub({
+      async listTabs() {
+        return [
+          { id: '@1', title: 'claude', active: true },
+          { id: '@3', title: 'zsh', active: false },
+        ];
+      },
+    }),
+  );
   const s = seed(mgr, [
     { id: '@1', title: 'claude' },
     { id: '@2', title: 'api' },
@@ -195,9 +241,13 @@ test('_syncTabs keeps titles with their window across a tmux-side renumber', asy
 });
 
 test('a tab tmux does not know yet falls back to the live window name', async () => {
-  const mgr = managerWith(muxStub({
-    async listTabs() { return [{ id: '@7', title: 'claude', active: true }]; },
-  }));
+  const mgr = managerWith(
+    muxStub({
+      async listTabs() {
+        return [{ id: '@7', title: 'claude', active: true }];
+      },
+    }),
+  );
   // `pending` is what a freshly seeded session carries until the first sync.
   const s = seed(mgr, [{ id: 'pending', title: 'claude' }]);
 

@@ -29,10 +29,20 @@ function createRescan<T>(scan: () => T | PromiseLike<T>): () => Promise<T> {
       // .catch() first for two reasons: a caller queued behind a scan that FAILED
       // still wants their own scan to run, and without it `followUp` would never be
       // reset — leaving every later mid-scan caller holding a stale rejected promise.
-      if (!followUp) followUp = inFlight.catch(() => {}).then(() => { followUp = null; return rescan(); });
+      if (!followUp)
+        followUp = inFlight
+          .catch(() => {})
+          .then(() => {
+            followUp = null;
+            return rescan();
+          });
       return followUp;
     }
-    inFlight = Promise.resolve().then(scan).finally(() => { inFlight = null; });
+    inFlight = Promise.resolve()
+      .then(scan)
+      .finally(() => {
+        inFlight = null;
+      });
     return inFlight;
   };
 }

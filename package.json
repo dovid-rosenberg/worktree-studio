@@ -19,7 +19,8 @@
     "postinstall": "node bin/fix-pty.ts && node bin/build-client.ts",
     "lint": "biome lint",
     "format": "biome format --write",
-    "check": "npm run lint && npm run typecheck"
+    "check": "npm run lint && npm run typecheck",
+    "format:check": "biome format"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.10.0",

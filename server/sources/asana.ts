@@ -12,7 +12,9 @@ interface AsanaTask {
   permalink_url: string;
 }
 
-function cfgOf(cfg: PartialDeep<Config>): AsanaConfig { return (cfg.sources?.asana) || {}; }
+function cfgOf(cfg: PartialDeep<Config>): AsanaConfig {
+  return cfg.sources?.asana || {};
+}
 
 // Unwraps the Asana envelope and hands back its `data`. Generic rather than `any`
 // because the shape varies by endpoint and only the caller knows which one it asked
@@ -39,7 +41,10 @@ const adapter: SourceAdapter = {
     const a = cfgOf(cfg);
     // `workspace` is set here because isEnabled() demands it, and sources/index.ts runs
     // that gate before it reaches either of these two calls.
-    const tasks = await api<AsanaTask[]>(cfg, `/tasks?assignee=me&workspace=${encodeURIComponent(a.workspace!)}&completed_since=now&opt_fields=name,permalink_url&limit=30`);
+    const tasks = await api<AsanaTask[]>(
+      cfg,
+      `/tasks?assignee=me&workspace=${encodeURIComponent(a.workspace!)}&completed_since=now&opt_fields=name,permalink_url&limit=30`,
+    );
     return tasks.map((t) => ({ id: t.gid, title: t.name, subtitle: 'Asana task' }));
   },
   async seed(cfg, { id }) {

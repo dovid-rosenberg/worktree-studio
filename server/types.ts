@@ -33,10 +33,11 @@ export type IsoTimestamp = string;
  * `Partial<Config>` is not enough: it stops at the top level, so a `{ web: { port } }`
  * would still be required to carry `web.host`.
  */
-export type PartialDeep<T> =
-  T extends (infer _U)[] ? T
-    : T extends object ? { [K in keyof T]?: PartialDeep<T[K]> }
-      : T;
+export type PartialDeep<T> = T extends (infer _U)[]
+  ? T
+  : T extends object
+    ? { [K in keyof T]?: PartialDeep<T[K]> }
+    : T;
 
 /** Where a repo's worktrees live on disk (server/layout.ts). */
 export interface WorktreeLayout {

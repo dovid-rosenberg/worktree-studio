@@ -8,7 +8,9 @@ import * as review from '../server/review.ts';
 import type { ReviewFile } from '../server/review.ts';
 import { expectErr, expectOk, present } from './helpers.ts';
 
-function sh(cwd: string, args: string[]) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
+function sh(cwd: string, args: string[]) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
 
 // A repo with a base commit on `main`, a feature branch with ONE committed change
 // (committed.txt), and three uncommitted working changes on top: a modified file, a
@@ -56,11 +58,13 @@ test('base() prefers origin/<default> when the local default ref is stale (branc
   sh(dir, ['config', 'user.email', 't@t.t']);
   sh(dir, ['config', 'user.name', 't']);
   fs.writeFileSync(path.join(dir, 'f.txt'), 'A\n');
-  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'A']);
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'A']);
   const A = sh(dir, ['rev-parse', 'HEAD']);
   // the mainline advances with someone else's commit
   fs.writeFileSync(path.join(dir, 'other.txt'), 'not my work\n');
-  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'B (someone else)']);
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'B (someone else)']);
   const B = sh(dir, ['rev-parse', 'HEAD']);
   // origin/main is current at B; the feature branch was cut from B and adds a commit
   sh(dir, ['update-ref', 'refs/remotes/origin/main', B]);
@@ -68,7 +72,8 @@ test('base() prefers origin/<default> when the local default ref is stale (branc
   // now (off main) rewind local main to A so it lags behind origin/main
   sh(dir, ['branch', '-f', 'main', A]);
   fs.writeFileSync(path.join(dir, 'mine.txt'), 'my change\n');
-  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'my commit']);
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'my commit']);
 
   assert.equal(await review.base(dir, 'main'), B, 'bases on origin/main (B), not the stale local main (A)');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -80,16 +85,19 @@ test('commits() excludes commits already on the mainline and includes the branch
   sh(dir, ['config', 'user.email', 't@t.t']);
   sh(dir, ['config', 'user.name', 't']);
   fs.writeFileSync(path.join(dir, 'f.txt'), 'A\n');
-  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'A']);
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'A']);
   const A = sh(dir, ['rev-parse', 'HEAD']);
   fs.writeFileSync(path.join(dir, 'other.txt'), 'not my work\n');
-  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'B (someone else)']);
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'B (someone else)']);
   const B = sh(dir, ['rev-parse', 'HEAD']);
   sh(dir, ['update-ref', 'refs/remotes/origin/main', B]);
   sh(dir, ['checkout', '-q', '-b', 'feature/mine', B]);
   sh(dir, ['branch', '-f', 'main', A]);
   fs.writeFileSync(path.join(dir, 'mine.txt'), 'my change\n');
-  sh(dir, ['add', '-A']); sh(dir, ['commit', '-q', '-m', 'my commit']);
+  sh(dir, ['add', '-A']);
+  sh(dir, ['commit', '-q', '-m', 'my commit']);
 
   const { commits } = await review.commits(dir, 'main');
   const subjects = commits.map((c) => c.subject);
@@ -178,7 +186,10 @@ test('commitDetail() carries the structured model alongside the raw patch', asyn
   assert.equal(present(f.parsed, 'the parsed diff').path, 'committed.txt');
   assert.equal(present(f.parsed, 'the parsed diff').status, 'added');
   assert.equal(present(f.parsed, 'the parsed diff').hunks.length, 1);
-  assert.deepEqual(present(present(f.parsed, 'the parsed diff').hunks[0]).lines.map((l) => [l.type, l.text]), [['add', 'committed work']]);
+  assert.deepEqual(
+    present(present(f.parsed, 'the parsed diff').hunks[0]).lines.map((l) => [l.type, l.text]),
+    [['add', 'committed work']],
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -187,7 +198,10 @@ test('commitDetail(uncommitted) aligns a changed line into one side-by-side row'
   const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
   const m = mustFind(files, 'modified.txt');
   const h = present(present(m.parsed, 'the parsed diff').hunks[0], 'the first hunk');
-  const change = present(h.rows.find((r) => r.type === 'change'), 'a change row');
+  const change = present(
+    h.rows.find((r) => r.type === 'change'),
+    'a change row',
+  );
   const left = present(h.lines[present(change.left, 'left index')]);
   const right = present(h.lines[present(change.right, 'right index')]);
   assert.equal(left.text, 'line one', 'the old version on the left');
@@ -202,7 +216,11 @@ test('commitDetail(uncommitted) models a deleted file as one all-removed hunk', 
   const { files } = await review.commitDetail(dir, 'main', 'uncommitted');
   const d = mustFind(files, 'deleted.txt');
   assert.equal(present(d.parsed, 'the parsed diff').status, 'deleted');
-  assert.ok(present(present(d.parsed, 'the parsed diff').hunks[0]).rows.every((r) => r.type === 'del' && r.right === null));
+  assert.ok(
+    present(present(d.parsed, 'the parsed diff').hunks[0]).rows.every(
+      (r) => r.type === 'del' && r.right === null,
+    ),
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -296,10 +314,7 @@ test('a sha that is really a git option cannot write a file', async () => {
   const victim = path.join(os.tmpdir(), `wts-victim-${process.pid}-${Date.now()}.txt`);
   fs.rmSync(victim, { force: true });
 
-  await assert.rejects(
-    () => review.commitDetail(dir, 'main', `--output=${victim}`),
-    /invalid commit sha/,
-  );
+  await assert.rejects(() => review.commitDetail(dir, 'main', `--output=${victim}`), /invalid commit sha/);
   assert.equal(fs.existsSync(victim), false, `git wrote ${victim} — the option reached the argv`);
 
   fs.rmSync(victim, { force: true });
@@ -310,7 +325,19 @@ test('isValidSha accepts object names and "uncommitted", and nothing else', () =
   for (const good of ['uncommitted', 'abcd', 'a1b2c3d4', 'f'.repeat(40), 'DEADBEEF']) {
     assert.equal(review.isValidSha(good), true, good);
   }
-  for (const bad of ['--output=/tmp/x', '-n', 'HEAD', 'main', 'abc', 'f'.repeat(41), '', null, undefined, 'abc def', '../etc']) {
+  for (const bad of [
+    '--output=/tmp/x',
+    '-n',
+    'HEAD',
+    'main',
+    'abc',
+    'f'.repeat(41),
+    '',
+    null,
+    undefined,
+    'abc def',
+    '../etc',
+  ]) {
     assert.equal(review.isValidSha(bad), false, String(bad));
   }
 });
@@ -318,7 +345,10 @@ test('isValidSha accepts object names and "uncommitted", and nothing else', () =
 test('a real sha still resolves, with the option terminator in place', async () => {
   const { dir, commitSha } = tempRepo();
   const detail = await review.commitDetail(dir, 'main', commitSha);
-  assert.deepEqual(detail.files.map((f) => f.file), ['committed.txt']);
+  assert.deepEqual(
+    detail.files.map((f) => f.file),
+    ['committed.txt'],
+  );
   assert.ok(present(present(detail.files[0]).diff, 'the diff text').includes('committed work'));
   fs.rmSync(dir, { recursive: true, force: true });
 });

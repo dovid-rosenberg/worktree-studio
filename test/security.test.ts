@@ -45,14 +45,15 @@ function harness({ port }: { port?: number } = {}) {
 
   // Same shape as server.ts's hook receiver, including the grandfather clause.
   const sessions = new Map([
-    ['s_new', { id: 's_new', hookAuth: true }],   // settings file written with a token
-    ['s_legacy', { id: 's_legacy' }],             // launched before the token existed
+    ['s_new', { id: 's_new', hookAuth: true }], // settings file written with a token
+    ['s_legacy', { id: 's_legacy' }], // launched before the token existed
   ]);
   const hooks: string[] = [];
   app.post('/hook/:event', (req, res) => {
     const known = sessions.get(String(req.query.wts));
     const deny = guard.denyToken(req);
-    if (deny && !(known && known.hookAuth !== true)) return res.status(deny.status).json({ error: deny.error });
+    if (deny && !(known && known.hookAuth !== true))
+      return res.status(deny.status).json({ error: deny.error });
     if (known) hooks.push(`${known.id}:${req.params.event}`);
     return res.json({ ok: true });
   });
@@ -62,10 +63,15 @@ function harness({ port }: { port?: number } = {}) {
   const attached: Array<string | null> = []; // session ids that got as far as "spawn a pty"
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url || '', 'http://localhost');
-    if (url.pathname !== '/ws/term') { socket.destroy(); return; }
+    if (url.pathname !== '/ws/term') {
+      socket.destroy();
+      return;
+    }
     const deny = guard.denyBrowser(req) || guard.denyToken(req, url.searchParams.get('token'));
     if (deny) {
-      socket.write(`HTTP/1.1 ${deny.status} ${deny.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\n\r\n`);
+      socket.write(
+        `HTTP/1.1 ${deny.status} ${deny.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\n\r\n`,
+      );
       socket.destroy();
       return;
     }
@@ -95,26 +101,44 @@ async function serving<T>(fn: (h: Harness) => Promise<T>): Promise<T> {
   const origin = `http://127.0.0.1:${port}`;
   const get = (p: string, init: RequestInit = {}) =>
     fetch(origin + p, { ...init, headers: { host: `127.0.0.1:${port}`, ...(init.headers || {}) } });
-  try { return await fn({ ...h, port, origin, get }); }
-  finally { h.server.close(); }
+  try {
+    return await fn({ ...h, port, origin, get });
+  } finally {
+    h.server.close();
+  }
 }
 
 // undici's fetch silently drops a caller-set Host (it is a forbidden header name), so
 // the rebinding cases are driven with a raw client — which is what the attacker is
 // doing anyway. setHost:false means we control the header completely, including
 // omitting it.
-interface RawResult { status?: number; body: unknown }
-function raw(port: number, { path: p = '/api/state', headers = {} }: { path?: string; headers?: Record<string, string> } = {}): Promise<RawResult> {
+interface RawResult {
+  status?: number;
+  body: unknown;
+}
+function raw(
+  port: number,
+  { path: p = '/api/state', headers = {} }: { path?: string; headers?: Record<string, string> } = {},
+): Promise<RawResult> {
   return new Promise<RawResult>((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path: p, method: 'GET', headers, setHost: false }, (res) => {
-      let body = '';
-      res.on('data', (c) => { body += c; });
-      res.on('end', () => {
-        let parsed = null;
-        try { parsed = body ? JSON.parse(body) : null; } catch { parsed = body; } // node's own 400s are plain text
-        resolve({ status: res.statusCode, body: parsed });
-      });
-    });
+    const req = http.request(
+      { host: '127.0.0.1', port, path: p, method: 'GET', headers, setHost: false },
+      (res) => {
+        let body = '';
+        res.on('data', (c) => {
+          body += c;
+        });
+        res.on('end', () => {
+          let parsed = null;
+          try {
+            parsed = body ? JSON.parse(body) : null;
+          } catch {
+            parsed = body;
+          } // node's own 400s are plain text
+          resolve({ status: res.statusCode, body: parsed });
+        });
+      },
+    );
     req.on('error', reject);
     req.end();
   });
@@ -122,10 +146,22 @@ function raw(port: number, { path: p = '/api/state', headers = {} }: { path?: st
 
 // Open a ws to the harness and resolve with what happened, never throwing: a refused
 // handshake and an accepted one both have to be observable.
-interface ProbeOpts { origin?: string; host?: string; token?: string; session?: string }
+interface ProbeOpts {
+  origin?: string;
+  host?: string;
+  token?: string;
+  session?: string;
+}
 /** Whether the socket opened, what it said, and — when refused — the handshake status. */
-interface ProbeResult { open: boolean; said?: string | null; status?: number | null }
-function wsProbe(port: number, { origin, host, token, session = 's_1' }: ProbeOpts = {}): Promise<ProbeResult> {
+interface ProbeResult {
+  open: boolean;
+  said?: string | null;
+  status?: number | null;
+}
+function wsProbe(
+  port: number,
+  { origin, host, token, session = 's_1' }: ProbeOpts = {},
+): Promise<ProbeResult> {
   return new Promise<ProbeResult>((resolve) => {
     const headers: Record<string, string> = {};
     if (origin) headers.Origin = origin;
@@ -133,7 +169,17 @@ function wsProbe(port: number, { origin, host, token, session = 's_1' }: ProbeOp
     const q = `?session=${encodeURIComponent(session)}${token ? `&token=${token}` : ''}`;
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/term${q}`, { headers });
     let settled = false;
-    const done = (v: ProbeResult) => { if (!settled) { settled = true; try { ws.close(); } catch { /* */ } resolve(v); } };
+    const done = (v: ProbeResult) => {
+      if (!settled) {
+        settled = true;
+        try {
+          ws.close();
+        } catch {
+          /* */
+        }
+        resolve(v);
+      }
+    };
     ws.on('message', (m) => done({ open: true, said: m.toString('utf8') }));
     ws.on('open', () => setTimeout(() => done({ open: true, said: null }), 200));
     ws.on('unexpected-response', (_req, res) => done({ open: false, status: res.statusCode }));
@@ -211,7 +257,12 @@ test('the token is accepted as a header, a bearer, or a query param', async () =
 
 test('a rebinding-style Host is refused even with a valid token', async () => {
   await serving(async ({ port }) => {
-    for (const host of ['evil.com', `evil.com:${port}`, `127.0.0.1.nip.io:${port}`, `127.0.0.1:${port + 1}`]) {
+    for (const host of [
+      'evil.com',
+      `evil.com:${port}`,
+      `127.0.0.1.nip.io:${port}`,
+      `127.0.0.1:${port + 1}`,
+    ]) {
       const r = await raw(port, { headers: { host, 'x-wts-token': TOKEN } });
       assert.equal(r.status, 403, `Host: '${host}' is refused`);
       assert.deepEqual(r.body, { error: 'forbidden host' });
@@ -219,10 +270,17 @@ test('a rebinding-style Host is refused even with a valid token', async () => {
     // No Host header at all is refused too, rather than defaulting to "fine" — node's
     // own HTTP/1.1 parser gets there first with a 400, which is equally a refusal.
     const noHost = await raw(port, { headers: { 'x-wts-token': TOKEN } });
-    assert.ok(noHost.status === 400 || noHost.status === 403, `a Host-less request is refused (got ${noHost.status})`);
+    assert.ok(
+      noHost.status === 400 || noHost.status === 403,
+      `a Host-less request is refused (got ${noHost.status})`,
+    );
     // And the honest ones still pass.
     for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]) {
-      assert.equal((await raw(port, { headers: { host, 'x-wts-token': TOKEN } })).status, 200, `Host: '${host}' is allowed`);
+      assert.equal(
+        (await raw(port, { headers: { host, 'x-wts-token': TOKEN } })).status,
+        200,
+        `Host: '${host}' is allowed`,
+      );
     }
   });
 });
@@ -253,7 +311,10 @@ test('legitimate same-origin traffic works end to end', async () => {
     const page = await get('/', { headers: { origin } });
     assert.equal(page.status, 200);
     const html = await page.text();
-    const token = present(present(/window\.WTS_TOKEN = "([^"]+)"/.exec(html), 'the injected token')[1], 'the token capture');
+    const token = present(
+      present(/window\.WTS_TOKEN = "([^"]+)"/.exec(html), 'the injected token')[1],
+      'the token capture',
+    );
     assert.equal(token, TOKEN);
     // 2. it calls the API with that token, same-origin, under both prefixes
     for (const p of ['/api/state', '/api/v1/state']) {
@@ -278,9 +339,12 @@ test('a non-browser client (no Origin at all) still works with the token', async
 
 test('the hook receiver takes the token, and grandfathers only pre-token sessions', async () => {
   await serving(async ({ origin, hooks }) => {
-    const post = (q: string, headers: Record<string, string> = {}) => fetch(`${origin}/hook/Stop?${q}`, {
-      method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}',
-    });
+    const post = (q: string, headers: Record<string, string> = {}) =>
+      fetch(`${origin}/hook/Stop?${q}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: '{}',
+      });
     // The URL baked into a settings file carries the token in the query string —
     // the hook script gets a URL and nothing else.
     assert.equal((await post(`wts=s_new&token=${TOKEN}`)).status, 200);
@@ -346,7 +410,8 @@ test('session ids are unguessable UUIDs and old ids keep working', () => {
   const ids = new Set<string>();
   for (let i = 0; i < 500; i++) ids.add(makeId('s_'));
   assert.equal(ids.size, 500, 'no collisions');
-  for (const id of ids) assert.match(id, /^s_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  for (const id of ids)
+    assert.match(id, /^s_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   // Ids are only ever compared for equality and used as map keys — an id minted by
   // the old scheme is still a perfectly good key, which is what keeps the sessions
   // already in sessions.json working.

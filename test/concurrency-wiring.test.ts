@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { expectOk, present } from './helpers.ts';
-import type { ConcurrencyConfig, } from '../server/types.ts';
+import type { ConcurrencyConfig } from '../server/types.ts';
 import type { ConfigPatchPlan } from '../server/servers.ts';
 import fs from 'fs';
 import os from 'os';
@@ -16,7 +16,11 @@ import { validateConcurrency } from '../server/config.ts';
 
 // accept-blue's real port map + FE configPatch wiring — mirrors config.ts defaults.
 const AB_PORT_ENV = {
-  api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999,
+  api__port_su: 1231,
+  api__port_iso: 1232,
+  api__port: 1233,
+  api__port_merchant: 1239,
+  api__port_internal: 1999,
 };
 function concurrency(overrides = {}) {
   return {
@@ -117,8 +121,12 @@ test('launchOpts for accept-blue at slot 0 yields base ports and redis__db 0', (
   s.allocSlotFor('feat-a'); // slot 0
   const opts = s.launchOpts('accept-blue', 'feat-a');
   assert.deepEqual(opts.env, {
-    api__port_su: '1231', api__port_iso: '1232', api__port: '1233',
-    api__port_merchant: '1239', api__port_internal: '1999', redis__db: '0',
+    api__port_su: '1231',
+    api__port_iso: '1232',
+    api__port: '1233',
+    api__port_merchant: '1239',
+    api__port_internal: '1999',
+    redis__db: '0',
   });
   assert.deepEqual(opts.ports, [1231, 1232, 1233, 1239, 1999]);
   assert.equal(opts.patch, undefined, 'accept-blue itself has no configPatch');
@@ -131,8 +139,12 @@ test('launchOpts for accept-blue at slot 2 shifts every port +200 and sets redis
   s.allocSlotFor('feat-c'); // 2
   const opts = s.launchOpts('accept-blue', 'feat-c');
   assert.deepEqual(opts.env, {
-    api__port_su: '1431', api__port_iso: '1432', api__port: '1433',
-    api__port_merchant: '1439', api__port_internal: '2199', redis__db: '2',
+    api__port_su: '1431',
+    api__port_iso: '1432',
+    api__port: '1433',
+    api__port_merchant: '1439',
+    api__port_internal: '2199',
+    redis__db: '2',
   });
   assert.deepEqual(opts.ports, [1431, 1432, 1433, 1439, 2199]);
 });
@@ -170,13 +182,13 @@ function worktreeWithConfig(relFile: string, contents: string) {
 }
 
 const FE_CONFIG = [
-  "export default {",
+  'export default {',
   "  suURL: 'http://localhost:1231/su/api/v1',",
   "  merchantURL: 'http://localhost:1239/merchant',",
   "  isoURL: 'http://localhost:1232/iso/api/v1',",
   "  fePort: 'http://localhost:3030',",
-  "};",
-  "",
+  '};',
+  '',
 ].join('\n');
 
 test('applyConfigPatch at slot 2 rewrites every sibling localhost:port +200 and leaves other text untouched', () => {
@@ -184,13 +196,13 @@ test('applyConfigPatch at slot 2 rewrites every sibling localhost:port +200 and 
   const { dir, file } = worktreeWithConfig('src/config.ts', FE_CONFIG);
   s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 });
   const expected = [
-    "export default {",
+    'export default {',
     "  suURL: 'http://localhost:1431/su/api/v1',",
     "  merchantURL: 'http://localhost:1439/merchant',",
     "  isoURL: 'http://localhost:1432/iso/api/v1',",
     "  fePort: 'http://localhost:3030',", // FE's own vite port — not a sibling family
-    "};",
-    "",
+    '};',
+    '',
   ].join('\n');
   assert.equal(fs.readFileSync(file, 'utf8'), expected);
 });
@@ -215,7 +227,9 @@ test('applyConfigPatch is idempotent (running the same patch twice yields the sa
 test('applyConfigPatch is a no-op (no throw) when the config file is absent', () => {
   const s = servers();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-wt-'));
-  assert.doesNotThrow(() => s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 }));
+  assert.doesNotThrow(() =>
+    s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 }),
+  );
   assert.ok(!fs.existsSync(path.join(dir, 'src/config.ts')), 'no file was created');
 });
 
@@ -244,7 +258,12 @@ test('with concurrency disabled, launchOpts for accept-blue returns empty env so
 
 // Build a Servers on a caller-owned stateDir so a second instance can reuse it.
 function serversOn(stateDir: string, concOverrides: Partial<ConcurrencyConfig> = {}) {
-  return new Servers({ _stateDir: stateDir, web: { port: 0 }, start: {}, concurrency: concurrency(concOverrides) });
+  return new Servers({
+    _stateDir: stateDir,
+    web: { port: 0 },
+    start: {},
+    concurrency: concurrency(concOverrides),
+  });
 }
 
 test('A1: slots survive a Studio restart (new Servers on the same stateDir restores them)', () => {
@@ -353,7 +372,11 @@ function captureWarn(fn: () => void): string[] {
   const orig = console.warn;
   const msgs: string[] = [];
   console.warn = (...a: unknown[]) => msgs.push(a.map(String).join(' '));
-  try { fn(); } finally { console.warn = orig; }
+  try {
+    fn();
+  } finally {
+    console.warn = orig;
+  }
   return msgs;
 }
 
@@ -371,16 +394,24 @@ test('A8: the shipped config (step 100, maxSlots 3) produces no warnings', () =>
 
 test('A8: maxSlots 17 is flagged (exceeds the redis DB index limit)', () => {
   const msgs = captureWarn(() => validateConcurrency({ concurrency: { ...SHIPPED, maxSlots: 17 } }));
-  assert.ok(msgs.some((m) => /maxSlots=17/.test(m)), `expected a maxSlots warning, got: ${JSON.stringify(msgs)}`);
+  assert.ok(
+    msgs.some((m) => /maxSlots=17/.test(m)),
+    `expected a maxSlots warning, got: ${JSON.stringify(msgs)}`,
+  );
 });
 
 test('A8: a colliding offsetStep (step 1) is flagged for the accept-blue port family', () => {
   const msgs = captureWarn(() => validateConcurrency({ concurrency: { ...SHIPPED, offsetStep: 1 } }));
-  assert.ok(msgs.some((m) => /collide/.test(m)), `expected a collision warning, got: ${JSON.stringify(msgs)}`);
+  assert.ok(
+    msgs.some((m) => /collide/.test(m)),
+    `expected a collision warning, got: ${JSON.stringify(msgs)}`,
+  );
 });
 
 test('A8: a disabled concurrency block is never validated', () => {
-  const msgs = captureWarn(() => validateConcurrency({ concurrency: { ...SHIPPED, enabled: false, maxSlots: 99 } }));
+  const msgs = captureWarn(() =>
+    validateConcurrency({ concurrency: { ...SHIPPED, enabled: false, maxSlots: 99 } }),
+  );
   assert.deepEqual(msgs, []);
 });
 
@@ -391,7 +422,7 @@ test('A8: a disabled concurrency block is never validated', () => {
 test('orphan cleanup: stop() drops the tracked entry and releaseSlot frees the feature slot', async () => {
   const s = servers();
   s.portPid = async () => null; // no real lsof
-  s.alive = () => false;        // don't signal a made-up pid
+  s.alive = () => false; // don't signal a made-up pid
   const wt = '/repo/.worktrees/feat-a';
   s.tracked[wt] = { pid: 999999, repo: 'accept-blue', log: '/x.log' };
   s.allocSlotFor(featureFromPath(wt));
@@ -405,15 +436,22 @@ test('orphan cleanup: stop() drops the tracked entry and releaseSlot frees the f
   assert.equal(s.slots.has('feat-a'), false, 'concurrency slot released (not leaked)');
 });
 
-test('stop() targets only the worktree\'s known ports (no full discovery scan)', async () => {
+test("stop() targets only the worktree's known ports (no full discovery scan)", async () => {
   const s = servers();
   s.alive = () => false;
   const probed: number[] = [];
-  s.portPid = async (p: number) => { probed.push(p); return null; };
+  s.portPid = async (p: number) => {
+    probed.push(p);
+    return null;
+  };
   // accept-blue at slot 0 → its base port family
   s.allocSlotFor('feat-a');
   await s.stop('accept-blue', '/repo/.worktrees/feat-a');
-  assert.deepEqual(probed.sort((a, b) => a - b), [1231, 1232, 1233, 1239, 1999], 'probes just this worktree\'s ports');
+  assert.deepEqual(
+    probed.sort((a, b) => a - b),
+    [1231, 1232, 1233, 1239, 1999],
+    "probes just this worktree's ports",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -422,9 +460,16 @@ test('stop() targets only the worktree\'s known ports (no full discovery scan)',
 
 test('discoverRunning resolves each listening pid once and reuses it on the next scan', async () => {
   const s = servers();
-  s._listeningPids = async () => new Map([['100', new Set([3000])], ['200', new Set([4000])]]);
+  s._listeningPids = async () =>
+    new Map([
+      ['100', new Set([3000])],
+      ['200', new Set([4000])],
+    ]);
   let calls = 0;
-  s._resolvePid = async (pid) => { calls++; return { cwd: `/cwd/${pid}`, top: `/top/${pid}` }; };
+  s._resolvePid = async (pid) => {
+    calls++;
+    return { cwd: `/cwd/${pid}`, top: `/top/${pid}` };
+  };
 
   const a = await s.discoverRunning();
   const b = await s.discoverRunning();
@@ -439,10 +484,13 @@ test('discoverRunning drops cache entries for pids that stop listening', async (
   let live = new Map([['100', new Set([3000])]]);
   s._listeningPids = async () => live;
   let calls = 0;
-  s._resolvePid = async (pid) => { calls++; return { cwd: `/c/${pid}`, top: `/top/${pid}` }; };
+  s._resolvePid = async (pid) => {
+    calls++;
+    return { cwd: `/c/${pid}`, top: `/top/${pid}` };
+  };
 
-  await s.discoverRunning();            // resolves 100
-  await s.discoverRunning();            // cached → no new resolve
+  await s.discoverRunning(); // resolves 100
+  await s.discoverRunning(); // cached → no new resolve
   assert.equal(calls, 1, '100 resolved once across two scans');
 
   live = new Map([['200', new Set([4000])]]); // 100 gone, 200 appears
@@ -478,7 +526,10 @@ import net from 'net';
 function freePort(): Promise<number> {
   return new Promise<number>((resolve) => {
     const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => { const { port } = srv.address() as import('net').AddressInfo; srv.close(() => resolve(port)); });
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address() as import('net').AddressInfo;
+      srv.close(() => resolve(port));
+    });
   });
 }
 
@@ -495,7 +546,12 @@ function slowStarting(port: number, delayMs: number) {
     _stateDir: stateDir,
     web: { port: 0 },
     start: { api: { cmd, ports: [port] } },
-    concurrency: { enabled: true, offsetStep: 100, maxSlots: 3, repos: { api: { portEnv: { API_PORT: port } } } },
+    concurrency: {
+      enabled: true,
+      offsetStep: 100,
+      maxSlots: 3,
+      repos: { api: { portEnv: { API_PORT: port } } },
+    },
   };
   return { s: new Servers(cfg), wt, repo, stateDir };
 }
@@ -578,7 +634,14 @@ function bystander(): { pid: number } {
   return { pid: present(p.pid, 'a spawned pid') };
 }
 
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 // A process that has just been signalled stays visible to kill(pid, 0) until it is
 // reaped, so "did it die?" is only answerable after a beat.
 const settle = () => new Promise((r) => setTimeout(r, 400));
@@ -596,14 +659,23 @@ test('stop() does not signal a pid that was recycled since the record was writte
   const wt = '/repo/.worktrees/feat-old';
   // Exactly the shape servers.json holds after a reboot: our record, someone
   // else's process wearing the pid it names.
-  s.tracked[wt] = { pid: victim.pid, repo: 'api', log: '/dev/null', startedAt: Date.now() - 3 * 24 * 3600 * 1000 };
+  s.tracked[wt] = {
+    pid: victim.pid,
+    repo: 'api',
+    log: '/dev/null',
+    startedAt: Date.now() - 3 * 24 * 3600 * 1000,
+  };
 
   await s.stop('api', wt);
   await settle(); // a SIGTERMed child lingers in the process table until it is reaped
 
   assert.equal(alive(victim.pid), true, 'an unrelated process survived a stop() aimed at its pid');
   assert.equal(s.tracked[wt], undefined, 'and the dangerous record was dropped');
-  try { process.kill(victim.pid, 'SIGKILL'); } catch { /* */ }
+  try {
+    process.kill(victim.pid, 'SIGKILL');
+  } catch {
+    /* */
+  }
 });
 
 test('stop() still signals a process this Servers really launched', async () => {
@@ -623,7 +695,11 @@ test('a record written before startedAt existed is validated against the launch 
   // servers.json outlives upgrades, and the user's live file has three such rows.
   const ours = bystander();
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-tracked-legacy-'));
-  const s = new Servers({ _stateDir: stateDir, web: { port: 0 }, start: { api: { cmd: 'definitely-not-what-sleep-runs', ports: [] } } });
+  const s = new Servers({
+    _stateDir: stateDir,
+    web: { port: 0 },
+    start: { api: { cmd: 'definitely-not-what-sleep-runs', ports: [] } },
+  });
   const wt = '/repo/.worktrees/feat-legacy';
   s.tracked[wt] = { pid: ours.pid, repo: 'api', log: '/dev/null' }; // no startedAt
 
@@ -631,7 +707,11 @@ test('a record written before startedAt existed is validated against the launch 
   await settle();
   assert.equal(alive(ours.pid), true, 'legacy records are not a licence to kill');
   assert.equal(s.tracked[wt], undefined, 'the unverifiable record was dropped rather than trusted');
-  try { process.kill(ours.pid, 'SIGKILL'); } catch { /* */ }
+  try {
+    process.kill(ours.pid, 'SIGKILL');
+  } catch {
+    /* */
+  }
 });
 
 test('pruneTracked drops stale and recycled records and keeps live ones', async () => {
@@ -639,22 +719,43 @@ test('pruneTracked drops stale and recycled records and keeps live ones', async 
   const stranger = bystander();
   const s = bare();
   s.tracked['/repo/.worktrees/live'] = { pid: ours.pid, repo: 'api', log: 'l', startedAt: Date.now() };
-  s.tracked['/repo/.worktrees/recycled'] = { pid: stranger.pid, repo: 'api', log: 'l', startedAt: Date.now() - 864e5 };
+  s.tracked['/repo/.worktrees/recycled'] = {
+    pid: stranger.pid,
+    repo: 'api',
+    log: 'l',
+    startedAt: Date.now() - 864e5,
+  };
   s.tracked['/repo/.worktrees/dead'] = { pid: 2 ** 22, repo: 'api', log: 'l', startedAt: Date.now() };
 
   const dropped = await s.pruneTracked();
   assert.deepEqual(Object.keys(s.tracked), ['/repo/.worktrees/live']);
-  assert.deepEqual(dropped.map((d) => d.worktreePath).sort(), ['/repo/.worktrees/dead', '/repo/.worktrees/recycled']);
+  assert.deepEqual(dropped.map((d) => d.worktreePath).sort(), [
+    '/repo/.worktrees/dead',
+    '/repo/.worktrees/recycled',
+  ]);
   // durable — the next daemon reads a pruned file
-  assert.deepEqual(Object.keys(new Servers({ _stateDir: s.cfg._stateDir, web: { port: 0 }, start: {} }).tracked), ['/repo/.worktrees/live']);
+  assert.deepEqual(
+    Object.keys(new Servers({ _stateDir: s.cfg._stateDir, web: { port: 0 }, start: {} }).tracked),
+    ['/repo/.worktrees/live'],
+  );
 
-  for (const p of [ours.pid, stranger.pid]) { try { process.kill(p, 'SIGKILL'); } catch { /* */ } }
+  for (const p of [ours.pid, stranger.pid]) {
+    try {
+      process.kill(p, 'SIGKILL');
+    } catch {
+      /* */
+    }
+  }
 });
 
 test('start() records the moment it spawned, so its own pid validates', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-tracked-start-'));
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-tracked-repo-'));
-  const s = new Servers({ _stateDir: stateDir, web: { port: 0 }, start: { api: { cmd: 'exec sleep 20', ports: [] } } });
+  const s = new Servers({
+    _stateDir: stateDir,
+    web: { port: 0 },
+    start: { api: { cmd: 'exec sleep 20', ports: [] } },
+  });
   expectOk(await s.start('api', repo), 'start()');
   const t = present(s.tracked[repo], 'the tracked record');
   assert.ok(t.startedAt, 'the record carries a start stamp');

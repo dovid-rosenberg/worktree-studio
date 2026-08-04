@@ -12,11 +12,11 @@ function deriveEnv(
   repoConc: RepoConcurrency | null | undefined,
   slot: number,
   offsetStep: number,
-): { env: Record<string, string>, ports: number[] } {
+): { env: Record<string, string>; ports: number[] } {
   const env: Record<string, string> = {};
   const ports: number[] = [];
-  const portEnv = (repoConc?.portEnv) || {};
-  const slotEnv = (repoConc?.slotEnv) || [];
+  const portEnv = repoConc?.portEnv || {};
+  const slotEnv = repoConc?.slotEnv || [];
   for (const key of Object.keys(portEnv)) {
     const port = portEnv[key] + slot * offsetStep;
     env[key] = String(port);
@@ -37,7 +37,7 @@ function allocSlot(usedSlots: Set<number> | number[] | null | undefined, maxSlot
 // rewriteSiblingPort(text, basePort, offsetStep, maxSlots, newPort) → `text` with
 // every `localhost:<basePort + k*offsetStep>` (for k in 0..maxSlots-1) rewritten to
 // `localhost:<newPort>`. Used to re-point a per-worktree FE config (gitignored
-// `src/config.ts`) at the accept-blue merchant port for its slot.
+// `src/config.ts`) at the sibling backend's port for its slot.
 //   - Only touches ports in this family (base, base+step, …); everything else is left
 //     byte-for-byte — including other numbers and unrelated `localhost:<port>`s.
 //   - The `localhost:` anchor + a trailing non-digit guard mean `localhost:1239` never
@@ -66,8 +66,8 @@ function rewriteSiblingPort(
 // with EVERY sibling-repo port family shifted to `slot`. For each base port in
 // Object.values(siblingPortEnv), it rewrites every `localhost:<base + k*offsetStep>`
 // (k in 0..maxSlots-1) to `localhost:<base + slot*offsetStep>` (one rewriteSiblingPort
-// pass per base). Used for FE configs (e.g. ab-su's) that reference MULTIPLE accept-blue
-// ports (su/merchant/iso) — a feature at slot n runs one accept-blue instance serving
+// pass per base). Used for FE configs that reference MULTIPLE ports of one backend —
+// a feature at slot n runs one backend instance serving
 // all of them at +n*offsetStep, so all of those refs must move together.
 //   - Pure, idempotent, port-family-safe (inherits rewriteSiblingPort's `(?![0-9])` guard).
 //   - Slot 0 is a no-op (every base → itself).

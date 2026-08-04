@@ -68,9 +68,9 @@
     {#if notable || noDeps || ms.length > 1 || !sess}
       <div class="l2">
         {#if sess && notable}
-          <span class="pill agent {sess.state}" title="Agent — the Claude session">{sess.state}</span>
+          <span class="pill agent {sess.state}" title="The Claude session driving this feature">{sess.state}</span>
         {/if}
-        {#if !sess}<span class="noagent">no agent</span>{/if}
+        {#if !sess}<span class="nosession">no session</span>{/if}
         {#if noDeps}
           <span class="pill nodeps" title="{noDeps} of {ms.length} worktree(s) have no node_modules — their dev server cannot start until deps are installed">deps missing</span>
         {/if}
@@ -117,7 +117,7 @@
   .act { margin-top:6px; font-family:var(--mono); font-size:11.5px; color:var(--faint);
          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  .noagent { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
+  .nosession { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   /* Waiting-hue, not an error: it is a thing to do, not a thing that broke. */
   .pill.nodeps { color:var(--waiting); background:var(--waiting-bg); }
   /* Same amber as deps: both say "configured wrong, not broken", and both are fixed

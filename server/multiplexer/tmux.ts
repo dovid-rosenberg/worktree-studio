@@ -85,29 +85,41 @@ const CONF = path.join(CONFIG_DIR, 'tmux.conf');
 (function ensureConf() {
   try {
     fs.mkdirSync(path.dirname(CONF), { recursive: true });
-    fs.writeFileSync(CONF, [
-      'set -g status off', // no status bar → clean, native look
-      'set -g mouse on',
-      'set -g default-terminal "tmux-256color"',
-      'setw -g pane-border-status off',
-      'set -g base-index 0', // windows start at 0 → studio tab index maps 1:1
-      'set -g renumber-windows on', // keep indices contiguous when a tab closes
-      'set -g destroy-unattached off',
-      'setw -g automatic-rename off', // keep our explicit tab names (claude/shell)
-      'set -g allow-rename off', // don't let the running program rename the window
-      'set -g window-size largest', // a smaller pop-out client never shrinks the embedded terminal
-      'setw -g aggressive-resize on',
-      '',
-    ].join('\n'));
-  } catch { /* */ }
+    fs.writeFileSync(
+      CONF,
+      [
+        'set -g status off', // no status bar → clean, native look
+        'set -g mouse on',
+        'set -g default-terminal "tmux-256color"',
+        'setw -g pane-border-status off',
+        'set -g base-index 0', // windows start at 0 → studio tab index maps 1:1
+        'set -g renumber-windows on', // keep indices contiguous when a tab closes
+        'set -g destroy-unattached off',
+        'setw -g automatic-rename off', // keep our explicit tab names (claude/shell)
+        'set -g allow-rename off', // don't let the running program rename the window
+        'set -g window-size largest', // a smaller pop-out client never shrinks the embedded terminal
+        'setw -g aggressive-resize on',
+        '',
+      ].join('\n'),
+    );
+  } catch {
+    /* */
+  }
 })();
 
-const ENV: NodeJS.ProcessEnv = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
-function T(args: string[]): Promise<RunResult> { return run('tmux', ['-L', SOCK, '-f', CONF, ...args], { env: ENV }); }
+const ENV: NodeJS.ProcessEnv = {
+  ...process.env,
+  PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
+};
+function T(args: string[]): Promise<RunResult> {
+  return run('tmux', ['-L', SOCK, '-f', CONF, ...args], { env: ENV });
+}
 
 // Wrap a command so the pane survives the command exiting (drops to a shell).
 function persistCmd(cmd?: string): string {
-  return cmd ? `${cmd}; exec ${process.env.SHELL || '/bin/bash'} -l` : `${process.env.SHELL || '/bin/bash'} -l`;
+  return cmd
+    ? `${cmd}; exec ${process.env.SHELL || '/bin/bash'} -l`
+    : `${process.env.SHELL || '/bin/bash'} -l`;
 }
 
 // Launch commands go to a FILE and we type `source <file>` — never the command itself.
@@ -140,7 +152,11 @@ export function reapLaunchScripts(maxAgeMs = 24 * 60 * 60 * 1000): number {
   let removed = 0;
   const cutoff = Date.now() - maxAgeMs;
   let names: string[];
-  try { names = fs.readdirSync(LAUNCH_DIR); } catch { return 0; } // never created yet
+  try {
+    names = fs.readdirSync(LAUNCH_DIR);
+  } catch {
+    return 0;
+  } // never created yet
   for (const name of names) {
     if (!name.endsWith('.sh')) continue;
     const file = path.join(LAUNCH_DIR, name);
@@ -148,7 +164,9 @@ export function reapLaunchScripts(maxAgeMs = 24 * 60 * 60 * 1000): number {
       if (fs.statSync(file).mtimeMs >= cutoff) continue;
       fs.unlinkSync(file);
       removed++;
-    } catch { /* raced with something else, or unreadable — leave it */ }
+    } catch {
+      /* raced with something else, or unreadable — leave it */
+    }
   }
   return removed;
 }
@@ -168,7 +186,9 @@ const tmux: TmuxDriver = {
   name: 'tmux',
   env: ENV,
 
-  async available() { return (await T(['-V'])).code === 0; },
+  async available() {
+    return (await T(['-V'])).code === 0;
+  },
 
   async hasSession(name) {
     return (await T(['has-session', '-t', `=${name}`])).code === 0;
@@ -181,7 +201,21 @@ const tmux: TmuxDriver = {
     // is too late: window 0 already spawned without the vars.
     const envArgs: string[] = [];
     if (env) for (const [k, v] of Object.entries(env)) envArgs.push('-e', `${k}=${String(v)}`);
-    const r = await T(['new-session', '-d', '-s', name, '-n', 'claude', '-x', '220', '-y', '50', '-c', cwd || HOME, ...envArgs]);
+    const r = await T([
+      'new-session',
+      '-d',
+      '-s',
+      name,
+      '-n',
+      'claude',
+      '-x',
+      '220',
+      '-y',
+      '50',
+      '-c',
+      cwd || HOME,
+      ...envArgs,
+    ]);
     if (r.code !== 0) return { created: false, error: r.stderr.trim() };
     await T(['set-option', '-t', name, 'remain-on-exit', 'off']);
     await T(['send-keys', '-t', `${name}:0`, '--', launchKeys(`${name}-0`, cmd), 'Enter']);
@@ -201,7 +235,18 @@ const tmux: TmuxDriver = {
   // middle of [claude, api, web] relabels web as "api". A window_id never changes for
   // the life of the window, and tmux accepts it as a -t target everywhere.
   async newTab(name, { title, cwd, cmd } = {}) {
-    const r = await T(['new-window', '-P', '-F', '#{window_id}', '-t', name, '-n', title || 'shell', '-c', cwd || HOME]);
+    const r = await T([
+      'new-window',
+      '-P',
+      '-F',
+      '#{window_id}',
+      '-t',
+      name,
+      '-n',
+      title || 'shell',
+      '-c',
+      cwd || HOME,
+    ]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() };
     // new-window selects the new window → send the command to the session's active window
     if (cmd) await T(['send-keys', '-t', name, '--', launchKeys(`${name}-tab`, cmd), 'Enter']);
@@ -215,10 +260,14 @@ const tmux: TmuxDriver = {
   async listTabs(name) {
     const r = await T(['list-windows', '-t', name, '-F', '#{window_id}\t#{window_name}\t#{window_active}']);
     if (r.code !== 0) return [];
-    return r.stdout.trim().split('\n').filter(Boolean).map((l) => {
-      const [wid, wname, active] = l.split('\t');
-      return { id: wid, title: wname, active: active === '1' };
-    });
+    return r.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        const [wid, wname, active] = l.split('\t');
+        return { id: wid, title: wname, active: active === '1' };
+      });
   },
 
   async capture(name, target = '0') {
@@ -261,7 +310,6 @@ const tmux: TmuxDriver = {
     await T(['kill-session', '-t', `=${name}-split`]);
     return true;
   },
-
 };
 
 export default tmux;

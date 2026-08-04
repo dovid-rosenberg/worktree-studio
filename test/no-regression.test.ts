@@ -30,7 +30,7 @@ import * as worktree from '../server/worktree.ts';
 function oldFeatureFromPath(worktreePath: string): string {
   const parts = String(worktreePath || '').split(path.sep);
   const i = parts.lastIndexOf('.worktrees');
-  return (i >= 0 && parts[i + 1]) ? parts[i + 1] : path.basename(worktreePath || '');
+  return i >= 0 && parts[i + 1] ? parts[i + 1] : path.basename(worktreePath || '');
 }
 
 // server/features.ts before this change: the grouping key was the bare wtname.
@@ -51,7 +51,10 @@ const OWNER_CONFIG = {
   claude: { cmd: 'claude' },
   editors: {
     WebStorm: { open: 'open -na WebStorm --args {path}' },
-    Zed: { open: '/Applications/Zed.app/Contents/MacOS/cli {path}', openGroup: '/Applications/Zed.app/Contents/MacOS/cli {paths}' },
+    Zed: {
+      open: '/Applications/Zed.app/Contents/MacOS/cli {path}',
+      openGroup: '/Applications/Zed.app/Contents/MacOS/cli {paths}',
+    },
     Fleet: { open: 'open -na Fleet --args {path}' },
   },
   defaultEditor: 'WebStorm',
@@ -69,14 +72,21 @@ const OWNER_CONFIG = {
 const BASE = '/Users/davidr/Desktop/ab-code';
 // A worktree row spelling only what the functions under comparison read; the rest of
 // `Worktree` plays no part in grouping or slotting.
-const wt = (repo: string, repoDir: string, name: string, branch: string | null, extra: Partial<Worktree> = {}) => ({
-  repo,
-  wtname: name,
-  branch,
-  path: name === repo ? `${BASE}/${repoDir}/${repo}` : `${BASE}/${repoDir}/${repo}/.worktrees/${name}`,
-  running: false,
-  ...extra,
-} as Worktree);
+const wt = (
+  repo: string,
+  repoDir: string,
+  name: string,
+  branch: string | null,
+  extra: Partial<Worktree> = {},
+) =>
+  ({
+    repo,
+    wtname: name,
+    branch,
+    path: name === repo ? `${BASE}/${repoDir}/${repo}` : `${BASE}/${repoDir}/${repo}/.worktrees/${name}`,
+    running: false,
+    ...extra,
+  }) as Worktree;
 
 const CORPUS = [
   wt('accept-blue', 'ab-be', 'accept-blue', 'develop'),
@@ -112,10 +122,16 @@ test('slot keying is byte-identical to the old featureFromPath() over the whole 
 });
 
 test('slot keying is still identical after the scan index is fed', () => {
-  const repos: Array<{ name: string; worktrees: Array<{ path: string; name: string; branch: string | null }> }> = [];
+  const repos: Array<{
+    name: string;
+    worktrees: Array<{ path: string; name: string; branch: string | null }>;
+  }> = [];
   for (const w of CORPUS) {
     let r = repos.find((x) => x.name === w.repo);
-    if (!r) { r = { name: w.repo, worktrees: [] }; repos.push(r); }
+    if (!r) {
+      r = { name: w.repo, worktrees: [] };
+      repos.push(r);
+    }
     r.worktrees.push({ path: w.path, name: w.wtname, branch: w.branch });
   }
   identity.reindex(repos);
@@ -125,9 +141,9 @@ test('slot keying is still identical after the scan index is fed', () => {
 test('slot keying matches the old function for the awkward paths too', () => {
   const odd = [
     `${BASE}/ab-be/accept-blue/.worktrees/feat/src/lib`, // a cwd deep inside a worktree
-    `${BASE}/ab-be/accept-blue`,                          // main checkout
-    `${BASE}/ab-be/accept-blue/.worktrees`,               // the container itself
-    '/private/tmp/somewhere/else',                        // nothing to do with a repo
+    `${BASE}/ab-be/accept-blue`, // main checkout
+    `${BASE}/ab-be/accept-blue/.worktrees`, // the container itself
+    '/private/tmp/somewhere/else', // nothing to do with a repo
     '',
   ];
   for (const p of odd) {
@@ -144,13 +160,20 @@ test('grouping keys are byte-identical to the old wtname key', () => {
 
 test('grouping and slot keying give the same answer for every worktree', () => {
   for (const w of CORPUS) {
-    assert.equal(identity.of(w), identity.ofPath(w.path),
-      `grouping and slotting disagree for ${w.path} — a feature grouped one way and slotted another collides on ports`);
+    assert.equal(
+      identity.of(w),
+      identity.ofPath(w.path),
+      `grouping and slotting disagree for ${w.path} — a feature grouped one way and slotted another collides on ports`,
+    );
   }
 });
 
 test("computeFeatures under the owner's config equals grouping by wtname", () => {
-  const { features, groups } = computeFeatures(CORPUS, (OWNER_CONFIG as { groups?: GroupConfig[] }).groups || [], identity);
+  const { features, groups } = computeFeatures(
+    CORPUS,
+    (OWNER_CONFIG as { groups?: GroupConfig[] }).groups || [],
+    identity,
+  );
 
   // rebuild what the old code produced, from the old key
   const expected = new Map<string, Worktree[]>();
@@ -162,20 +185,35 @@ test("computeFeatures under the owner's config equals grouping by wtname", () =>
   for (const f of features) {
     assert.deepEqual(
       f.members.map((m) => (m.missing ? m.ref : m.path)).sort(),
-      present(expected.get(f.name), `expected members for ${f.name}`).map((m) => m.path).sort(),
+      present(expected.get(f.name), `expected members for ${f.name}`)
+        .map((m) => m.path)
+        .sort(),
       f.name,
     );
   }
   // groups are only the multi-member ones
-  assert.deepEqual(groups.map((g) => g.name).sort(),
-    [...expected].filter(([, m]) => m.length >= 2).map(([n]) => n).sort());
-  assert.deepEqual(groups.map((g) => g.name), ['custom-reports'], 'the three-repo feature, and only it');
+  assert.deepEqual(
+    groups.map((g) => g.name).sort(),
+    [...expected]
+      .filter(([, m]) => m.length >= 2)
+      .map(([n]) => n)
+      .sort(),
+  );
+  assert.deepEqual(
+    groups.map((g) => g.name),
+    ['custom-reports'],
+    'the three-repo feature, and only it',
+  );
 });
 
 test('main checkouts are still never features', () => {
   const { features } = computeFeatures(CORPUS, [], identity);
   for (const name of ['accept-blue', 'merchant-v3', 'ab-iso-fe', 'ab-su']) {
-    assert.equal(features.some((f) => f.name === name), false, `${name} leaked in as a feature`);
+    assert.equal(
+      features.some((f) => f.name === name),
+      false,
+      `${name} leaked in as a feature`,
+    );
   }
 });
 
@@ -196,8 +234,11 @@ test("the owner's copyPatterns still reach create(), and run configs are still c
   for (const p of OWNER_CONFIG.copyPatterns.default) {
     assert.ok(opts.copyPatterns.includes(p), `lost ${p}`);
   }
-  assert.deepEqual(opts.copyAlways, ['.idea/runConfigurations/*.xml'],
-    'no copyAlways key in the config → the historical unconditional JetBrains copy');
+  assert.deepEqual(
+    opts.copyAlways,
+    ['.idea/runConfigurations/*.xml'],
+    'no copyAlways key in the config → the historical unconditional JetBrains copy',
+  );
 });
 
 // ------------------------------------------------- concurrency slot registry --
@@ -207,7 +248,12 @@ test('the Servers slot registry keys on the same feature names as before', () =>
   const cfg = {
     ...OWNER_CONFIG,
     _stateDir: stateDir,
-    concurrency: { enabled: true, offsetStep: 100, maxSlots: 3, repos: { 'accept-blue': { portEnv: { api__port: 1233 }, slotEnv: ['redis__db'] } } },
+    concurrency: {
+      enabled: true,
+      offsetStep: 100,
+      maxSlots: 3,
+      repos: { 'accept-blue': { portEnv: { api__port: 1233 }, slotEnv: ['redis__db'] } },
+    },
   };
   const servers = new Servers(cfg, createIdentity(cfg));
   const feature = CORPUS.filter((w) => w.wtname === 'custom-reports');
@@ -215,7 +261,10 @@ test('the Servers slot registry keys on the same feature names as before', () =>
   // all three repos of one feature key the same slot — one allocation, not three
   const keys = feature.map((m) => servers.featureFor(m.path));
   assert.deepEqual(keys, ['custom-reports', 'custom-reports', 'custom-reports']);
-  assert.deepEqual(keys, feature.map((m) => oldFeatureFromPath(m.path)));
+  assert.deepEqual(
+    keys,
+    feature.map((m) => oldFeatureFromPath(m.path)),
+  );
   for (const k of keys) servers.allocSlotFor(k);
   assert.equal(servers.slots.size, 1, 'one slot for the whole feature');
   assert.equal(servers.slots.get('custom-reports'), 0);
@@ -226,7 +275,11 @@ test('the Servers slot registry keys on the same feature names as before', () =>
 
   // reconcileSlots agrees with the same key function
   servers.reconcileSlots(new Map([[feature[0].path, { pid: 1, ports: [1233] }]]));
-  assert.deepEqual([...servers.slots.keys()], ['custom-reports'], 'the feature with no running server was released');
+  assert.deepEqual(
+    [...servers.slots.keys()],
+    ['custom-reports'],
+    'the feature with no running server was released',
+  );
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
@@ -236,8 +289,21 @@ test('launch ports for a slotted repo are unchanged at slot 0', () => {
     ...OWNER_CONFIG,
     _stateDir: stateDir,
     concurrency: {
-      enabled: true, offsetStep: 100, maxSlots: 3,
-      repos: { 'accept-blue': { portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 }, slotEnv: ['redis__db'] } },
+      enabled: true,
+      offsetStep: 100,
+      maxSlots: 3,
+      repos: {
+        'accept-blue': {
+          portEnv: {
+            api__port_su: 1231,
+            api__port_iso: 1232,
+            api__port: 1233,
+            api__port_merchant: 1239,
+            api__port_internal: 1999,
+          },
+          slotEnv: ['redis__db'],
+        },
+      },
     },
   };
   const servers = new Servers(cfg, createIdentity(cfg));

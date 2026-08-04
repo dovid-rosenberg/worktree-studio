@@ -45,7 +45,9 @@ export const billingMultipliers = $state<BillingMultipliers>({
  * Ignores a payload without them, so an older daemon degrades to the bootstrap
  * values rather than to zeros.
  */
-export function adoptPricing(pricing: { cacheMultipliers?: Record<string, unknown> } | null | undefined): void {
+export function adoptPricing(
+  pricing: { cacheMultipliers?: Record<string, unknown> } | null | undefined,
+): void {
   const m = pricing?.cacheMultipliers;
   if (!m || typeof m !== 'object') return;
   for (const key of Object.keys(billingMultipliers) as (keyof BillingMultipliers)[]) {

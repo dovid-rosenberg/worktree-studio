@@ -41,9 +41,7 @@ export interface HunkApplyOptions {
   expect?: string | string[];
 }
 
-export type HunkApplyResult =
-  | { ok: false; error: string }
-  | ({ ok: true; hunks: number[] } & FileHunks);
+export type HunkApplyResult = { ok: false; error: string } | ({ ok: true; hunks: number[] } & FileHunks);
 
 // Canonical diff flags: force `a/`+`b/` prefixes and plain output so neither the user's
 // global git config (diff.mnemonicPrefix gives `c/`+`w/`, diff.noprefix gives none) nor
@@ -57,11 +55,17 @@ function gitApply(cwd: string, args: string[], patch: string): Promise<ApplyResu
     const p = spawn('git', ['-C', cwd, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    p.stdout.on('data', (d) => { stdout += d; });
-    p.stderr.on('data', (d) => { stderr += d; });
+    p.stdout.on('data', (d) => {
+      stdout += d;
+    });
+    p.stderr.on('data', (d) => {
+      stderr += d;
+    });
     p.on('error', (e) => resolve({ code: 1, stdout, stderr: e.message }));
     p.on('close', (code) => resolve({ code: code === null ? 1 : code, stdout, stderr }));
-    p.stdin.on('error', () => { /* git exited before reading the patch; `close` reports it */ });
+    p.stdin.on('error', () => {
+      /* git exited before reading the patch; `close` reports it */
+    });
     p.stdin.end(patch);
   });
 }
@@ -75,7 +79,8 @@ async function unstagedDiff(worktreePath: string, file: string): Promise<string>
   if (r.stdout) return r.stdout;
   const st = await git(worktreePath, ['status', '--porcelain', '--', file]);
   if (st.startsWith('??')) {
-    return (await gitFull(worktreePath, ['diff', '--no-index', ...DIFF_FLAGS, '--', '/dev/null', file])).stdout;
+    return (await gitFull(worktreePath, ['diff', '--no-index', ...DIFF_FLAGS, '--', '/dev/null', file]))
+      .stdout;
   }
   return '';
 }
@@ -90,14 +95,20 @@ function parseOne(patch: string, file: string): DiffFile | null {
   if (!files.length) return null;
   // Match on path so a rename (old ≠ new name) resolves from either side; a single-file
   // diff that somehow disagrees still resolves to its only entry.
-  return files.find((f) => f.path === file || f.oldPath === file || f.newPath === file) || (files.length === 1 ? files[0] : null);
+  return (
+    files.find((f) => f.path === file || f.oldPath === file || f.newPath === file) ||
+    (files.length === 1 ? files[0] : null)
+  );
 }
 
 // fileHunks(worktreePath, file) → both sides of one working file, structured.
 // `unstaged` is what can be staged, `staged` is what can be unstaged; hunk indexes in
 // stage()/unstage() refer to the matching side.
 async function fileHunks(worktreePath: string, file: string): Promise<FileHunks> {
-  const [unstagedRaw, stagedRaw] = await Promise.all([unstagedDiff(worktreePath, file), stagedDiff(worktreePath, file)]);
+  const [unstagedRaw, stagedRaw] = await Promise.all([
+    unstagedDiff(worktreePath, file),
+    stagedDiff(worktreePath, file),
+  ]);
   const porcelain = await git(worktreePath, ['status', '--porcelain', '--', file]);
   return {
     file,
@@ -124,7 +135,8 @@ function unstageableReason(fd: DiffFile, scope: string): string | null {
 // have moved under us; without the guard a stale index would silently stage the WRONG
 // hunk. With it we refuse and tell the caller to reload.
 async function apply(
-  worktreePath: string, { file, hunks, reverse = false, expect }: HunkApplyOptions = {},
+  worktreePath: string,
+  { file, hunks, reverse = false, expect }: HunkApplyOptions = {},
 ): Promise<HunkApplyResult> {
   if (!file) return { ok: false, error: 'file is required' };
   const scope = reverse ? 'staged' : 'unstaged';
@@ -134,7 +146,9 @@ async function apply(
   const why = unstageableReason(fd, scope);
   if (why) return { ok: false, error: why };
 
-  const list = (Array.isArray(hunks) ? hunks : [hunks]).map((n) => (typeof n === 'number' ? n : parseInt(String(n), 10)));
+  const list = (Array.isArray(hunks) ? hunks : [hunks]).map((n) =>
+    typeof n === 'number' ? n : parseInt(String(n), 10),
+  );
   if (!list.length || list.some((n) => !Number.isInteger(n) || n < 0 || n >= fd.hunks.length)) {
     return { ok: false, error: `hunks must be indexes into the ${scope} diff (0…${fd.hunks.length - 1})` };
   }
@@ -152,13 +166,16 @@ async function apply(
   // applies leaves the index in a state nobody asked for. Refuse instead of half-doing it.
   const args = ['apply', '--cached', '--whitespace=nowarn', ...(reverse ? ['--reverse'] : [])];
   const check = await gitApply(worktreePath, [...args, '--check'], patch);
-  if (check.code !== 0) return { ok: false, error: (check.stderr || check.stdout).trim() || 'patch does not apply' };
+  if (check.code !== 0)
+    return { ok: false, error: (check.stderr || check.stdout).trim() || 'patch does not apply' };
   const done = await gitApply(worktreePath, args, patch);
   if (done.code !== 0) return { ok: false, error: (done.stderr || done.stdout).trim() || 'git apply failed' };
   return { ok: true, hunks: list, ...(await fileHunks(worktreePath, file)) };
 }
 
-const stage = (worktreePath: string, opts: HunkApplyOptions) => apply(worktreePath, { ...opts, reverse: false });
-const unstage = (worktreePath: string, opts: HunkApplyOptions) => apply(worktreePath, { ...opts, reverse: true });
+const stage = (worktreePath: string, opts: HunkApplyOptions) =>
+  apply(worktreePath, { ...opts, reverse: false });
+const unstage = (worktreePath: string, opts: HunkApplyOptions) =>
+  apply(worktreePath, { ...opts, reverse: true });
 
 export { fileHunks, stage, unstage, apply, unstagedDiff, stagedDiff, DIFF_FLAGS };

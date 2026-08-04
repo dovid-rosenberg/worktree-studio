@@ -45,21 +45,29 @@ import type { CiEntry } from './forge.ts';
 import type { CiPayload, CiRepo, CiSnapshot } from './types.ts';
 
 const DEFAULTS = {
-  debounceMs: 500,       // coalesce a burst of triggers (a rescan storm, push then commit) into one sweep
-  minSweepMs: 20000,     // floor between sweeps — forge's CI_TTL, i.e. never more often than polling was
-  netMs: 90000,          // safety net while somebody is watching: a queued check going green has no local signal
-  tickMs: 5000,          // heartbeat that decides whether the net is due; spawns nothing itself
-  concurrency: 4,        // parallel gh/glab processes at most
+  debounceMs: 500, // coalesce a burst of triggers (a rescan storm, push then commit) into one sweep
+  minSweepMs: 20000, // floor between sweeps — forge's CI_TTL, i.e. never more often than polling was
+  netMs: 90000, // safety net while somebody is watching: a queued check going green has no local signal
+  tickMs: 5000, // heartbeat that decides whether the net is due; spawns nothing itself
+  concurrency: 4, // parallel gh/glab processes at most
   sweepTimeoutMs: 45000, // a sweep that hasn't finished by now is abandoned so the next one can run
 };
 
-function unref<T extends { unref?: () => unknown }>(t: T): T { if (t && typeof t.unref === 'function') t.unref(); return t; }
+function unref<T extends { unref?: () => unknown }>(t: T): T {
+  if (t && typeof t.unref === 'function') t.unref();
+  return t;
+}
 
 // Run `fn` over `items` with at most `limit` in flight. Order is irrelevant here —
 // every result is keyed — so this is a pool of workers pulling from one cursor.
 async function pool<T>(items: T[], limit: number, fn: (item: T) => unknown): Promise<void> {
   let i = 0;
-  const worker = async () => { while (i < items.length) { const n = i++; await fn(items[n]); } };
+  const worker = async () => {
+    while (i < items.length) {
+      const n = i++;
+      await fn(items[n]);
+    }
+  };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
 }
 
@@ -128,8 +136,8 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
   // become processes.
   function entries(list: CiSession[] | null | undefined): Map<string, CiEntry> {
     const out = new Map<string, CiEntry>();
-    for (const s of (list || [])) {
-      for (const r of (s.repos || [])) {
+    for (const s of list || []) {
+      for (const r of s.repos || []) {
         if (r?.worktreePath && r.branch) out.set(`${r.worktreePath}\n${r.branch}`, r);
       }
     }
@@ -146,15 +154,18 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     const results = new Map<string, CiRepo>();
     await pool([...wanted], o.concurrency, async ([key, entry]) => {
       lookups += 1;
-      try { results.set(key, await forge.ciForRepo(entry)); }
-      catch { results.set(key, { repo: entry.repo, hasPR: false }); }
+      try {
+        results.set(key, await forge.ciForRepo(entry));
+      } catch {
+        results.set(key, { repo: entry.repo, hasPR: false });
+      }
     });
     if (stopped || my !== gen) return; // abandoned mid-flight — a newer sweep owns the snapshot
 
     const next: CiSnapshot = {};
     for (const s of list) {
       const repos: CiRepo[] = [];
-      for (const r of (s.repos || [])) {
+      for (const r of s.repos || []) {
         if (!r?.worktreePath || !r.branch) continue;
         const found = results.get(`${r.worktreePath}\n${r.branch}`);
         repos.push(found ? { ...found, repo: r.repo } : { repo: r.repo, hasPR: false });
@@ -166,12 +177,19 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     if (nextSig === sig) return; // nothing moved — do not wake every subscriber up
     sig = nextSig;
     snapshot = next;
-    try { onChange(snapshot); } catch { /* a broken listener must not kill the feed */ }
+    try {
+      onChange(snapshot);
+    } catch {
+      /* a broken listener must not kill the feed */
+    }
   }
 
   function runSweep(): void {
     if (stopped) return;
-    if (busy) { queued = true; return; }
+    if (busy) {
+      queued = true;
+      return;
+    }
     busy = true;
     sweeps += 1;
     const my = ++gen;
@@ -179,16 +197,30 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
       if (my !== gen) return; // a later sweep already took over
       busy = false;
       lastSweepAt = Date.now();
-      if (queued) { queued = false; poke(); }
+      if (queued) {
+        queued = false;
+        poke();
+      }
     };
     // A gh/glab that never returns must not wedge the feed forever. forge kills the
     // child on its own timeout; this covers the case where even that doesn't land,
     // by giving up on the result and letting the next trigger start clean.
-    const guard = unref(setTimeout(() => { gen += 1; busy = false; lastSweepAt = Date.now(); }, o.sweepTimeoutMs));
+    const guard = unref(
+      setTimeout(() => {
+        gen += 1;
+        busy = false;
+        lastSweepAt = Date.now();
+      }, o.sweepTimeoutMs),
+    );
     Promise.resolve()
       .then(() => sweep(my))
-      .catch(() => { /* sweep is already total; this is the belt to its braces */ })
-      .then(() => { clearTimeout(guard); release(); });
+      .catch(() => {
+        /* sweep is already total; this is the belt to its braces */
+      })
+      .then(() => {
+        clearTimeout(guard);
+        release();
+      });
   }
 
   /**
@@ -201,7 +233,12 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     if (force && forge && typeof forge.invalidate === 'function') forge.invalidate();
     if (timer) return;
     const wait = Math.max(o.debounceMs, o.minSweepMs - (Date.now() - lastSweepAt));
-    timer = unref(setTimeout(() => { timer = null; runSweep(); }, wait));
+    timer = unref(
+      setTimeout(() => {
+        timer = null;
+        runSweep();
+      }, wait),
+    );
   }
 
   // The safety net. CI moves on the forge's side — a queued check goes green with no
@@ -218,14 +255,18 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     poke,
     // The `ci` half as the bus serializes it. A getter, not a value: the bus reads
     // it at write time, so a subscriber and a flush can never disagree.
-    snapshot(): CiPayload { return { ci: snapshot }; },
+    snapshot(): CiPayload {
+      return { ci: snapshot };
+    },
     stop(): void {
       stopped = true;
       clearInterval(heartbeat);
       if (timer) clearTimeout(timer);
       timer = null;
     },
-    stats() { return { sweeps, lookups, watching: watching.active() }; },
+    stats() {
+      return { sweeps, lookups, watching: watching.active() };
+    },
   };
 }
 

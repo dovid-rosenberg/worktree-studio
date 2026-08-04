@@ -19,12 +19,13 @@ import type { Config, PartialDeep } from '../server/types.ts';
  * case vacuously true, which is exactly what the first draft of this file did.
  */
 
-const cfg = (over: PartialDeep<Config> = {}): Config => ({
-  baseDirs: [],
-  worktrees: { layout: 'nested', dir: '.worktrees' },
-  featureIdentity: { strategy: 'basename' },
-  ...over,
-} as unknown as Config);
+const cfg = (over: PartialDeep<Config> = {}): Config =>
+  ({
+    baseDirs: [],
+    worktrees: { layout: 'nested', dir: '.worktrees' },
+    featureIdentity: { strategy: 'basename' },
+    ...over,
+  }) as unknown as Config;
 
 /*
  * A tiny deterministic PRNG. `Math.random()` would make a failure unreproducible, and
@@ -127,8 +128,18 @@ test('[branch] identity follows the branch, so differing branches do NOT group',
   // The strategy exists for teams whose worktree names differ per repo; the trade is
   // that a feature whose branches differ stops being one feature.
   const id = createIdentity(cfg({ featureIdentity: { strategy: 'branch', branchPattern: BRANCH_PATTERN } }));
-  const a = { repo: 'accept-blue', wtname: 'merchant-mfa', branch: 'feature/merchant-mfa-totp', path: '/b/a/.worktrees/merchant-mfa' };
-  const b = { repo: 'merchant-v3', wtname: 'merchant-mfa', branch: 'feature/mfa-totp', path: '/b/m/.worktrees/merchant-mfa' };
+  const a = {
+    repo: 'accept-blue',
+    wtname: 'merchant-mfa',
+    branch: 'feature/merchant-mfa-totp',
+    path: '/b/a/.worktrees/merchant-mfa',
+  };
+  const b = {
+    repo: 'merchant-v3',
+    wtname: 'merchant-mfa',
+    branch: 'feature/mfa-totp',
+    path: '/b/m/.worktrees/merchant-mfa',
+  };
   assert.notEqual(id.of(a), id.of(b));
 
   // …and the same branch in two repos does.

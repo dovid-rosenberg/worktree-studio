@@ -16,7 +16,9 @@ interface GitlabIssue {
   web_url: string;
 }
 
-function cfgOf(cfg: PartialDeep<Config>): GitlabConfig { return (cfg.sources?.gitlab) || {}; }
+function cfgOf(cfg: PartialDeep<Config>): GitlabConfig {
+  return cfg.sources?.gitlab || {};
+}
 
 // The REST fallback's two required settings, checked where they are read.
 //
@@ -27,7 +29,9 @@ function cfgOf(cfg: PartialDeep<Config>): GitlabConfig { return (cfg.sources?.gi
 // "undefined" token and reports the resulting 401 as if the token were wrong.
 function restTarget(g: GitlabConfig): { token: string; project: string } {
   if (!g.token || !g.project) {
-    throw new Error('GitLab: set sources.gitlab.token and sources.gitlab.project, or pick a repo with `glab` installed');
+    throw new Error(
+      'GitLab: set sources.gitlab.token and sources.gitlab.project, or pick a repo with `glab` installed',
+    );
   }
   return { token: g.token, project: g.project };
 }
@@ -37,7 +41,9 @@ function restTarget(g: GitlabConfig): { token: string; project: string } {
 async function rest<T>(cfg: PartialDeep<Config>, pathAndQuery: string): Promise<T> {
   const g = cfgOf(cfg);
   const host = (g.host || 'https://gitlab.com').replace(/\/$/, '');
-  const res = await fetch(`${host}/api/v4${pathAndQuery}`, { headers: { 'PRIVATE-TOKEN': restTarget(g).token } });
+  const res = await fetch(`${host}/api/v4${pathAndQuery}`, {
+    headers: { 'PRIVATE-TOKEN': restTarget(g).token },
+  });
   if (!res.ok) throw new Error(`GitLab API ${res.status}`);
   return (await res.json()) as T;
 }
@@ -61,7 +67,10 @@ const adapter: SourceAdapter = {
       return items.map((it) => ({ id: String(it.iid), title: it.title, subtitle: `!${it.iid}` }));
     }
     const proj = encodeURIComponent(restTarget(g).project);
-    const items = await rest<GitlabIssue[]>(cfg, `/projects/${proj}/issues?state=opened&per_page=30${q ? `&search=${encodeURIComponent(String(q))}` : ''}`);
+    const items = await rest<GitlabIssue[]>(
+      cfg,
+      `/projects/${proj}/issues?state=opened&per_page=30${q ? `&search=${encodeURIComponent(String(q))}` : ''}`,
+    );
     return items.map((it) => ({ id: String(it.iid), title: it.title, subtitle: `#${it.iid}` }));
   },
   async seed(cfg, { repoPath, id }) {
@@ -70,11 +79,23 @@ const adapter: SourceAdapter = {
       const r = await run('glab', ['issue', 'view', String(id), '-F', 'json'], { cwd: repoPath, env: ENV });
       if (r.code !== 0) throw new Error(r.stderr.trim() || 'glab issue view failed');
       const it = JSON.parse(r.stdout) as GitlabIssue;
-      return { source: 'gitlab', id: String(it.iid), title: it.title, body: it.description || '', url: it.web_url };
+      return {
+        source: 'gitlab',
+        id: String(it.iid),
+        title: it.title,
+        body: it.description || '',
+        url: it.web_url,
+      };
     }
     const proj = encodeURIComponent(restTarget(g).project);
     const it = await rest<GitlabIssue>(cfg, `/projects/${proj}/issues/${id}`);
-    return { source: 'gitlab', id: String(it.iid), title: it.title, body: it.description || '', url: it.web_url };
+    return {
+      source: 'gitlab',
+      id: String(it.iid),
+      title: it.title,
+      body: it.description || '',
+      url: it.web_url,
+    };
   },
 };
 

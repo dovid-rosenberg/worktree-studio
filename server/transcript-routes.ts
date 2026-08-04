@@ -100,9 +100,12 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   // config.ts owns where state lives (and honors WT_STUDIO_STATE); `cfg._stateDir` is
   // that same value riding on the loaded config. Falling back to a path spelled here
   // is how the index ended up under a `~/.wt-studio` that exists nowhere else.
-  const stateDir = (cfg?._stateDir) || STATE_DIR;
+  const stateDir = cfg?._stateDir || STATE_DIR;
   const index = new TranscriptIndex({ file: path.join(stateDir, 'transcripts.db') });
-  if (!index.ready) console.warn(`[wt-studio] transcript index unavailable (${index.error}) — search falls back to file scan`);
+  if (!index.ready)
+    console.warn(
+      `[wt-studio] transcript index unavailable (${index.error}) — search falls back to file scan`,
+    );
 
   // ---- keeping the index warm ----
   // The Stop hook is the natural trigger: it fires exactly when claude has finished
@@ -133,7 +136,11 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
       queue.delete(id); // delete BEFORE indexing, so a Stop arriving mid-pass re-queues
       const session = manager.get(id);
       if (!session) continue;
-      try { await index.index(session); } catch (e) { console.error('[wt-studio] index', e instanceof Error ? e.message : e); }
+      try {
+        await index.index(session);
+      } catch (e) {
+        console.error('[wt-studio] index', e instanceof Error ? e.message : e);
+      }
     }
     draining = false;
   }
@@ -154,22 +161,39 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
    */
 
   // Catch up on everything already on disk, once, off the boot path.
-  setTimeout(() => { for (const s of manager.all()) enqueue(s); }, 2000).unref?.();
+  setTimeout(() => {
+    for (const s of manager.all()) enqueue(s);
+  }, 2000).unref?.();
 
   // Bring one session up to date before answering a query about it, so a caller
   // never sees stale numbers just because no Stop hook has fired since the last turn.
   async function fresh(session: Session): Promise<void> {
     if (!index.ready) return;
-    try { await index.index(session); } catch { /* fall through to whatever is indexed */ }
+    try {
+      await index.index(session);
+    } catch {
+      /* fall through to whatever is indexed */
+    }
   }
 
   function need(req: Request<{ id: string }>, res: Response): Session | null {
     const s = manager.get(req.params.id);
-    if (!s) { res.status(404).json({ error: 'no such session' }); return null; }
+    if (!s) {
+      res.status(404).json({ error: 'no such session' });
+      return null;
+    }
     return s;
   }
 
-  const meta = (s: Session): SessionMeta => ({ id: s.id, title: s.title, feature: s.feature, branch: s.branch, repo: s.repoName, active: s.active, state: s.state });
+  const meta = (s: Session): SessionMeta => ({
+    id: s.id,
+    title: s.title,
+    feature: s.feature,
+    branch: s.branch,
+    repo: s.repoName,
+    active: s.active,
+    state: s.state,
+  });
 
   // A query param arrives as a STRING, an ARRAY (`?role=a&role=b`) or undefined, and
   // an array reaching sqlite or an execFile argv is a TypeError — a 500 leaking an
@@ -192,9 +216,15 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   // Which transcript a session maps to, and whether we can see it. Useful on its own
   // when a session's numbers look empty — it says WHY.
   r.get('/sessions/:id/transcript', async (req, res) => {
-    const s = need(req, res); if (!s) return;
+    const s = need(req, res);
+    if (!s) return;
     const loc = transcripts.locate(s, {});
-    res.json({ session: meta(s), claudeSessionId: s.claudeSessionId, ...loc, projectsRoot: transcripts.projectsRoot({}) });
+    res.json({
+      session: meta(s),
+      claudeSessionId: s.claudeSessionId,
+      ...loc,
+      projectsRoot: transcripts.projectsRoot({}),
+    });
   });
 
   // ---- search ----
@@ -202,7 +232,10 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
     const q = str(req.query.q, null) ?? str(req.query.query, '');
     if (!q.trim()) return res.json({ query: '', hits: [], total: 0, backend: index.status().backend });
     const sessionId = str(req.query.session, null) ?? str(req.query.sessionId, null);
-    if (sessionId) { const s = manager.get(sessionId); if (s) await fresh(s); }
+    if (sessionId) {
+      const s = manager.get(sessionId);
+      if (s) await fresh(s);
+    }
 
     if (!index.ready) {
       // No sqlite → scan the files we know about directly. Bounded by session count,
@@ -238,16 +271,28 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   });
 
   r.get('/sessions/:id/transcript/search', async (req, res) => {
-    const s = need(req, res); if (!s) return;
+    const s = need(req, res);
+    if (!s) return;
     await fresh(s);
     const q = str(req.query.q, null) ?? str(req.query.query, '');
     if (!index.ready) {
       const loc = transcripts.locate(s, {});
-      if (!loc.found) return res.json({ query: q, backend: 'file-scan', hits: [], total: 0, reason: loc.reason });
-      const hits = await transcripts.search(loc.file, { query: q, limit: Number(str(req.query.limit)) || 30 });
+      if (!loc.found)
+        return res.json({ query: q, backend: 'file-scan', hits: [], total: 0, reason: loc.reason });
+      const hits = await transcripts.search(loc.file, {
+        query: q,
+        limit: Number(str(req.query.limit)) || 30,
+      });
       return res.json({ query: q, backend: 'file-scan', session: meta(s), hits, total: hits.length });
     }
-    res.json({ ...index.search(q, { sessionId: s.id, limit: str(req.query.limit), order: str(req.query.order, 'rank') }), session: meta(s) });
+    res.json({
+      ...index.search(q, {
+        sessionId: s.id,
+        limit: str(req.query.limit),
+        order: str(req.query.order, 'rank'),
+      }),
+      session: meta(s),
+    });
   });
 
   // ---- telemetry ----
@@ -255,15 +300,30 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   // session's telemetry on its own must still learn the cache multipliers, or its
   // billed-weight chart falls back to whatever it last knew.
   r.get('/sessions/:id/transcript/usage', async (req, res) => {
-    const s = need(req, res); if (!s) return;
+    const s = need(req, res);
+    if (!s) return;
     await fresh(s);
     if (index.ready) {
       const rows = index.usageRows(s.id);
-      if (rows.length) return res.json({ session: meta(s), source: 'index', ...summarize(rows), costIsEstimate: true, pricing: pricingBlock() });
+      if (rows.length)
+        return res.json({
+          session: meta(s),
+          source: 'index',
+          ...summarize(rows),
+          costIsEstimate: true,
+          pricing: pricingBlock(),
+        });
     }
     // Not indexed (or no sqlite) → read the transcript directly.
     const loc = transcripts.locate(s, {});
-    if (!loc.found) return res.json({ session: meta(s), source: 'none', reason: loc.reason, ...summarize([]), pricing: pricingBlock() });
+    if (!loc.found)
+      return res.json({
+        session: meta(s),
+        source: 'none',
+        reason: loc.reason,
+        ...summarize([]),
+        pricing: pricingBlock(),
+      });
     const agg = await transcripts.aggregate(loc.file);
     res.json({ session: meta(s), source: 'transcript', ...agg, pricing: pricingBlock() });
   });
@@ -273,13 +333,18 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   // so it is the unit worth costing.
   r.get('/transcripts/usage', async (req, res) => {
     const sessions = manager.all();
-    if (req.query.refresh === '1') { for (const s of sessions) await fresh(s); }
+    if (req.query.refresh === '1') {
+      for (const s of sessions) await fresh(s);
+    }
 
     const bySession = new Map<string, UsageRow[]>();
     if (index.ready) {
       for (const row of index.usageRows(null)) {
         let rows = bySession.get(row.session_id);
-        if (!rows) { rows = []; bySession.set(row.session_id, rows); }
+        if (!rows) {
+          rows = [];
+          bySession.set(row.session_id, rows);
+        }
         rows.push(row);
       }
     }
@@ -314,7 +379,13 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
       const key = e.session.feature || e.session.id;
       let f = features.get(key);
       if (!f) {
-        f = { feature: key, sessions: 0, ...transcripts.blankTotals(), costUsd: 0, unpricedModels: new Set<string>() };
+        f = {
+          feature: key,
+          sessions: 0,
+          ...transcripts.blankTotals(),
+          costUsd: 0,
+          unpricedModels: new Set<string>(),
+        };
         features.set(key, f);
       }
       f.sessions++;
@@ -326,7 +397,11 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
     const totals = transcripts.blankTotals();
     let costUsd = 0;
     const unpriced = new Set<string>();
-    for (const e of out) { transcripts.addUsage(totals, e); costUsd += e.costUsd || 0; for (const m of e.unpricedModels) unpriced.add(m); }
+    for (const e of out) {
+      transcripts.addUsage(totals, e);
+      costUsd += e.costUsd || 0;
+      for (const m of e.unpricedModels) unpriced.add(m);
+    }
 
     res.json({
       sessions: out.sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0)),
@@ -341,7 +416,8 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   });
 
   r.post('/transcripts/reindex', async (req, res) => {
-    const body: { full?: unknown; session?: unknown } = req.body && typeof req.body === 'object' ? req.body : {};
+    const body: { full?: unknown; session?: unknown } =
+      req.body && typeof req.body === 'object' ? req.body : {};
     const full = body.full === true || req.query.full === '1';
     const only = body.session ? manager.get(String(body.session)) : null;
     const targets: Session[] = body.session ? (only ? [only] : []) : manager.all();

@@ -14,7 +14,10 @@ import type { CiEntry } from '../server/forge.ts';
 import type { CiPayload, CiRepo } from '../server/types.ts';
 import { present } from './helpers.ts';
 
-const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
+const sleep = (ms: number) =>
+  new Promise<void>((r) => {
+    setTimeout(r, ms);
+  });
 
 async function waitFor(fn: () => unknown, { timeout = 2000, label = 'condition' } = {}) {
   const until = Date.now() + timeout;
@@ -49,13 +52,22 @@ function fakeForge(answers: Record<string, CiAnswer> = {}) {
       if (typeof a === 'function') return a(entry);
       return a ? { repo: entry.repo, ...a } : { repo: entry.repo, hasPR: false };
     },
-    invalidate() { f.invalidations += 1; },
+    invalidate() {
+      f.invalidations += 1;
+    },
   };
   return f;
 }
 
 const SESSION = { id: 's_1', repos: [{ repo: 'api', worktreePath: '/w/a', branch: 'feature/a' }] };
-const OPEN_PR = { hasPR: true, provider: 'github', number: 4, url: 'https://gh/4', state: 'OPEN', checks: { passed: 1, running: 0, failed: 0, total: 1 } };
+const OPEN_PR = {
+  hasPR: true,
+  provider: 'github',
+  number: 4,
+  url: 'https://gh/4',
+  state: 'OPEN',
+  checks: { passed: 1, running: 0, failed: 0, total: 1 },
+};
 
 // A feed with one attached stream and one promoted session, unless overridden.
 // `sessions`/`streams` take either a value or a thunk, so a test can change the
@@ -128,8 +140,11 @@ test('a poke sweeps and pushes the snapshot keyed by session id', async () => {
 test('the snapshot is re-emitted only when it actually differs', async () => {
   const forge = fakeForge({ '/w/a': OPEN_PR });
   const { feed: f, frames } = feed({ forge });
-  f.poke(); await waitFor(() => frames.length === 1, { label: 'frame 1' });
-  f.poke(); f.poke(); f.poke();
+  f.poke();
+  await waitFor(() => frames.length === 1, { label: 'frame 1' });
+  f.poke();
+  f.poke();
+  f.poke();
   await sleep(60);
   assert.equal(frames.length, 1, 'an unchanged answer must not wake every subscriber');
   assert.ok(forge.lookups >= 2, 'it did look again — it just had nothing to say');
@@ -177,7 +192,11 @@ test('snapshot() is the `ci` half the bus writes, and it survives sessions going
   f.poke();
   await waitFor(() => frames.length === 2, { label: 'the removal frame' });
   f.stop();
-  assert.deepEqual(f.snapshot(), { ci: {} }, 'a closed session is simply absent — a replacement reports removals for free');
+  assert.deepEqual(
+    f.snapshot(),
+    { ci: {} },
+    'a closed session is simply absent — a replacement reports removals for free',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -204,14 +223,20 @@ test('a storm of triggers is floored at minSweepMs — no more often than pollin
   const forge = fakeForge({ '/w/a': OPEN_PR });
   const { feed: f } = feed({ forge, intervals: { ...FAST, minSweepMs: 300 } });
   const until = Date.now() + 400;
-  while (Date.now() < until) { f.poke({ force: true }); await sleep(2); } // ~200 triggers
+  while (Date.now() < until) {
+    f.poke({ force: true });
+    await sleep(2);
+  } // ~200 triggers
   await sleep(50);
   f.stop();
-  assert.ok(forge.lookups <= 3, `400 ms of continuous triggers must not become a spawn storm (was ${forge.lookups})`);
+  assert.ok(
+    forge.lookups <= 3,
+    `400 ms of continuous triggers must not become a spawn storm (was ${forge.lookups})`,
+  );
   assert.ok(forge.lookups >= 1, 'but it does still refresh');
 });
 
-test('minSweepMs defaults to forge\'s CI_TTL, so the push model cannot shell out more often than the poll did', () => {
+test("minSweepMs defaults to forge's CI_TTL, so the push model cannot shell out more often than the poll did", () => {
   assert.equal(DEFAULTS.minSweepMs, 20000);
 });
 
@@ -241,7 +266,11 @@ test('a hung forge lookup never rejects and never emits — and a later sweep st
 });
 
 test('a forge that throws is contained — the session comes back hasPR:false', async () => {
-  const forge = fakeForge({ '/w/a': () => { throw new Error('gh: exploded'); } });
+  const forge = fakeForge({
+    '/w/a': () => {
+      throw new Error('gh: exploded');
+    },
+  });
   const { feed: f, frames } = feed({ forge });
   f.poke();
   await waitFor(() => frames.length === 1, { label: 'a frame' });
@@ -255,7 +284,10 @@ test('a sessions() that throws cannot take the feed down', async () => {
   const frames: CiPayload[] = [];
   const f = createCiFeed({
     forge,
-    sessions: () => { if (broken) throw new Error('mid-restore'); return [SESSION]; },
+    sessions: () => {
+      if (broken) throw new Error('mid-restore');
+      return [SESSION];
+    },
     streams: () => 1,
     onChange: () => frames.push(f.snapshot()),
     intervals: FAST,
@@ -276,7 +308,10 @@ test('an onChange listener that throws does not stop the next sweep', async () =
     forge,
     sessions: () => [SESSION],
     streams: () => 1,
-    onChange: () => { calls += 1; throw new Error('bus is on fire'); },
+    onChange: () => {
+      calls += 1;
+      throw new Error('bus is on fire');
+    },
     intervals: FAST,
   });
   f.poke();
@@ -288,7 +323,10 @@ test('an onChange listener that throws does not stop the next sweep', async () =
 });
 
 test('stop() parks the feed for good', async () => {
-  const { feed: f, forge } = feed({ forge: fakeForge({ '/w/a': OPEN_PR }), intervals: { ...FAST, netMs: 20 } });
+  const { feed: f, forge } = feed({
+    forge: fakeForge({ '/w/a': OPEN_PR }),
+    intervals: { ...FAST, netMs: 20 },
+  });
   f.stop();
   f.poke({ force: true });
   await sleep(100);

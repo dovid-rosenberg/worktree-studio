@@ -48,7 +48,8 @@ const qs = (params: Record<string, string | number | boolean | null | undefined>
 };
 
 /** Index health: backend, whether FTS5 is available, how much is indexed, price age. */
-export const transcriptStatus = (signal?: AbortSignal): Promise<TranscriptStatus> => get(`${V1}/transcripts/status`, signal);
+export const transcriptStatus = (signal?: AbortSignal): Promise<TranscriptStatus> =>
+  get(`${V1}/transcripts/status`, signal);
 
 /**
  * Search. Always the global endpoint — passing `session` scopes it to one session AND
@@ -78,14 +79,12 @@ export const sessionUsage = (id: string, signal?: AbortSignal): Promise<Usage> =
 export const fleetUsage = (
   { refresh }: { refresh?: boolean } = {},
   signal?: AbortSignal,
-): Promise<FleetUsage> =>
-  get(`${V1}/transcripts/usage${qs({ refresh: refresh ? 1 : null })}`, signal);
+): Promise<FleetUsage> => get(`${V1}/transcripts/usage${qs({ refresh: refresh ? 1 : null })}`, signal);
 
 export const reindex = (
   { session, full }: { session?: string | null; full?: boolean } = {},
   signal?: AbortSignal,
-): Promise<any> =>
-  post(`${V1}/transcripts/reindex`, { session, full }, signal);
+): Promise<any> => post(`${V1}/transcripts/reindex`, { session, full }, signal);
 
 /** The session list, for the search scope picker and session titles. */
 export async function listSessions(signal?: AbortSignal): Promise<StateSession[]> {

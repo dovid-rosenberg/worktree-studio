@@ -21,7 +21,10 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 function npmRun(args: string[]): void {
   const r = spawnSync(npm, args, { cwd: client, stdio: 'inherit' });
-  if (r.error) { console.error(`[build-client] ${r.error.message}`); process.exit(1); }
+  if (r.error) {
+    console.error(`[build-client] ${r.error.message}`);
+    process.exit(1);
+  }
   if (r.status !== 0) process.exit(r.status || 1);
 }
 

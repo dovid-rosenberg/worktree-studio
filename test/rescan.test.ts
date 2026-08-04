@@ -15,11 +15,17 @@ function oldRescan(scan: () => Promise<unknown>) {
   return async function rescan() {
     if (scanning) return;
     scanning = true;
-    try { await scan(); } finally { scanning = false; }
+    try {
+      await scan();
+    } finally {
+      scanning = false;
+    }
   };
 }
 
-const tick = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r)); };
+const tick = async () => {
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+};
 
 // A scan whose completion the test controls. `started` records the config each
 // scan read AT ITS START, which is the whole question here.
@@ -30,9 +36,17 @@ function gated() {
   const started: Array<string | number> = [];
   return {
     started,
-    async run(tag: string | number) { started.push(tag); await new Promise<void>((r) => waiting.push(r)); },
-    release() { const r = waiting.shift(); if (r) r(); },
-    get pending() { return waiting.length; },
+    async run(tag: string | number) {
+      started.push(tag);
+      await new Promise<void>((r) => waiting.push(r));
+    },
+    release() {
+      const r = waiting.shift();
+      if (r) r();
+    },
+    get pending() {
+      return waiting.length;
+    },
   };
 }
 
@@ -40,8 +54,17 @@ function gated() {
 function scenario(make: (scan: () => Promise<void>) => () => Promise<unknown>) {
   const g = gated();
   let baseDirs = ['a'];
-  const rescan = make(async () => { const dirs = baseDirs.join(','); await g.run(dirs); });
-  return { g, rescan, setBaseDirs: (v: string[]) => { baseDirs = v; } };
+  const rescan = make(async () => {
+    const dirs = baseDirs.join(',');
+    await g.run(dirs);
+  });
+  return {
+    g,
+    rescan,
+    setBaseDirs: (v: string[]) => {
+      baseDirs = v;
+    },
+  };
 }
 
 test('a baseDirs change made during a scan gets its own scan', async () => {
@@ -49,11 +72,11 @@ test('a baseDirs change made during a scan gets its own scan', async () => {
   const before = scenario(oldRescan);
 
   for (const s of [now, before]) {
-    const first = s.rescan();           // a background scan is already in flight …
+    const first = s.rescan(); // a background scan is already in flight …
     await tick();
-    s.setBaseDirs(['a', 'b']);          // … when POST /api/settings replaces baseDirs
+    s.setBaseDirs(['a', 'b']); // … when POST /api/settings replaces baseDirs
     const queued = s.rescan();
-    s.g.release();                      // the in-flight scan finishes — it only saw ['a']
+    s.g.release(); // the in-flight scan finishes — it only saw ['a']
     await first;
     await tick();
     s.g.release();
@@ -73,8 +96,12 @@ test('several requests during one scan collapse into a single follow-up', async 
   const queued = [rescan(), rescan(), rescan()];
   assert.equal(queued[0], queued[1], 'they share one promise');
   assert.equal(queued[1], queued[2]);
-  g.release(); await first; await tick();
-  g.release(); await Promise.all(queued); await tick();
+  g.release();
+  await first;
+  await tick();
+  g.release();
+  await Promise.all(queued);
+  await tick();
   assert.equal(g.started.length, 2, 'three mid-scan requests bought exactly one re-run');
   assert.equal(g.pending, 0);
 });
@@ -82,14 +109,22 @@ test('several requests during one scan collapse into a single follow-up', async 
 test('sequential requests do not stack up', async () => {
   const g = gated();
   const rescan = createRescan(() => g.run('x'));
-  for (let i = 0; i < 3; i++) { const p = rescan(); await tick(); g.release(); await p; }
+  for (let i = 0; i < 3; i++) {
+    const p = rescan();
+    await tick();
+    g.release();
+    await p;
+  }
   assert.equal(g.started.length, 3);
   assert.equal(g.pending, 0);
 });
 
-test('a failed scan neither wedges the queue nor swallows the next caller\'s result', async () => {
+test("a failed scan neither wedges the queue nor swallows the next caller's result", async () => {
   let n = 0;
-  const rescan = createRescan(async () => { n += 1; if (n === 1) throw new Error('scan blew up'); });
+  const rescan = createRescan(async () => {
+    n += 1;
+    if (n === 1) throw new Error('scan blew up');
+  });
   await assert.rejects(rescan(), /scan blew up/, 'the first caller still sees their own failure');
   await rescan();
   assert.equal(n, 2, 'the next request runs a fresh scan');

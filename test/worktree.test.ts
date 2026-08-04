@@ -7,7 +7,9 @@ import { execFileSync } from 'child_process';
 import * as worktree from '../server/worktree.ts';
 import { expectErr, expectOk } from './helpers.ts';
 
-function sh(cwd: string, cmd: string, args: string[]): void { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }
+function sh(cwd: string, cmd: string, args: string[]): void {
+  execFileSync(cmd, args, { cwd, stdio: 'ignore' });
+}
 
 function tempRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-repo-'));
@@ -37,7 +39,10 @@ test('create() makes a worktree and carries gitignored run configs + local files
   assert.ok(fs.existsSync(made.path), 'worktree dir exists');
   assert.ok(fs.existsSync(path.join(made.path, '.env')), '.env copied');
   assert.ok(fs.existsSync(path.join(made.path, 'config', 'dev-config.ts')), 'dev-config.ts copied');
-  assert.ok(fs.existsSync(path.join(made.path, '.idea', 'runConfigurations', 'start.xml')), 'run config copied');
+  assert.ok(
+    fs.existsSync(path.join(made.path, '.idea', 'runConfigurations', 'start.xml')),
+    'run config copied',
+  );
   assert.equal(made.copied.runConfigs, 1);
   assert.equal(made.copied.files, 2);
   assert.equal(made.created, true);

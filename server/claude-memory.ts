@@ -88,7 +88,11 @@ export function linkMemory(worktreePath: string, repoPath: string, projectsDir =
 
     const link = memoryDirFor(worktreePath, projectsDir);
     let st: fs.Stats | undefined;
-    try { st = fs.lstatSync(link); } catch { /* absent — the normal first-run path */ }
+    try {
+      st = fs.lstatSync(link);
+    } catch {
+      /* absent — the normal first-run path */
+    }
 
     if (st?.isSymbolicLink()) {
       const cur = fs.readlinkSync(link);
@@ -101,7 +105,11 @@ export function linkMemory(worktreePath: string, repoPath: string, projectsDir =
       // The one case worth being paranoid about: a real directory holding real memories.
       // Replacing it would delete them, so an occupied directory wins over the feature.
       if (fs.readdirSync(link).length) {
-        return { status: 'occupied', reason: 'a real memory directory with content is already here', at: link };
+        return {
+          status: 'occupied',
+          reason: 'a real memory directory with content is already here',
+          at: link,
+        };
       }
       fs.rmdirSync(link); // empty — safe to stand a link in its place
     } else if (st) {
@@ -127,7 +135,7 @@ export interface RepoLike {
  * Link every repo a session spans.
  *
  * Per-repo, not per-session: a feature is several checkouts, and each worktree has to
- * reach its OWN repo's memories — pointing an `ab-iso-fe` worktree at `accept-blue`'s
+ * reach its OWN repo's memories — pointing a frontend worktree at the backend's
  * memories would be worse than pointing it at nothing.
  */
 export function linkSessionMemory(

@@ -1,0 +1,62 @@
+name: Release
+
+# There is no deploy step, and that is not an omission.
+#
+# Worktree Studio is a local daemon: it drives YOUR tmux, YOUR git worktrees and YOUR
+# Claude sessions on YOUR machine, over a loopback socket behind a boot token. There is
+# no server to push to and no artifact to install — you run it from a checkout. A "CD"
+# pipeline here would deploy nothing, somewhere.
+#
+# What is actually worth automating is the other half: making a version reproducible.
+# Tag `v1.2.3`, and this verifies the tag matches package.json, runs the full suite
+# against it, and cuts a release with generated notes. That is the part a user of the
+# repo can rely on.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Release notes are generated from the commits since the previous tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # A tag that disagrees with package.json produces a release nobody can reproduce
+      # from an install, so it fails here rather than shipping.
+      - name: Tag matches package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG does not match package.json $PKG" >&2
+            exit 1
+          fi
+          echo "version $PKG"
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - run: npm ci
+      - run: npm ci --prefix client
+
+      # The same gates as CI: a tag is not a reason to ship something that fails them.
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+
+      - name: Create the release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

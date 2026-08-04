@@ -10,25 +10,47 @@ import type { Feature, Session } from '../../../../../server/types';
  * footer that counts what is on screen rather than one category of it.
  */
 vi.mock('$lib/ops.svelte.js', () => ({
-  openApp: vi.fn(), stopMainServer: vi.fn(), promote: vi.fn(),
-  activateSession: vi.fn(), closeSession: vi.fn(), pending: new Set(),
+  openApp: vi.fn(),
+  stopMainServer: vi.fn(),
+  promote: vi.fn(),
+  activateSession: vi.fn(),
+  closeSession: vi.fn(),
+  pending: new Set(),
 }));
 
 /** The footer summary, as text, so assertions read like what is on screen. */
-const foot = (c: HTMLElement) => c.querySelector('.rail-foot')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+const foot = (c: HTMLElement) =>
+  c.querySelector('.rail-foot')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
 
 const { default: Rail } = await import('./Rail.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');
 const { world } = await import('$lib/stores/world.svelte.js');
 
 const member = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo, wtname: 'wt', path: `/${repo}/wt`, branch: 'feature/x',
-  running: false, canStart: true, ports: [], isMain: false, session: null, ...over,
+  repo,
+  wtname: 'wt',
+  path: `/${repo}/wt`,
+  branch: 'feature/x',
+  running: false,
+  canStart: true,
+  ports: [],
+  isMain: false,
+  session: null,
+  ...over,
 });
 const feature = (name: string, over: Record<string, unknown> = {}): Feature =>
-  ({ name, auto: true, members: [member('accept-blue')], session: null, ...over } as unknown as Feature);
+  ({ name, auto: true, members: [member('accept-blue')], session: null, ...over }) as unknown as Feature;
 const session = (id: string, over: Record<string, unknown> = {}): Session =>
-  ({ id, title: id, state: 'idle', activity: '', repoName: 'accept-blue', worktreePath: null, repos: [], ...over } as unknown as Session);
+  ({
+    id,
+    title: id,
+    state: 'idle',
+    activity: '',
+    repoName: 'accept-blue',
+    worktreePath: null,
+    repos: [],
+    ...over,
+  }) as unknown as Session;
 
 function give(features: Feature[], sessions: Session[] = [], repos: unknown[] = [], webRepos: string[] = []) {
   world.topology = { features, groups: [], repos, webRepos } as never;
@@ -113,10 +135,12 @@ describe('Rail', () => {
   it('counts a working agent ONCE however many repos its feature spans', () => {
     const agent = { id: 's1', state: 'working', activity: '', muxName: 'm' };
     give(
-      [feature('wide', {
-        members: [member('accept-blue', { session: agent }), member('merchant-v3', { session: agent })],
-        session: agent,
-      })],
+      [
+        feature('wide', {
+          members: [member('accept-blue', { session: agent }), member('merchant-v3', { session: agent })],
+          session: agent,
+        }),
+      ],
       [session('s1', { state: 'working', worktreePath: '/wt' })],
     );
     const { container } = render(Rail);
@@ -125,9 +149,11 @@ describe('Rail', () => {
   });
 
   it('counts dev servers per worktree, because each worktree runs its own', () => {
-    give([feature('wide', {
-      members: [member('accept-blue', { running: true }), member('merchant-v3', { running: true })],
-    })]);
+    give([
+      feature('wide', {
+        members: [member('accept-blue', { running: true }), member('merchant-v3', { running: true })],
+      }),
+    ]);
     const { container } = render(Rail);
     expect(foot(container)).toContain('2 up');
   });

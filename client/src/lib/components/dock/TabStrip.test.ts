@@ -15,25 +15,29 @@ import type { Session } from '../../../../../server/types';
  * WHICH id the strip decided to send.
  */
 const ops = vi.hoisted(() => ({
-  addTab: vi.fn(), closeTab: vi.fn(), renameTab: vi.fn(), selectTab: vi.fn(),
+  addTab: vi.fn(),
+  closeTab: vi.fn(),
+  renameTab: vi.fn(),
+  selectTab: vi.fn(),
 }));
 vi.mock('$lib/ops.svelte.js', () => ops);
 
 const { default: TabStrip } = await import('./TabStrip.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');
 
-const session = (over: Record<string, unknown> = {}): Session => ({
-  id: 's1',
-  title: 'token-race-fix',
-  state: 'working',
-  worktreePath: '/wt',
-  tabs: [
-    { id: '@1', title: 'claude' },
-    { id: '@7', title: 'api' },
-    { id: '@9', title: 'web' },
-  ],
-  ...over,
-} as unknown as Session);
+const session = (over: Record<string, unknown> = {}): Session =>
+  ({
+    id: 's1',
+    title: 'token-race-fix',
+    state: 'working',
+    worktreePath: '/wt',
+    tabs: [
+      { id: '@1', title: 'claude' },
+      { id: '@7', title: 'api' },
+      { id: '@9', title: 'web' },
+    ],
+    ...over,
+  }) as unknown as Session;
 
 beforeEach(() => {
   vi.clearAllMocks();

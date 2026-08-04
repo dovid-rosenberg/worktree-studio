@@ -92,7 +92,16 @@ interface Servers {
    */
   startAll(targets: Array<{ repo: string; worktreePath: string }>): Promise<
     | { ok: false; slotError: string }
-    | { ok: true; results: Array<{ repo: string; ok: boolean; error?: string; listening?: boolean; boundElsewhere?: number[] }> }
+    | {
+        ok: true;
+        results: Array<{
+          repo: string;
+          ok: boolean;
+          error?: string;
+          listening?: boolean;
+          boundElsewhere?: number[];
+        }>;
+      }
   >;
   stop(repo: string, worktreePath: string): Promise<unknown>;
   // Was `Promise<unknown>` while /group/restart threw the result away and answered a
@@ -109,8 +118,17 @@ interface Manager {
   deactivate(id: string): Promise<unknown>;
   close(id: string): Promise<unknown>;
   sessionForWorktree(worktreePath: string): SessionRef | null | undefined;
-  adopt(args: { worktreePath: string; repoName: string; repoPath: string; branch?: string | null; wtname?: string }): Promise<SessionRef | null>;
-  attachRepo(id: string, args: { repo: string; repoPath: string; worktreePath: string; branch?: string | null; wtname?: string }): Promise<unknown>;
+  adopt(args: {
+    worktreePath: string;
+    repoName: string;
+    repoPath: string;
+    branch?: string | null;
+    wtname?: string;
+  }): Promise<SessionRef | null>;
+  attachRepo(
+    id: string,
+    args: { repo: string; repoPath: string; worktreePath: string; branch?: string | null; wtname?: string },
+  ): Promise<unknown>;
 }
 
 /** One scan-cache row: the repo name a member names, and the checkout to run git in. */
@@ -150,7 +168,18 @@ interface GroupBody {
 
 // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
 function register(app: Router, deps: OrchestratorDeps): void {
-  const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, running, scheduleBroadcast, rescan } = deps;
+  const {
+    cfg,
+    servers,
+    manager,
+    repos,
+    resolveGroup,
+    conflictsFor,
+    refreshRunning,
+    running,
+    scheduleBroadcast,
+    rescan,
+  } = deps;
 
   /**
    * Free the feature's slot for every member, but only if the feature is genuinely down.
@@ -179,7 +208,12 @@ function register(app: Router, deps: OrchestratorDeps): void {
       .map((m) => ({ repo: m.repo, path: m.path, reason: skipReason(m) }));
     const conflicts: Member[] = [];
     const seen = new Set<string>();
-    for (const m of toStart) for (const c of conflictsFor(m, flat)) if (!seen.has(c.path)) { seen.add(c.path); conflicts.push(c); }
+    for (const m of toStart)
+      for (const c of conflictsFor(m, flat))
+        if (!seen.has(c.path)) {
+          seen.add(c.path);
+          conflicts.push(c);
+        }
     if (conflicts.length && !stopConflicts) {
       // `skipped` rides along so the confirm dialog can say what this start will NOT
       // bring up, before the user agrees to stop something else for it.
@@ -198,9 +232,13 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const out = await servers.startAll(toStart.map((m) => ({ repo: m.repo, worktreePath: m.path })));
     if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
 
-    let started = 0; const failures: Array<{ repo: string; error?: string }> = [];
+    let started = 0;
+    const failures: Array<{ repo: string; error?: string }> = [];
     for (const r of out.results) {
-      if (!r.ok) { failures.push({ repo: r.repo, error: r.error }); continue; }
+      if (!r.ok) {
+        failures.push({ repo: r.repo, error: r.error });
+        continue;
+      }
       // Spawned but never bound. This used to count as a start, which is the precise
       // shape of "it said it started and nothing is running": the process was created,
       // so `ok` was true, and whether it survived long enough to listen was never asked.
@@ -274,10 +312,17 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // member failed to rebind reported success.
     const failures: Array<{ repo: string; error?: string }> = [];
     let restarted = 0;
-    await Promise.all(toRestart.map(async (m) => {
-      const r = await servers.restart(m.repo, m.path, servers.launchOpts(m.repo, servers.featureFor(m.path)));
-      if (r.ok) restarted++; else failures.push({ repo: m.repo, error: r.error });
-    }));
+    await Promise.all(
+      toRestart.map(async (m) => {
+        const r = await servers.restart(
+          m.repo,
+          m.path,
+          servers.launchOpts(m.repo, servers.featureFor(m.path)),
+        );
+        if (r.ok) restarted++;
+        else failures.push({ repo: m.repo, error: r.error });
+      }),
+    );
     await refreshRunning();
     scheduleBroadcast();
     res.json({
@@ -303,14 +348,17 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // `$&`, `` $` ``, `$'` and `$$` in a replacement string are expanded by the engine
     // AFTER shq() has done its quoting — so a worktree path containing `$&` would open
     // some other path entirely, quoting notwithstanding. split/join is literal.
-    if (ed.openGroup) { await run('bash', ['-lc', ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]); }
-    else { for (const p of paths) await run('bash', ['-lc', ed.open.split('{path}').join(shq(p))]); }
+    if (ed.openGroup) {
+      await run('bash', ['-lc', ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]);
+    } else {
+      for (const p of paths) await run('bash', ['-lc', ed.open.split('{path}').join(shq(p))]);
+    }
     res.json({ ok: true });
   });
 
   // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
   app.post('/group/close', async (req, res) => {
-    const { group: g } = await resolveGroup(String((req.body?.group) ?? ''));
+    const { group: g } = await resolveGroup(String(req.body?.group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     for (const m of g.members) {
       if (m.running) await servers.stop(m.repo, m.path);
@@ -331,10 +379,16 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const results: Array<{ repo: string; ok: boolean; error?: string }> = [];
     for (const m of g.members) {
       const repoObj = repos().find((r) => r.name === m.repo);
-      if (!repoObj) { results.push({ repo: m.repo, ok: false, error: 'unknown repo' }); continue; }
+      if (!repoObj) {
+        results.push({ repo: m.repo, ok: false, error: 'unknown repo' });
+        continue;
+      }
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.close(m.session.id);
-      const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: !!deleteBranches });
+      const rr = await worktree.remove(repoObj.path, m.path, {
+        branch: m.branch,
+        deleteBranch: !!deleteBranches,
+      });
       results.push({ repo: m.repo, ok: rr.ok, error: rr.ok ? undefined : rr.error });
     }
     // Unconditional, and the ONE place that is right: the worktrees are gone, so the
@@ -348,22 +402,38 @@ function register(app: Router, deps: OrchestratorDeps): void {
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
   app.post('/group/session', async (req, res) => {
-    const { group: g } = await resolveGroup(String((req.body?.group) ?? ''));
+    const { group: g } = await resolveGroup(String(req.body?.group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const members = g.members;
     if (!members.length) return res.status(400).json({ error: 'feature has no members' });
-    for (const m of members) { const s = manager.sessionForWorktree(m.path); if (s) return res.json({ ok: true, session: s, existed: true }); }
+    for (const m of members) {
+      const s = manager.sessionForWorktree(m.path);
+      if (s) return res.json({ ok: true, session: s, existed: true });
+    }
     const [primary, ...rest] = members;
     const pRepo = repos().find((r) => r.name === primary.repo);
     // A repo the scan cache has not seen. The `rest` loop below already skips one;
     // the primary went straight to `pRepo.path`, so the same miss was a TypeError —
     // a 500 leaking an internal message where the caller's own 400 belongs.
     if (!pRepo) return res.status(400).json({ error: 'unknown repo' });
-    const session = await manager.adopt({ worktreePath: primary.path, repoName: primary.repo, repoPath: pRepo.path, branch: primary.branch, wtname: primary.wtname });
+    const session = await manager.adopt({
+      worktreePath: primary.path,
+      repoName: primary.repo,
+      repoPath: pRepo.path,
+      branch: primary.branch,
+      wtname: primary.wtname,
+    });
     if (session) {
       for (const m of rest) {
         const ro = repos().find((r) => r.name === m.repo);
-        if (ro) await manager.attachRepo(session.id, { repo: m.repo, repoPath: ro.path, worktreePath: m.path, branch: m.branch, wtname: m.wtname });
+        if (ro)
+          await manager.attachRepo(session.id, {
+            repo: m.repo,
+            repoPath: ro.path,
+            worktreePath: m.path,
+            branch: m.branch,
+            wtname: m.wtname,
+          });
       }
     }
     scheduleBroadcast();

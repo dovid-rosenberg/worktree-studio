@@ -62,8 +62,13 @@ export type Item =
   | { k: 'note'; b: Block; note: Note }
   | { k: 'group'; b: Block; g: Group }
   | { k: 'hunk'; b: Block; g: Group; hunk: Hunk }
-  | { k: 'row'; b: Block; type: 'context' | 'add' | 'del' | 'change';
-      left: DiffLine | null; right: DiffLine | null }
+  | {
+      k: 'row';
+      b: Block;
+      type: 'context' | 'add' | 'del' | 'change';
+      left: DiffLine | null;
+      right: DiffLine | null;
+    }
   | { k: 'gap' };
 
 /**
@@ -134,12 +139,22 @@ export function buildItems(blocks: Block[], view: 'unified' | 'split') {
 
   const offsets = new Float64Array(items.length + 1);
   let y = 0;
-  for (let i = 0; i < items.length; i++) { offsets[i] = y; y += H[items[i].k]; }
+  for (let i = 0; i < items.length; i++) {
+    offsets[i] = y;
+    y += H[items[i].k];
+  }
   offsets[items.length] = y;
   // A hard floor keeps short diffs from collapsing the gutter, and the cap stops one
   // pathological minified line from creating a 200k-pixel-wide surface nothing can scroll.
   const clamp = (n: number) => Math.max(40, Math.min(n, 2000));
-  return { items, offsets, total: y, cols: clamp(cols), colsLeft: clamp(colsLeft), colsRight: clamp(colsRight) };
+  return {
+    items,
+    offsets,
+    total: y,
+    cols: clamp(cols),
+    colsLeft: clamp(colsLeft),
+    colsRight: clamp(colsRight),
+  };
 }
 
 /**
@@ -153,7 +168,8 @@ export function indexAt(offsets: Float64Array, y: number, count: number): number
   if (hi < 0) return 0;
   while (lo < hi) {
     const mid = (lo + hi + 1) >> 1;
-    if (offsets[mid] <= y) lo = mid; else hi = mid - 1;
+    if (offsets[mid] <= y) lo = mid;
+    else hi = mid - 1;
   }
   return lo;
 }
@@ -200,11 +216,19 @@ export function isRenameSummaryPath(file: string): boolean {
  */
 export function refusal(p: ParsedFile | null | undefined): Note | null {
   if (!p) return null;
-  if (p.binary) return { tone: 'warn', text: 'Binary file — no textual diff. Hunk staging is unavailable; stage the whole file from the command line.' };
-  if (p.unsupported === 'combined') return { tone: 'warn', text: 'Combined (merge) diff — hunk staging is not supported for this file.' };
+  if (p.binary)
+    return {
+      tone: 'warn',
+      text: 'Binary file — no textual diff. Hunk staging is unavailable; stage the whole file from the command line.',
+    };
+  if (p.unsupported === 'combined')
+    return { tone: 'warn', text: 'Combined (merge) diff — hunk staging is not supported for this file.' };
   if (p.modeOnly) {
     const mode = p.oldMode && p.newMode ? ` (${p.oldMode} → ${p.newMode})` : '';
-    return { tone: 'warn', text: `Mode-only change${mode} — no content changed, so there are no hunks to stage.` };
+    return {
+      tone: 'warn',
+      text: `Mode-only change${mode} — no content changed, so there are no hunks to stage.`,
+    };
   }
   if (!p.hunks.length) return { tone: 'info', text: 'No textual changes in this file.' };
   return null;

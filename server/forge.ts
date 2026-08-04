@@ -32,7 +32,10 @@ export interface Provider {
   create: (branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<CreateResult>;
 }
 
-const ENV: NodeJS.ProcessEnv = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+const ENV: NodeJS.ProcessEnv = {
+  ...process.env,
+  PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
+};
 
 // gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
 // on the client any more (server/ci.ts pushes instead), but the cache still bounds
@@ -75,8 +78,16 @@ function ghChecks(rollup: unknown): CiChecks {
     const conclusion = String(n.conclusion || '').toUpperCase();
     const status = String(n.status || n.state || '').toUpperCase();
     if (conclusion === 'SUCCESS' || status === 'SUCCESS') c.passed++;
-    else if (['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ERROR', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(conclusion) || status === 'FAILURE' || status === 'ERROR') c.failed++;
-    else if (['QUEUED', 'IN_PROGRESS', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED'].includes(status)) c.running++;
+    else if (
+      ['FAILURE', 'TIMED_OUT', 'CANCELLED', 'ERROR', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(
+        conclusion,
+      ) ||
+      status === 'FAILURE' ||
+      status === 'ERROR'
+    )
+      c.failed++;
+    else if (['QUEUED', 'IN_PROGRESS', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED'].includes(status))
+      c.running++;
   }
   return c;
 }
@@ -87,7 +98,8 @@ function glChecks(status: unknown): CiChecks {
   if (!s) return { passed: 0, running: 0, failed: 0, total: 0 };
   if (s === 'success') return { passed: 1, running: 0, failed: 0, total: 1 };
   if (['failed', 'canceled', 'cancelled'].includes(s)) return { passed: 0, running: 0, failed: 1, total: 1 };
-  if (['running', 'pending', 'created', 'preparing', 'scheduled', 'waiting_for_resource'].includes(s)) return { passed: 0, running: 1, failed: 0, total: 1 };
+  if (['running', 'pending', 'created', 'preparing', 'scheduled', 'waiting_for_resource'].includes(s))
+    return { passed: 0, running: 1, failed: 0, total: 1 };
   return { passed: 0, running: 0, failed: 0, total: 0 };
 }
 
@@ -117,13 +129,28 @@ const github: Provider = {
   id: 'github',
   cli: 'gh',
   async view(branch, cwd, env) {
-    const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], { cwd, env, timeout: VIEW_TIMEOUT_MS });
+    const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], {
+      cwd,
+      env,
+      timeout: VIEW_TIMEOUT_MS,
+    });
     if (r.code !== 0 || !r.stdout.trim()) return null;
     const j: GhPr = JSON.parse(r.stdout);
-    return { hasPR: true, provider: 'github', number: j.number, url: j.url, state: j.state, checks: ghChecks(j.statusCheckRollup) };
+    return {
+      hasPR: true,
+      provider: 'github',
+      number: j.number,
+      url: j.url,
+      state: j.state,
+      checks: ghChecks(j.statusCheckRollup),
+    };
   },
   async create(branch, cwd, env) {
-    const r = await run('gh', ['pr', 'create', '--fill', '--head', branch], { cwd, env, timeout: CREATE_TIMEOUT_MS });
+    const r = await run('gh', ['pr', 'create', '--fill', '--head', branch], {
+      cwd,
+      env,
+      timeout: CREATE_TIMEOUT_MS,
+    });
     if (r.code !== 0) return { ok: false, stderr: r.stderr };
     // gh prints progress lines before the URL — the PR link is the last line.
     return { ok: true, url: r.stdout.trim().split('\n').pop() };
@@ -138,10 +165,21 @@ const gitlab: Provider = {
     if (r.code !== 0 || !r.stdout.trim()) return null;
     const j: GlMr = JSON.parse(r.stdout);
     const pipe: GlPipeline = j.pipeline || j.head_pipeline || {};
-    return { hasPR: true, provider: 'gitlab', number: j.iid, url: j.web_url, state: j.state, checks: glChecks(pipe.status) };
+    return {
+      hasPR: true,
+      provider: 'gitlab',
+      number: j.iid,
+      url: j.web_url,
+      state: j.state,
+      checks: glChecks(pipe.status),
+    };
   },
   async create(_branch, cwd, env) {
-    const r = await run('glab', ['mr', 'create', '--fill', '--yes'], { cwd, env, timeout: CREATE_TIMEOUT_MS });
+    const r = await run('glab', ['mr', 'create', '--fill', '--yes'], {
+      cwd,
+      env,
+      timeout: CREATE_TIMEOUT_MS,
+    });
     if (r.code !== 0) return { ok: false, stderr: r.stderr };
     // glab's output is prose; pull the first URL out of it.
     return { ok: true, url: (r.stdout.match(/https?:\/\/\S+/) || ['created'])[0] };
@@ -186,11 +224,16 @@ export interface PrResult {
 
 // Push a member's branch to origin. Split out (and injectable via createForge) so
 // the push half of openPullRequest can be driven without a remote.
-function pushBranchToOrigin(member: PrMember, env?: NodeJS.ProcessEnv, timeoutMs = PUSH_TIMEOUT_MS): Promise<PushResult> {
+function pushBranchToOrigin(
+  member: PrMember,
+  env?: NodeJS.ProcessEnv,
+  timeoutMs = PUSH_TIMEOUT_MS,
+): Promise<PushResult> {
   // openPullRequest() refuses a detached member before it gets here, but this is
   // exported and injectable, so it does not lean on its one caller: a null branch is
   // a failed push, not a TypeError out of execFile's argv check.
-  if (!member.branch) return Promise.resolve({ code: 1, stdout: '', stderr: 'no branch — the worktree is detached' });
+  if (!member.branch)
+    return Promise.resolve({ code: 1, stdout: '', stderr: 'no branch — the worktree is detached' });
   return run('git', ['-C', member.path, 'push', '-u', 'origin', member.branch], { env, timeout: timeoutMs });
 }
 
@@ -203,8 +246,15 @@ function pushFailureLine(r: PushResult): string {
   // all, so the generic fallback below would report "git push exited 1" for the one
   // failure the user can actually do something about.
   if (r.timedOut) return 'git push timed out — no answer from origin';
-  const lines = `${r.stderr || ''}\n${r.stdout || ''}`.split('\n').map((l) => l.trim()).filter(Boolean);
-  return lines.find((l) => /^(?:error|fatal|remote)\b/i.test(l) || l.startsWith('!')) || lines[0] || `git push exited ${r.code}`;
+  const lines = `${r.stderr || ''}\n${r.stdout || ''}`
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return (
+    lines.find((l) => /^(?:error|fatal|remote)\b/i.test(l) || l.startsWith('!')) ||
+    lines[0] ||
+    `git push exited ${r.code}`
+  );
 }
 
 /**
@@ -248,15 +298,24 @@ interface CreateFailure {
 // `onChanged` is how the push side (server/ci.ts) hears that *this* module just did
 // something that changes a branch's PR state — opening one. Everything else that can
 // (a commit, a push, a branch switch) is observed by the git watcher instead.
-function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled = (p) => has(p.cli), pushBranch = pushBranchToOrigin, onChanged = () => {} }: ForgeDeps = {}) {
+function createForge({
+  manager,
+  resolveGroup,
+  providers = PROVIDERS,
+  isInstalled = (p) => has(p.cli),
+  pushBranch = pushBranchToOrigin,
+  onChanged = () => {},
+}: ForgeDeps = {}) {
   const installed = providers.filter(isInstalled);
   const installedSet = new Set(installed); // membership test for failure attribution
-  const ciCache = new Map<string, { at: number, data: CiRepo }>();
+  const ciCache = new Map<string, { at: number; data: CiRepo }>();
 
   // Drop every cached answer. Called when something is known to have changed the
   // truth (a new commit, a push, a PR just opened) — without it a refresh triggered
   // inside the TTL would re-serve the very answer it was triggered to replace.
-  function invalidate() { ciCache.clear(); }
+  function invalidate() {
+    ciCache.clear();
+  }
 
   // Look up a single repo's PR/MR + checks (GitHub first, then GitLab). Never
   // throws — returns { repo, hasPR:false } on any miss/failure. Cached per key.
@@ -270,9 +329,14 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
     try {
       for (const p of installed) {
         const found = await p.view(branch, worktreePath, env);
-        if (found) { data = { repo, ...found }; break; }
+        if (found) {
+          data = { repo, ...found };
+          break;
+        }
       }
-    } catch { data = { repo, hasPR: false }; }
+    } catch {
+      data = { repo, hasPR: false };
+    }
     ciCache.set(key, { at: Date.now(), data });
     return { ...data, repo };
   }
@@ -343,10 +407,15 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
       if (!installed.length) return res.json({ repos: entries.map((r) => ({ repo: r.repo, hasPR: false })) });
       // Per-repo lookups are independent (and each is cached + never throws) — run them
       // in parallel so a multi-repo feature isn't gated on serial gh/glab round-trips.
-      const repos = await Promise.all(entries.map(async (entry) => {
-        try { return await ciForRepo(entry, ENV); }
-        catch { return { repo: entry.repo, hasPR: false }; }
-      }));
+      const repos = await Promise.all(
+        entries.map(async (entry) => {
+          try {
+            return await ciForRepo(entry, ENV);
+          } catch {
+            return { repo: entry.repo, hasPR: false };
+          }
+        }),
+      );
       res.json({ repos });
     });
 
@@ -359,7 +428,14 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
       // A branch that had no PR a second ago now has one, and its cached "hasPR:
       // false" says otherwise. Drop it and tell the push side to re-look, so the
       // pill appears without waiting out the TTL.
-      if (results.some((r) => r.url)) { invalidate(); try { onChanged(); } catch { /* the feed must never break the route */ } }
+      if (results.some((r) => r.url)) {
+        invalidate();
+        try {
+          onChanged();
+        } catch {
+          /* the feed must never break the route */
+        }
+      }
       res.json({ ok: results.some((r) => r.url), results });
     });
   }
@@ -370,6 +446,13 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
 const TIMEOUTS = { VIEW_TIMEOUT_MS, PUSH_TIMEOUT_MS, CREATE_TIMEOUT_MS };
 
 export {
-  createForge, PROVIDERS, github, gitlab, ghChecks, glChecks, pushFailureLine, pushBranchToOrigin,
+  createForge,
+  PROVIDERS,
+  github,
+  gitlab,
+  ghChecks,
+  glChecks,
+  pushFailureLine,
+  pushBranchToOrigin,
   TIMEOUTS,
 };

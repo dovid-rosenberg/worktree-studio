@@ -14,7 +14,9 @@ import * as gitMod from '../server/git.ts';
 import * as config from '../server/config.ts';
 import { expectOk } from './helpers.ts';
 
-function sh(cwd: string, cmd: string, args: string[]) { execFileSync(cmd, args, { cwd, stdio: 'ignore' }); }
+function sh(cwd: string, cmd: string, args: string[]) {
+  execFileSync(cmd, args, { cwd, stdio: 'ignore' });
+}
 
 // A repo inside its own container dir, so `sibling`/`external` layouts have
 // somewhere sane to put things and the walk tests have a base dir to scan.
@@ -31,7 +33,9 @@ function repoIn(base: string, name: string, gitignore = '.worktrees/\n') {
   return dir;
 }
 
-function tmp(prefix: string) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
+function tmp(prefix: string) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
 const rm = (d: string) => fs.rmSync(d, { recursive: true, force: true });
 
 // ------------------------------------------------------------------ layouts
@@ -39,7 +43,9 @@ const rm = (d: string) => fs.rmSync(d, { recursive: true, force: true });
 test('the default layout still creates <repo>/.worktrees/<name>', async () => {
   const base = tmp('wts-nested-');
   const repo = repoIn(base, 'api');
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [] }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [] }),
+  );
   assert.equal(res.path, path.join(repo, '.worktrees', 'feat-a'));
   assert.ok(fs.existsSync(path.join(res.path, 'README.md')));
   // Pre-existing quirk, asserted so it stays pre-existing: `.gitignore` says
@@ -54,7 +60,9 @@ test('a nested layout with a custom dir creates <repo>/<dir>/<name>', async () =
   const repo = repoIn(base, 'api', 'wt/\n');
   fs.mkdirSync(path.join(repo, 'wt')); // so the directory-only ignore pattern matches
   const layout = layoutMod.resolve({ worktrees: { layout: 'nested', dir: 'wt' } });
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }),
+  );
   assert.equal(res.path, path.join(repo, 'wt', 'feat-a'));
   assert.deepEqual(res.warnings, [], 'the ignore check consults the CONFIGURED dir');
   rm(base);
@@ -64,7 +72,9 @@ test('the gitignore warning names the configured dir', async () => {
   const base = tmp('wts-warn-');
   const repo = repoIn(base, 'api', '# nothing ignored\n');
   const layout = layoutMod.resolve({ worktrees: { layout: 'nested', dir: 'wt' } });
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }),
+  );
   assert.deepEqual(res.warnings, ['wt/ is not gitignored here; checkouts will show as untracked']);
   rm(base);
 });
@@ -73,7 +83,9 @@ test('the sibling layout creates <repo>/../<name> and warns about nothing', asyn
   const base = tmp('wts-sibling-');
   const repo = repoIn(base, 'api');
   const layout = layoutMod.resolve({ worktrees: { layout: 'sibling' } });
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }),
+  );
   assert.equal(res.path, path.join(base, 'feat-a'));
   assert.ok(fs.existsSync(path.join(res.path, 'README.md')), 'it is a real checkout');
   assert.deepEqual(res.warnings, [], 'outside the working tree — nothing to gitignore');
@@ -85,7 +97,9 @@ test('the external layout creates <root>/<repo>/<name>, making the tree as it go
   const repo = repoIn(base, 'api');
   const root = path.join(base, 'does', 'not', 'exist', 'yet');
   const layout = layoutMod.resolve({ worktrees: { layout: 'external', root } });
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }),
+  );
   assert.equal(res.path, path.join(root, 'api', 'feat-a'));
   assert.ok(fs.existsSync(path.join(res.path, 'README.md')));
   rm(base);
@@ -95,7 +109,9 @@ test('remove() works on a worktree created outside the repo', async () => {
   const base = tmp('wts-siblingrm-');
   const repo = repoIn(base, 'api');
   const layout = layoutMod.resolve({ worktrees: { layout: 'sibling' } });
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }),
+  );
   const _out = expectOk(await worktree.remove(repo, res.path));
   assert.equal(fs.existsSync(res.path), false);
   rm(base);
@@ -105,8 +121,22 @@ test('the unique suffix walks the configured layout, not .worktrees', async () =
   const base = tmp('wts-unique-');
   const repo = repoIn(base, 'api');
   const layout = layoutMod.resolve({ worktrees: { layout: 'sibling' } });
-  const first = expectOk(await worktree.create(repo, 'feature/dup', 'dup', { fetch: false, copyPatterns: [], layout, unique: true }));
-  const second = expectOk(await worktree.create(repo, 'feature/dup', 'dup', { fetch: false, copyPatterns: [], layout, unique: true }));
+  const first = expectOk(
+    await worktree.create(repo, 'feature/dup', 'dup', {
+      fetch: false,
+      copyPatterns: [],
+      layout,
+      unique: true,
+    }),
+  );
+  const second = expectOk(
+    await worktree.create(repo, 'feature/dup', 'dup', {
+      fetch: false,
+      copyPatterns: [],
+      layout,
+      unique: true,
+    }),
+  );
   assert.equal(first.path, path.join(base, 'dup'));
   assert.equal(second.path, path.join(base, 'dup-2'), 'suffixed inside the sibling container');
   assert.equal(second.branch, 'feature/dup-2');
@@ -119,7 +149,9 @@ test('a sibling worktree is not scanned as a repo of its own', async () => {
   const base = tmp('wts-walk-');
   const repo = repoIn(base, 'api');
   const layout = layoutMod.resolve({ worktrees: { layout: 'sibling' } });
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }),
+  );
   assert.ok(fs.existsSync(res.path));
   const found = gitMod.findRepos([base], 2);
   assert.deepEqual(found, [repo], 'only the real repo — the worktree is reported through it');
@@ -158,7 +190,9 @@ function repoWithLocalFiles(base: string) {
 test('copyAlways defaults to the JetBrains run configs when the caller passes none', async () => {
   const base = tmp('wts-always-');
   const repo = repoWithLocalFiles(base);
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [] }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [] }),
+  );
   assert.equal(res.copied.runConfigs, 1, 'unchanged from the old hardcoded copy');
   assert.ok(fs.existsSync(path.join(res.path, '.idea', 'runConfigurations', 'start.xml')));
   rm(base);
@@ -167,7 +201,9 @@ test('copyAlways defaults to the JetBrains run configs when the caller passes no
 test('copyAlways: [] turns the JetBrains copy off', async () => {
   const base = tmp('wts-always-off-');
   const repo = repoWithLocalFiles(base);
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], copyAlways: [] }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], copyAlways: [] }),
+  );
   assert.equal(res.copied.runConfigs, 0);
   assert.equal(fs.existsSync(path.join(res.path, '.idea')), false);
   rm(base);
@@ -176,9 +212,13 @@ test('copyAlways: [] turns the JetBrains copy off', async () => {
 test('copyAlways is not gated on gitignore (a tracked match is still copied)', async () => {
   const base = tmp('wts-always-tracked-');
   const repo = repoWithLocalFiles(base);
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', {
-    fetch: false, copyPatterns: [], copyAlways: ['tracked.json'],
-  }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', {
+      fetch: false,
+      copyPatterns: [],
+      copyAlways: ['tracked.json'],
+    }),
+  );
   assert.equal(res.copied.runConfigs, 1);
   rm(base);
 });
@@ -187,13 +227,19 @@ test('the shipped copyPatterns carry .env* and gitignored .vscode json', async (
   const base = tmp('wts-patterns-');
   const repo = repoWithLocalFiles(base);
   const cfg = config.defaults();
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', {
-    fetch: false, ...worktree.worktreeCopyOpts(cfg, 'api'),
-  }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', {
+      fetch: false,
+      ...worktree.worktreeCopyOpts(cfg, 'api'),
+    }),
+  );
   for (const rel of ['.env', '.env.local', path.join('.vscode', 'settings.json')]) {
     assert.ok(fs.existsSync(path.join(res.path, rel)), `${rel} not copied`);
   }
-  assert.ok(fs.existsSync(path.join(res.path, '.idea', 'runConfigurations', 'start.xml')), 'run config still copied');
+  assert.ok(
+    fs.existsSync(path.join(res.path, '.idea', 'runConfigurations', 'start.xml')),
+    'run config still copied',
+  );
   rm(base);
 });
 
@@ -202,9 +248,13 @@ test('copyPatterns never copies a TRACKED match over the checkout', async () => 
   const repo = repoWithLocalFiles(base);
   // dirty the tracked file in the main checkout; the worktree must get the committed one
   fs.writeFileSync(path.join(repo, 'tracked.json'), '{"dirty":true}\n');
-  const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', {
-    fetch: false, copyPatterns: ['tracked.json'], copyAlways: [],
-  }));
+  const res = expectOk(
+    await worktree.create(repo, 'feature/a', 'feat-a', {
+      fetch: false,
+      copyPatterns: ['tracked.json'],
+      copyAlways: [],
+    }),
+  );
   assert.equal(res.copied.files, 0, 'a tracked file is skipped');
   assert.equal(fs.readFileSync(path.join(res.path, 'tracked.json'), 'utf8'), '{"tracked":true}\n');
   rm(base);

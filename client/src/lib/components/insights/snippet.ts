@@ -37,10 +37,16 @@ function fromMarkers(s: string): Segment[] {
   let i = 0;
   while (i < s.length) {
     const open = s.indexOf(OPEN, i);
-    if (open === -1) { push(out, s.slice(i), false); break; }
+    if (open === -1) {
+      push(out, s.slice(i), false);
+      break;
+    }
     push(out, s.slice(i, open), false);
     const close = s.indexOf(CLOSE, open + 1);
-    if (close === -1) { push(out, s.slice(open + 1), true); break; }
+    if (close === -1) {
+      push(out, s.slice(open + 1), true);
+      break;
+    }
     push(out, s.slice(open + 1, close), true);
     i = close + 1;
   }

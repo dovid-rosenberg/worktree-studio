@@ -58,13 +58,19 @@ test('run() kills a child that never exits, and says that is what happened', asy
   // abandoned by a promise that resolved without it.
   await new Promise((res) => setTimeout(res, 200));
   let survivors = '';
-  try { survivors = execFileSync('/usr/bin/pgrep', ['-f', marker]).toString().trim(); } catch { /* none — pgrep exits 1 */ }
+  try {
+    survivors = execFileSync('/usr/bin/pgrep', ['-f', marker]).toString().trim();
+  } catch {
+    /* none — pgrep exits 1 */
+  }
   assert.equal(survivors, '', `the child survived the timeout: ${survivors}`);
 });
 
 test('run() applies a finite default ceiling when the caller names none', () => {
-  assert.ok(Number.isFinite(DEFAULT_TIMEOUT_MS) && DEFAULT_TIMEOUT_MS > 0,
-    'every child process has a backstop, not just the ones a caller thought about');
+  assert.ok(
+    Number.isFinite(DEFAULT_TIMEOUT_MS) && DEFAULT_TIMEOUT_MS > 0,
+    'every child process has a backstop, not just the ones a caller thought about',
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -78,9 +84,16 @@ test('create() survives a `git fetch` that never answers', async () => {
   process.env.PATH = `${bin}:${oldPath}`;
   try {
     const t0 = Date.now();
-    const res = await worktree.create(repo, 'feature/hang', 'hang', { fetchTimeoutMs: 400, copyPatterns: [], copyAlways: [] });
+    const res = await worktree.create(repo, 'feature/hang', 'hang', {
+      fetchTimeoutMs: 400,
+      copyPatterns: [],
+      copyAlways: [],
+    });
     const ms = Date.now() - t0;
-    assert.ok(fs.existsSync(expectOk(res, 'create()').path), 'the worktree is still created from the refs already local');
+    assert.ok(
+      fs.existsSync(expectOk(res, 'create()').path),
+      'the worktree is still created from the refs already local',
+    );
     assert.ok(ms < 10000, `create() took ${ms}ms — the fetch is unbounded`);
   } finally {
     process.env.PATH = oldPath;
@@ -101,24 +114,45 @@ test('pushBranchToOrigin() gives up on a push that never answers', async () => {
   const bin = fakeGitBin(dir);
   try {
     const t0 = Date.now();
-    const r = await pushBranchToOrigin({ repo: 'api', path: dir, branch: 'b' }, { PATH: `${bin}:${process.env.PATH}` }, 400);
+    const r = await pushBranchToOrigin(
+      { repo: 'api', path: dir, branch: 'b' },
+      { PATH: `${bin}:${process.env.PATH}` },
+      400,
+    );
     const ms = Date.now() - t0;
     assert.ok(ms < 10000, `the push was awaited for ${ms}ms`);
     assert.equal(r.timedOut, true);
     assert.notEqual(r.code, 0);
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a timed-out push is reported as one, not as "git push exited 1"', () => {
   assert.match(pushFailureLine({ timedOut: true, code: 1, stdout: '', stderr: '' }), /timed out/i);
   // …and an ordinary failure still reads exactly as before.
-  assert.equal(pushFailureLine({ code: 1, stdout: 'To github.com:acme/api.git\n', stderr: '! [rejected] main -> main\n' }),
-    '! [rejected] main -> main');
+  assert.equal(
+    pushFailureLine({
+      code: 1,
+      stdout: 'To github.com:acme/api.git\n',
+      stderr: '! [rejected] main -> main\n',
+    }),
+    '! [rejected] main -> main',
+  );
 });
 
 test('openPullRequest surfaces a hung push instead of blaming the forge CLI', async () => {
   const f = createForge({
-    providers: [{ id: 'gh', cli: 'gh', view: async () => null, create: async () => { throw new Error('must not be reached'); } }],
+    providers: [
+      {
+        id: 'gh',
+        cli: 'gh',
+        view: async () => null,
+        create: async () => {
+          throw new Error('must not be reached');
+        },
+      },
+    ],
     isInstalled: () => true,
     pushBranch: async () => ({ code: 1, timedOut: true, stdout: '', stderr: '' }),
   });

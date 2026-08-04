@@ -84,9 +84,15 @@ function createTerminalHandler({ manager, spawn = pty.spawn }: TerminalDeps) {
     const rows = Number(url.searchParams.get('rows')) || 30;
     // `?session=` is optional in a URL but not to this handler: with no id there is no
     // session to attach to, and nothing below has anything to work with.
-    if (!id) { ws.close(); return; }
+    if (!id) {
+      ws.close();
+      return;
+    }
     const s = manager.get(id);
-    if (!s) { ws.close(); return; }
+    if (!s) {
+      ws.close();
+      return;
+    }
 
     // The listener that owns the pty's lifetime is installed BEFORE the spawn.
     //
@@ -100,7 +106,15 @@ function createTerminalHandler({ manager, spawn = pty.spawn }: TerminalDeps) {
     // awaited ensureSplit between this line and the spawn. The split is gone and with it
     // the await, so nothing can interleave and the flag could never be true.
     let term: TerminalPty | null = null;
-    ws.on('close', () => { if (term) { try { term.kill(); } catch { /* */ } } });
+    ws.on('close', () => {
+      if (term) {
+        try {
+          term.kill();
+        } catch {
+          /* */
+        }
+      }
+    });
 
     const spec = manager.mux.attachSpawn(s.muxName);
     // Nothing between here and the assignment may await, or the close listener above
@@ -110,19 +124,46 @@ function createTerminalHandler({ manager, spawn = pty.spawn }: TerminalDeps) {
     // later than this line but nothing can prove that to a reader (or a type checker)
     // from a `let` that starts out null.
     const attached = spawn(spec.file, spec.args, {
-      name: 'xterm-256color', cols, rows, cwd: s.worktreePath || s.repoPath, env: spec.env || process.env,
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: s.worktreePath || s.repoPath,
+      env: spec.env || process.env,
     });
     term = attached;
-    attached.onData((d) => { try { ws.send(d); } catch { /* */ } });
-    attached.onExit(() => { try { ws.close(); } catch { /* */ } });
+    attached.onData((d) => {
+      try {
+        ws.send(d);
+      } catch {
+        /* */
+      }
+    });
+    attached.onExit(() => {
+      try {
+        ws.close();
+      } catch {
+        /* */
+      }
+    });
     ws.on('message', (data, isBinary) => {
-      if (isBinary) { attached.write(data.toString('utf8')); return; }
+      if (isBinary) {
+        attached.write(data.toString('utf8'));
+        return;
+      }
       const txt = data.toString('utf8');
       try {
         const msg = JSON.parse(txt);
-        if (msg.type === 'resize') { attached.resize(Math.max(2, msg.cols | 0), Math.max(2, msg.rows | 0)); return; }
-        if (msg.type === 'input') { attached.write(msg.data); return; }
-      } catch { attached.write(txt); }
+        if (msg.type === 'resize') {
+          attached.resize(Math.max(2, msg.cols | 0), Math.max(2, msg.rows | 0));
+          return;
+        }
+        if (msg.type === 'input') {
+          attached.write(msg.data);
+          return;
+        }
+      } catch {
+        attached.write(txt);
+      }
     });
   };
 }

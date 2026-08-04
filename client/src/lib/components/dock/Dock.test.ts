@@ -21,10 +21,19 @@ vi.mock('$lib/components/dock/ReviewMount.svelte', () => ({ default: (() => {}) 
 vi.mock('$lib/components/dock/InsightsMount.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/components/dock/LogsPanel.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/components/insights/FleetInsights.svelte', () => ({ default: (() => {}) as never }));
-vi.mock('$lib/api.js', () => ({ api: vi.fn().mockResolvedValue({ repos: [] }), TOKEN: '', tokenQuery: () => '' }));
+vi.mock('$lib/api.js', () => ({
+  api: vi.fn().mockResolvedValue({ repos: [] }),
+  TOKEN: '',
+  tokenQuery: () => '',
+}));
 vi.mock('$lib/ops.svelte.js', () => ({
-  addTab: vi.fn(), closeTab: vi.fn(), renameTab: vi.fn(), selectTab: vi.fn(),
-  startSessionServers: vi.fn(), stopSessionServers: vi.fn(), pending: new Set(),
+  addTab: vi.fn(),
+  closeTab: vi.fn(),
+  renameTab: vi.fn(),
+  selectTab: vi.fn(),
+  startSessionServers: vi.fn(),
+  stopSessionServers: vi.fn(),
+  pending: new Set(),
 }));
 
 const { default: Dock } = await import('./Dock.svelte');
@@ -32,15 +41,33 @@ const { ui } = await import('$lib/stores/ui.svelte.js');
 const { world } = await import('$lib/stores/world.svelte.js');
 
 const member = (repo: string) => ({
-  repo, wtname: 'wt', path: `/${repo}/wt`, branch: 'feature/x',
-  running: false, canStart: true, ports: [], isMain: false, session: null,
+  repo,
+  wtname: 'wt',
+  path: `/${repo}/wt`,
+  branch: 'feature/x',
+  running: false,
+  canStart: true,
+  ports: [],
+  isMain: false,
+  session: null,
 });
 const feature = (name = 'bare'): Feature =>
-  ({ name, auto: true, members: [member('accept-blue')], session: null } as unknown as Feature);
+  ({ name, auto: true, members: [member('accept-blue')], session: null }) as unknown as Feature;
 const session = (id = 's1'): Session =>
-  ({ id, title: 'token-race-fix', state: 'working', activity: '', repoName: 'accept-blue',
-     worktreePath: '/wt', branch: 'fix/x', feature: 'token-race-fix', repos: [], tabs: [],
-     source: 'freetext', active: true } as unknown as Session);
+  ({
+    id,
+    title: 'token-race-fix',
+    state: 'working',
+    activity: '',
+    repoName: 'accept-blue',
+    worktreePath: '/wt',
+    branch: 'fix/x',
+    feature: 'token-race-fix',
+    repos: [],
+    tabs: [],
+    source: 'freetext',
+    active: true,
+  }) as unknown as Session;
 
 function give(features: Feature[] = [], sessions: Session[] = []) {
   world.topology = { features, groups: [], repos: [], webRepos: [] } as never;

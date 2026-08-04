@@ -44,12 +44,27 @@ const OLD_CONCURRENCY = {
   maxSlots: 3,
   repos: {
     'accept-blue': {
-      portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
+      portEnv: {
+        api__port_su: 1231,
+        api__port_iso: 1232,
+        api__port: 1233,
+        api__port_merchant: 1239,
+        api__port_internal: 1999,
+      },
       slotEnv: ['redis__db'],
     },
-    'merchant-v3': { portEnv: { WTS_FE_PORT: 3030 }, configPatch: { file: 'src/config.ts', siblingRepo: 'accept-blue' } },
-    'ab-iso-fe': { portEnv: { WTS_FE_PORT: 9000 }, configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' } },
-    'ab-su': { portEnv: { WTS_FE_PORT: 8000 }, configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' } },
+    'merchant-v3': {
+      portEnv: { WTS_FE_PORT: 3030 },
+      configPatch: { file: 'src/config.ts', siblingRepo: 'accept-blue' },
+    },
+    'ab-iso-fe': {
+      portEnv: { WTS_FE_PORT: 9000 },
+      configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' },
+    },
+    'ab-su': {
+      portEnv: { WTS_FE_PORT: 8000 },
+      configPatch: { file: 'src/config/config.ts', siblingRepo: 'accept-blue' },
+    },
   },
 };
 
@@ -69,10 +84,26 @@ test('the shipped convention defaults name no company port, repo or file', () =>
   // contents depend on the machine, not on what Studio ships.
   const d = defaults();
   const json = JSON.stringify({
-    concurrency: d.concurrency, copyPatterns: d.copyPatterns, copyAlways: d.copyAlways,
-    worktrees: d.worktrees, featureIdentity: d.featureIdentity,
+    concurrency: d.concurrency,
+    copyPatterns: d.copyPatterns,
+    copyAlways: d.copyAlways,
+    worktrees: d.worktrees,
+    featureIdentity: d.featureIdentity,
   });
-  for (const needle of ['1231', '1232', '1233', '1239', '1999', 'accept-blue', 'merchant-v3', 'ab-iso-fe', 'ab-su', 'configPatch', 'redis__db', 'WTS_FE_PORT']) {
+  for (const needle of [
+    '1231',
+    '1232',
+    '1233',
+    '1239',
+    '1999',
+    'accept-blue',
+    'merchant-v3',
+    'ab-iso-fe',
+    'ab-su',
+    'configPatch',
+    'redis__db',
+    'WTS_FE_PORT',
+  ]) {
     assert.equal(json.includes(needle), false, `the shipped defaults still contain ${needle}`);
   }
 });
@@ -88,7 +119,12 @@ test('a config that already has the old concurrency values keeps every one of th
 });
 
 test('a config with its OWN concurrency repos is not merged with the defaults', () => {
-  const mine = { enabled: true, offsetStep: 50, maxSlots: 2, repos: { 'my-api': { portEnv: { PORT: 4000 } } } };
+  const mine = {
+    enabled: true,
+    offsetStep: 50,
+    maxSlots: 2,
+    repos: { 'my-api': { portEnv: { PORT: 4000 } } },
+  };
   writeConfig({ concurrency: mine });
   assert.deepEqual(load().concurrency, mine);
 });
@@ -104,11 +140,6 @@ test('a config with an empty concurrency.repos is left empty (not re-seeded)', (
 });
 
 // ---------------------- an existing config that PREDATES the concurrency key --
-
-
-
-
-
 
 test('a config created from scratch gets the EMPTY defaults, never the legacy block', () => {
   fs.rmSync(FILE, { force: true });
@@ -129,7 +160,10 @@ test('a pre-existing config gains the new convention keys at their defaults', ()
 });
 
 test('a partially-specified convention block keeps its own values and fills the rest', () => {
-  writeConfig({ worktrees: { layout: 'sibling' }, featureIdentity: { strategy: 'branch', branchPattern: '^x/(\\d+)' } });
+  writeConfig({
+    worktrees: { layout: 'sibling' },
+    featureIdentity: { strategy: 'branch', branchPattern: '^x/(\\d+)' },
+  });
   const cfg = load();
   assert.equal(cfg.worktrees.layout, 'sibling');
   assert.equal(cfg.worktrees.dir, '.worktrees', 'the unspecified sub-key is defaulted');

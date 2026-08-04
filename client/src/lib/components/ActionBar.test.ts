@@ -11,12 +11,30 @@ import type { Feature, Session } from '../../../../server/types';
  *      and start the same worktrees by a different route. A `Run servers` reappearing
  *      here is the regression to catch.
  */
-const ops = vi.hoisted(() => Object.fromEntries([
-  'activateSession', 'addRepoToSession', 'closeFeature', 'closeSession', 'deactivateSession',
-  'deleteFeature', 'installDeps', 'openEditor', 'openGroup', 'openSessionRepos', 'prFeature',
-  'promote', 'renameSession', 'restartStack', 'runStack', 'startFeatureSession',
-  'stopMainServer', 'stopStack',
-].map((k) => [k, vi.fn()])));
+const ops = vi.hoisted(() =>
+  Object.fromEntries(
+    [
+      'activateSession',
+      'addRepoToSession',
+      'closeFeature',
+      'closeSession',
+      'deactivateSession',
+      'deleteFeature',
+      'installDeps',
+      'openEditor',
+      'openGroup',
+      'openSessionRepos',
+      'prFeature',
+      'promote',
+      'renameSession',
+      'restartStack',
+      'runStack',
+      'startFeatureSession',
+      'stopMainServer',
+      'stopStack',
+    ].map((k) => [k, vi.fn()]),
+  ),
+);
 vi.mock('$lib/ops.svelte.js', () => ({ ...ops, pending: new Set() }));
 
 const { default: ActionBar } = await import('./ActionBar.svelte');
@@ -24,25 +42,53 @@ const { ui } = await import('$lib/stores/ui.svelte.js');
 const { world } = await import('$lib/stores/world.svelte.js');
 
 const member = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo, wtname: 'wt', path: `/${repo}/wt`, branch: 'feature/x',
-  running: false, canStart: true, ports: [], isMain: false, session: null, ...over,
+  repo,
+  wtname: 'wt',
+  path: `/${repo}/wt`,
+  branch: 'feature/x',
+  running: false,
+  canStart: true,
+  ports: [],
+  isMain: false,
+  session: null,
+  ...over,
 });
 
 const feature = (over: Record<string, unknown> = {}): Feature =>
-  ({ name: 'token-race-fix', auto: true, members: [member('accept-blue')], session: null, ...over } as unknown as Feature);
+  ({
+    name: 'token-race-fix',
+    auto: true,
+    members: [member('accept-blue')],
+    session: null,
+    ...over,
+  }) as unknown as Feature;
 
 /** One entry of a session's `repos` — the worktrees the agent can actually write to. */
 const sessionRepo = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo, repoPath: `/${repo}`, worktree: 'wt', worktreePath: `/${repo}/wt`, branch: 'fix/x', ...over,
+  repo,
+  repoPath: `/${repo}`,
+  worktree: 'wt',
+  worktreePath: `/${repo}/wt`,
+  branch: 'fix/x',
+  ...over,
 });
 
 // `repos` is always present on the wire (server/types.ts declares it required), so the
 // fixture carries it: the bar reads it to decide how many worktrees "Open in editor"
 // has to open, and a fixture without it tests a session shape the server never sends.
 const session = (over: Record<string, unknown> = {}): Session =>
-  ({ id: 's1', title: 'token-race-fix', state: 'working', repoName: 'accept-blue',
-     worktreePath: '/wt', branch: 'fix/x', feature: 'token-race-fix', active: true,
-     repos: [sessionRepo('accept-blue', { primary: true })], ...over } as unknown as Session);
+  ({
+    id: 's1',
+    title: 'token-race-fix',
+    state: 'working',
+    repoName: 'accept-blue',
+    worktreePath: '/wt',
+    branch: 'fix/x',
+    feature: 'token-race-fix',
+    active: true,
+    repos: [sessionRepo('accept-blue', { primary: true })],
+    ...over,
+  }) as unknown as Session;
 
 function give(features: Feature[], sessions: Session[]) {
   world.topology = { features, groups: [], repos: [], webRepos: [] } as never;
@@ -119,10 +165,16 @@ describe('ActionBar', () => {
    */
   it('acts on a main-checkout server, whose card no longer carries its own buttons', () => {
     world.topology = {
-      features: [], groups: [], webRepos: [],
-      repos: [{ name: 'ab-su', path: '/ab-su', worktrees: [
-        { repo: 'ab-su', path: '/ab-su', isMain: true, running: true, ports: [8000] },
-      ] }],
+      features: [],
+      groups: [],
+      webRepos: [],
+      repos: [
+        {
+          name: 'ab-su',
+          path: '/ab-su',
+          worktrees: [{ repo: 'ab-su', path: '/ab-su', isMain: true, running: true, ports: [8000] }],
+        },
+      ],
     } as never;
     world.sessionHalf = { sessions: [], servers: {} } as never;
     ui.selectMainServer('/ab-su');

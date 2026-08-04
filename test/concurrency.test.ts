@@ -4,31 +4,49 @@ import { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts } from
 
 // accept-blue's real port map + redis__db slot key (mirrors config defaults).
 const AB = {
-  portEnv: { api__port_su: 1231, api__port_iso: 1232, api__port: 1233, api__port_merchant: 1239, api__port_internal: 1999 },
+  portEnv: {
+    api__port_su: 1231,
+    api__port_iso: 1232,
+    api__port: 1233,
+    api__port_merchant: 1239,
+    api__port_internal: 1999,
+  },
   slotEnv: ['redis__db'],
 };
 
 test('deriveEnv slot 0 leaves ports at their base and redis__db at 0', () => {
   const { env } = deriveEnv(AB, 0, 100);
   assert.deepEqual(env, {
-    api__port_su: '1231', api__port_iso: '1232', api__port: '1233',
-    api__port_merchant: '1239', api__port_internal: '1999', redis__db: '0',
+    api__port_su: '1231',
+    api__port_iso: '1232',
+    api__port: '1233',
+    api__port_merchant: '1239',
+    api__port_internal: '1999',
+    redis__db: '0',
   });
 });
 
 test('deriveEnv slot 1 offsets every port by +100 and sets redis__db to 1', () => {
   const { env } = deriveEnv(AB, 1, 100);
   assert.deepEqual(env, {
-    api__port_su: '1331', api__port_iso: '1332', api__port: '1333',
-    api__port_merchant: '1339', api__port_internal: '2099', redis__db: '1',
+    api__port_su: '1331',
+    api__port_iso: '1332',
+    api__port: '1333',
+    api__port_merchant: '1339',
+    api__port_internal: '2099',
+    redis__db: '1',
   });
 });
 
 test('deriveEnv slot 2 offsets every port by +200 and sets redis__db to 2', () => {
   const { env } = deriveEnv(AB, 2, 100);
   assert.deepEqual(env, {
-    api__port_su: '1431', api__port_iso: '1432', api__port: '1433',
-    api__port_merchant: '1439', api__port_internal: '2199', redis__db: '2',
+    api__port_su: '1431',
+    api__port_iso: '1432',
+    api__port: '1433',
+    api__port_merchant: '1439',
+    api__port_internal: '2199',
+    redis__db: '2',
   });
 });
 
@@ -66,10 +84,10 @@ test('allocSlot accepts an array of used slots', () => {
 // rewriteSiblingPort — re-point the FE's gitignored src/config.ts at a slot's BE merchant port.
 // merchant base port is 1239, offsetStep 100, maxSlots 3 (family: 1239, 1339, 1439).
 const FE_CONFIG = [
-  "export default {",
+  'export default {',
   "  baseURL: 'http://localhost:1239/merchant',",
   "  paayLibrary: { verifyUrl: 'http://localhost:1239/merchant/admin/three-ds' },",
-  "};",
+  '};',
 ].join('\n');
 
 test('rewriteSiblingPort slot 0 is a no-op (base → base)', () => {
@@ -96,7 +114,10 @@ test('rewriteSiblingPort is idempotent (re-running yields the same result)', () 
 test('rewriteSiblingPort leaves ports outside the family and non-port text untouched', () => {
   const text = "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1239/x';";
   const out = rewriteSiblingPort(text, 1239, 100, 3, 1439);
-  assert.equal(out, "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1439/x';");
+  assert.equal(
+    out,
+    "a='http://localhost:3030'; b='http://localhost:12390'; c=1239; d='http://localhost:1439/x';",
+  );
 });
 
 // A7 — match 127.0.0.1 as well as localhost, and preserve whichever host was written.
@@ -123,11 +144,11 @@ test('rewriteSiblingPort 127.0.0.1 keeps its trailing-digit guard', () => {
 // references su 1231, merchant 1239, iso 1232 — a slot moves all three uniformly).
 const SU_PORTS = { api__port_su: 1231, api__port_merchant: 1239, api__port_iso: 1232 };
 const SU_CONFIG = [
-  "export default {",
+  'export default {',
   "  apiUrl: 'http://localhost:1231/su/api/v1',",
   "  merchantUrl: 'http://localhost:1239',",
   "  isoUrl: 'http://localhost:1232/iso/api/v1',",
-  "};",
+  '};',
 ].join('\n');
 
 test('rewriteAllSiblingPorts slot 2 shifts every sibling port family by +200', () => {
@@ -135,7 +156,9 @@ test('rewriteAllSiblingPorts slot 2 shifts every sibling port family by +200', (
   assert.ok(out.includes('localhost:1431/su/api/v1'));
   assert.ok(out.includes('localhost:1439'));
   assert.ok(out.includes('localhost:1432/iso/api/v1'));
-  assert.ok(!out.includes('localhost:1231') && !out.includes('localhost:1239') && !out.includes('localhost:1232'));
+  assert.ok(
+    !out.includes('localhost:1231') && !out.includes('localhost:1239') && !out.includes('localhost:1232'),
+  );
 });
 
 test('rewriteAllSiblingPorts slot 0 is a no-op', () => {
@@ -148,7 +171,11 @@ test('rewriteAllSiblingPorts is idempotent', () => {
 });
 
 test('rewriteAllSiblingPorts leaves non-family ports and non-port text untouched', () => {
-  const text = "fe='http://localhost:8000'; big='http://localhost:12390'; n=1231; su='http://localhost:1231/x';";
+  const text =
+    "fe='http://localhost:8000'; big='http://localhost:12390'; n=1231; su='http://localhost:1231/x';";
   const out = rewriteAllSiblingPorts(text, SU_PORTS, 100, 3, 2);
-  assert.equal(out, "fe='http://localhost:8000'; big='http://localhost:12390'; n=1231; su='http://localhost:1431/x';");
+  assert.equal(
+    out,
+    "fe='http://localhost:8000'; big='http://localhost:12390'; n=1231; su='http://localhost:1431/x';",
+  );
 });

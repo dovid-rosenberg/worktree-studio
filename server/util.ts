@@ -52,7 +52,7 @@ function run(cmd: string, args: string[] = [], opts: RunOptions = {}): Promise<R
         // A child killed on the timeout exits with no code and usually no stderr at
         // all, so without this flag "hung and killed" is indistinguishable from any
         // other failure — and it is the one failure the user can actually act on.
-        timedOut: !!(err?.killed),
+        timedOut: !!err?.killed,
         error: err || null,
       });
     });
@@ -75,12 +75,21 @@ function has(cmd: string): boolean {
     execFileSync('command', ['-v', cmd], { shell: '/bin/bash', stdio: 'ignore' });
     return true;
   } catch {
-    try { execFileSync('/usr/bin/which', [cmd], { stdio: 'ignore' }); return true; } catch { return false; }
+    try {
+      execFileSync('/usr/bin/which', [cmd], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
 function readJson<T>(file: string, fallback: T): T {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')) as T; } catch { return fallback; }
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 // Read a JSON *state* file, telling "not there yet" apart from "there but corrupt".
@@ -93,15 +102,27 @@ function readJson<T>(file: string, fallback: T): T {
 // be the wrong trade: preserve the bad file, say so, and carry on empty.
 function readJsonState<T>(file: string, fallback: T): T {
   let text: string;
-  try { text = fs.readFileSync(file, 'utf8'); } catch { return fallback; }
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return fallback;
+  }
   if (!text.trim()) return fallback;
-  try { return JSON.parse(text) as T; }
-  catch (e) {
+  try {
+    return JSON.parse(text) as T;
+  } catch (e) {
     const aside = `${file}.corrupt-${Date.now()}`;
     let kept = false;
-    try { fs.renameSync(file, aside); kept = true; } catch { /* */ }
-    console.error(`[wt-studio] ${file} is not valid JSON (${(e as Error).message}). `
-      + `${kept ? `Kept it at ${aside}` : 'Could not move it aside'}; continuing with empty state.`);
+    try {
+      fs.renameSync(file, aside);
+      kept = true;
+    } catch {
+      /* */
+    }
+    console.error(
+      `[wt-studio] ${file} is not valid JSON (${(e as Error).message}). ` +
+        `${kept ? `Kept it at ${aside}` : 'Could not move it aside'}; continuing with empty state.`,
+    );
     return fallback;
   }
 }
@@ -119,12 +140,20 @@ function writeJson(file: string, obj: unknown): void {
 // a counter) was both. randomUUID is 122 CSPRNG bits.
 // Ids are only ever compared for equality and used as map keys — nothing validates
 // their shape — so ids minted by the old scheme keep working unchanged.
-function makeId(prefix = ''): string { return `${prefix}${crypto.randomUUID()}`; }
+function makeId(prefix = ''): string {
+  return `${prefix}${crypto.randomUUID()}`;
+}
 
 // Short, stable handle derived from an id, for the places that need a *label* rather
 // than a credential — tmux session names, which have to stay inside 60-odd readable
 // characters. Never use this where the full id is the thing being authenticated.
-function shortId(id: string): string { return String(id).replace(/[^0-9a-f]/gi, '').slice(-8) || 'session'; }
+function shortId(id: string): string {
+  return (
+    String(id)
+      .replace(/[^0-9a-f]/gi, '')
+      .slice(-8) || 'session'
+  );
+}
 
 // Resolve a path through its symlinks, falling back to the path itself when it
 // can't be resolved (doesn't exist yet, permission denied). Worktree paths are
@@ -132,7 +161,13 @@ function shortId(id: string): string { return String(id).replace(/[^0-9a-f]/gi, 
 // paths, and lsof's view of a running process — and any of them may hand us a
 // symlinked spelling (/tmp vs /private/tmp, a symlinked home), so every
 // comparison goes through this first.
-function realpath(p: string): string { try { return fs.realpathSync(p); } catch { return p; } }
+function realpath(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
 
 // A memo for realpath(), because resolving a path costs a syscall per path
 // component and the state build resolves the same few dozen worktree paths many
@@ -150,17 +185,25 @@ function realpath(p: string): string { try { return fs.realpathSync(p); } catch 
 // for it recently is exactly the entry that survives a removal.
 function createRealpathCache() {
   const cache = new Map<string, string>();
-  let hits = 0, misses = 0;
+  let hits = 0,
+    misses = 0;
   return {
     resolve(p: string): string {
       if (!p) return p;
       // `has` first, not `get() ?? miss`: the map never stores a nullish value, so
       // this is the only form that stays correct if one is ever added.
       const hit = cache.get(p);
-      if (hit !== undefined) { hits++; return hit; }
+      if (hit !== undefined) {
+        hits++;
+        return hit;
+      }
       misses++;
       let r: string;
-      try { r = fs.realpathSync(p); } catch { return p; }
+      try {
+        r = fs.realpathSync(p);
+      } catch {
+        return p;
+      }
       cache.set(p, r);
       return r;
     },
@@ -168,18 +211,24 @@ function createRealpathCache() {
       const keep = livePaths instanceof Set ? livePaths : new Set(livePaths);
       for (const p of cache.keys()) if (!keep.has(p)) cache.delete(p);
     },
-    get size() { return cache.size; },
-    get stats() { return { hits, misses }; },
+    get size() {
+      return cache.size;
+    },
+    get stats() {
+      return { hits, misses };
+    },
   };
 }
 
 // Turn any string into a safe slug usable as branch/worktree/mux-session name.
 function slug(s: string | null | undefined, max = 48): string {
-  return (s || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, max) || 'session';
+  return (
+    (s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, max) || 'session'
+  );
 }
 
 // POSIX single-quote a string for safe inclusion in a shell command.
@@ -194,4 +243,21 @@ function shq(s: unknown): string {
 // rejection to the error middleware itself, so the wrapper is gone and the policy it
 // enforced lives in exactly one place: crash.routeErrors(), mounted last in server.ts.
 
-export { HOME, expandTilde, run, git, gitFull, has, readJson, readJsonState, writeJson, makeId, shortId, realpath, createRealpathCache, slug, shq, DEFAULT_TIMEOUT_MS };
+export {
+  HOME,
+  expandTilde,
+  run,
+  git,
+  gitFull,
+  has,
+  readJson,
+  readJsonState,
+  writeJson,
+  makeId,
+  shortId,
+  realpath,
+  createRealpathCache,
+  slug,
+  shq,
+  DEFAULT_TIMEOUT_MS,
+};

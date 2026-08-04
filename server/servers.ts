@@ -164,7 +164,9 @@ const PID_START_SKEW_MS = 10000;
 // Servers instance uses ITS OWN configured resolver (`this.identity`) instead, so
 // slot keys always match the grouping in server/features.ts.
 const DEFAULT_IDENTITY = createIdentity({});
-function featureFromPath(worktreePath: string): string { return DEFAULT_IDENTITY.ofPath(worktreePath); }
+function featureFromPath(worktreePath: string): string {
+  return DEFAULT_IDENTITY.ofPath(worktreePath);
+}
 
 // Dev-server logs are appended to for the life of the worktree, so both their size
 // and what a single read of one may cost have to be bounded — and the read matters
@@ -184,8 +186,13 @@ function readRange(file: string, start: number, end: number): string {
   const len = end - start;
   if (len <= 0) return '';
   const fd = fs.openSync(file, 'r');
-  try { const buf = Buffer.alloc(len); const n = fs.readSync(fd, buf, 0, len, start); return buf.toString('utf8', 0, n); }
-  finally { fs.closeSync(fd); }
+  try {
+    const buf = Buffer.alloc(len);
+    const n = fs.readSync(fd, buf, 0, len, start);
+    return buf.toString('utf8', 0, n);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // The last `lines` lines of a file, read backwards from the end and capped at
@@ -194,10 +201,17 @@ function readRange(file: string, start: number, end: number): string {
 // an arbitrary byte offset can land in the middle of.
 function readTail(file: string, lines: number, maxBytes = TAIL_MAX_BYTES): string {
   let size: number;
-  try { size = fs.statSync(file).size; } catch { return ''; }
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return '';
+  }
   const start = Math.max(0, size - maxBytes);
   let text = readRange(file, start, size);
-  if (start > 0) { const nl = text.indexOf('\n'); text = nl >= 0 ? text.slice(nl + 1) : ''; }
+  if (start > 0) {
+    const nl = text.indexOf('\n');
+    text = nl >= 0 ? text.slice(nl + 1) : '';
+  }
   return text.split('\n').slice(-lines).join('\n');
 }
 
@@ -213,10 +227,18 @@ function readTail(file: string, lines: number, maxBytes = TAIL_MAX_BYTES): strin
 // acceptable for a log, and the alternative is unbounded growth.
 function trimLog(file: string, max = MAX_LOG_BYTES, keep = KEEP_LOG_BYTES): boolean {
   let size: number;
-  try { size = fs.statSync(file).size; } catch { return false; }
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return false;
+  }
   if (size <= max) return false;
   let fd: number;
-  try { fd = fs.openSync(file, 'r+'); } catch { return false; }
+  try {
+    fd = fs.openSync(file, 'r+');
+  } catch {
+    return false;
+  }
   try {
     const want = Math.min(keep, size); // a keep larger than the file would read from a negative offset
     const buf = Buffer.alloc(want);
@@ -225,7 +247,9 @@ function trimLog(file: string, max = MAX_LOG_BYTES, keep = KEEP_LOG_BYTES): bool
     const from = nl >= 0 && nl + 1 < n ? nl + 1 : 0;
     fs.writeSync(fd, buf, from, n - from, 0);
     fs.ftruncateSync(fd, n - from);
-  } finally { fs.closeSync(fd); }
+  } finally {
+    fs.closeSync(fd);
+  }
   return true;
 }
 
@@ -247,7 +271,7 @@ class Servers {
   constructor(cfg: ServersConfig, identity?: Identity | null) {
     this.cfg = cfg;
     this.identity = identity || createIdentity(cfg);
-    this.selfPort = (cfg.web?.port) || 0;
+    this.selfPort = cfg.web?.port || 0;
     // config.ts stamps `_stateDir` onto every config it loads and every caller passes
     // one; a config without it never reached this line, because path.join() threw on it.
     const stateDir = cfg._stateDir!;
@@ -279,20 +303,31 @@ class Servers {
     this._starting = new Map();
   }
 
-  _save(): void { writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) }); }
+  _save(): void {
+    writeJson(this.file, { tracked: this.tracked, slots: Object.fromEntries(this.slots) });
+  }
 
   // The feature a worktree path belongs to, under the configured identity
   // strategy. Every slot key in the app goes through here or through
   // `identity.of()` on the equivalent worktree object — the two agree by
   // construction (server/identity.ts).
-  featureFor(worktreePath: string): string { return this.identity.ofPath(worktreePath); }
+  featureFor(worktreePath: string): string {
+    return this.identity.ofPath(worktreePath);
+  }
 
   // ---- concurrency: per-feature slot allocation + derived launch env ----
-  _concEnabled(): boolean { return !!(this.cfg.concurrency?.enabled); }
-  _repoConc(repo: string): RepoConcurrency | null { const c = this.cfg.concurrency; return (c?.repos?.[repo]) || null; }
+  _concEnabled(): boolean {
+    return !!this.cfg.concurrency?.enabled;
+  }
+  _repoConc(repo: string): RepoConcurrency | null {
+    const c = this.cfg.concurrency;
+    return c?.repos?.[repo] || null;
+  }
   // A repo that gets a concurrency slot runs on its own (offset) ports per feature,
   // so running it in two worktrees at once does NOT collide.
-  isSlotted(repo: string): boolean { return this._concEnabled() && !!this._repoConc(repo); }
+  isSlotted(repo: string): boolean {
+    return this._concEnabled() && !!this._repoConc(repo);
+  }
 
   // Allocate (or reuse) the slot for a feature. Returns { slot } or { error } when
   // all slots are busy. Slot 0 semantics when concurrency is off / no feature name.
@@ -311,7 +346,9 @@ class Servers {
     return { slot };
   }
 
-  releaseSlot(feature: string): void { if (feature && this.slots.delete(feature)) this._save(); }
+  releaseSlot(feature: string): void {
+    if (feature && this.slots.delete(feature)) this._save();
+  }
 
   /**
    * Release a feature's slot only if nothing of that feature is still listening.
@@ -353,7 +390,9 @@ class Servers {
   }
 
   // Is a launch for this feature in flight right now?
-  isStarting(feature: string): boolean { return this._starting.has(feature); }
+  isStarting(feature: string): boolean {
+    return this._starting.has(feature);
+  }
 
   // Self-heal the slot map against reality: drop any slot whose feature has no
   // running worktree in `runningMap` (Map(realpath → {pid,ports}) from discoverRunning).
@@ -377,7 +416,7 @@ class Servers {
 
   // Launch env + ports for a repo at a feature's current slot. {} / [] when
   // concurrency is off or the repo has no concurrency config (behaves as today).
-  // When the repo declares a `configPatch` (e.g. an FE that hardcodes accept-blue's
+  // When the repo declares a `configPatch` (e.g. an FE that hardcodes its backend's
   // ports), return a `patch` descriptor that start() applies to the worktree's config
   // file — shifting ALL of the sibling repo's port families to this feature's slot.
   launchOpts(repo: string, feature: string): LaunchOpts {
@@ -413,7 +452,9 @@ class Servers {
       const text = fs.readFileSync(file, 'utf8');
       const out = rewriteAllSiblingPorts(text, patch.siblingPortEnv, step, max, patch.slot);
       if (out !== text) fs.writeFileSync(file, out);
-    } catch { /* best-effort — never block a launch on a config rewrite */ }
+    } catch {
+      /* best-effort — never block a launch on a config rewrite */
+    }
   }
 
   startCfg(repo: string): StartCommand | null {
@@ -427,7 +468,14 @@ class Servers {
     return { cmd: s.cmd, ports: s.ports || [] };
   }
 
-  alive(pid: number): boolean { try { process.kill(pid, 0); return true; } catch { return false; } }
+  alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   // { startedAt, command } for a live pid, or null when there is no such process.
   // `lstart` is a fixed-width ctime string — "Mon Jul 27 22:46:40 2026", 24 chars —
@@ -473,7 +521,7 @@ class Servers {
   async pruneTracked(): Promise<DroppedRecord[]> {
     const dropped: DroppedRecord[] = [];
     for (const [wt, t] of Object.entries(this.tracked)) {
-      if (await this._trackedPidState(t) === 'ours') continue;
+      if ((await this._trackedPidState(t)) === 'ours') continue;
       dropped.push({ worktreePath: wt, pid: t.pid });
       delete this.tracked[wt];
     }
@@ -496,8 +544,10 @@ class Servers {
     // parse -F output: `p<pid>` starts a process block; `n<host>:<port>` are its sockets
     let pid: string | null = null;
     for (const line of r.stdout.split('\n')) {
-      if (line[0] === 'p') { pid = line.slice(1); if (!byPid.has(pid)) byPid.set(pid, new Set()); }
-      else if (line[0] === 'n' && pid) {
+      if (line[0] === 'p') {
+        pid = line.slice(1);
+        if (!byPid.has(pid)) byPid.set(pid, new Set());
+      } else if (line[0] === 'n' && pid) {
         const m = line.slice(1).match(/:(\d+)$/);
         if (m) {
           const port = Number(m[1]);
@@ -569,7 +619,8 @@ class Servers {
    */
   async installDeps(worktreePath: string): Promise<{ ok: boolean; error?: string; log?: string }> {
     if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: false, error: 'no such worktree' };
-    if (!fs.existsSync(path.join(worktreePath, 'package.json'))) return { ok: false, error: 'no package.json here' };
+    if (!fs.existsSync(path.join(worktreePath, 'package.json')))
+      return { ok: false, error: 'no package.json here' };
     if (this.installing.has(worktreePath)) return { ok: false, error: 'already installing' };
 
     this.installing.add(worktreePath);
@@ -581,9 +632,13 @@ class Servers {
       try {
         fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: npm install @ ${worktreePath} =====\n`);
         child = spawn('npm', ['install', '--no-audit', '--no-fund'], {
-          cwd: worktreePath, stdio: ['ignore', fd, fd], env: ENV,
+          cwd: worktreePath,
+          stdio: ['ignore', fd, fd],
+          env: ENV,
         });
-      } finally { fs.closeSync(fd); }
+      } finally {
+        fs.closeSync(fd);
+      }
 
       const code = await new Promise<number>((resolve) => {
         child.once('error', () => resolve(-1));
@@ -615,11 +670,19 @@ class Servers {
     try {
       if (!fs.existsSync(path.join(worktreePath, 'package.json'))) return false;
       return !fs.existsSync(path.join(worktreePath, 'node_modules'));
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   // Attach running/pid/ports/canStart to a worktree object using a discovered map.
-  decorate(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): Pick<Worktree, 'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling' | 'noStartCmd'> {
+  decorate(
+    worktree: Pick<Worktree, 'path' | 'repo'>,
+    running: Map<string, RunningServer>,
+  ): Pick<
+    Worktree,
+    'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling' | 'noStartCmd'
+  > {
     const hit = running.get(realpath(worktree.path));
     const deps = this.depsMissing(worktree.path);
     const configured = !!this.startCfg(worktree.repo);
@@ -652,14 +715,28 @@ class Servers {
   _lock(worktreePath: string): string | null {
     const name = `${slug(worktreePath, 40)}-${crypto.createHash('sha1').update(String(worktreePath)).digest('hex').slice(0, 8)}`;
     const lock = path.join(this.lockDir, `${name}.lock`);
-    try { fs.mkdirSync(lock); return lock; }
-    catch {
+    try {
+      fs.mkdirSync(lock);
+      return lock;
+    } catch {
       // stale lock (>60s) → reclaim
-      try { if (Date.now() - fs.statSync(lock).mtimeMs > 60000) { return lock; } } catch { /* */ }
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > 60000) {
+          return lock;
+        }
+      } catch {
+        /* */
+      }
       return null;
     }
   }
-  _unlock(lock: string): void { try { fs.rmdirSync(lock); } catch { /* */ } }
+  _unlock(lock: string): void {
+    try {
+      fs.rmdirSync(lock);
+    } catch {
+      /* */
+    }
+  }
 
   // opts.env: per-call env merged over the base ENV (concurrency slot offsets).
   // opts.ports: derived (slot-offset) ports to pre-check/poll instead of sc.ports.
@@ -692,7 +769,12 @@ class Servers {
       let child: ChildProcess;
       try {
         fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);
-        child = spawn('bash', ['-lc', sc.cmd], { cwd: worktreePath, detached: true, stdio: ['ignore', fd, fd], env });
+        child = spawn('bash', ['-lc', sc.cmd], {
+          cwd: worktreePath,
+          detached: true,
+          stdio: ['ignore', fd, fd],
+          env,
+        });
       } finally {
         // spawn() dups this descriptor into the child synchronously, so by the time
         // it returns the parent's copy is dead weight — and the daemon outlives every
@@ -721,7 +803,10 @@ class Servers {
           await new Promise((r) => setTimeout(r, 500));
           let allUp = true;
           for (const p of ports) if (!(await this.portPid(p))) allUp = false;
-          if (allUp) { listening = true; break; }
+          if (allUp) {
+            listening = true;
+            break;
+          }
           listening = false;
         }
       }
@@ -735,10 +820,15 @@ class Servers {
           const hit = (await this.discoverRunning()).get(realpath(worktreePath));
           const other = (hit?.ports || []).filter((p) => !ports.includes(p));
           if (other.length) boundElsewhere = other;
-        } catch { /* diagnosis is a bonus; never let it change the launch outcome */ }
+        } catch {
+          /* diagnosis is a bonus; never let it change the launch outcome */
+        }
       }
       return { ok: true, pid: child.pid, log, listening, boundElsewhere };
-    } finally { this._endStart(feature); this._unlock(lock); }
+    } finally {
+      this._endStart(feature);
+      this._unlock(lock);
+    }
   }
 
   /**
@@ -760,15 +850,22 @@ class Servers {
    */
   async startAll(
     targets: Array<{ repo: string; worktreePath: string }>,
-  ): Promise<{ ok: false; slotError: string } | { ok: true; results: Array<{ repo: string } & StartResult> }> {
+  ): Promise<
+    { ok: false; slotError: string } | { ok: true; results: Array<{ repo: string } & StartResult> }
+  > {
     for (const t of targets) {
       const alloc = this.allocSlotFor(this.featureFor(t.worktreePath));
       if (alloc.error) return { ok: false, slotError: alloc.error };
     }
-    const results = await Promise.all(targets.map(async (t) => {
-      const feature = this.featureFor(t.worktreePath);
-      return { repo: t.repo, ...(await this.start(t.repo, t.worktreePath, this.launchOpts(t.repo, feature))) };
-    }));
+    const results = await Promise.all(
+      targets.map(async (t) => {
+        const feature = this.featureFor(t.worktreePath);
+        return {
+          repo: t.repo,
+          ...(await this.start(t.repo, t.worktreePath, this.launchOpts(t.repo, feature))),
+        };
+      }),
+    );
     return { ok: true, results };
   }
 
@@ -791,18 +888,37 @@ class Servers {
     // A record with no pid can only be 'gone', so `t.pid` here is the pid that state
     // was decided on.
     if (state === 'ours' && t.pid) {
-      try { process.kill(-t.pid, 'SIGTERM'); killed = true; } catch { try { process.kill(t.pid, 'SIGTERM'); killed = true; } catch { /* */ } }
+      try {
+        process.kill(-t.pid, 'SIGTERM');
+        killed = true;
+      } catch {
+        try {
+          process.kill(t.pid, 'SIGTERM');
+          killed = true;
+        } catch {
+          /* */
+        }
+      }
     } else if (state === 'stranger') {
       // Loud, because it means this record was about to be used to kill something
       // that has nothing to do with Studio. The port sweep below still frees
       // whatever is genuinely holding this worktree's ports.
-      console.warn(`[wt-studio] refusing to signal pid ${t.pid} for ${worktreePath}: it is no longer the process Studio started (pid reused). Dropping the stale record.`);
+      console.warn(
+        `[wt-studio] refusing to signal pid ${t.pid} for ${worktreePath}: it is no longer the process Studio started (pid reused). Dropping the stale record.`,
+      );
     }
     // Also free any listener still holding one of this worktree's known ports —
     // a targeted per-port lookup rather than a full lsof-all-sockets discovery scan.
     for (const p of this._portsFor(repo, worktreePath)) {
       const pid = await this.portPid(p);
-      if (pid && (!t || pid !== t.pid)) { try { process.kill(pid, 'SIGTERM'); killed = true; } catch { /* */ } }
+      if (pid && (!t || pid !== t.pid)) {
+        try {
+          process.kill(pid, 'SIGTERM');
+          killed = true;
+        } catch {
+          /* */
+        }
+      }
     }
     delete this.tracked[worktreePath];
     this._save();
@@ -820,7 +936,9 @@ class Servers {
       await this.stop(repo, worktreePath);
       await new Promise((r) => setTimeout(r, 800));
       return await this.start(repo, worktreePath, opts);
-    } finally { this._endStart(feature); }
+    } finally {
+      this._endStart(feature);
+    }
   }
 
   // Bring every tracked log back under the size ceiling. One stat per tracked
@@ -847,7 +965,11 @@ class Servers {
     const empty = { offset: offset ?? 0, text: '', size: 0, skipped: 0 };
     if (!log || !fs.existsSync(log)) return empty;
     let size: number;
-    try { size = fs.statSync(log).size; } catch { return empty; }
+    try {
+      size = fs.statSync(log).size;
+    } catch {
+      return empty;
+    }
     if (offset !== null) {
       // a shrunken file means it was truncated/rotated — re-read from the start
       const start = offset > size ? 0 : Math.max(0, offset);

@@ -31,9 +31,7 @@
 // `ci` is optional: wired in, it joins the snapshot and gets its own flush flag;
 // omitted, the bus behaves exactly as it did with two events.
 
-import type {
-  TopologyPayload, SessionStatePayload, CiPayload, SseEventName, SseEvents,
-} from './types.ts';
+import type { TopologyPayload, SessionStatePayload, CiPayload, SseEventName, SseEvents } from './types.ts';
 
 /** The half of an SSE response the bus touches. */
 export interface SseClient {
@@ -62,10 +60,18 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }: Broadc
   let topologyPending = false;
   let ciPending = false;
 
-  function frame<E extends SseEventName>(event: E, data: SseEvents[E]): string { return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`; }
+  function frame<E extends SseEventName>(event: E, data: SseEvents[E]): string {
+    return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  }
   // A dead socket throws here; the request's close handler is what unsubscribes,
   // so one broken client never breaks the fan-out for the others.
-  function write(res: SseClient, text: string): void { try { res.write(text); } catch { /* */ } }
+  function write(res: SseClient, text: string): void {
+    try {
+      res.write(text);
+    } catch {
+      /* */
+    }
+  }
 
   // Send the full snapshot, then join the fan-out. Returns the unsubscribe fn.
   /**
@@ -100,7 +106,10 @@ function createBroadcast({ topology, sessionState, ci, debounceMs = 80 }: Broadc
   // half, and including it makes every flush a chance for a client to converge.
   // The CI half does NOT ride along — that is the whole reason it is its own event.
   function flush() {
-    if (timer) { clearTimeout(timer); timer = null; }
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
     const withTopology = topologyPending;
     const ciFeed = ciPending && ci ? ci : null;
     topologyPending = false;

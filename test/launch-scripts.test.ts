@@ -50,7 +50,7 @@ test('only .sh files are touched', () => {
   const when = new Date(Date.now() - 30 * DAY);
   fs.utimesSync(keep, when, when);
 
-  assert.equal(reapLaunchScripts(), 0, 'a non-script is not this function\'s business');
+  assert.equal(reapLaunchScripts(), 0, "a non-script is not this function's business");
   assert.ok(fs.existsSync(keep));
   fs.unlinkSync(keep);
 });

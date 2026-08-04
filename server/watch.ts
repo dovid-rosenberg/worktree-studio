@@ -130,8 +130,17 @@ interface Job {
   runs: number;
 }
 
-function isDir(p: string): boolean { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
-function unref<T extends { unref?: () => unknown }>(t: T): T { if (t && typeof t.unref === 'function') t.unref(); return t; }
+function isDir(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function unref<T extends { unref?: () => unknown }>(t: T): T {
+  if (t && typeof t.unref === 'function') t.unref();
+  return t;
+}
 
 /**
  * "Is anyone actually looking?" — the signal that paces the sweeps which cannot be
@@ -148,10 +157,16 @@ function unref<T extends { unref?: () => unknown }>(t: T): T { if (t && typeof t
 function attention({ streams, pollWindowMs = 30000 }: AttentionOptions = {}): Attention {
   let lastPoll = 0;
   return {
-    seen() { lastPoll = Date.now(); }, // call this from the state route
+    seen() {
+      lastPoll = Date.now();
+    }, // call this from the state route
     active() {
       if (typeof streams === 'function') {
-        try { if (streams() > 0) return true; } catch { return true; } // never go idle on a broken probe
+        try {
+          if (streams() > 0) return true;
+        } catch {
+          return true;
+        } // never go idle on a broken probe
       }
       return Date.now() - lastPoll < pollWindowMs;
     },
@@ -165,9 +180,16 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
   const cfg = deps.cfg || {};
   const o = { ...DEFAULTS, ...(cfg.watch || {}), ...(deps.intervals || {}) };
   const hasViewers = deps.hasViewers;
-  const watching = typeof hasViewers === 'function'
-    ? () => { try { return !!hasViewers(); } catch { return true; } }
-    : () => true;
+  const watching =
+    typeof hasViewers === 'function'
+      ? () => {
+          try {
+            return !!hasViewers();
+          } catch {
+            return true;
+          }
+        }
+      : () => true;
 
   // dir → { w, kind }. One entry per watched directory; never one per ref file.
   const watchers = new Map<string, { w: fs.FSWatcher; kind: WatchKind }>();
@@ -186,13 +208,22 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
     const e = watchers.get(dir);
     if (!e) return;
     watchers.delete(dir);
-    try { e.w.close(); } catch { /* already dead */ }
+    try {
+      e.w.close();
+    } catch {
+      /* already dead */
+    }
   }
 
   function arm(dir: string, kind: WatchKind, recursive: boolean): void {
     if (stopped || watchers.has(dir)) return;
     if (watchers.size >= o.maxWatchers) {
-      if (!warnedCap) { warnedCap = true; console.warn(`[wt-studio] watch: hit maxWatchers (${o.maxWatchers}); falling back to the safety-net timer for the rest`); }
+      if (!warnedCap) {
+        warnedCap = true;
+        console.warn(
+          `[wt-studio] watch: hit maxWatchers (${o.maxWatchers}); falling back to the safety-net timer for the rest`,
+        );
+      }
       return;
     }
     let w: fs.FSWatcher;
@@ -201,7 +232,10 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
     } catch {
       // recursive watching is unavailable on older Linux/Node — a flat watch on the
       // same directory is strictly better than no watch at all.
-      if (recursive) { arm(dir, kind, false); return; }
+      if (recursive) {
+        arm(dir, kind, false);
+        return;
+      }
       return; // vanished, unreadable, or out of descriptors — the next sync retries
     }
     w.on('error', () => disarm(dir));
@@ -217,7 +251,11 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
   function sync(): void {
     if (stopped) return;
     let tree: ReturnType<typeof gitMod.walkTree>;
-    try { tree = gitMod.walkTree(cfg.baseDirs || [], cfg.scanDepth || 3); } catch { return; }
+    try {
+      tree = gitMod.walkTree(cfg.baseDirs || [], cfg.scanDepth || 3);
+    } catch {
+      return;
+    }
     knownDirs = new Set(tree.dirs);
     knownRepos = new Set(tree.repos);
 
@@ -239,7 +277,8 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
     }
     for (const [dir, [kind, recursive]] of want) arm(dir, kind, recursive);
     // Let a dismissed directory earn a fresh look if it is removed and re-created.
-    for (const p of [...dismissed]) if (!isDir(p) || knownRepos.has(p) || knownDirs.has(p)) dismissed.delete(p);
+    for (const p of [...dismissed])
+      if (!isDir(p) || knownRepos.has(p) || knownDirs.has(p)) dismissed.delete(p);
   }
 
   // ---- event filtering ------------------------------------------------------
@@ -312,21 +351,33 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
   // `scanning` guard, but re-runs afterwards instead of dropping the request).
   async function runScan(): Promise<void> {
     if (stopped) return;
-    if (scanBusy) { scanQueued = true; return; }
+    if (scanBusy) {
+      scanQueued = true;
+      return;
+    }
     scanBusy = true;
     try {
       await deps.rescan();
-    } catch { /* a failed scan must never take the watcher down with it */ } finally {
+    } catch {
+      /* a failed scan must never take the watcher down with it */
+    } finally {
       lastScanAt = Date.now();
       scans += 1;
       // Any scan resets the safety net — the net exists to cover a *quiet* period,
       // not to fire 60s after boot when watching already refreshed us a second ago.
       const net = jobs.find((j) => j.name === 'net');
       if (net) net.last = lastScanAt;
-      try { sync(); } catch { /* */ } // the repo set may have changed under us
+      try {
+        sync();
+      } catch {
+        /* */
+      } // the repo set may have changed under us
       scanBusy = false;
     }
-    if (scanQueued && !stopped) { scanQueued = false; trigger(); }
+    if (scanQueued && !stopped) {
+      scanQueued = false;
+      trigger();
+    }
   }
 
   // ---- periodic jobs --------------------------------------------------------
@@ -336,15 +387,37 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
   // of checking often is nil and a dashboard that opens after a long idle gets a
   // fresh sweep within one tick instead of waiting out the idle interval.
   const jobs: Job[] = [
-    { name: 'running', fn: deps.refreshRunning, active: o.runningActiveMs, idle: o.runningIdleMs, last: 0, busy: false, runs: 0 },
-    { name: 'reconcile', fn: deps.reconcile, active: o.reconcileActiveMs, idle: o.reconcileIdleMs, last: 0, busy: false, runs: 0 },
+    {
+      name: 'running',
+      fn: deps.refreshRunning,
+      active: o.runningActiveMs,
+      idle: o.runningIdleMs,
+      last: 0,
+      busy: false,
+      runs: 0,
+    },
+    {
+      name: 'reconcile',
+      fn: deps.reconcile,
+      active: o.reconcileActiveMs,
+      idle: o.reconcileIdleMs,
+      last: 0,
+      busy: false,
+      runs: 0,
+    },
     { name: 'net', fn: runScan, active: o.netActiveMs, idle: o.netIdleMs, last: 0, busy: false, runs: 0 },
   ].filter((j): j is Job => typeof j.fn === 'function');
 
   function runJob(j: Job): Promise<void> {
     j.last = Date.now();
     j.busy = true;
-    return Promise.resolve().then(j.fn).catch(() => {}).then(() => { j.busy = false; j.runs += 1; });
+    return Promise.resolve()
+      .then(j.fn)
+      .catch(() => {})
+      .then(() => {
+        j.busy = false;
+        j.runs += 1;
+      });
   }
 
   function tick(): void {
@@ -365,7 +438,8 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
     // `reconcile` is deliberately NOT run here: it flips sessions whose mux session
     // died to stopped, and manager.restore() runs after us — reconciling first would
     // deactivate sessions restore() was about to bring back.
-    if (j.name === 'running') await runJob(j); else j.last = Date.now();
+    if (j.name === 'running') await runJob(j);
+    else j.last = Date.now();
   }
   const timer = unref(setInterval(tick, o.tickMs));
 
@@ -380,7 +454,9 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
     // Force a debounced rescan — for callers that know something changed but that
     // the filesystem cannot tell us about.
     poke: trigger,
-    watched() { return [...watchers.keys()].sort(); },
+    watched() {
+      return [...watchers.keys()].sort();
+    },
     stats(): WatchStats {
       const out: WatchStats = { scans, watchers: watchers.size, repos: knownRepos.size };
       for (const j of jobs) out[j.name] = j.runs;

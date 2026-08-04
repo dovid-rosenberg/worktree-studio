@@ -155,7 +155,7 @@ the rest, and the difference between them matters.
   "default": [".env", ".env.local", ".env.*.local", ".env*",
               "config/*-config.js", "src/config.js", "src/config/config.js",
               ".vscode/*.json"],
-  "merchant-v3": ["…"]                       // optional per-repo override
+  "web": ["…"]                       // optional per-repo override
 },
 "copyAlways": {
   "default": [".idea/runConfigurations/*.xml"]
@@ -234,35 +234,35 @@ config files hardcode the backend's ports.
   "offsetStep": 100,
   "maxSlots": 3,
   "repos": {
-    "accept-blue": {
+    "api": {
       "portEnv": {
-        "api__port_su": 1231,
-        "api__port_iso": 1232,
+        "api__port_portal": 1231,
+        "api__port_admin": 1232,
         "api__port": 1233,
-        "api__port_merchant": 1239,
+        "api__port_web": 1239,
         "api__port_internal": 1999
       },
       "slotEnv": ["redis__db"]
     },
-    "merchant-v3": {
+    "web": {
       "portEnv": { "WTS_FE_PORT": 3030 },
-      "configPatch": { "file": "src/config.js", "siblingRepo": "accept-blue" }
+      "configPatch": { "file": "src/config.js", "siblingRepo": "api" }
     },
-    "ab-iso-fe": {
+    "admin": {
       "portEnv": { "WTS_FE_PORT": 9000 },
-      "configPatch": { "file": "src/config/config.js", "siblingRepo": "accept-blue" }
+      "configPatch": { "file": "src/config/config.js", "siblingRepo": "api" }
     },
-    "ab-su": {
+    "portal": {
       "portEnv": { "WTS_FE_PORT": 8000 },
-      "configPatch": { "file": "src/config/config.js", "siblingRepo": "accept-blue" }
+      "configPatch": { "file": "src/config/config.js", "siblingRepo": "api" }
     }
   }
 }
 ```
 
 At slot 1 the backend comes up on 1331/1332/1333/1339/2099 with `redis__db=1`,
-merchant-v3's Vite server on 3130, and merchant-v3's `src/config.js` is rewritten
-so every `localhost:12xx` reference points at the slot-1 backend. `ab-su`
+web's Vite server on 3130, and web's `src/config.js` is rewritten
+so every `localhost:12xx` reference points at the slot-1 backend. `portal`
 references three of the backend's families at once, which is why `configPatch`
 shifts *all* of a sibling's families together rather than one named port.
 

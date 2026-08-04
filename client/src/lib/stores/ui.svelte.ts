@@ -42,7 +42,7 @@ export type LiveMember = Worktree;
  * a live agent, or a running dev server.
  */
 export type RailRow =
-  | { kind: 'agent'; key: string; name: string; session: Session; active: boolean }
+  | { kind: 'session'; key: string; name: string; session: Session; active: boolean }
   | { kind: 'mainserver'; key: string; name: string; worktree: Worktree; active: boolean }
   | { kind: 'feature'; key: string; name: string; feature: Feature; active: boolean };
 
@@ -87,14 +87,20 @@ export type DockView = 'term' | 'changes' | 'logs' | 'usage';
 function savedDock(): DockView {
   // Only Insights is worth restoring: the panel views belong to a session and reset with
   // the selection anyway.
-  try { return localStorage.getItem(DOCK_KEY) === 'usage' ? 'usage' : 'term'; } catch { return 'term'; }
+  try {
+    return localStorage.getItem(DOCK_KEY) === 'usage' ? 'usage' : 'term';
+  } catch {
+    return 'term';
+  }
 }
 
 function savedRailWidth(): number {
   try {
     const n = Number(localStorage.getItem(RAIL_KEY));
     return Number.isFinite(n) && n >= RAIL_MIN && n <= RAIL_MAX ? n : RAIL_DEFAULT;
-  } catch { return RAIL_DEFAULT; }
+  } catch {
+    return RAIL_DEFAULT;
+  }
 }
 
 /**
@@ -111,9 +117,12 @@ export function featureActive(f: Feature): boolean {
 
 /** Active first, then alphabetical. Returns a new array. */
 export function sortFeatures(list: Feature[]): Feature[] {
-  return list.slice().sort(
-    (a, b) => (Number(featureActive(b)) - Number(featureActive(a))) || String(a.name).localeCompare(String(b.name)),
-  );
+  return list
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(featureActive(b)) - Number(featureActive(a)) || String(a.name).localeCompare(String(b.name)),
+    );
 }
 
 /** Members that actually exist on disk. */
@@ -162,18 +171,20 @@ class UI {
   insightsFocus = $state<string | null>(null);
 
   /** Selected session id, or null. Read-only — go through select(). */
-  get selectedId(): string | null { return this.selection?.kind === 'session' ? this.selection.id : null; }
+  get selectedId(): string | null {
+    return this.selection?.kind === 'session' ? this.selection.id : null;
+  }
   /** Selected sessionless feature's name, or null. Read-only — go through selectFeature(). */
-  get selectedFeatureName(): string | null { return this.selection?.kind === 'feature' ? this.selection.name : null; }
+  get selectedFeatureName(): string | null {
+    return this.selection?.kind === 'feature' ? this.selection.name : null;
+  }
 
   /** The selected session object, or null. Follows the live `sessions` list. */
   selected = $derived(this.selectedId ? world.session(this.selectedId) : null);
 
   /** The selected sessionless feature, or null. Follows the live `features` list. */
   selectedFeature = $derived(
-    this.selectedFeatureName
-      ? (world.features.find((f) => f.name === this.selectedFeatureName) || null)
-      : null,
+    this.selectedFeatureName ? world.features.find((f) => f.name === this.selectedFeatureName) || null : null,
   );
 
   /**
@@ -186,49 +197,58 @@ class UI {
    */
   selectedMainServer = $derived(
     this.selection?.kind === 'mainserver'
-      ? (world.repos.flatMap((r) => r.worktrees || [])
-          .find((w) => w.path === (this.selection as { path: string }).path) || null)
+      ? world.repos
+          .flatMap((r) => r.worktrees || [])
+          .find((w) => w.path === (this.selection as { path: string }).path) || null
       : null,
   );
 
-  #featureMatches = (f: Feature): boolean => !this.repoFilter
+  #featureMatches = (f: Feature): boolean =>
+    !this.repoFilter ||
     // A MissingMember is a dangling config reference with no repo, so it can never
     // match a filter — guard on the discriminant rather than casting it away.
-    || (f.members || []).some((m) => Boolean(m) && !('missing' in m && m.missing)
-      && (m as Worktree).repo === this.repoFilter);
+    (f.members || []).some(
+      (m) => Boolean(m) && !('missing' in m && m.missing) && (m as Worktree).repo === this.repoFilter,
+    );
 
   /** Features after the repo filter, in rail order. Whole features, never split. */
   visibleFeatures = $derived(sortFeatures(world.features.filter(this.#featureMatches)));
 
   /** Features with at least one dev server up. */
-  serverFeatures = $derived(
-    this.visibleFeatures.filter((f) => liveMembers(f).some((m) => m.running)),
-  );
+  serverFeatures = $derived(this.visibleFeatures.filter((f) => liveMembers(f).some((m) => m.running)));
 
   /**
-   * Unpromoted sessions — no worktree, so no feature to sit under. Stopped/deactivated
-   * ones linger, sorted after the live ones.
+   * Sessions with no worktree yet, so no feature to sit under. Stopped/deactivated ones
+   * linger, sorted after the live ones.
+   *
+   * "Session", never "agent". The UI used both for one thing — "no agent" on a card,
+   * "Start session" on the button beside it — and a reader cannot tell whether that is
+   * one concept or two. `session` wins: it is already the URL, the state file and the type.
    */
-  visibleAgents = $derived(
+  unpromotedSessions = $derived(
     world.sessions
       .filter((s) => !s.worktreePath && (!this.repoFilter || s.repoName === this.repoFilter))
       .slice()
-      .sort((a, b) =>
-        (Number(a.state === 'stopped') - Number(b.state === 'stopped'))
-        || String(a.title || '').localeCompare(String(b.title || ''))),
+      .sort(
+        (a, b) =>
+          Number(a.state === 'stopped') - Number(b.state === 'stopped') ||
+          String(a.title || '').localeCompare(String(b.title || '')),
+      ),
   );
 
   /**
    * Dev servers running from a repo's MAIN checkout. Not a worktree, therefore not a
    * feature, therefore in no other list — without this they are a mystery port.
    */
-  visibleMainServers = $derived((() => {
-    const web = new Set(world.webRepos || []);
-    return world.repos
-      .flatMap((r) => r.worktrees || [])
-      .filter((w) => w.isMain && web.has(w.repo) && w.running && (w.ports || []).length)
-      .filter((w) => !this.repoFilter || w.repo === this.repoFilter);
-  })());
+  visibleMainServers = $derived(
+    (() => {
+      const web = new Set(world.webRepos || []);
+      return world.repos
+        .flatMap((r) => r.worktrees || [])
+        .filter((w) => w.isMain && web.has(w.repo) && w.running && (w.ports || []).length)
+        .filter((w) => !this.repoFilter || w.repo === this.repoFilter);
+    })(),
+  );
 
   /**
    * THE rail: one flat list, active first, then everything else.
@@ -244,28 +264,45 @@ class UI {
    * server to the top, which is where a waiting agent belongs, and `dividerAt` marks
    * where the quiet ones begin. One row per thing, always.
    */
-  railRows = $derived<RailRow[]>((() => {
-    const rows: RailRow[] = [
-      ...this.visibleAgents.map((s): RailRow => ({
-        kind: 'agent', key: `s:${s.id}`, name: s.title, session: s,
-        active: s.state !== 'stopped',
-      })),
-      ...this.visibleMainServers.map((w): RailRow => ({
-        kind: 'mainserver', key: `w:${w.path}`, name: w.repo, worktree: w, active: true,
-      })),
-      ...this.visibleFeatures.map((f): RailRow => ({
-        kind: 'feature', key: `f:${f.name}`, name: f.name, feature: f, active: featureActive(f),
-      })),
-    ];
-    // Active first, then alphabetical — the comparator the rail has always used, now
-    // applied across every kind of row rather than within each section.
-    return rows.sort((a, b) => (Number(b.active) - Number(a.active)) || a.name.localeCompare(b.name));
-  })());
+  railRows = $derived<RailRow[]>(
+    (() => {
+      const rows: RailRow[] = [
+        ...this.unpromotedSessions.map(
+          (s): RailRow => ({
+            kind: 'session',
+            key: `s:${s.id}`,
+            name: s.title,
+            session: s,
+            active: s.state !== 'stopped',
+          }),
+        ),
+        ...this.visibleMainServers.map(
+          (w): RailRow => ({
+            kind: 'mainserver',
+            key: `w:${w.path}`,
+            name: w.repo,
+            worktree: w,
+            active: true,
+          }),
+        ),
+        ...this.visibleFeatures.map(
+          (f): RailRow => ({
+            kind: 'feature',
+            key: `f:${f.name}`,
+            name: f.name,
+            feature: f,
+            active: featureActive(f),
+          }),
+        ),
+      ];
+      // Active first, then alphabetical — the comparator the rail has always used, now
+      // applied across every kind of row rather than within each section.
+      return rows.sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+    })(),
+  );
 
   /** Index of the first quiet row, or -1 when everything is active (or nothing is). */
-  dividerAt = $derived(
-    this.railRows.some((r) => r.active) ? this.railRows.findIndex((r) => !r.active) : -1,
-  );
+  dividerAt = $derived(this.railRows.some((r) => r.active) ? this.railRows.findIndex((r) => !r.active) : -1);
 
   /**
    * What ⌘1–9 picks, in the order the rail actually draws it.
@@ -280,17 +317,23 @@ class UI {
     this.railRows
       .filter((r) => r.kind !== 'mainserver') // nothing to select: it owns no session
       .map((r) => ({
-        kind: r.kind === 'agent' ? ('session' as const) : ('feature' as const),
-        id: r.kind === 'agent' ? r.session!.id : (r.feature?.session?.id ?? null),
+        kind: r.kind === 'session' ? ('session' as const) : ('feature' as const),
+        id: r.kind === 'session' ? r.session!.id : (r.feature?.session?.id ?? null),
         name: r.name,
       })),
   );
 
   /** Repo names offered by the filter: every member repo, plus unpromoted sessions' repos. */
-  repoNames = $derived([...new Set([
-    ...world.features.flatMap((f) => liveMembers(f).map((m) => m.repo)),
-    ...world.sessions.map((s) => s.repoName),
-  ])].filter(Boolean).sort());
+  repoNames = $derived(
+    [
+      ...new Set([
+        ...world.features.flatMap((f) => liveMembers(f).map((m) => m.repo)),
+        ...world.sessions.map((s) => s.repoName),
+      ]),
+    ]
+      .filter(Boolean)
+      .sort(),
+  );
 
   /** True when nothing at all is selected — the dock shows its empty state. */
   nothingSelected = $derived(!this.selected && !this.selectedFeature);
@@ -311,7 +354,11 @@ class UI {
 
   setDockView(v: DockView): void {
     this.dockView = v;
-    try { localStorage.setItem(DOCK_KEY, v === 'usage' ? 'usage' : 'term'); } catch { /* private mode */ }
+    try {
+      localStorage.setItem(DOCK_KEY, v === 'usage' ? 'usage' : 'term');
+    } catch {
+      /* private mode */
+    }
   }
 
   /**
@@ -328,7 +375,10 @@ class UI {
   }
 
   toggleUsage(): void {
-    if (this.dockView === 'usage') { this.setDockView('term'); return; }
+    if (this.dockView === 'usage') {
+      this.setDockView('term');
+      return;
+    }
     // Seed the drill-down with whatever is open, so opening Insights while looking at a
     // session lands on that session's breakdown rather than nowhere.
     this.openInsights(this.selectedId);
@@ -336,7 +386,11 @@ class UI {
 
   setRailWidth(px: number): void {
     this.railWidth = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.round(px)));
-    try { localStorage.setItem(RAIL_KEY, String(this.railWidth)); } catch { /* private mode */ }
+    try {
+      localStorage.setItem(RAIL_KEY, String(this.railWidth));
+    } catch {
+      /* private mode */
+    }
   }
 
   /** Replace the selection and reset the per-selection dock state, as rebuildDock() did. */
@@ -356,7 +410,10 @@ class UI {
    * without has no terminal to show, so the dock renders the feature pane instead.
    */
   selectFeature(f: Feature | null | undefined): void {
-    if (f?.session?.id) { this.select(f.session.id); return; }
+    if (f?.session?.id) {
+      this.select(f.session.id);
+      return;
+    }
     this.#pick(f ? { kind: 'feature', name: f.name } : null);
   }
 
@@ -367,14 +424,15 @@ class UI {
   }
 
   /** Nothing selected. */
-  clearSelection(): void { this.selection = null; }
+  clearSelection(): void {
+    this.selection = null;
+  }
 
   goToSession(id: string): void {
     this.select(id);
     // Leaving Insights up would hide the session we were just asked to go to.
     if (this.dockView === 'usage') this.setDockView('term');
   }
-
 }
 
 export function labelForSource(s: Pick<Session, 'source' | 'sourceId'>): string {

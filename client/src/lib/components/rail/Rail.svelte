@@ -76,7 +76,7 @@
       {/if}
       {#if row.kind === 'feature'}
         <FeatureCard feature={row.feature} />
-      {:else if row.kind === 'agent'}
+      {:else if row.kind === 'session'}
         <SessionCard session={row.session} />
       {:else}
         <MainServerCard worktree={row.worktree} />
@@ -85,7 +85,7 @@
   </div>
 
   <!-- Counts what is drawn, then the fleet summary. The row count used to say
-       "N feature(s)" while the list also held agents and main-checkout servers, so the
+       "N feature(s)" while the list also held sessions and main-checkout servers, so the
        number never matched the rows. Zeros are hidden: a zero takes the same space as a
        real count and says nothing. -->
   <div class="rail-foot">

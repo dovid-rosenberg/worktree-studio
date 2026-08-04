@@ -63,10 +63,16 @@ test('a modified file moves into the worktree and leaves main clean', async (t) 
 
   assert.equal(r.ok, true);
   assert.equal(r.moved, 1);
-  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'edited in main\n',
-    'the edit is in the worktree');
-  assert.equal(await readFile(join(dir, 'kept.txt'), 'utf8'), 'base\n',
-    'main is back to its committed state');
+  assert.equal(
+    await readFile(join(wt, 'kept.txt'), 'utf8'),
+    'edited in main\n',
+    'the edit is in the worktree',
+  );
+  assert.equal(
+    await readFile(join(dir, 'kept.txt'), 'utf8'),
+    'base\n',
+    'main is back to its committed state',
+  );
 });
 
 test('an untracked file comes along too — half a change is worse than none', async (t) => {
@@ -117,8 +123,7 @@ test('on conflict the work is left in the stash, never dropped', async (t) => {
   assert.equal(r.ok, false, 'the caller must hear about it');
   // The point of the whole design: a failed replay is recoverable, not a loss.
   const list = await run('git', ['-C', dir, 'stash', 'list']);
-  assert.match(list.stdout, /wt-studio: promote test/,
-    'the stash entry is still there to pop by hand');
+  assert.match(list.stdout, /wt-studio: promote test/, 'the stash entry is still there to pop by hand');
 });
 
 test('a clean main is a no-op rather than an empty stash', async (t) => {
@@ -171,7 +176,14 @@ async function repoWithOrigin() {
   await g('remote', 'add', 'origin', remote);
   await g('push', '-q', '-u', 'origin', 'main');
   await g('remote', 'set-head', 'origin', 'main');
-  return { dir, g, cleanup: async () => { await cleanup(); await rm(remote, { recursive: true, force: true }); } };
+  return {
+    dir,
+    g,
+    cleanup: async () => {
+      await cleanup();
+      await rm(remote, { recursive: true, force: true });
+    },
+  };
 }
 
 const aheadOf = async (dir: string) => {
@@ -199,8 +211,11 @@ test('the default base leaves those commits behind — the silent case', async (
   const wt = join(dir, '.worktrees', 'feat');
   await g('worktree', 'add', '-q', '-b', 'feature/x', wt, 'origin/main');
 
-  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'base\n',
-    'the worktree is at the pushed base, without the commit');
+  assert.equal(
+    await readFile(join(wt, 'kept.txt'), 'utf8'),
+    'base\n',
+    'the worktree is at the pushed base, without the commit',
+  );
 });
 
 test('cutting from HEAD carries the commits into the worktree', async (t) => {
@@ -212,8 +227,7 @@ test('cutting from HEAD carries the commits into the worktree', async (t) => {
   const wt = join(dir, '.worktrees', 'feat');
   await g('worktree', 'add', '-q', '-b', 'feature/x', wt, 'HEAD');
 
-  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'committed work\n',
-    'the commit came along');
+  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'committed work\n', 'the commit came along');
   const log = await run('git', ['-C', wt, 'log', '--oneline', '--no-decorate']);
   assert.match(log.stdout, /work in main/);
 });
@@ -247,7 +261,10 @@ test('commits and uncommitted changes can come along together', async (t) => {
   const r = await moveDirtyInto(dir, wt);
 
   assert.equal(r.ok, true);
-  assert.equal(await readFile(join(wt, 'kept.txt'), 'utf8'), 'committed work, then edited\n',
-    'the edit sits on top of the commit, in one worktree');
+  assert.equal(
+    await readFile(join(wt, 'kept.txt'), 'utf8'),
+    'committed work, then edited\n',
+    'the edit sits on top of the commit, in one worktree',
+  );
   assert.ok(existsSync(join(wt, 'new.txt')));
 });

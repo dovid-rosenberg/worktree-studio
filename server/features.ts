@@ -25,7 +25,9 @@ export type ComputedFeature = Omit<Feature, 'session'>;
 const DEFAULT_IDENTITY = createIdentity({});
 
 // linked = not the repo's main checkout
-function isLinked(w: Worktree): boolean { return w.wtname !== w.repo; }
+function isLinked(w: Worktree): boolean {
+  return w.wtname !== w.repo;
+}
 
 function resolveRef(worktrees: Worktree[], ref: string): FeatureMember {
   const [repo, ...rest] = ref.split('/');
@@ -55,7 +57,8 @@ function computeFeatures(
   for (const w of linked) {
     const key = identity.of(w);
     const bucket = byName.get(key);
-    if (bucket) bucket.push(w); else byName.set(key, [w]);
+    if (bucket) bucket.push(w);
+    else byName.set(key, [w]);
   }
 
   const auto: ComputedFeature[] = [];
@@ -66,7 +69,8 @@ function computeFeatures(
     if (members.length >= 2) auto.push({ name, auto: true, members }); // only real multi-groups
   }
 
-  const byRunning = (a: ComputedFeature, b: ComputedFeature) => memberRunning(b) - memberRunning(a) || a.name.localeCompare(b.name);
+  const byRunning = (a: ComputedFeature, b: ComputedFeature) =>
+    memberRunning(b) - memberRunning(a) || a.name.localeCompare(b.name);
   const features = [...manual, ...autofeat].sort(byRunning);
   const groups = [...manual, ...auto].sort(byRunning);
   return { features, groups };
@@ -77,7 +81,6 @@ function memberRunning(group: ComputedFeature): number {
   // no `running` at all, so it never counted.
   return (group.members || []).filter((m) => m && !m.missing && m.running).length;
 }
-
 
 /**
  * Worktrees belonging to `feature` that a session's `repos` does not include.
@@ -98,7 +101,11 @@ function memberRunning(group: ComputedFeature): number {
  * @param of       the identity resolver's `of()`
  */
 function attachableWorktrees(
-  repos: { name: string; path: string; worktrees?: { name?: string; branch?: string | null; path: string; isMain?: boolean }[] }[],
+  repos: {
+    name: string;
+    path: string;
+    worktrees?: { name?: string; branch?: string | null; path: string; isMain?: boolean }[];
+  }[],
   feature: string | null | undefined,
   known: Set<string>,
   of: (input: { repo: string; wtname?: string; branch?: string | null; path: string }) => string,

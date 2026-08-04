@@ -68,7 +68,9 @@ class Dialogs {
   }
 
   /** True while any dialog is up — the global shortcut handler checks this. */
-  get open_(): boolean { return this.queue.length > 0; }
+  get open_(): boolean {
+    return this.queue.length > 0;
+  }
 }
 
 export const dialogs = new Dialogs();

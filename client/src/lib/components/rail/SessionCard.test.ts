@@ -12,21 +12,25 @@ import type { Session } from '../../../../../server/types';
  * beneath it, so the list moved under the pointer mid-aim.
  */
 vi.mock('$lib/ops.svelte.js', () => ({
-  promote: vi.fn(), activateSession: vi.fn(), closeSession: vi.fn(), pending: new Set(),
+  promote: vi.fn(),
+  activateSession: vi.fn(),
+  closeSession: vi.fn(),
+  pending: new Set(),
 }));
 
-const session = (over: Record<string, unknown> = {}): Session => ({
-  id: 's1',
-  title: 'Find the session that made a…',
-  state: 'waiting',
-  activity: 'Waiting for your input',
-  source: 'freetext',
-  sourceUrl: null,
-  repoName: 'accept-blue',
-  worktreePath: null,
-  repos: [],
-  ...over,
-} as unknown as Session);
+const session = (over: Record<string, unknown> = {}): Session =>
+  ({
+    id: 's1',
+    title: 'Find the session that made a…',
+    state: 'waiting',
+    activity: 'Waiting for your input',
+    source: 'freetext',
+    sourceUrl: null,
+    repoName: 'accept-blue',
+    worktreePath: null,
+    repos: [],
+    ...over,
+  }) as unknown as Session;
 
 describe('SessionCard', () => {
   it('shows the title, source and activity', () => {
@@ -42,7 +46,9 @@ describe('SessionCard', () => {
   });
 
   it('links an issue-backed session to its source, opening away from the app', () => {
-    render(SessionCard, { session: session({ source: 'github', sourceId: 412, sourceUrl: 'https://example.test/i/412' }) });
+    render(SessionCard, {
+      session: session({ source: 'github', sourceId: 412, sourceUrl: 'https://example.test/i/412' }),
+    });
     const link = screen.getByRole('link', { name: 'GH#412' });
     expect(link).toHaveAttribute('href', 'https://example.test/i/412');
     expect(link).toHaveAttribute('target', '_blank');

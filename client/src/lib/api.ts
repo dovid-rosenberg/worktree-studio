@@ -25,13 +25,15 @@
  * absent so the failure is a clean 401 rather than a token that is silently wrong.
  */
 export const TOKEN: string = (() => {
-  const injected = typeof window !== 'undefined' ? (window as unknown as { WTS_TOKEN?: string }).WTS_TOKEN : '';
+  const injected =
+    typeof window !== 'undefined' ? (window as unknown as { WTS_TOKEN?: string }).WTS_TOKEN : '';
   if (injected && !/^__WTS_TOKEN/.test(injected)) return String(injected);
   return String(import.meta.env.VITE_WTS_TOKEN || '');
 })();
 
 /** `?token=…` / `&token=…` for EventSource and WebSocket URLs. */
-export const tokenQuery = (sep: '?' | '&'): string => (TOKEN ? `${sep}token=${encodeURIComponent(TOKEN)}` : '');
+export const tokenQuery = (sep: '?' | '&'): string =>
+  TOKEN ? `${sep}token=${encodeURIComponent(TOKEN)}` : '';
 
 /**
  * A JSON call to the daemon. Throws `Error(data.error || statusText)` on a non-2xx so
@@ -92,7 +94,12 @@ export async function request(method: HttpMethod, url: string, opts: RequestOpts
   const txt = await res.text();
   let data: any;
   let parsed = true;
-  try { data = txt ? JSON.parse(txt) : {}; } catch { parsed = false; data = { raw: txt }; }
+  try {
+    data = txt ? JSON.parse(txt) : {};
+  } catch {
+    parsed = false;
+    data = { raw: txt };
+  }
   if (!res.ok) throw new Error(data?.error || res.statusText || `HTTP ${res.status}`);
   if (opts.strictJson && !parsed) throw new Error('The daemon returned a non-JSON response.');
   return data;
@@ -110,6 +117,9 @@ export function api(method: HttpMethod, url: string, body?: unknown): Promise<an
  */
 export async function busy<T>(setBusy: (v: boolean) => void, fn: () => Promise<T>): Promise<T> {
   setBusy(true);
-  try { return await fn(); }
-  finally { setBusy(false); }
+  try {
+    return await fn();
+  } finally {
+    setBusy(false);
+  }
 }

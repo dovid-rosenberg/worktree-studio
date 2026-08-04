@@ -31,13 +31,27 @@ const member = (repo: string, over: Record<string, unknown> = {}) => ({
 });
 
 const feature = (name: string, members: unknown[], session: unknown = null): Feature =>
-  ({ name, auto: true, members, session } as unknown as Feature);
+  ({ name, auto: true, members, session }) as unknown as Feature;
 
 const session = (id: string, over: Record<string, unknown> = {}): Session =>
-  ({ id, title: id, state: 'idle', activity: '', muxName: `m-${id}`, repoName: 'accept-blue', worktreePath: null, ...over } as unknown as Session);
+  ({
+    id,
+    title: id,
+    state: 'idle',
+    activity: '',
+    muxName: `m-${id}`,
+    repoName: 'accept-blue',
+    worktreePath: null,
+    ...over,
+  }) as unknown as Session;
 
 /** Drive the store the way the stream does: two halves, kept whole. */
-function give({ features = [] as Feature[], sessions = [] as Session[], repos = [] as unknown[], webRepos = [] as string[] }) {
+function give({
+  features = [] as Feature[],
+  sessions = [] as Session[],
+  repos = [] as unknown[],
+  webRepos = [] as string[],
+}) {
   world.topology = { features, groups: [], repos, webRepos } as never;
   world.sessionHalf = { sessions, servers: {} } as never;
 }
@@ -92,10 +106,15 @@ describe('the rail', () => {
     give({
       features: [feature('feat', [member('accept-blue')])],
       sessions: [session('s1')],
-      repos: [{ name: 'ab-iso-fe', worktrees: [member('ab-iso-fe', { isMain: true, running: true, ports: [5271], path: '/main' })] }],
+      repos: [
+        {
+          name: 'ab-iso-fe',
+          worktrees: [member('ab-iso-fe', { isMain: true, running: true, ports: [5271], path: '/main' })],
+        },
+      ],
       webRepos: ['ab-iso-fe'],
     });
-    expect(ui.railRows.map((r) => r.kind).sort()).toEqual(['agent', 'feature', 'mainserver']);
+    expect(ui.railRows.map((r) => r.kind).sort()).toEqual(['feature', 'mainserver', 'session']);
   });
 
   it('sorts active rows above quiet ones and marks the boundary', () => {
@@ -120,7 +139,11 @@ describe('the rail', () => {
     give({
       features: [
         feature('stale', [member('accept-blue')]),
-        feature('needsyou', [member('accept-blue', { session: embedded('s9', 'waiting') })], embedded('s9', 'waiting')),
+        feature(
+          'needsyou',
+          [member('accept-blue', { session: embedded('s9', 'waiting') })],
+          embedded('s9', 'waiting'),
+        ),
       ],
     });
     expect(ui.railRows[0].name).toBe('needsyou');
@@ -179,7 +202,9 @@ describe('selection', () => {
 
   it('selecting a feature that HAS an agent selects the agent', () => {
     give({
-      features: [feature('f', [member('accept-blue', { session: embedded('s1', 'idle') })], embedded('s1', 'idle'))],
+      features: [
+        feature('f', [member('accept-blue', { session: embedded('s1', 'idle') })], embedded('s1', 'idle')),
+      ],
       sessions: [session('s1')],
     });
     ui.selectFeature(ui.visibleFeatures[0]);

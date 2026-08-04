@@ -16,12 +16,16 @@ function servers(extra = {}) {
   return new Servers(cfg);
 }
 
-function tempWorktree() { return fs.mkdtempSync(path.join(os.tmpdir(), 'wts-wt-')); }
+function tempWorktree() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'wts-wt-'));
+}
 
 // Descriptors open in THIS process. /dev/fd is the calling process's own
 // descriptor table on macOS and Linux alike, so this counts exactly what a
 // long-lived daemon would be accumulating.
-function openFds() { return fs.readdirSync('/dev/fd').length; }
+function openFds() {
+  return fs.readdirSync('/dev/fd').length;
+}
 
 test('start() does not leak the log descriptor it hands the child', async () => {
   const s = servers();
@@ -43,8 +47,11 @@ function growLog(file: string, bytes: number): void {
   const line = `${'x'.repeat(99)}\n`;
   const chunk = Buffer.from(line.repeat(Math.ceil((1 << 20) / line.length)));
   const fd = fs.openSync(file, 'a');
-  try { for (let w = 0; w < bytes; w += chunk.length) fs.writeSync(fd, chunk); }
-  finally { fs.closeSync(fd); }
+  try {
+    for (let w = 0; w < bytes; w += chunk.length) fs.writeSync(fd, chunk);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // A Servers with one tracked worktree pointing at a log we control.
@@ -111,10 +118,15 @@ test('trimming is safe under a live O_APPEND writer — no sparse hole', () => {
     assert.equal(trimLog(log, 1 << 20, 256 * 1024), true);
     const afterTrim = fs.statSync(log).size;
     fs.writeSync(child, 'still writing\n');
-    assert.equal(fs.statSync(log).size, afterTrim + 'still writing\n'.length,
-      'O_APPEND resumes at the new end — the file does not jump back to its old size');
+    assert.equal(
+      fs.statSync(log).size,
+      afterTrim + 'still writing\n'.length,
+      'O_APPEND resumes at the new end — the file does not jump back to its old size',
+    );
     assert.ok(fs.readFileSync(log, 'utf8').endsWith('still writing\n'));
-  } finally { fs.closeSync(child); }
+  } finally {
+    fs.closeSync(child);
+  }
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -213,7 +225,10 @@ test('pruneTracked drops a record whose process is gone, and keeps a live one', 
 
   const dropped = await s.pruneTracked();
 
-  assert.deepEqual(dropped.map((d) => d.worktreePath), [dead]);
+  assert.deepEqual(
+    dropped.map((d) => d.worktreePath),
+    [dead],
+  );
   assert.equal(dropped[0].pid, 4194304, 'the dropped record reports the pid it named');
   assert.ok(!(dead in s.tracked), 'the dead record is gone');
   assert.ok(live in s.tracked, 'the live one is untouched');

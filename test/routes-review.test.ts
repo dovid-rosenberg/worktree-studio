@@ -19,18 +19,26 @@ import type { Request, Response, Router } from 'express';
 import type { JsonBody } from './helpers.ts';
 import { present } from './helpers.ts';
 
-function sh(cwd: string, args: string[]) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
+function sh(cwd: string, args: string[]) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
 
 // Records mounts and lets a test call one back by method + path.
 type Method = 'get' | 'post';
 type Handler = (req: Request, res: Response) => unknown;
 /** What a handler answered with, as the assertions read it. */
-interface Answer { status: number; body: JsonBody }
+interface Answer {
+  status: number;
+  body: JsonBody;
+}
 
 function fakeApp() {
   const mounted: Record<Method, string[]> = { get: [], post: [] };
   const handlers = new Map<string, Handler>();
-  const record = (method: Method) => (p: string, fn: Handler) => { mounted[method].push(p); handlers.set(`${method} ${p}`, fn); };
+  const record = (method: Method) => (p: string, fn: Handler) => {
+    mounted[method].push(p);
+    handlers.set(`${method} ${p}`, fn);
+  };
   return {
     get: record('get'),
     post: record('post'),
@@ -42,8 +50,14 @@ function fakeApp() {
         const res = {
           headersSent: false,
           statusCode: 200,
-          status(code: number) { this.statusCode = code; return this; },
-          json(body: JsonBody) { this.headersSent = true; resolve({ status: this.statusCode, body }); },
+          status(code: number) {
+            this.statusCode = code;
+            return this;
+          },
+          json(body: JsonBody) {
+            this.headersSent = true;
+            resolve({ status: this.statusCode, body });
+          },
         };
         fn({ params: {}, query: {}, body: {}, ...req } as Request, res as unknown as Response);
       });
@@ -73,7 +87,9 @@ function fixture() {
   const deps = {
     manager: { get: (id: string) => (id === 's1' ? session : null) },
     repos: () => [{ name: 'demo', defaultBranch: 'main' }],
-    broadcast: () => { deps.broadcasts += 1; },
+    broadcast: () => {
+      deps.broadcasts += 1;
+    },
     broadcasts: 0,
   };
   return { dir, deps };
@@ -108,7 +124,10 @@ test('register() spells no prefix — the router it is handed owns /api and /api
 test('register() refuses to wire up without a session manager', () => {
   // Deliberately wired without a manager — the throw IS the contract, so the cast is
   // what lets the test hand over the omission a caller could actually make.
-  assert.throws(() => routes.register(asRouter(fakeApp()), {} as Parameters<typeof routes.register>[1]), /manager/);
+  assert.throws(
+    () => routes.register(asRouter(fakeApp()), {} as Parameters<typeof routes.register>[1]),
+    /manager/,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -119,9 +138,15 @@ test('GET diff returns the working-tree files with hunks and side-by-side rows',
   const { app, dir } = registered();
   const r = await app.call('get', '/sessions/:id/diff', { params: { id: 's1' }, query: { repo: 'demo' } });
   assert.equal(r.status, 200);
-  const f = present(r.body.files.find((x: JsonBody) => x.file === 'f.txt'), 'the f.txt row');
+  const f = present(
+    r.body.files.find((x: JsonBody) => x.file === 'f.txt'),
+    'the f.txt row',
+  );
   assert.equal(f.parsed.hunks.length, 2);
-  assert.ok(f.parsed.hunks[0].rows.some((row: JsonBody) => row.type === 'change'), 'rows are aligned for side-by-side');
+  assert.ok(
+    f.parsed.hunks[0].rows.some((row: JsonBody) => row.type === 'change'),
+    'rows are aligned for side-by-side',
+  );
   assert.match(f.diff, /^\+L2 CHANGED$/m, 'the raw patch is still there alongside the model');
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -137,7 +162,10 @@ test('GET diff defaults to the uncommitted entry', async () => {
 test('GET diff of a commit returns that commit’s files', async () => {
   const { app, dir } = registered();
   const sha = sh(dir, ['rev-parse', 'HEAD']).trim();
-  const r = await app.call('get', '/sessions/:id/diff', { params: { id: 's1' }, query: { repo: 'demo', sha } });
+  const r = await app.call('get', '/sessions/:id/diff', {
+    params: { id: 's1' },
+    query: { repo: 'demo', sha },
+  });
   assert.equal(r.body.sha, sha);
   assert.equal(r.body.files[0].file, 'f.txt');
   assert.equal(r.body.files[0].parsed.status, 'added');
@@ -148,7 +176,10 @@ test('GET diff 404s for an unknown session and 400s for an unknown repo', async 
   const { app, dir } = registered();
   const missing = await app.call('get', '/sessions/:id/diff', { params: { id: 'nope' } });
   assert.equal(missing.status, 404);
-  const wrongRepo = await app.call('get', '/sessions/:id/diff', { params: { id: 's1' }, query: { repo: 'other' } });
+  const wrongRepo = await app.call('get', '/sessions/:id/diff', {
+    params: { id: 's1' },
+    query: { repo: 'other' },
+  });
   assert.equal(wrongRepo.status, 400);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -159,7 +190,10 @@ test('GET diff 404s for an unknown session and 400s for an unknown repo', async 
 
 test('GET hunks splits a file into a stageable and an unstageable side', async () => {
   const { app, dir } = registered();
-  const r = await app.call('get', '/sessions/:id/hunks', { params: { id: 's1' }, query: { repo: 'demo', file: 'f.txt' } });
+  const r = await app.call('get', '/sessions/:id/hunks', {
+    params: { id: 's1' },
+    query: { repo: 'demo', file: 'f.txt' },
+  });
   assert.equal(r.status, 200);
   assert.equal(r.body.unstaged.hunks.length, 2);
   assert.equal(r.body.staged, null);
@@ -176,7 +210,8 @@ test('GET hunks requires a file', async () => {
 test('POST hunks/stage stages just that hunk and broadcasts the change', async () => {
   const { app, dir, deps } = registered();
   const r = await app.call('post', '/sessions/:id/hunks/stage', {
-    params: { id: 's1' }, body: { repo: 'demo', file: 'f.txt', hunks: [0] },
+    params: { id: 's1' },
+    body: { repo: 'demo', file: 'f.txt', hunks: [0] },
   });
   assert.equal(r.status, 200);
   assert.equal(r.body.ok, true);
@@ -190,7 +225,8 @@ test('POST hunks/stage stages just that hunk and broadcasts the change', async (
 test('POST hunks/stage accepts the `hunk` singular shorthand', async () => {
   const { app, dir } = registered();
   const r = await app.call('post', '/sessions/:id/hunks/stage', {
-    params: { id: 's1' }, body: { repo: 'demo', file: 'f.txt', hunk: 1 },
+    params: { id: 's1' },
+    body: { repo: 'demo', file: 'f.txt', hunk: 1 },
   });
   assert.equal(r.body.ok, true);
   assert.match(sh(dir, ['diff', '--cached']), /^\+L25 CHANGED$/m);
@@ -201,7 +237,8 @@ test('POST hunks/unstage puts a staged hunk back', async () => {
   const { app, dir } = registered();
   sh(dir, ['add', 'f.txt']);
   const r = await app.call('post', '/sessions/:id/hunks/unstage', {
-    params: { id: 's1' }, body: { repo: 'demo', file: 'f.txt', hunks: [0] },
+    params: { id: 's1' },
+    body: { repo: 'demo', file: 'f.txt', hunks: [0] },
   });
   assert.equal(r.body.ok, true);
   assert.doesNotMatch(sh(dir, ['diff', '--cached']), /L2 CHANGED/);
@@ -212,7 +249,8 @@ test('POST hunks/unstage puts a staged hunk back', async () => {
 test('a refused stage is a 400 carrying the reason, and stages nothing', async () => {
   const { app, dir, deps } = registered();
   const r = await app.call('post', '/sessions/:id/hunks/stage', {
-    params: { id: 's1' }, body: { repo: 'demo', file: 'f.txt', hunks: [9] },
+    params: { id: 's1' },
+    body: { repo: 'demo', file: 'f.txt', hunks: [9] },
   });
   assert.equal(r.status, 400);
   assert.equal(r.body.ok, false);
@@ -238,7 +276,10 @@ test('GET /sessions/:id/diff refuses a sha that is really a git option, with a 4
   const victim = path.join(os.tmpdir(), `wts-route-victim-${process.pid}-${Date.now()}.txt`);
   fs.rmSync(victim, { force: true });
 
-  const r = await app.call('get', '/sessions/:id/diff', { params: { id: 's1' }, query: { sha: `--output=${victim}` } });
+  const r = await app.call('get', '/sessions/:id/diff', {
+    params: { id: 's1' },
+    query: { sha: `--output=${victim}` },
+  });
 
   assert.equal(r.status, 400, 'a bad request, not a 500 and certainly not a 200');
   assert.equal(fs.existsSync(victim), false, `a GET wrote ${victim}`);
@@ -255,7 +296,10 @@ test('GET /sessions/:id/diff still defaults to the working tree and accepts a re
   const sha = sh(dir, ['rev-parse', 'HEAD']).trim();
   const commit = await app.call('get', '/sessions/:id/diff', { params: { id: 's1' }, query: { sha } });
   assert.equal(commit.status, 200);
-  assert.deepEqual(commit.body.files.map((f: JsonBody) => f.file), ['f.txt']);
+  assert.deepEqual(
+    commit.body.files.map((f: JsonBody) => f.file),
+    ['f.txt'],
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -265,7 +309,8 @@ test('GET /sessions/:id/diff still defaults to the working tree and accepts a re
 test('a repeated ?sha= is a 400, not a 500', async () => {
   const { app, dir } = registered();
   const r = await app.call('get', '/sessions/:id/diff', {
-    params: { id: 's1' }, query: { sha: ['abcdef1', 'abcdef2'] },
+    params: { id: 's1' },
+    query: { sha: ['abcdef1', 'abcdef2'] },
   });
   assert.equal(r.status, 400, 'coerced and rejected at the boundary');
   assert.match(r.body.error, /hex object name/);
@@ -275,7 +320,8 @@ test('a repeated ?sha= is a 400, not a 500', async () => {
 test('a repeated ?file= still resolves to one file', async () => {
   const { app, dir } = registered();
   const r = await app.call('get', '/sessions/:id/hunks', {
-    params: { id: 's1' }, query: { repo: 'demo', file: ['f.txt'] },
+    params: { id: 's1' },
+    query: { repo: 'demo', file: ['f.txt'] },
   });
   assert.equal(r.status, 200);
   fs.rmSync(dir, { recursive: true, force: true });
