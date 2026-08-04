@@ -8,6 +8,7 @@ import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } f
 import * as status from './status.ts';
 import * as worktree from './worktree.ts';
 import * as layoutMod from './layout.ts';
+import { linkSessionMemory } from './claude-memory.ts';
 import { createIdentity } from './identity.ts';
 import type { HookPayload } from './status.ts';
 import type { WorktreeCreateResult } from './worktree.ts';
@@ -334,6 +335,33 @@ class SessionManager extends EventEmitter {
     return s.worktree || (primary && primary.worktree) || s.suggestedName || s.feature;
   }
 
+  /**
+   * Let this session reach its repos' Claude Code memories.
+   *
+   * Claude Code keys memory on the session's absolute cwd, and Studio runs every session
+   * in a worktree — a different path from the checkout. So a repo's accumulated memories
+   * (commit style, review conventions) were invisible to every session Studio started,
+   * and anything a session learned was written to a directory that died with the
+   * worktree. See server/claude-memory.ts for the mechanism and its refusals.
+   *
+   * Called immediately before each launch rather than at promote: it is idempotent (the
+   * steady state is one lstat per repo), which makes it self-healing for the worktrees
+   * that already exist and for any made outside Studio by a plain `wt`.
+   */
+  _shareMemories(s: Session): void {
+    for (const { repo, outcome } of linkSessionMemory(s.repos)) {
+      if (outcome.status === 'linked') {
+        console.log(`[wt-studio] ${repo}: worktree now shares the checkout's Claude memories`);
+      } else if (outcome.status === 'occupied') {
+        // Loud: the session is starting WITHOUT the repo's memories and that is a
+        // silent behaviour change unless it is said out loud.
+        console.warn(`[wt-studio] ${repo}: left its memory directory alone (${outcome.reason}: ${outcome.at})`);
+      } else if (outcome.status === 'error') {
+        console.warn(`[wt-studio] ${repo}: could not share Claude memories: ${outcome.error}`);
+      }
+    }
+  }
+
   claudeCmd(session: Session, { resume }: { resume?: boolean } = {}): string {
     // Launch claude clean. On a FRESH launch the single-line seed rides along as
     // claude's final positional arg (see below) — no post-launch typing race. On
@@ -477,6 +505,7 @@ class SessionManager extends EventEmitter {
     this._writeHookSettings(session);
     this.sessions.set(id, session);
 
+    this._shareMemories(session);
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
@@ -524,6 +553,7 @@ class SessionManager extends EventEmitter {
     };
     this._writeHookSettings(session);
     this.sessions.set(id, session);
+    this._shareMemories(session);
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
@@ -842,6 +872,7 @@ class SessionManager extends EventEmitter {
     // Regenerate the hook settings file so it tracks the current install path/port —
     // makes a relaunch self-heal after the studio dir is moved or the port changes.
     this._writeHookSettings(s);
+    this._shareMemories(s);
     const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
     // Resume from the transcript's home dir so --resume finds the conversation. For a
     // promoted session home is already the worktree (moved there at promote), so it
@@ -922,6 +953,7 @@ class SessionManager extends EventEmitter {
         }
         // Refresh the hook settings file to the current install path/port before relaunch.
         this._writeHookSettings(s);
+        this._shareMemories(s);
         const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
         // Resume from the transcript's home dir so --resume finds the conversation.
         // Promoted sessions already have home = worktree (moved at promote time).
