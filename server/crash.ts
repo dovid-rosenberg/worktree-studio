@@ -185,7 +185,7 @@ function routeErrors({ log = console.error }: Pick<Io, 'log'> = {}) {
     // throw is. Only an error naming no status is an unhandled exception.
     const e = err as Thrown | null | undefined;
     const status = Number(e && (e.status || e.statusCode));
-    res.status(status >= 400 && status <= 599 ? status : 500).json({ error: e && e.message });
+    res.status(status >= 400 && status <= 599 ? status : 500).json({ error: e?.message });
   };
   return handler as typeof handler & ErrorRequestHandler;
 }

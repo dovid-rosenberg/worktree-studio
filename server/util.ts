@@ -52,7 +52,7 @@ function run(cmd: string, args: string[] = [], opts: RunOptions = {}): Promise<R
         // A child killed on the timeout exits with no code and usually no stderr at
         // all, so without this flag "hung and killed" is indistinguishable from any
         // other failure — and it is the one failure the user can actually act on.
-        timedOut: !!(err && err.killed),
+        timedOut: !!(err?.killed),
         error: err || null,
       });
     });

@@ -96,7 +96,7 @@ test('remove() works on a worktree created outside the repo', async () => {
   const repo = repoIn(base, 'api');
   const layout = layoutMod.resolve({ worktrees: { layout: 'sibling' } });
   const res = expectOk(await worktree.create(repo, 'feature/a', 'feat-a', { fetch: false, copyPatterns: [], layout }));
-  const out = expectOk(await worktree.remove(repo, res.path));
+  const _out = expectOk(await worktree.remove(repo, res.path));
   assert.equal(fs.existsSync(res.path), false);
   rm(base);
 });

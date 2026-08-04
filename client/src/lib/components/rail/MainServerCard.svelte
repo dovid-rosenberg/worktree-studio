@@ -42,9 +42,9 @@
   /* A whole-card button, so the hit area is the card and not a strip inside it. */
   .hit { display:block; width:100%; text-align:left; background:none; border:0; padding:0; cursor:pointer; color:inherit; font:inherit; }
   .l1 { display:flex; align-items:center; gap:7px; }
-  .rname { font-weight:600; font-size:13px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .rname { font-weight:600; font-size:14px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .l2 { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
-  .l2 .p { font-family:var(--mono); font-size:10.5px; color:var(--done); }
-  .src { font-family:var(--mono); font-size:9px; text-transform:uppercase; letter-spacing:.05em;
+  .l2 .p { font-family:var(--mono); font-size:11.5px; color:var(--done); }
+  .src { font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
          border:1px solid var(--border); border-radius:5px; padding:1px 5px; color:var(--muted); }
 </style>

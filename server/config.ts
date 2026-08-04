@@ -6,7 +6,7 @@ import path from 'path';
 import { HOME, expandTilde, readJson, writeJson } from './util.ts';
 import * as security from './security.ts';
 import { DEFAULT_COPY_ALWAYS } from './worktree.ts';
-import type { ConcurrencyConfig, Config, PartialDeep } from './types.ts';
+import type { Config, PartialDeep } from './types.ts';
 
 const CONFIG_DIR = process.env.WT_STUDIO_CONFIG_DIR || path.join(HOME, '.config', 'worktree-studio');
 const CONFIG_FILE = process.env.WT_STUDIO_CONFIG || path.join(CONFIG_DIR, 'config.json');
@@ -119,8 +119,8 @@ function defaults(): ShippedConfig {
 //     at slot b land on the same port when base_i - base_j == (b-a)*offsetStep. That happens
 //     iff |base_i - base_j| is a multiple of offsetStep no larger than (maxSlots-1)*offsetStep.
 function validateConcurrency(cfg: PartialDeep<Config> | null | undefined): void {
-  const c = cfg && cfg.concurrency;
-  if (!c || !c.enabled) return;
+  const c = cfg?.concurrency;
+  if (!c?.enabled) return;
   // `|| 0` reads exactly as an absent value did: every use of `step` below sits
   // behind `step > 0`, which `undefined` and `0` both fail.
   const step = c.offsetStep || 0;
@@ -129,7 +129,7 @@ function validateConcurrency(cfg: PartialDeep<Config> | null | undefined): void 
     console.warn(`[wt-studio] concurrency.maxSlots=${max} exceeds 16 (redis DB index limit); slots >= 16 collide on redis__db.`);
   }
   for (const [repo, rc] of Object.entries(c.repos || {})) {
-    const bases = Object.values((rc && rc.portEnv) || {});
+    const bases = Object.values((rc?.portEnv) || {});
     for (let i = 0; i < bases.length; i++) {
       for (let j = i + 1; j < bases.length; j++) {
         // A parsed JSON object has no holes, so neither does Object.values over one:

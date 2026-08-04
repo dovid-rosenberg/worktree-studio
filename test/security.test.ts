@@ -36,12 +36,12 @@ function harness({ port }: { port?: number } = {}) {
   const app = express();
   app.use(guard.browser);
   app.use(express.json());
-  app.get('/', (req, res) => res.type('html').send(`<script>window.WTS_TOKEN = "${TOKEN}";</script>`));
+  app.get('/', (_req, res) => res.type('html').send(`<script>window.WTS_TOKEN = "${TOKEN}";</script>`));
   app.use('/api', guard.authed);
   const api = express.Router();
   app.use('/api', api);
   app.use('/api/v1', api);
-  api.get('/state', (req, res) => res.json({ ok: true, sessions: [] }));
+  api.get('/state', (_req, res) => res.json({ ok: true, sessions: [] }));
 
   // Same shape as server.ts's hook receiver, including the grandfather clause.
   const sessions = new Map([
@@ -136,7 +136,7 @@ function wsProbe(port: number, { origin, host, token, session = 's_1' }: ProbeOp
     const done = (v: ProbeResult) => { if (!settled) { settled = true; try { ws.close(); } catch { /* */ } resolve(v); } };
     ws.on('message', (m) => done({ open: true, said: m.toString('utf8') }));
     ws.on('open', () => setTimeout(() => done({ open: true, said: null }), 200));
-    ws.on('unexpected-response', (req, res) => done({ open: false, status: res.statusCode }));
+    ws.on('unexpected-response', (_req, res) => done({ open: false, status: res.statusCode }));
     ws.on('error', () => done({ open: false, status: null }));
   });
 }

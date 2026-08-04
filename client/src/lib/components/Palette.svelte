@@ -137,15 +137,15 @@
 
 <style>
   .palette-inner { display:flex; flex-direction:column; min-height:0; }
-  .palette-inner input { width:100%; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--ink); font-size:16px; padding:15px 18px; outline:none; font-family:var(--sans); }
+  .palette-inner input { width:100%; border:0; border-bottom:1px solid var(--border); background:transparent; color:var(--ink); font-size:17px; padding:15px 18px; outline:none; font-family:var(--sans); }
   /* The suppressed outline is replaced by a brand underline, so keyboard focus stays visible. */
   .palette-inner input:focus-visible { outline:none; border-bottom-color:var(--brand); }
   .palette-list { max-height:340px; overflow:auto; padding:6px; }
-  .psec { font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:8px 12px 4px; }
-  .pcmd { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; font-size:13.5px; }
+  .psec { font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:8px 12px 4px; }
+  .pcmd { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; font-size:14.5px; }
   .pcmd.on { background:var(--elevated); }
   .pcmd .pg { width:20px; text-align:center; color:var(--brand); flex:none; }
   .pcmd .dot { flex:none; }
   .pcmd .ptitle { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .pcmd .psub { margin-left:auto; padding-left:12px; font-family:var(--mono); font-size:10.5px; color:var(--faint); white-space:nowrap; flex:none; }
+  .pcmd .psub { margin-left:auto; padding-left:12px; font-family:var(--mono); font-size:11.5px; color:var(--faint); white-space:nowrap; flex:none; }
 </style>

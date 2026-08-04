@@ -46,7 +46,7 @@ function studio(root: string) {
   const api = express.Router();
   app.use('/api', api);
   app.use('/api/v1', api);
-  api.get('/state', (req, res) => res.json({ sessions: [] }));
+  api.get('/state', (_req, res) => res.json({ sessions: [] }));
   webui.mountFallback(app, { ui, token: TOKEN });
   return { app, ui };
 }

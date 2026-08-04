@@ -2,11 +2,8 @@
   /*
    * One live terminal attached to one multiplexer pane.
    *
-   * This replaces the duplicated globals in public/app.js — term/term2, fit/fit2,
-   * ws/ws2, ro/ro2 and their parallel open/connect/resize/destroy functions. Every
-   * instance owns its xterm, socket, fit addon and ResizeObserver privately, so the
-   * every terminal on screen is the same code with different props and
-   * neither can reach into the other's state. Mount it twice to get a split.
+   * Every instance owns its xterm, socket, fit addon and ResizeObserver privately, so
+   * two terminals on screen cannot reach into each other's state.
    *
    * Wire protocol (server/server.js, wss.on('connection')) — unchanged:
    *   GET /ws/term?session=<id>[&tab=<i>]&cols=<n>&rows=<n>
@@ -41,7 +38,7 @@
   // any of this silently reshapes every tmux window the UI attaches to.
   const XTERM_OPTIONS = {
     fontFamily: 'ui-monospace, SF Mono, Menlo, monospace',
-    fontSize: 12.5,
+    fontSize: 13.5,
     cursorBlink: true,
     scrollback: 8000,
     allowProposedApi: true,
@@ -189,13 +186,57 @@
      * Returning false stops xterm's default handling; the sequence goes out through the
      * same socket send onData uses, so ordering with ordinary typing is preserved.
      */
+    /*
+     * ---- Command-key chords ----
+     *
+     * There is no ANSI encoding for ⌘. A real terminal implements ⌘←/⌘→ at the EMULATOR
+     * level: it recognises the chord and writes the bytes the shell already understands.
+     * xterm.js does not, so every ⌘ chord fell through its default handling (which
+     * ignores meta) and then to the browser, and nothing reached the pty — which is why
+     * none of them appeared to work.
+     *
+     * So Studio does what a terminal does: translate the chord. Each target below is a
+     * control code readline and Claude Code's TUI both already bind, so nothing has to be
+     * configured on the other end.
+     *
+     *   ⌘←  ^A  beginning of line        ⌘⌫  ^U  delete to beginning of line
+     *   ⌘→  ^E  end of line              ⌘↵  LF  newline without submitting
+     *   ⌥←  ESC b  back one word         ⌥→  ESC f  forward one word
+     *
+     * ⌥←/⌥→ are here for the same reason: macOS terminals send those word-wise
+     * sequences, and ⌥ is otherwise only claimed by the rail's ⌥1–9 (digits, no clash).
+     */
+    const CHORDS: Record<string, string> = {
+      'meta:ArrowLeft': '\x01',
+      'meta:ArrowRight': '\x05',
+      'meta:Backspace': '\x15',
+      'meta:Enter': '\n',
+      'alt:ArrowLeft': '\x1bb',
+      'alt:ArrowRight': '\x1bf',
+    };
+
+    const send = (bytes: string): boolean => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(new TextEncoder().encode(bytes));
+      }
+      // false stops xterm's default handling; the bytes go out through the same socket
+      // onData uses, so ordering with ordinary typing is preserved.
+      return false;
+    };
+
     t.attachCustomKeyEventHandler((ev) => {
       if (ev.type !== 'keydown') return true;
       if (ev.key === 'Enter' && ev.shiftKey && !ev.metaKey && !ev.ctrlKey && !ev.altKey) {
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(new TextEncoder().encode('\n'));
-        }
-        return false;
+        return send('\n');
+      }
+      // Exactly one modifier, so ⌘⇧← (select to line start, the browser's) is not stolen.
+      if (ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.shiftKey) {
+        const hit = CHORDS[`meta:${ev.key}`];
+        if (hit) { ev.preventDefault(); return send(hit); }
+      }
+      if (ev.altKey && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) {
+        const hit = CHORDS[`alt:${ev.key}`];
+        if (hit) { ev.preventDefault(); return send(hit); }
       }
       return true;
     });
@@ -293,6 +334,19 @@
   /* Follows the theme via --term-bg. That token and TERM_THEMES in theme.svelte.ts
      must stay in step: xterm cannot read a CSS custom property, so the palette is
      declared twice — here for the padding around the canvas, there for the canvas. */
-  .term-wrap { flex:1; min-height:0; min-width:0; background:var(--term-bg); padding:8px 10px; }
+  /*
+   * `overflow:hidden` is load-bearing, not tidiness.
+   *
+   * FitAddon picks a whole number of rows, and a container height that is not an exact
+   * multiple of the cell height leaves a remainder. xterm still lays `.xterm-screen` out
+   * at rows × cellHeight, so that layer can end up TALLER than this box — measured at 6px
+   * over, which with the default `overflow:visible` painted the last partial row straight
+   * through the action bar below.
+   *
+   * It only became visible when the type scale went up a point and changed the cell
+   * height; the geometry was always able to do it. Clipping here is what makes the
+   * terminal end where its box ends, whatever the remainder happens to be.
+   */
+  .term-wrap { flex:1; min-height:0; min-width:0; overflow:hidden; background:var(--term-bg); padding:8px 10px; }
   .term-wrap :global(.xterm) { height:100%; }
 </style>

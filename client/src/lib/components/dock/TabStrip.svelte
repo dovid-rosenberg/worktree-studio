@@ -174,7 +174,7 @@
   .spring { flex:1; }
 
   .tab {
-    font-family:var(--mono); font-size:11.5px; color:var(--muted); padding:6px 10px;
+    font-family:var(--mono); font-size:12.5px; color:var(--muted); padding:6px 10px;
     border-radius:7px 7px 0 0; display:flex; align-items:center; gap:7px;
     border:1px solid transparent; border-bottom:none; cursor:pointer;
     background:none; max-width:190px; min-width:0;
@@ -182,25 +182,25 @@
   .tab:hover { color:var(--ink); }
   .tab.on { color:var(--ink); background:var(--bg); border-color:var(--border); }
   .tab .label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tab.add { color:var(--faint); font-size:13px; padding:5px 11px; }
+  .tab.add { color:var(--faint); font-size:14px; padding:5px 11px; }
 
   /* The rename box is sized like the tab it replaces, so the strip does not jump. */
   .tab.renaming {
-    font-family:var(--mono); font-size:11.5px; color:var(--ink); background:var(--bg);
+    font-family:var(--mono); font-size:12.5px; color:var(--ink); background:var(--bg);
     border:1px solid var(--brand); border-radius:7px 7px 0 0; padding:6px 10px; width:150px;
   }
 
-  .tabclose { color:var(--faint); font-size:10px; padding:0 3px; border-radius:3px; flex:none; }
+  .tabclose { color:var(--faint); font-size:11px; padding:0 3px; border-radius:3px; flex:none; }
   .tabclose:hover { color:var(--del); background:var(--border); }
 
   /* Panels read as a segmented control, not as tabs with closable processes. */
   .pill-tab {
-    font-family:var(--mono); font-size:11.5px; color:var(--muted); padding:5px 11px;
+    font-family:var(--mono); font-size:12.5px; color:var(--muted); padding:5px 11px;
     border:1px solid transparent; border-radius:7px; background:none; cursor:pointer;
     display:inline-flex; align-items:center; gap:6px; margin-bottom:4px;
   }
   .pill-tab:hover { color:var(--ink); }
   .pill-tab.on { color:var(--brand); border-color:var(--border); background:var(--panel); }
 
-  .cbadge { font-family:var(--mono); font-size:9.5px; font-weight:700; background:var(--brand); color:var(--brand-ink); border-radius:999px; padding:0 5px; min-width:15px; text-align:center; }
+  .cbadge { font-family:var(--mono); font-size:10.5px; font-weight:700; background:var(--brand); color:var(--brand-ink); border-radius:999px; padding:0 5px; min-width:15px; text-align:center; }
 </style>

@@ -83,7 +83,7 @@ function expandPattern(base: string, pattern: string): string[] {
     const last = i === segs.length - 1;
     const next: string[] = [];
     const re = seg.includes('*')
-      ? new RegExp('^' + seg.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*') + '$')
+      ? new RegExp(`^${seg.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*')}$`)
       : null;
     for (const d of dirs) {
       const abs = path.join(base, d);
@@ -134,8 +134,8 @@ const FETCH_TIMEOUT_MS = 60000;
 function worktreeCopyOpts(cfg: PartialDeep<Config> | null | undefined, repo: string): WorktreeCopyOpts {
   const pick = (m?: Record<string, string[] | undefined> | null): string[] => (m && (m[repo] || m.default)) || [];
   return {
-    copyPatterns: pick(cfg && cfg.copyPatterns),
-    copyAlways: cfg && cfg.copyAlways ? pick(cfg.copyAlways) : DEFAULT_COPY_ALWAYS,
+    copyPatterns: pick(cfg?.copyPatterns),
+    copyAlways: cfg?.copyAlways ? pick(cfg.copyAlways) : DEFAULT_COPY_ALWAYS,
   };
 }
 

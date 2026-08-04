@@ -95,7 +95,7 @@ export type LocateResult =
   | { found: false; reason: string };
 
 function projectsRoot(opts?: LocateOptions | null): string {
-  return (opts && opts.root) || process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
+  return (opts?.root) || process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 }
 
 // Claude Code names a project directory after the launch cwd with every
@@ -123,7 +123,7 @@ function isSessionId(id: unknown): id is string { return typeof id === 'string' 
 // try every directory this session has ever owned before falling back to a scan of the
 // project dirs. Claude session ids are uuids, so a filename match is unambiguous.
 function locate(session: LocatableSession | null | undefined, opts: LocateOptions = {}): LocateResult {
-  if (!session || !session.claudeSessionId) return { found: false, reason: 'session has no claudeSessionId yet' };
+  if (!session?.claudeSessionId) return { found: false, reason: 'session has no claudeSessionId yet' };
   const id = session.claudeSessionId;
   if (!isSessionId(id)) return { found: false, reason: 'claudeSessionId is not a uuid' };
   const root = projectsRoot(opts);
@@ -164,7 +164,7 @@ export interface ScanStats {
 }
 
 /** Returning false stops the read early. */
-type RecordSink = (rec: TranscriptRecord) => boolean | void;
+type RecordSink = (rec: TranscriptRecord) => boolean | undefined;
 
 // Stream a JSONL file from a byte offset, invoking onRecord for each COMPLETE line.
 //
@@ -338,7 +338,7 @@ function toEntry(rec: TranscriptRecord): TranscriptEntry | null {
 }
 
 /** Returning false stops the read early. */
-type EntrySink = (e: TranscriptEntry) => boolean | void;
+type EntrySink = (e: TranscriptEntry) => boolean | undefined;
 
 // Stream a transcript and hand normalized entries to `onEntry`. Same offset/early-stop
 // contract as scan().

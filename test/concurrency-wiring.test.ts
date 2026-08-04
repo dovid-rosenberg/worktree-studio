@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { expectOk, present } from './helpers.ts';
-import type { ConcurrencyConfig, ConfigPatch } from '../server/types.ts';
+import type { ConcurrencyConfig, } from '../server/types.ts';
 import type { ConfigPatchPlan } from '../server/servers.ts';
 import fs from 'fs';
 import os from 'os';

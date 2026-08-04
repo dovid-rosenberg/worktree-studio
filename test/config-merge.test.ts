@@ -16,7 +16,6 @@
 // ~/.config/worktree-studio/config.json.
 import { test } from 'node:test';
 import assert from 'node:assert';
-import type { Config, PartialDeep } from '../server/types.ts';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';

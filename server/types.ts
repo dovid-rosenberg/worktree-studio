@@ -15,8 +15,6 @@
 // decorators. Node's stripper rejects all four, and this file is on the require
 // path the moment anything imports a value from it.
 
-'use strict';
-
 // ---- primitives -------------------------------------------------------------
 
 /** A session's lifecycle state, as the Claude Code hooks report it. */

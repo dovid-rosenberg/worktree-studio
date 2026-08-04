@@ -146,7 +146,7 @@ function firstCapture(m: Array<string | undefined> | null): string | null {
 function manifestIndex(groups?: GroupConfig[] | null): Map<string, string> {
   const byRef = new Map<string, string>();
   for (const g of groups || []) {
-    if (!g || !g.name) continue;
+    if (!g?.name) continue;
     for (const ref of g.members || []) {
       if (typeof ref === 'string') byRef.set(ref, g.name);
     }

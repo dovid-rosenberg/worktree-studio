@@ -14,6 +14,9 @@ vi.mock('$lib/ops.svelte.js', () => ({
   activateSession: vi.fn(), closeSession: vi.fn(), pending: new Set(),
 }));
 
+/** The footer summary, as text, so assertions read like what is on screen. */
+const foot = (c: HTMLElement) => c.querySelector('.rail-foot')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+
 const { default: Rail } = await import('./Rail.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');
 const { world } = await import('$lib/stores/world.svelte.js');
@@ -96,5 +99,48 @@ describe('Rail', () => {
     render(Rail);
     const select = screen.getByLabelText('Filter by repo') as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(['', 'accept-blue', 'merchant-v3']);
+  });
+
+  /*
+   * The fleet summary moved down from the header to sit beside the rows it counts. Both
+   * counting rules came with it, and both were bugs once:
+   *
+   *  - agent states were counted per MEMBER, so a 3-repo feature with one working agent
+   *    said "3 working" — the numbers grew with how multi-repo the work was;
+   *  - `running` counts SERVERS while working/waiting count AGENTS, and printed as one
+   *    comma-run they read as parts of a total that never added up.
+   */
+  it('counts a working agent ONCE however many repos its feature spans', () => {
+    const agent = { id: 's1', state: 'working', activity: '', muxName: 'm' };
+    give(
+      [feature('wide', {
+        members: [member('accept-blue', { session: agent }), member('merchant-v3', { session: agent })],
+        session: agent,
+      })],
+      [session('s1', { state: 'working', worktreePath: '/wt' })],
+    );
+    const { container } = render(Rail);
+    expect(foot(container)).toContain('1 working');
+    expect(foot(container)).not.toContain('2 working');
+  });
+
+  it('counts dev servers per worktree, because each worktree runs its own', () => {
+    give([feature('wide', {
+      members: [member('accept-blue', { running: true }), member('merchant-v3', { running: true })],
+    })]);
+    const { container } = render(Rail);
+    expect(foot(container)).toContain('2 up');
+  });
+
+  it('hides a zero rather than spending a slot saying nothing', () => {
+    give([feature('quiet')]);
+    const { container } = render(Rail);
+    expect(foot(container)).not.toMatch(/\b0 (working|waiting|up)\b/);
+  });
+
+  it('heads the list with New session — the verb that creates what it lists', () => {
+    give([]);
+    render(Rail);
+    expect(screen.getByRole('button', { name: /New session/ })).toBeInTheDocument();
   });
 });

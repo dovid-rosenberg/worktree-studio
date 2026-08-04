@@ -85,7 +85,7 @@ function selection(body: { hunks?: HunkIndex | HunkIndex[]; hunk?: HunkIndex }):
 // passes a getter and this module never holds a stale reference.
 function register(api: Router, deps: ReviewDeps): void {
   const { repos } = deps || {};
-  if (!deps || !deps.manager) throw new Error('routes-review: deps.manager is required');
+  if (!deps?.manager) throw new Error('routes-review: deps.manager is required');
   const broadcast = deps.broadcast || (() => {});
   const defaultBranchOf = (name: string): string => {
     const list = typeof repos === 'function' ? repos() : repos || [];
@@ -93,7 +93,7 @@ function register(api: Router, deps: ReviewDeps): void {
     // A repo the scan cache has not seen (outside every baseDir, or a rescan that has
     // not landed) has no default branch to report; 'main' is the floor git.ts falls
     // back to for exactly the same reason.
-    return (hit && hit.defaultBranch) || 'main';
+    return (hit?.defaultBranch) || 'main';
   };
 
   // The structured per-file diff for one commit, or for the working tree when

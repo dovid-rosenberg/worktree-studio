@@ -182,7 +182,10 @@ export function connectStream(hooks: StreamHooks = {}): () => void {
   const ev = new EventSource(`/api/v1/events${tokenQuery('?')}`);
 
   const apply = (half: 'topology' | 'sessions' | 'ci') => (e: MessageEvent) => {
-    let frame;
+    // `any`, not `unknown`: the three branches below hand it straight to $state.raw
+    // fields typed by the wire contract, and the daemon is the only writer of this
+    // stream. Naming the type is what stops it being an *implicit* any.
+    let frame: any;
     try { frame = JSON.parse(e.data); } catch { return; }
     if (half === 'sessions') {
       hooks.onSessionFrame?.(frame); // diff BEFORE swapping in

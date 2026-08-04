@@ -4,11 +4,16 @@
    * The bar under the dock: the whole shared workspace (every repo this session owns),
    * its dev-server ports, and the PR/CI pills.
    *
-   * A READOUT, not a control surface. It used to carry `Run all` / `Run rest` / `Stop all`
-   * and an `Open <repo> ↗` per frontend — the same worktrees the ActionBar's `Run stack` /
-   * `Stop stack` act on, by a different route (the session endpoints rather than the group
-   * ones), so one capability wore two sets of words and could disagree with itself. The
-   * verbs live at the bottom now; this says what is true.
+   * A READOUT, not a control surface, and it no longer owns a band of its own: it renders
+   * INSIDE the ActionBar, left of the verbs. It used to carry `Run all` / `Run rest` /
+   * `Stop all` and an `Open <repo> ↗` per frontend — the same worktrees `Run stack` /
+   * `Stop stack` act on, by a different route — so one capability wore two sets of words
+   * and could disagree with itself. Once the buttons went, a whole horizontal band was
+   * left holding chips, with the buttons that affect those ports in a different band
+   * entirely. So the chips moved to the buttons.
+   *
+   * No border, padding or background here: the ActionBar owns the bar, this owns the
+   * chips.
    *
    * CI is PUSHED, not polled: the daemon owns when to look (server/ci.js debounces,
    * gates on a live subscriber, and only emits when the snapshot changed) and sends a
@@ -46,7 +51,7 @@
   }
 </script>
 
-<div class="serverbar">
+<div class="readout">
   {#if !promoted}
     <span>Promote to a worktree to run dev servers.</span>
   {:else if !configured}
@@ -81,7 +86,7 @@
 </div>
 
 <style>
-  .serverbar { display:flex; align-items:center; gap:10px; row-gap:8px; flex-wrap:wrap; padding:8px 16px; border-top:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:11.5px; color:var(--muted); flex:none; }
+  .readout { display:flex; align-items:center; gap:9px; row-gap:6px; flex-wrap:wrap; min-width:0; font-family:var(--mono); font-size:11.5px; color:var(--muted); }
   .portchip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:6px; padding:2px 8px; }
   .cistat { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border); border-radius:6px; padding:2px 9px; cursor:pointer; color:var(--ink); }
   .cistat:hover { border-color:var(--brand); }

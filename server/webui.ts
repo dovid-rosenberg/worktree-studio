@@ -70,7 +70,7 @@ function sendIndex(ui: ResolvedUi, token: string, res: Response): Response {
 
 // The document + its assets. Mounted before the API routes, like any static mount.
 function mount(app: Express, { ui, token }: MountOptions): void {
-  app.get(['/', '/index.html'], (req: Request, res: Response) => sendIndex(ui, token, res));
+  app.get(['/', '/index.html'], (_req: Request, res: Response) => sendIndex(ui, token, res));
   // index:false so the static middleware can never serve the un-injected index.html.
   app.use(express.static(ui.root, { index: false }));
 }

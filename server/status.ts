@@ -38,7 +38,7 @@ function mapEvent(event: string, payload?: HookPayload | null): EventState | nul
     case 'UserPromptSubmit': return { state: 'working', activity: 'thinking…' };
     case 'PreToolUse': return { state: 'working', activity: tool ? `running ${tool}` : 'working…' };
     case 'PostToolUse': return { state: 'working', activity: tool ? `${tool} done` : 'working…' };
-    case 'Notification': return { state: 'waiting', activity: (payload && payload.message) || 'waiting for you' };
+    case 'Notification': return { state: 'waiting', activity: (payload?.message) || 'waiting for you' };
     case 'Stop': return { state: 'idle', activity: 'turn done' };
     case 'SubagentStop': return { state: 'working', activity: 'subagent done' };
     case 'SessionEnd': return { state: 'stopped', activity: 'session ended' };

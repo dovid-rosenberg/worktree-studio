@@ -130,7 +130,7 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     const out = new Map<string, CiEntry>();
     for (const s of (list || [])) {
       for (const r of (s.repos || [])) {
-        if (r && r.worktreePath && r.branch) out.set(`${r.worktreePath}\n${r.branch}`, r);
+        if (r?.worktreePath && r.branch) out.set(`${r.worktreePath}\n${r.branch}`, r);
       }
     }
     return out;
@@ -155,7 +155,7 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
     for (const s of list) {
       const repos: CiRepo[] = [];
       for (const r of (s.repos || [])) {
-        if (!r || !r.worktreePath || !r.branch) continue;
+        if (!r?.worktreePath || !r.branch) continue;
         const found = results.get(`${r.worktreePath}\n${r.branch}`);
         repos.push(found ? { ...found, repo: r.repo } : { repo: r.repo, hasPR: false });
       }

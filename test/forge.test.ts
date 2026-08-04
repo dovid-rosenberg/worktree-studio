@@ -13,7 +13,6 @@ import type { Provider, PushResult } from '../server/forge.ts';
 import type { AddressInfo } from 'net';
 import type { Router } from 'express';
 import { body as jsonBody, present } from './helpers.ts';
-import type { JsonBody } from './helpers.ts';
 
 // A worktree path that is deliberately NOT a git repo — used to drive the real
 // `git push` failure path end to end.

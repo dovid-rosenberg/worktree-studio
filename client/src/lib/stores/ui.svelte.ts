@@ -68,8 +68,9 @@ export type Selection =
 const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
 
-/** Drag bounds for the rail. Below ~230 the member chips stop being readable. */
-export const RAIL_MIN = 230;
+/** Drag bounds for the rail. Below this the member chips stop being readable — the floor
+    moved with the type scale, which went up a point across the app. */
+export const RAIL_MIN = 250;
 export const RAIL_MAX = 560;
 const RAIL_DEFAULT = 320;
 
@@ -355,7 +356,7 @@ class UI {
    * without has no terminal to show, so the dock renders the feature pane instead.
    */
   selectFeature(f: Feature | null | undefined): void {
-    if (f && f.session && f.session.id) { this.select(f.session.id); return; }
+    if (f?.session?.id) { this.select(f.session.id); return; }
     this.#pick(f ? { kind: 'feature', name: f.name } : null);
   }
 

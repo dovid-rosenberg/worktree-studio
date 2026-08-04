@@ -22,7 +22,6 @@ import * as routesReview from '../server/routes-review.ts';
 import * as transcriptRoutes from '../server/transcript-routes.ts';
 import type { TranscriptManager } from '../server/transcript-routes.ts';
 import type { AddressInfo } from 'net';
-import type { Session } from '../server/types.ts';
 import { body as jsonBody, present, session as makeSession } from './helpers.ts';
 import type { JsonBody } from './helpers.ts';
 

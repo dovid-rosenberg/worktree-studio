@@ -37,7 +37,7 @@ function transcriptFile(root: string, id = 'cccccccc-0000-4000-8000-000000000015
 
 let n = 0;
 function append(file: string, records: unknown[]) {
-  fs.appendFileSync(file, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  fs.appendFileSync(file, `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
 }
 
 function usage(over: Record<string, unknown> = {}) {
@@ -159,11 +159,11 @@ test('a relocated transcript is re-read from the start, not from a stale offset'
 test('malformed lines are counted and skipped without stalling the offset', async () => {
   const { root, index } = fixture();
   const file = transcriptFile(root);
-  fs.writeFileSync(file, [
+  fs.writeFileSync(file, `${[
     JSON.stringify(user('good one')),
     '{ broken json',
     JSON.stringify(asst({ msgId: 'm1', text: 'good two' })),
-  ].join('\n') + '\n');
+  ].join('\n')}\n`);
   const p = expectOk(await index.index(session()));
   assert.equal(p.added, 2);
   assert.equal(p.malformedLines, 1);

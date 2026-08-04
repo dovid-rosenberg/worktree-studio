@@ -361,40 +361,40 @@
   .changes { flex:1; min-height:0; display:flex; flex-direction:column; background:var(--bg); }
 
   .branchbar { display:flex; align-items:center; gap:9px; flex-wrap:wrap; padding:9px 14px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; }
-  .branchbar .br { font-family:var(--mono); font-size:12px; font-weight:700; color:var(--ink); }
+  .branchbar .br { font-family:var(--mono); font-size:13px; font-weight:700; color:var(--ink); }
   .branchbar .spacer { flex:1; }
   .cdot { width:7px; height:7px; border-radius:50%; }
   .cdot.b { background:var(--brand); } .cdot.a { background:var(--waiting); }
-  .refresh { cursor:pointer; color:var(--muted); font-family:var(--mono); font-size:10.5px; }
+  .refresh { cursor:pointer; color:var(--muted); font-family:var(--mono); font-size:11.5px; }
   .refresh:hover { color:var(--brand); }
 
   /* segmented unified / side-by-side switch */
   .seg { display:inline-flex; border:1px solid var(--border-strong); border-radius:8px; overflow:hidden; }
-  .segbtn { font-family:var(--mono); font-size:10.5px; font-weight:600; padding:4px 10px; border:0; background:var(--elevated); color:var(--muted); cursor:pointer; }
+  .segbtn { font-family:var(--mono); font-size:11.5px; font-weight:600; padding:4px 10px; border:0; background:var(--elevated); color:var(--muted); cursor:pointer; }
   .segbtn + .segbtn { border-left:1px solid var(--border-strong); }
   .segbtn:hover { color:var(--ink); }
   .segbtn.on { background:var(--brand); color:var(--brand-ink); }
 
-  .banner { flex:none; display:flex; align-items:center; gap:10px; padding:7px 14px; background:var(--del-bg); color:var(--del); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:11.5px; }
+  .banner { flex:none; display:flex; align-items:center; gap:10px; padding:7px 14px; background:var(--del-bg); color:var(--del); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:12.5px; }
   .banner span { flex:1; }
 
   .commit-cols { display:grid; grid-template-columns:300px 1fr; min-height:0; flex:1; }
   .commit-list { border-right:1px solid var(--border); overflow:auto; background:var(--panel); }
   .commit-detail { overflow:hidden; background:var(--bg); display:flex; flex-direction:column; min-width:0; min-height:0; }
 
-  .chsub { font-family:var(--mono); font-size:9.5px; color:var(--faint); padding:9px 12px 5px; }
+  .chsub { font-family:var(--mono); font-size:10.5px; color:var(--faint); padding:9px 12px 5px; }
   .chsub.clean { text-transform:none; letter-spacing:0; }
   .chsub.err, .diff-empty.err { color:var(--del); }
 
   .dhd { padding:13px 16px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; }
-  .dhd h3 { margin:0 0 5px; font-size:14px; font-weight:650; }
-  .dmeta { font-family:var(--mono); font-size:10.5px; color:var(--muted); display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .dhd h3 { margin:0 0 5px; font-size:15px; font-weight:650; }
+  .dmeta { font-family:var(--mono); font-size:11.5px; color:var(--muted); display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
   .dmeta .sha { color:var(--brand); }
   .dmeta .stat { display:inline-flex; gap:6px; }
   .dmeta .collapse { margin-left:auto; }
   .add { color:var(--add); } .del { color:var(--del); }
 
-  .diff-empty { color:var(--faint); font-family:var(--mono); font-size:12px; padding:16px; }
+  .diff-empty { color:var(--faint); font-family:var(--mono); font-size:13px; padding:16px; }
 
   @media (max-width: 820px) {
     .commit-cols { grid-template-columns:1fr; grid-template-rows:minmax(120px, 30%) 1fr; }

@@ -205,7 +205,7 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
       return; // vanished, unreadable, or out of descriptors — the next sync retries
     }
     w.on('error', () => disarm(dir));
-    w.on('change', (event, filename) => {
+    w.on('change', (_event, filename) => {
       if (matters(dir, kind, filename == null ? null : String(filename))) trigger();
     });
     watchers.set(dir, { w, kind });

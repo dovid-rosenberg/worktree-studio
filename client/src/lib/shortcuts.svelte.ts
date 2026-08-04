@@ -38,14 +38,16 @@ import { ui } from '$lib/stores/ui.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
-import { promote, runStack } from '$lib/ops.svelte.js';
+import { runStack } from '$lib/ops.svelte.js';
 
 const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
   ['⌘N', 'New session'],
   ['⌘\\', 'Toggle Insights'],
   ['⌥1–9', 'Jump to the Nth rail row'],
-  ['⌘↵', 'Promote current to worktree'],
+  ['⌘↵', 'New line in the terminal (without submitting)'],
+  ['⇧↵', 'New line in the terminal'],
+  ['⌘←/→', 'Start / end of line in the terminal'],
   ['⌘D', 'Review changes'],
   ['⌘R', 'Run stack'],
   ['⇧↵', 'New line in the terminal (sent as ESC+CR)'],
@@ -100,13 +102,21 @@ export function handleShortcut(e: KeyboardEvent): void {
   const s = ui.selected;
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); overlays.openIntake(); return; }
   if (e.key === '\\') { e.preventDefault(); ui.toggleUsage(); return; }
-  if (e.key === 'Enter') { e.preventDefault(); if (s && !s.worktreePath) promote(s); return; }
+  /*
+   * ⌘↵ belongs to the TERMINAL — it is "newline without submitting" there (Terminal.svelte
+   * maps it to LF, like every macOS terminal).
+   *
+   * It used to be Promote, and it was broken as well as conflicting: preventDefault() ran
+   * BEFORE the `!s.worktreePath` guard, so on an already-promoted session — which is most
+   * of them — the key was swallowed and did nothing at all. Promote is still on the
+   * ActionBar and in the palette, which is where a once-per-session verb belongs.
+   */
   if (e.key === 'd' || e.key === 'D') {
     e.preventDefault();
-    if (s && s.worktreePath) { ui.goToSession(s.id); ui.dockView = 'changes'; }
+    if (s?.worktreePath) { ui.goToSession(s.id); ui.dockView = 'changes'; }
     return;
   }
   // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the
   // session-addressed op, which is the same worktrees without the conflict handling.
-  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (s && s.worktreePath && s.feature) runStack(s.feature); }
+  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (s?.worktreePath && s.feature) runStack(s.feature); }
 }

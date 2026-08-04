@@ -122,18 +122,18 @@
 <style>
   /* Ported from public/style.css — .commit-list / .grouphd / .crow / .chsub. */
   .commit-list { border-right:1px solid var(--border); overflow:auto; background:var(--panel); min-height:0; }
-  .grouphd { font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:11px 13px 5px; position:sticky; top:0; background:var(--panel); z-index:1; }
-  .chsub { font-family:var(--mono); font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:9px 12px 5px; }
+  .grouphd { font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:11px 13px 5px; position:sticky; top:0; background:var(--panel); z-index:1; }
+  .chsub { font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:9px 12px 5px; }
   .chsub.clean { text-transform:none; letter-spacing:0; }
 
   .crow { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:8px 13px; border-left:2px solid transparent; border-bottom:1px solid var(--border); font-family:var(--sans); color:var(--ink); }
   .crow:hover { background:var(--elevated); }
   .crow.on { background:var(--elevated); border-left-color:var(--brand); }
   .crow .l1 { display:flex; align-items:center; gap:8px; }
-  .crow .sha { font-family:var(--mono); font-size:11px; color:var(--brand); flex:none; }
-  .crow .subj { color:var(--ink); font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .crow .l2 { display:flex; align-items:center; gap:8px; margin-top:3px; font-size:10.5px; color:var(--faint); font-family:var(--mono); }
-  .crow .stat { margin-left:auto; font-family:var(--mono); font-size:10.5px; white-space:nowrap; display:inline-flex; gap:6px; }
+  .crow .sha { font-family:var(--mono); font-size:12px; color:var(--brand); flex:none; }
+  .crow .subj { color:var(--ink); font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .crow .l2 { display:flex; align-items:center; gap:8px; margin-top:3px; font-size:11.5px; color:var(--faint); font-family:var(--mono); }
+  .crow .stat { margin-left:auto; font-family:var(--mono); font-size:11.5px; white-space:nowrap; display:inline-flex; gap:6px; }
   .crow.uncommitted { border-left-color:var(--waiting); }
   .crow.uncommitted .sha { color:var(--waiting); }
   .add { color:var(--add); } .del { color:var(--del); }

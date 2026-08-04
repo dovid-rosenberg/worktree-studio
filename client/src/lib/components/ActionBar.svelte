@@ -25,6 +25,7 @@
    * running from a repo's main checkout. The last used to carry its own buttons inside
    * its rail card — the only buttons in the rail — because it could not be selected.
    */
+  import ServerBar from '$lib/components/dock/ServerBar.svelte';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
   import {
@@ -87,6 +88,11 @@
       onclick={() => stopMainServer(mainServer)}
     >Stop server</button>
   {:else}
+    <!-- The workspace readout — ports and CI — left of the verbs that act on them. It
+         used to be its own band above the terminal, which put the chips and the buttons
+         that affect them in different places. -->
+    {#if session}<ServerBar {session} />{/if}
+
     <span class="grow"></span>
 
     {#if isPending}

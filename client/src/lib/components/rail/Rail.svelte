@@ -23,14 +23,36 @@
   import FeatureCard from '$lib/components/rail/FeatureCard.svelte';
   import MainServerCard from '$lib/components/rail/MainServerCard.svelte';
   import SessionCard from '$lib/components/rail/SessionCard.svelte';
-  import { ui } from '$lib/stores/ui.svelte.js';
+  import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+  import { world } from '$lib/stores/world.svelte.js';
+  import { overlays } from '$lib/stores/overlays.svelte.js';
 
   const rows = $derived(ui.railRows);
   const dividerAt = $derived(ui.dividerAt);
   const quiet = $derived(dividerAt < 0 ? 0 : rows.length - dividerAt);
+
+  /*
+   * The fleet summary, moved down from the top bar to sit beside the rows it counts.
+   *
+   * TWO VOCABULARIES, SAID SEPARATELY. `running` counts dev SERVERS; `working` and
+   * `waiting` count AGENTS. Printed as one comma-run they read as parts of one total and
+   * then fail the arithmetic, so each group names what it counts.
+   *
+   * Servers are per WORKTREE (each runs its own). Agents are per SESSION — counting them
+   * per member inflated the numbers by exactly how multi-repo the work was.
+   */
+  const running = $derived(world.features.flatMap((f) => liveMembers(f)).filter((m) => m.running).length);
+  const working = $derived(world.sessions.filter((s) => s.state === 'working').length);
+  const waiting = $derived(world.sessions.filter((s) => s.state === 'waiting').length);
 </script>
 
 <aside class="rail">
+  <!-- The verb that creates what this list contains, at the head of the list. It used to
+       sit in the top bar, on the other side of the app from its result. -->
+  <div class="rail-new">
+    <button class="btn primary block" onclick={() => overlays.openIntake()}>＋ New session</button>
+  </div>
+
   <div class="rail-head">
     <span id="rail-label">Work</span>
     <!-- Matches on any MEMBER repo: filtering to one repo must not split a BE+FE feature. -->
@@ -42,8 +64,9 @@
 
   <div class="rail-list" role="list" aria-labelledby="rail-label">
     {#if !rows.length}
+      <!-- The button is directly above, so the copy no longer has to point at it. -->
       <div class="rail-empty">
-        Nothing here yet. Click “+ New session”, or create a worktree by promoting one.
+        Nothing here yet. Start a session above, or promote one to create a worktree.
       </div>
     {/if}
 
@@ -61,25 +84,39 @@
     {/each}
   </div>
 
-  <!-- Counts what is drawn. It used to say "N feature(s)" while the list also held
-       agents and main-checkout servers, so the number never matched the rows. -->
+  <!-- Counts what is drawn, then the fleet summary. The row count used to say
+       "N feature(s)" while the list also held agents and main-checkout servers, so the
+       number never matched the rows. Zeros are hidden: a zero takes the same space as a
+       real count and says nothing. -->
   <div class="rail-foot">
-    {rows.length} row(s){quiet ? ` · ${quiet} idle` : ''}
+    <div class="foot-rows">{rows.length} row(s){quiet ? ` · ${quiet} idle` : ''}</div>
+    {#if working || waiting || running}
+      <div class="foot-counts">
+        {#if working}<span class="c"><span class="dot working"></span>{working} working</span>{/if}
+        {#if waiting}<span class="c"><span class="dot waiting"></span>{waiting} waiting</span>{/if}
+        {#if running}<span class="c"><span class="dot done"></span>{running} up</span>{/if}
+      </div>
+    {/if}
   </div>
 </aside>
 
 <style>
   .rail { border-right:1px solid var(--border); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
-  .rail-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 14px; font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); }
+  .rail-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:12px 14px; font-family:var(--mono); font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); border-bottom:1px solid var(--border); }
   /* overflow-x:hidden is load-bearing: a long branch name must truncate inside its card,
      never widen the rail into a horizontal scrollbar. */
   .rail-list { flex:1; overflow-y:auto; overflow-x:hidden; padding:8px 0; display:flex; flex-direction:column; }
-  .rail-foot { padding:10px 14px; border-top:1px solid var(--border); font-family:var(--mono); font-size:10.5px; color:var(--faint); }
-  .rail-empty { padding:14px; font-family:var(--mono); font-size:10.5px; color:var(--faint); }
+  .rail-new { padding:10px 12px 0; }
+  .rail-new .block { width:100%; }
+
+  .rail-foot { padding:9px 14px; border-top:1px solid var(--border); font-family:var(--mono); font-size:11.5px; color:var(--faint); display:flex; flex-direction:column; gap:5px; }
+  .rail-foot .foot-counts { display:flex; flex-wrap:wrap; gap:9px; }
+  .rail-foot .c { display:inline-flex; align-items:center; gap:5px; }
+  .rail-empty { padding:14px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
 
   /* A hairline, not a header: it separates, it does not label a category. Deliberately
      not sticky — the four sticky headers it replaces used to pile up on each other. */
   .divider { display:flex; align-items:center; gap:9px; margin:6px 12px 8px; }
   .divider::after { content:''; flex:1; height:1px; background:var(--border); }
-  .divider span { font-family:var(--mono); font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
+  .divider span { font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
 </style>

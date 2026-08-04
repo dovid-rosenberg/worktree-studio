@@ -46,7 +46,7 @@ export const billingMultipliers = $state<BillingMultipliers>({
  * values rather than to zeros.
  */
 export function adoptPricing(pricing: { cacheMultipliers?: Record<string, unknown> } | null | undefined): void {
-  const m = pricing && pricing.cacheMultipliers;
+  const m = pricing?.cacheMultipliers;
   if (!m || typeof m !== 'object') return;
   for (const key of Object.keys(billingMultipliers) as (keyof BillingMultipliers)[]) {
     const v = Number(m[key]);

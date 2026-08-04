@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch supersedes the first: this is a single-maintainer
+# repo, and a queue of runs for commits nobody will look at is just latency.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22 is a hard floor, not a preference: the transcript index is built on
+      # `node:sqlite`, and the server runs TypeScript through Node's own type stripping
+      # rather than a build step.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # tmux is what the multiplexer drives. A handful of tests spawn a REAL tmux
+      # session (see test/sessions.test.ts) and skip themselves when it is absent —
+      # so without this, CI would report green on tests it never ran.
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      # `npm ci` runs postinstall, which builds the client. That is deliberate: a build
+      # failure is a failure, and the daemon refuses to boot without the built client.
+      - run: npm ci
+      - run: npm ci --prefix client
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck and tests
+        run: npm test

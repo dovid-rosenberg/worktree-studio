@@ -18,7 +18,7 @@ const ADAPTERS: Record<string, SourceAdapter> = { freetext, github, gitlab, asan
 // with an internal message instead of the "not available" this module already knows
 // how to say. Own-key lookup only.
 function adapterFor(source: string): SourceAdapter | null {
-  return Object.prototype.hasOwnProperty.call(ADAPTERS, source) ? ADAPTERS[source] : null;
+  return Object.hasOwn(ADAPTERS, source) ? ADAPTERS[source] : null;
 }
 
 function enabled(cfg: PartialDeep<Config>): SourceInfo[] {
@@ -36,14 +36,14 @@ interface ListResult {
 
 async function list(cfg: PartialDeep<Config>, source: string, params?: SourceParams): Promise<ListResult> {
   const a = adapterFor(source);
-  if (!a || !a.isEnabled(cfg)) return { ok: false, error: `source '${source}' not available`, items: [] };
+  if (!a?.isEnabled(cfg)) return { ok: false, error: `source '${source}' not available`, items: [] };
   try { return { ok: true, items: await a.list(cfg, params || {}) }; }
   catch (e) { return { ok: false, error: (e as Error).message, items: [] }; }
 }
 
 async function seed(cfg: PartialDeep<Config>, source: string, params?: SourceParams): Promise<SourceSeed> {
   const a = adapterFor(source);
-  if (!a || !a.isEnabled(cfg)) throw new Error(`source '${source}' not available`);
+  if (!a?.isEnabled(cfg)) throw new Error(`source '${source}' not available`);
   return a.seed(cfg, params || {});
 }
 

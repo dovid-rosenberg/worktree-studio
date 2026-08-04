@@ -2,7 +2,7 @@
   "name": "worktree-studio",
   "version": "0.1.0",
   "private": true,
-  "description": "One place to start, watch, and steer Claude Code sessions \u2014 pluggable intake, baked-in worktrees, embedded multiplexer terminals, hook-driven status, and resume-after-shutdown.",
+  "description": "Orchestrate Claude Code sessions across git worktrees: one screen for every agent, worktree and dev server.",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -16,7 +16,10 @@
     "typecheck": "tsc --noEmit && npm --prefix client run check",
     "test": "npm run typecheck && node --test test/*.test.ts && npm --prefix client test",
     "fix-pty": "node bin/fix-pty.ts",
-    "postinstall": "node bin/fix-pty.ts && node bin/build-client.ts"
+    "postinstall": "node bin/fix-pty.ts && node bin/build-client.ts",
+    "lint": "biome lint",
+    "format": "biome format --write",
+    "check": "npm run lint && npm run typecheck"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.10.0",
@@ -27,9 +30,21 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.6",
     "@types/express": "5.0.6",
     "@types/node": "26.1.1",
     "@types/ws": "8.18.1",
     "typescript": "7.0.2"
-  }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dovid-rosenberg/worktree-studio.git"
+  },
+  "keywords": [
+    "claude-code",
+    "git-worktree",
+    "tmux",
+    "developer-tools"
+  ]
 }

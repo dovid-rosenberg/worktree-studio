@@ -113,8 +113,8 @@ function timingSafeEqual(a: string, b: string): boolean {
 function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }) {
   // Read the bind config lazily: cfg.web.port is rewritten to the real port when the
   // configured one is 0 (ephemeral), which happens after the guard is built.
-  const bindHost = () => String((cfg.web && cfg.web.host) || '127.0.0.1').toLowerCase();
-  const bindPort = () => String((cfg.web && cfg.web.port) || '');
+  const bindHost = () => String((cfg.web?.host) || '127.0.0.1').toLowerCase();
+  const bindPort = () => String((cfg.web?.port) || '');
 
   // A refusal is usually a stale client, not an attack, and the client only gets a
   // bare 401/403 — so log one line for the human. Deduplicated per reason for a
@@ -126,8 +126,8 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
     const last = loggedAt.get(error);
     if (last === undefined || last <= now - 60000) {
       loggedAt.set(error, now);
-      const h = (req.headers && req.headers.host) || '-';
-      const o = (req.headers && req.headers.origin) || '-';
+      const h = (req.headers?.host) || '-';
+      const o = (req.headers?.origin) || '-';
       // originalUrl, not url: express rewrites req.url to be relative to the mount
       // point, which would log a bare '/state' for a refused '/api/v1/state'.
       const where = String(req.originalUrl || req.url || '').split('?')[0];
@@ -150,7 +150,7 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   // The Host header the client *asked* for. Rejecting anything that is not a
   // loopback name is what defeats DNS rebinding.
   function denyHost(req: GuardedRequest): Denial | null {
-    const parsed = splitHostPort(req.headers && req.headers.host);
+    const parsed = splitHostPort(req.headers?.host);
     if (!parsed || !hostAllowed(parsed.host) || !portAllowed(parsed.port)) return deny(403, 'forbidden host', req);
     return null;
   }
@@ -163,7 +163,7 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   // sandboxed iframe or a data: document sends, i.e. an opaque origin the attacker
   // chose. Nothing legitimate here produces one.
   function denyOrigin(req: GuardedRequest): Denial | null {
-    const raw = req.headers && req.headers.origin;
+    const raw = req.headers?.origin;
     if (!raw) return null;
     let u: URL;
     try { u = new URL(raw); } catch { return deny(403, 'forbidden origin', req); }
@@ -180,13 +180,13 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   // Alfred) or as a query param — EventSource and WebSocket cannot set headers, and
   // neither can the hook URL baked into a session's settings file.
   function presented(req: GuardedRequest, queryToken?: string | null): string {
-    const h = req.headers && req.headers['x-wts-token'];
+    const h = req.headers?.['x-wts-token'];
     if (h) return String(h);
-    const auth = (req.headers && req.headers.authorization) || '';
+    const auth = (req.headers?.authorization) || '';
     const m = /^Bearer\s+(.+)$/i.exec(auth);
     if (m) return m[1].trim();
     if (queryToken != null) return String(queryToken);
-    if (req.query && req.query.token) return String(req.query.token);
+    if (req.query?.token) return String(req.query.token);
     return '';
   }
 

@@ -14,7 +14,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
  *
  * Two projects, because the two layers want different environments and mixing them
  * costs every store test a jsdom it does not use:
- *   stores — node, no DOM, the pure logic and the SSE stitching
+ *   logic      — node, no DOM: pure functions and the SSE stitching
  *   components — jsdom, @testing-library/svelte, what actually renders
  */
 export default defineConfig({
@@ -31,7 +31,14 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: 'stores', environment: 'node', include: ['src/lib/stores/**/*.test.ts'] },
+        test: {
+          name: 'logic',
+          environment: 'node',
+          // `actions/` too: an action's DOM half needs a browser, but the pure helper it
+          // is built on (moveItem) does not, and a test file that no project includes is
+          // a test file that silently never runs.
+          include: ['src/lib/stores/**/*.test.ts', 'src/lib/actions/**/*.test.ts'],
+        },
       },
       {
         extends: true,
