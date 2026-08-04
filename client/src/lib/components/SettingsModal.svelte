@@ -14,12 +14,22 @@
   import { overlays } from '$lib/stores/overlays.svelte.js';
   import { toast } from '$lib/stores/toasts.svelte.js';
   import { notify } from '$lib/stores/notify.svelte.js';
+  import { moveItem, reorderable } from '$lib/actions/reorderable.js';
 
   let loaded = $state(false);
   let saving = $state(false);
   let error = $state('');
 
-  let baseDirs = $state('');
+  /*
+   * Repo roots as ROWS, not a textarea.
+   *
+   * A textarea makes the list look like prose: no add/remove affordance, no per-entry
+   * validation, no way to reorder — and order matters, because the roots are scanned in
+   * order. Every other list in this modal is rows; this one was the odd one out.
+   */
+  let rootRows: {key:number, path:string}[] = $state([]);
+  /** Which editor "Open in editor" uses. The server has always accepted it; nothing sent it. */
+  let defaultEditor = $state('');
   let tools = $state({ gh: false, glab: false });
   let githubAuthed = $state(false);
   let gl = $state({ enabled: false, host: 'https://gitlab.com', project: '', token: '' });
@@ -41,7 +51,8 @@
         const d = await api('GET', '/api/v1/settings');
         if (!alive) return;
         const src = d.sources || {};
-        baseDirs = (d.baseDirs || []).join('\n');
+        rootRows = (d.baseDirs || []).map((path: string) => ({ key: ++rowKey, path }));
+        defaultEditor = d.defaultEditor || '';
         tools = d.tools || { gh: false, glab: false };
         githubAuthed = !!d.githubAuthed;
         gl = { enabled: false, host: 'https://gitlab.com', project: '', token: '', ...(src.gitlab || {}) };
@@ -104,7 +115,10 @@
           gitlab: { enabled: gl.enabled, host: gl.host.trim(), project: gl.project.trim(), token: gl.token.trim() },
           asana: { enabled: as.enabled, token: as.token.trim(), workspace: as.workspace.trim() },
         },
-        baseDirs: baseDirs.split('\n').map((s) => s.trim()).filter(Boolean),
+        baseDirs: rootRows.map((r) => r.path.trim()).filter(Boolean),
+        // Only send a name that still exists, or the server would pin "Open in editor"
+        // to an editor the user just deleted.
+        defaultEditor: editors[defaultEditor] ? defaultEditor : Object.keys(editors)[0] || '',
         notify: nt,
         start,
         editors,
@@ -114,6 +128,19 @@
       toast('Settings saved');
     } catch (e) { toast((e as Error).message, true); }
     finally { saving = false; }
+  }
+
+  /**
+   * Reorder helper shared by every list.
+   *
+   * Takes and returns the array rather than mutating in place: `$state` arrays reassign
+   * to notify, and a helper that spliced would update the data without redrawing.
+   */
+  const move = <T,>(list: T[], from: number, to: number): T[] => moveItem(list, from, to);
+
+  /** Keyboard equivalent of a drag — dragging serves a mouse and nothing else. */
+  function nudge<T>(list: T[], i: number, by: number): T[] {
+    return moveItem(list, i, Math.max(0, Math.min(list.length - 1, i + by)));
   }
 </script>
 
@@ -130,9 +157,21 @@
     {:else if !loaded}
       <div class="conn-status">Loading…</div>
     {:else}
-      <div class="field">
-        <label for="set-basedirs">Repo roots <span class="hint">— folders scanned for your repos (one per line)</span></label>
-        <textarea id="set-basedirs" class="textarea" rows="3" placeholder="~/Desktop/ab-code" bind:value={baseDirs}></textarea>
+      <div class="setsec">
+        <span class="lbl">Repo roots <span class="lbl-note">— folders scanned for your repos, in scan order</span></span>
+        {#each rootRows as row, i (row.key)}
+          <div
+            class="srvcfg-row cols2"
+            use:reorderable={{ index: i, onmove: (f, tIdx) => (rootRows = move(rootRows, f, tIdx)) }}
+          >
+            <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
+            <input bind:value={row.path} placeholder="~/Desktop/ab-code" aria-label="Repo root" />
+            <button class="btn ghost xs" title="Move up" aria-label="Move up" disabled={i === 0} onclick={() => (rootRows = nudge(rootRows, i, -1))}>↑</button>
+            <button class="btn ghost xs" title="Move down" aria-label="Move down" disabled={i === rootRows.length - 1} onclick={() => (rootRows = nudge(rootRows, i, 1))}>↓</button>
+            <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (rootRows = rootRows.filter((r) => r.key !== row.key))}>✕</button>
+          </div>
+        {/each}
+        <button class="btn ghost xs add" onclick={() => (rootRows = [...rootRows, { key: ++rowKey, path: '' }])}>＋ add root</button>
       </div>
 
       <div class="field">
@@ -176,8 +215,12 @@
 
       <div class="setsec">
         <span class="lbl">Dev servers <span class="lbl-note">— per-repo launch command &amp; ports (space/comma separated)</span></span>
-        {#each startRows as row (row.key)}
-          <div class="srvcfg-row">
+        {#each startRows as row, i (row.key)}
+          <div
+            class="srvcfg-row"
+            use:reorderable={{ index: i, onmove: (f, tIdx) => (startRows = move(startRows, f, tIdx)) }}
+          >
+            <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
             <input list="setRepoList" bind:value={row.repo} placeholder="repo…" aria-label="Repo" />
             <input bind:value={row.cmd} placeholder="command…" aria-label="Command" />
             <input bind:value={row.ports} placeholder="ports" aria-label="Ports" />
@@ -189,20 +232,48 @@
 
       <div class="setsec">
         <span class="lbl">Editors <span class="lbl-note">— <code>{'{path}'}</code> is the worktree path</span></span>
-        {#each editorRows as row (row.key)}
-          <div class="srvcfg-row cols3">
+        {#each editorRows as row, i (row.key)}
+          <div
+            class="srvcfg-row cols3"
+            use:reorderable={{ index: i, onmove: (f, tIdx) => (editorRows = move(editorRows, f, tIdx)) }}
+          >
+            <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
             <input bind:value={row.name} placeholder="name…" aria-label="Editor name" />
             <input bind:value={row.open} placeholder="open command with {'{path}'}…" aria-label="Open command" />
             <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (editorRows = editorRows.filter((r) => r.key !== row.key))}>✕</button>
           </div>
         {/each}
         <button class="btn ghost xs add" onclick={() => (editorRows = [...editorRows, { key: ++rowKey, name: '', open: '', openGroup: '' }])}>＋ add editor</button>
+
+        <!-- Which editor "Open in editor" actually uses. The server has always accepted
+             `defaultEditor` and returned it; this modal never sent it and offered no
+             control, so the choice was stuck at whatever config.json said and could only
+             be changed by hand-editing the file and restarting the daemon. -->
+        <label class="picker">
+          <span>Open in editor uses</span>
+          <select class="mini-select" bind:value={defaultEditor} aria-label="Default editor">
+            {#each editorRows.filter((r) => r.name.trim()) as r (r.key)}
+              <option value={r.name.trim()}>{r.name.trim()}</option>
+            {/each}
+          </select>
+        </label>
       </div>
 
       <div class="setsec">
-        <span class="lbl">Feature groups <span class="lbl-note">— members are <code>repo/branch-or-wtname</code> refs, comma-separated</span></span>
-        {#each groupRows as row (row.key)}
-          <div class="srvcfg-row cols3">
+        <span class="lbl">Feature groups <span class="lbl-note">— only for worktrees whose names do NOT match</span></span>
+        <!-- Said out loud, because the word "group" does not carry it: a feature is
+             normally AUTOMATIC — worktrees in different repos that share a name are one
+             feature. A group is the manual override for when the names cannot match. -->
+        <p class="secnote">
+          Worktrees that share a name are already one feature — you need a group only when
+          they differ, e.g. <code>accept-blue/fix-mfa</code> with <code>ab-iso-fe/mfa-cleanup</code>.
+        </p>
+        {#each groupRows as row, i (row.key)}
+          <div
+            class="srvcfg-row cols3"
+            use:reorderable={{ index: i, onmove: (f, tIdx) => (groupRows = move(groupRows, f, tIdx)) }}
+          >
+            <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
             <input bind:value={row.name} placeholder="group name…" aria-label="Group name" />
             <input bind:value={row.members} placeholder="repo/branch, repo/branch…" aria-label="Group members" />
             <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (groupRows = groupRows.filter((r) => r.key !== row.key))}>✕</button>
@@ -238,7 +309,20 @@
   .setsec { display:flex; flex-direction:column; gap:9px; }
   .setsec > .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .setsec .add { align-self:flex-start; }
-  .srvcfg-row { display:grid; grid-template-columns:120px 1fr 90px 30px; gap:8px; align-items:center; }
-  .srvcfg-row.cols3 { grid-template-columns:120px 1fr 30px; }
+  /* A leading grip column on every row, so the lists line up with each other. */
+  .srvcfg-row { display:grid; grid-template-columns:18px 120px 1fr 90px 30px; gap:8px; align-items:center; }
+  .srvcfg-row.cols3 { grid-template-columns:18px 120px 1fr 30px; }
+  /* Repo roots: one field, then move-up / move-down / remove. */
+  .srvcfg-row.cols2 { grid-template-columns:18px 1fr 28px 28px 30px; }
+
+  .grip { cursor:grab; color:var(--faint); font-size:14px; line-height:1; text-align:center; user-select:none; }
+  .grip:active { cursor:grabbing; }
+  /* Set by the reorderable action while a drag is in flight. */
+  .srvcfg-row:global(.dragging) { opacity:.45; }
+  .srvcfg-row:global(.dragover) { box-shadow:inset 0 2px 0 var(--brand); }
+
+  .picker { display:flex; align-items:center; gap:9px; margin-top:4px; font-family:var(--mono); font-size:12px; color:var(--muted); }
+  .secnote { margin:0 0 4px; font-size:12.5px; line-height:1.5; color:var(--muted); }
+  .secnote code { font-family:var(--mono); font-size:11.5px; }
   .srvcfg-row input { background:var(--panel); border:1px solid var(--border-strong); border-radius:7px; padding:6px 9px; color:var(--ink); font-family:var(--mono); font-size:12.5px; width:100%; }
 </style>
