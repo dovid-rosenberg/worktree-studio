@@ -458,8 +458,11 @@ async function main() {
     if (!s) return res.status(404).json({ error: 'no such session' });
     const owned = (s.repos || []).filter(promoted);
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
-    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath)); // whole stack stopped → free the feature's slot
+    // Refresh BEFORE releasing: the guard reads what is still listening, so it has to see
+    // the world after the stops. A session's repos can be a strict subset of its feature's
+    // members, so "I stopped mine" is not "the feature is down" — see releaseSlotIfIdle.
     await refreshRunning();
+    for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), runningCache);
     broadcastTopology();
     res.json({ ok: true });
   });
@@ -472,8 +475,11 @@ async function main() {
     const owned: PromotedRepo[] = s ? (s.repos || []).filter(promoted) : [];
     for (const r of owned) await servers.stop(r.repo, r.worktreePath);
     const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
-    for (const r of owned) servers.releaseSlot(servers.featureFor(r.worktreePath));
-    if (owned.length) { await refreshRunning(); broadcastTopology(); }
+    if (owned.length) {
+      await refreshRunning(); // the guard below reads the post-stop world
+      for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), runningCache);
+      broadcastTopology();
+    }
     res.json(out);
   });
 
@@ -620,9 +626,8 @@ async function main() {
     const { repo, worktreePath } = req.body || {};
     const out = await servers.stop(repo, worktreePath);
     await refreshRunning();
-    // only free the feature's slot once no sibling repo of the feature is still running
-    const feature = servers.featureFor(worktreePath);
-    if (![...runningCache.keys()].some((p) => servers.featureFor(p) === feature)) servers.releaseSlot(feature);
+    // This route already had the right rule; it is now the shared one (releaseSlotIfIdle).
+    servers.releaseSlotIfIdle(servers.featureFor(worktreePath), runningCache);
     broadcastTopology();
     res.json(out);
   });
@@ -643,7 +648,11 @@ async function main() {
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
   orchestrator.register(api, {
-    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast: broadcastTopology, rescan,
+    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning,
+    // A getter, not the Map: refreshRunning() REPLACES runningCache rather than mutating
+    // it, so a captured reference would be the pre-refresh map every time.
+    running: () => runningCache,
+    scheduleBroadcast: broadcastTopology, rescan,
   });
 
   // GET /sessions/:id/ci (still an on-demand answer for SwiftBar/Alfred and any

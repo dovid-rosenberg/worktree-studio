@@ -149,8 +149,6 @@
   .head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .head h2 { margin:0; font-size:20px; letter-spacing:-.01em; }
   .sub { margin:5px 0 20px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
-  .cta { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:26px; }
-  .danger-text { color:#e5484d; }
 
   .tablewrap { overflow-x:auto; border:1px solid var(--border); border-radius:10px; background:var(--panel); }
   .rtable { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:11.5px; min-width:560px; }

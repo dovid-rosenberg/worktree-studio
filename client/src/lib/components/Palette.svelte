@@ -33,7 +33,9 @@
           glyph: s.worktreePath ? '⎇' : '✦',
           dot: s.state,
           title: s.title,
-          sub: `${s.repoName} · ${s.state}${i != null && i < 9 ? ` · ⌘${i + 1}` : ''}`,
+          // ⌥, not ⌘: shortcuts.svelte.ts binds altKey + Digit1-9 (⌘-digit belongs to the
+          // browser's tab switcher). The palette advertised a key that did nothing.
+          sub: `${s.repoName} · ${s.state}${i != null && i < 9 ? ` · ⌥${i + 1}` : ''}`,
           run: () => { overlays.closePalette(); ui.goToSession(s.id); },
         };
       }),

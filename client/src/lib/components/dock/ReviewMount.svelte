@@ -22,12 +22,7 @@
    */
   import ReviewPanel from '$lib/components/review/ReviewPanel.svelte';
 
-  /**
-   * `onchangescount` is accepted and unused: ReviewPanel exposes no such callback, and
-   * Dock.svelte already fetches the badge count itself. Kept in the signature so the
-   * dock's call site isn't silently dropping a prop.
-   */
-  let { session }: { session?: Session; onchangescount?: (n: number) => void } = $props();
+  let { session }: { session?: Session } = $props();
 
   const sessionId = $derived(session?.id ?? null);
 </script>

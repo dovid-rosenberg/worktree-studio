@@ -73,6 +73,14 @@ type LaunchOpts = unknown;
 interface Servers {
   featureFor(worktreePath: string): string;
   allocSlotFor(feature: string): { slot?: number; error?: string };
+  /**
+   * Release only when nothing of the feature is still listening. Replaces the bare
+   * releaseSlot() these routes used to call: stopping every member this route knows about
+   * is not the same as the feature being down, because a feature can own a worktree the
+   * caller never enumerated. See servers.ts.
+   */
+  releaseSlotIfIdle(feature: string, running: Map<string, { pid: number; ports: number[] }>): boolean;
+  /** Unconditional. Only /group/delete may use it — the worktrees are gone by then. */
   releaseSlot(feature: string): void;
   launchOpts(repo: string, feature: string): LaunchOpts;
   // `listening` is the strong verdict: true = every expected port bound, false = the
@@ -118,6 +126,8 @@ interface OrchestratorDeps {
   resolveGroup: (name: string) => Promise<{ group: ResolvedGroup | null; flat: Member[] }>;
   conflictsFor: (member: Member, flat: Member[]) => Member[];
   refreshRunning: () => Promise<unknown>;
+  /** The discovered running map, read AFTER refreshRunning() so slot release can be guarded. */
+  running: () => Map<string, { pid: number; ports: number[] }>;
   scheduleBroadcast: () => void;
   rescan: () => Promise<unknown>;
 }
@@ -135,7 +145,16 @@ interface GroupBody {
 
 // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
 function register(app: Router, deps: OrchestratorDeps): void {
-  const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, scheduleBroadcast, rescan } = deps;
+  const { cfg, servers, manager, repos, resolveGroup, conflictsFor, refreshRunning, running, scheduleBroadcast, rescan } = deps;
+
+  /**
+   * Free the feature's slot for every member, but only if the feature is genuinely down.
+   * Always called AFTER refreshRunning(), because the guard reads what is still listening.
+   */
+  const releaseIdleSlots = (members: Member[]): void => {
+    const live = running();
+    for (const m of members) servers.releaseSlotIfIdle(servers.featureFor(m.path), live);
+  };
 
   app.post('/group/start', async (req, res) => {
     const { group, stopConflicts }: GroupBody = req.body || {};
@@ -223,8 +242,11 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
-    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
+    // Refresh first, then release: the guard reads what is still listening, and this
+    // released the slot BEFORE looking — so a member that refused to die still took its
+    // ports while the slot went back in the pool.
     await refreshRunning();
+    releaseIdleSlots(g.members);
     scheduleBroadcast();
     res.json({ ok: true });
   });
@@ -290,7 +312,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
       if (m.running) await servers.stop(m.repo, m.path);
       if (m.session) await manager.deactivate(m.session.id);
     }
-    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // whole stack stopped → free the feature's slot
+    // Close had no refresh at all, so it released against a stale map.
+    await refreshRunning();
+    releaseIdleSlots(g.members);
     scheduleBroadcast();
     res.json({ ok: true });
   });
@@ -309,7 +333,10 @@ function register(app: Router, deps: OrchestratorDeps): void {
       const rr = await worktree.remove(repoObj.path, m.path, { branch: m.branch, deleteBranch: !!deleteBranches });
       results.push({ repo: m.repo, ok: rr.ok, error: rr.ok ? undefined : rr.error });
     }
-    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path)); // feature removed → free its slot
+    // Unconditional, and the ONE place that is right: the worktrees are gone, so the
+    // feature no longer exists. Guarding here would leak the slot forever if some stray
+    // process were still holding a port from a path that has been deleted.
+    for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path));
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   });

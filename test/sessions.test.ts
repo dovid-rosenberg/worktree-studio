@@ -210,6 +210,25 @@ test('claudeCmd appends the seed as the final positional arg on a FRESH launch, 
   assert.ok(resumed.includes(`-r ${shq('sid-9')}`), `resume should still add -r <id>: ${resumed}`);
 });
 
+test('the add-repo CLI path in the system prompt actually exists on disk', () => {
+  /*
+   * The bug: the hint was built as `bin/wt-studio.js` while the file is `bin/wt-studio.ts`
+   * — the CLI moved with the TypeScript migration and this string did not. Every session's
+   * --append-system-prompt told the agent to run a path that does not exist, so `add-repo`
+   * failed from inside a session with a module-not-found nobody could place.
+   *
+   * Asserting the extension would just re-encode the mistake, so this stats the file the
+   * prompt actually names: rename the CLI again and this fails.
+   */
+  const m = manager();
+  const s = session({ settingsFile: '/tmp/s.settings.json', feature: 'f', repos: [sessionRepo({ primary: true })] });
+  const cmd = m.claudeCmd(s);
+
+  const found = cmd.match(/(\S*bin\/wt-studio\.\w+)/);
+  assert.ok(found, `the prompt should name the add-repo CLI: ${cmd}`);
+  assert.ok(fs.existsSync(found[1]), `the prompt names a CLI that does not exist: ${found[1]}`);
+});
+
 test('activate/restore resume cwd resolves to home (transcript dir) for a promoted session', async () => {
   const m = manager();
   const home = tempRepo('home');

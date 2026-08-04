@@ -313,6 +313,31 @@ class Servers {
 
   releaseSlot(feature: string): void { if (feature && this.slots.delete(feature)) this._save(); }
 
+  /**
+   * Release a feature's slot only if nothing of that feature is still listening.
+   *
+   * The safe form of releaseSlot, and the only one callers should reach for. Three routes
+   * used to free slots three different ways: `/servers/stop` guarded on this condition,
+   * while `/sessions/:id/servers/stop` and `/group/stop` released unconditionally once
+   * they had stopped what THEY knew about.
+   *
+   * Unconditional release is only correct if the caller stopped every member of the
+   * feature, and a caller cannot assume that. A session's `repos` can be a strict subset
+   * of its feature's members — a worktree made with a plain `wt` joins the feature but
+   * not the session — so stopping the session's repos can leave a sibling running. The
+   * slot then goes back in the pool, the next feature is handed it, and both bind the
+   * same ports.
+   *
+   * `running` is the discovered map (realpath → {pid,ports}) from discoverRunning();
+   * callers pass the cache they have just refreshed.
+   */
+  releaseSlotIfIdle(feature: string, running: Map<string, RunningServer>): boolean {
+    if (!feature) return false;
+    for (const p of running.keys()) if (this.featureFor(p) === feature) return false;
+    this.releaseSlot(feature);
+    return true;
+  }
+
   // Mark a feature as having a launch in flight, so its slot is not reclaimable
   // while its ports are still coming up. Always paired in a finally.
   _beginStart(feature: string): void {

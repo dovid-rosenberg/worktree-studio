@@ -381,7 +381,11 @@ class SessionManager extends EventEmitter {
     }
     // tell claude it can pull in another repo itself (single line — no newlines,
     // which would break the multiplexer layout)
-    const cli = path.join(import.meta.dirname, '..', 'bin', 'wt-studio.js');
+    // `.ts`, not `.js`: the CLI was migrated with the rest of the server and this string
+    // was not. Every session's system prompt told the agent to run a path that does not
+    // exist, so `add-repo` failed from inside a session with a module-not-found the user
+    // had to diagnose. Pinned by a test that stats the file.
+    const cli = path.join(import.meta.dirname, '..', 'bin', 'wt-studio.ts');
     const note = `You're in a Worktree Studio session (feature "${session.feature}"). If this work needs changes in another repo, run: ${cli} add-repo <repo-name> — it creates a same-named worktree in that repo and grants you access. Repos live under ${(this.cfg.baseDirs || []).join(', ')}.`;
     parts.push('--append-system-prompt', shq(note));
     // Fresh launch → deliver the seed as claude's final positional (the prompt) arg.

@@ -119,7 +119,7 @@
     </div>
 
     {#if ui.dockView === 'changes'}
-      <ReviewMount {session} onchangescount={(n: number) => (changesCount = n)} />
+      <ReviewMount {session} />
     {:else if ui.dockView === 'logs'}
       <LogsPanel {session} />
     {:else if ui.dockView === 'insights'}
