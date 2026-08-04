@@ -131,16 +131,16 @@
 
 <style>
   .logs { flex:1; min-height:0; display:flex; flex-direction:column; background:var(--term-bg); }
-  .logs-head { display:flex; align-items:center; gap:10px; padding:7px 12px; background:var(--elevated); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:11px; color:var(--muted); flex:none; }
-  .logs-select { width:auto; padding:3px 6px; font-size:11px; }
-  .chk { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .logs-head { display:flex; align-items:center; gap:10px; padding:7px 12px; background:var(--elevated); border-bottom:1px solid var(--border); font-family:var(--mono); font-size:12px; color:var(--muted); flex:none; }
+  .logs-select { width:auto; padding:3px 6px; font-size:12px; }
+  .chk { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:12px; color:var(--muted); }
   .chk input { accent-color:var(--brand); }
   .tailing { display:inline-flex; align-items:center; gap:6px; color:var(--done); margin-left:auto; }
   .tailing i { width:7px; height:7px; border-radius:50%; background:var(--done); display:inline-block; animation:pulse 1.1s infinite; }
   @media (prefers-reduced-motion:reduce){ .tailing i { animation:none; } }
-  .logbody { flex:1; overflow:auto; padding:9px 12px; font-family:var(--mono); font-size:12px; line-height:1.55; color:#c6ccd6; }
+  .logbody { flex:1; overflow:auto; padding:9px 12px; font-family:var(--mono); font-size:13px; line-height:1.55; color:#c6ccd6; }
   .logline { white-space:pre-wrap; word-break:break-word; }
   .logline .t { color:var(--faint); }
   .logline.ok { color:var(--done); } .logline.w { color:var(--waiting); } .logline.e { color:var(--del); }
-  .logs-hint { color:var(--faint); font-family:var(--mono); font-size:12px; padding:14px 4px; }
+  .logs-hint { color:var(--faint); font-family:var(--mono); font-size:13px; padding:14px 4px; }
 </style>

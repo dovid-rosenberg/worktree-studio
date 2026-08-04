@@ -3,16 +3,12 @@ import { render, screen } from '@testing-library/svelte';
 import type { Feature, Session } from '../../../../server/types';
 
 /*
- * The header's summary, which was wrong in two ways at once.
+ * The header is three things now: brand, Insights (with the waiting badge), and the ⋮
+ * menu. Everything else moved — New session and the fleet counts to the rail, the rest
+ * behind the menu — so what is left to pin here is that the header stays EMPTY of them.
  *
- * It counted agent states per MEMBER — every worktree across every feature — so a
- * 3-repo feature with one working agent contributed three. The numbers grew with how
- * multi-repo the work was, which is exactly backwards. And `running` counts SERVERS
- * while `working`/`waiting` count AGENTS, printed as one comma-run that read as parts
- * of one total and did not add up.
- *
- * The per-member inflation is the one worth a test: it is invisible unless you happen
- * to own a multi-repo feature and think to check the arithmetic.
+ * The counting rules (per-agent, not per-member; two vocabularies said separately) are
+ * tested where they now render: Rail.test.ts.
  */
 vi.mock('$lib/ops.svelte.js', () => ({ restartStack: vi.fn(), stopStack: vi.fn() }));
 
@@ -34,50 +30,34 @@ function give(features: Feature[], sessions: Session[] = []) {
   world.sessionHalf = { sessions, servers: {} } as never;
 }
 
-/** The counts strip, as text, so assertions read like what is on screen. */
-const counts = (c: HTMLElement) => c.querySelector('.counts')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
-
 beforeEach(() => {
   ui.dockView = 'term';
   give([]);
 });
 
 describe('TopBar summary', () => {
-  it('counts a working agent ONCE however many repos its feature spans', () => {
-    // The regression: three members, one agent. This used to say "3 working".
-    const agent = { id: 's1', state: 'working', activity: '', muxName: 'm' };
-    give(
-      [feature('wide', [member('accept-blue', { session: agent }), member('merchant-v3', { session: agent }), member('ab-iso-fe', { session: agent })], agent)],
-      [session('s1', 'working')],
-    );
+
+
+
+
+  it('no longer carries the fleet counts — they live beside the rows they count', () => {
+    give([feature('f', [member('accept-blue', { running: true })])]);
     const { container } = render(TopBar);
-    expect(counts(container)).toContain('1 working');
-    expect(counts(container)).not.toContain('3 working');
+    expect(container.querySelector('.counts')).toBeNull();
   });
 
-  it('counts dev servers per worktree, because each worktree runs its own', () => {
-    give([feature('wide', [member('accept-blue', { running: true }), member('merchant-v3', { running: true })])]);
-    const { container } = render(TopBar);
-    expect(counts(container)).toContain('2 up');
+  it('no longer carries New session — it heads the rail it creates rows in', () => {
+    render(TopBar);
+    expect(screen.queryByText(/New session/)).not.toBeInTheDocument();
   });
 
-  it('hides a zero rather than spending a slot saying nothing', () => {
-    give([feature('quiet', [member('accept-blue')])]);
-    const { container } = render(TopBar);
-    const text = counts(container);
-    expect(text).toContain('1 features');
-    expect(text).not.toMatch(/\b0\b/);
-  });
-
-  it('labels the two vocabularies separately so they never read as one total', () => {
-    give(
-      [feature('f', [member('accept-blue', { running: true, session: { id: 's1', state: 'waiting', activity: '', muxName: 'm' } })], { id: 's1', state: 'waiting', activity: '', muxName: 'm' })],
-      [session('s1', 'waiting')],
-    );
-    const { container } = render(TopBar);
-    const text = counts(container);
-    expect(text).toContain('agents');
-    expect(text).toContain('servers');
+  it('puts the rare and the destructive behind one ⋮ rather than in the bar', () => {
+    give([feature('f', [member('accept-blue', { running: true })])]);
+    render(TopBar);
+    // Settings, theme and Stop all were permanent buttons competing with the content.
+    expect(screen.queryByLabelText('Toggle theme')).not.toBeInTheDocument();
+    expect(screen.queryByText('Stop all')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Menu')).toBeInTheDocument();
   });
 
   it('does not advertise mux: tmux — it is the only driver and it was noise', () => {
@@ -99,14 +79,16 @@ describe('TopBar summary', () => {
     expect(screen.getByRole('button', { name: /Insights/ })).toHaveAttribute('data-n');
   });
 
-  it('offers the stack-wide buttons only when something is actually running', () => {
+  it('offers the stack-wide verbs in the menu only when something is actually running', async () => {
     give([feature('quiet', [member('accept-blue')])]);
     const { unmount } = render(TopBar);
-    expect(screen.queryByText('Stop all')).not.toBeInTheDocument();
+    screen.getByLabelText('Menu').click();
+    expect(screen.queryByText(/Stop all servers/)).not.toBeInTheDocument();
     unmount();
 
     give([feature('busy', [member('accept-blue', { running: true })])]);
     render(TopBar);
-    expect(screen.getByText('Stop all')).toBeInTheDocument();
+    screen.getByLabelText('Menu').click();
+    expect(await screen.findByText(/Stop all servers/)).toBeInTheDocument();
   });
 });

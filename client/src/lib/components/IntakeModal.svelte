@@ -179,24 +179,24 @@
 </Modal>
 
 <style>
-  .modal-head { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:14px; }
+  .modal-head { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:15px; }
   .srctabs { display:flex; gap:4px; padding:12px 16px 0; flex-wrap:wrap; }
-  .srctab { font-size:12.5px; font-weight:600; color:var(--muted); padding:7px 13px; border-radius:9px 9px 0 0; border:1px solid transparent; border-bottom:none; cursor:pointer; }
+  .srctab { font-size:13.5px; font-weight:600; color:var(--muted); padding:7px 13px; border-radius:9px 9px 0 0; border:1px solid transparent; border-bottom:none; cursor:pointer; }
   .srctab.on { color:var(--ink); background:var(--elevated); border-color:var(--border); }
   .srctab[data-disabled="true"] { opacity:.4; cursor:not-allowed; }
   .modal-body { padding:16px; background:var(--elevated); border-top:1px solid var(--border); display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
   .modal-foot { display:flex; align-items:center; gap:10px; padding:13px 16px; border-top:1px solid var(--border); }
-  .foot-note { font-family:var(--mono); font-size:11px; color:var(--faint); }
+  .foot-note { font-family:var(--mono); font-size:12px; color:var(--faint); }
   .field { display:flex; flex-direction:column; gap:6px; }
-  .field label, .field .lbl { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
+  .field label, .field .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
   .hint { text-transform:none; letter-spacing:0; color:var(--faint); }
   .issuelist { display:flex; flex-direction:column; gap:5px; max-height:200px; overflow-y:auto; }
-  .issue { display:flex; align-items:center; gap:9px; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px 10px; cursor:pointer; font-size:13px; }
+  .issue { display:flex; align-items:center; gap:9px; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px 10px; cursor:pointer; font-size:14px; }
   .issue:hover { border-color:var(--border-strong); }
   .issue.sel { border-color:var(--brand); }
-  .issue .num { font-family:var(--mono); color:var(--brand); font-weight:700; font-size:11.5px; }
-  .modal-note { font-family:var(--mono); font-size:11px; color:var(--faint); }
+  .issue .num { font-family:var(--mono); color:var(--brand); font-weight:700; font-size:12.5px; }
+  .modal-note { font-family:var(--mono); font-size:12px; color:var(--faint); }
   .repochecks { display:flex; flex-wrap:wrap; gap:8px; }
-  .repocheck { font-family:var(--mono); font-size:12px; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:5px 10px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; letter-spacing:0; }
+  .repocheck { font-family:var(--mono); font-size:13px; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:5px 10px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; letter-spacing:0; }
   .repocheck input { accent-color:var(--brand); }
 </style>

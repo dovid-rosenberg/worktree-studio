@@ -222,23 +222,23 @@
 </Modal>
 
 <style>
-  .modal-head { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:14px; }
+  .modal-head { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:15px; }
   .modal-body { padding:16px; background:var(--elevated); border-top:1px solid var(--border); display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
   .modal-foot { display:flex; align-items:center; gap:10px; padding:13px 16px; border-top:1px solid var(--border); }
-  .foot-note { font-family:var(--mono); font-size:11px; color:var(--faint); }
+  .foot-note { font-family:var(--mono); font-size:12px; color:var(--faint); }
   .field { display:flex; flex-direction:column; gap:6px; }
-  .field label, .field .lbl { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
+  .field label, .field .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
   .field label.inline input[type="checkbox"] { vertical-align:middle; margin-right:4px; accent-color:var(--brand); }
   .hint, .lbl-note { text-transform:none; letter-spacing:0; color:var(--faint); }
-  .chk { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px; color:var(--muted); text-transform:none; letter-spacing:0; }
+  .chk { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:12px; color:var(--muted); text-transform:none; letter-spacing:0; }
   .chk input { accent-color:var(--brand); }
-  .conn-status { font-family:var(--mono); font-size:12px; color:var(--muted); }
+  .conn-status { font-family:var(--mono); font-size:13px; color:var(--muted); }
   .conn-status .ok { color:var(--done); }
   .conn-status .warn { color:var(--waiting); }
   .setsec { display:flex; flex-direction:column; gap:9px; }
-  .setsec > .lbl { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .setsec > .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .setsec .add { align-self:flex-start; }
   .srvcfg-row { display:grid; grid-template-columns:120px 1fr 90px 30px; gap:8px; align-items:center; }
   .srvcfg-row.cols3 { grid-template-columns:120px 1fr 30px; }
-  .srvcfg-row input { background:var(--panel); border:1px solid var(--border-strong); border-radius:7px; padding:6px 9px; color:var(--ink); font-family:var(--mono); font-size:11.5px; width:100%; }
+  .srvcfg-row input { background:var(--panel); border:1px solid var(--border-strong); border-radius:7px; padding:6px 9px; color:var(--ink); font-family:var(--mono); font-size:12.5px; width:100%; }
 </style>

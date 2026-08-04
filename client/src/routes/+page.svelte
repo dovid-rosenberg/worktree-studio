@@ -38,5 +38,5 @@
 <style>
   /* The splitter is a real column, so the rail's width is the only thing that moves. */
   .main { flex:1; display:grid; grid-template-columns: var(--rail-w) auto 1fr; min-height:0; min-width:0; }
-  .streamwarn { font-family:var(--mono); font-size:11px; color:var(--waiting); background:var(--waiting-bg); padding:5px 16px; flex:none; }
+  .streamwarn { font-family:var(--mono); font-size:12px; color:var(--waiting); background:var(--waiting-bg); padding:5px 16px; flex:none; }
 </style>

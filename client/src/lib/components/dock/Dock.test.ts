@@ -116,10 +116,13 @@ describe('Dock routing', () => {
     expect(container.querySelector('.dock-head')).not.toBeNull();
   });
 
-  it('keeps the server bar with the session, where the ports are', () => {
+  it('no longer owns a server-bar band — the ports moved next to the buttons', () => {
+    // The readout renders inside the ActionBar now (see ActionBar.test), so the dock has
+    // one fewer horizontal band and the chips sit with the verbs that affect them.
     give([], [session()]);
     ui.select('s1');
     const { container } = render(Dock);
-    expect(container.querySelector('.serverbar')).toBeTruthy();
+    expect(container.querySelector('.serverbar')).toBeNull();
+    expect(container.querySelector('.readout')).toBeNull();
   });
 });

@@ -148,36 +148,36 @@
   .fpane { flex:1; min-height:0; overflow:auto; padding:24px 22px 40px; }
   .head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .head h2 { margin:0; font-size:20px; letter-spacing:-.01em; }
-  .sub { margin:5px 0 20px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
+  .sub { margin:5px 0 20px; font-family:var(--mono); font-size:12.5px; color:var(--faint); }
 
   .tablewrap { overflow-x:auto; border:1px solid var(--border); border-radius:10px; background:var(--panel); }
-  .rtable { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:11.5px; min-width:560px; }
-  .rtable th { text-align:left; font-size:9.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); font-weight:700; padding:8px 12px; border-bottom:1px solid var(--border); background:var(--elevated); white-space:nowrap; }
+  .rtable { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12.5px; min-width:560px; }
+  .rtable th { text-align:left; font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); font-weight:700; padding:8px 12px; border-bottom:1px solid var(--border); background:var(--elevated); white-space:nowrap; }
   .rtable td { padding:9px 12px; border-bottom:1px solid var(--border); color:var(--muted); }
   .rtable tr:last-child td { border-bottom:none; }
   .rtable td.r { color:var(--ink); }
   .rtable td.ports { color:var(--done); font-variant-numeric:tabular-nums; }
-  .badge { font-family:var(--mono); font-size:10px; font-weight:600; padding:2px 8px; border-radius:999px; margin-left:8px; }
+  .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; margin-left:8px; }
   .badge.merged { color:var(--done); background:var(--done-bg); }
   .badge.slot { color:var(--working); background:var(--working-bg); }
-  .h3 { margin:26px 0 10px; font-size:13px; font-weight:650; }
-  .msg { margin:0; font-size:12.5px; color:var(--muted); }
+  .h3 { margin:26px 0 10px; font-size:14px; font-weight:650; }
+  .msg { margin:0; font-size:13.5px; color:var(--muted); }
   .msg.bad { color:var(--waiting); }
   .rolls { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
   .roll { border:1px solid var(--border); border-radius:10px; background:var(--panel); padding:12px 13px; min-width:0; }
   .roll header { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:7px; }
-  .roll .rrepo { font-weight:640; font-size:12.5px; }
-  .roll .rbranch { font-family:var(--mono); font-size:10.5px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .roll .rbase { font-family:var(--mono); font-size:10px; color:var(--muted); }
-  .rsum { margin:0 0 8px; font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .roll .rrepo { font-weight:640; font-size:13.5px; }
+  .roll .rbranch { font-family:var(--mono); font-size:11.5px; color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .roll .rbase { font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .rsum { margin:0 0 8px; font-family:var(--mono); font-size:12px; color:var(--muted); }
   .rsum b { color:var(--ink); }
   .rsum .add { color:var(--add); margin-left:6px; }
   .rsum .del { color:var(--del); margin-left:4px; }
   .clist { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; }
-  .clist li { font-family:var(--mono); font-size:10.5px; color:var(--muted); display:flex; gap:7px; min-width:0; }
+  .clist li { font-family:var(--mono); font-size:11.5px; color:var(--muted); display:flex; gap:7px; min-width:0; }
   .clist code { color:var(--brand); flex:none; }
   .clist .csub { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .clist .more { color:var(--faint); }
 
-  .src { font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; border:1px solid var(--border); border-radius:5px; padding:1px 6px; color:var(--muted); }
+  .src { font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; border:1px solid var(--border); border-radius:5px; padding:1px 6px; color:var(--muted); }
 </style>

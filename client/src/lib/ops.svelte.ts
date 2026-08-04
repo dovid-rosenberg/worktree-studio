@@ -162,7 +162,19 @@ export async function addRepoToSession(s: Session) {
  */
 export async function addTab(s: Session, title = 'shell') {
   try {
-    await api('POST', `/api/v1/sessions/${s.id}/tabs`, { title });
+    const r = await api('POST', `/api/v1/sessions/${s.id}/tabs`, { title });
+    /*
+     * Select the tab that was just created.
+     *
+     * tmux's `new-window` makes the new window current, so the TERMINAL switched — but
+     * the strip kept its highlight on the old tab, because the response's `id` was
+     * thrown away. So the pane you were looking at and the tab that looked selected were
+     * different tabs, and clicking the highlighted one appeared to do nothing.
+     *
+     * Guarded on `r.id`: a driver that could not report an id leaves the strip alone
+     * rather than clearing the highlight to a tab that does not exist.
+     */
+    if (r?.id) { ui.dockView = 'term'; ui.activeTabId = r.id; }
   } catch (e) { toast(errMessage(e), true); }
 }
 

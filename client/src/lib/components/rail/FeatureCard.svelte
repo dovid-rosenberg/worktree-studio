@@ -111,21 +111,21 @@
          padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
 
   .l1 { display:flex; align-items:center; gap:7px; min-width:0; }
-  .fname { font-weight:600; font-size:13px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fname { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .l2 { display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; min-width:0; }
   .l3 { display:flex; flex-direction:column; gap:3px; margin-top:6px; min-width:0; }
-  .act { margin-top:6px; font-family:var(--mono); font-size:10.5px; color:var(--faint);
+  .act { margin-top:6px; font-family:var(--mono); font-size:11.5px; color:var(--faint);
          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  .noagent { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
+  .noagent { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   /* Waiting-hue, not an error: it is a thing to do, not a thing that broke. */
   .pill.nodeps { color:var(--waiting); background:var(--waiting-bg); }
   /* Same amber as deps: both say "configured wrong, not broken", and both are fixed
      by the user rather than by waiting. */
   .pill.nostart { color:var(--waiting); background:var(--waiting-bg); }
-  .nrepos { font-family:var(--mono); font-size:10px; color:var(--faint); }
+  .nrepos { font-family:var(--mono); font-size:11px; color:var(--faint); }
 
-  .mchip { display:flex; align-items:center; gap:5px; font-family:var(--mono); font-size:10.5px;
+  .mchip { display:flex; align-items:center; gap:5px; font-family:var(--mono); font-size:11.5px;
            color:var(--muted); min-width:0; max-width:100%; }
   .mchip .r { color:var(--ink); flex:none; }
   /* The branch is the only elastic part: repo and ports are short and identifying, so
@@ -133,9 +133,9 @@
   .mchip .br { color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto; min-width:0; }
   .mchip .p { color:var(--done); flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  .badge { font-family:var(--mono); font-size:10px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
+  .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
   .badge.merged { color:var(--done); background:var(--done-bg); }
   .badge.slot { color:var(--working); background:var(--working-bg); }
-  .src { font-family:var(--mono); font-size:9px; text-transform:uppercase; letter-spacing:.05em;
+  .src { font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
          border:1px solid var(--border); border-radius:5px; padding:1px 5px; color:var(--muted); flex:none; }
 </style>

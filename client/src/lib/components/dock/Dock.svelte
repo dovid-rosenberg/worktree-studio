@@ -12,7 +12,6 @@
   import Terminal from '$lib/components/Terminal.svelte';
   import DockHead from '$lib/components/dock/DockHead.svelte';
   import TabStrip from '$lib/components/dock/TabStrip.svelte';
-  import ServerBar from '$lib/components/dock/ServerBar.svelte';
   import LogsPanel from '$lib/components/dock/LogsPanel.svelte';
   import ReviewMount from '$lib/components/dock/ReviewMount.svelte';
   import FeaturePane from '$lib/components/dock/FeaturePane.svelte';
@@ -118,7 +117,6 @@
       <LogsPanel {session} />
     {/if}
 
-    <ServerBar {session} />
   {/if}
 </section>
 
@@ -127,7 +125,7 @@
   .empty { margin:auto; text-align:center; max-width:440px; padding:40px; color:var(--muted); }
   .empty-glyph { font-size:40px; color:var(--border-strong); }
   .empty h2 { margin:12px 0 6px; color:var(--ink); font-size:20px; }
-  .empty p { font-size:14px; line-height:1.55; }
+  .empty p { font-size:15px; line-height:1.55; }
   .empty-cta { display:flex; gap:8px; justify-content:center; margin-top:16px; }
 
   .term-area { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }

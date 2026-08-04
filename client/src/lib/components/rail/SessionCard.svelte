@@ -79,9 +79,9 @@
          padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
 
   .top { display:flex; align-items:center; gap:8px; min-width:0; }
-  .title { font-weight:600; font-size:13px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .meta { display:flex; align-items:center; gap:7px; margin-top:6px; font-family:var(--mono); font-size:10.5px;
+  .title { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .meta { display:flex; align-items:center; gap:7px; margin-top:6px; font-family:var(--mono); font-size:11.5px;
           color:var(--muted); flex-wrap:wrap; }
-  .act { margin-top:6px; font-family:var(--mono); font-size:10.5px; color:var(--faint);
+  .act { margin-top:6px; font-family:var(--mono); font-size:11.5px; color:var(--faint);
          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>

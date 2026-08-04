@@ -106,18 +106,18 @@
 
 <style>
   .dlg-inner { display:flex; flex-direction:column; min-height:0; }
-  .modal-head { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:14px; }
+  .modal-head { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:15px; }
   .modal-body { padding:16px; background:var(--elevated); border-top:1px solid var(--border); display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
   .modal-foot { display:flex; align-items:center; gap:10px; padding:13px 16px; border-top:1px solid var(--border); }
-  .dlg-msg { font-size:14px; line-height:1.55; color:var(--ink); }
+  .dlg-msg { font-size:15px; line-height:1.55; color:var(--ink); }
   .dlg-msg :global(a.link) { word-break:break-all; }
-  .dlg-check { display:flex; align-items:center; gap:8px; font-size:13.5px; }
+  .dlg-check { display:flex; align-items:center; gap:8px; font-size:14.5px; }
   .dlg-check input { accent-color:var(--brand); }
   .field { display:flex; flex-direction:column; gap:6px; }
-  .field label { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
+  .field label { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
   /* The shortcuts cheatsheet is a messageHtml payload, so its rules live here. */
   .dlg-msg :global(.kbd-list) { display:flex; flex-direction:column; gap:8px; }
-  .dlg-msg :global(.kbd-row) { display:flex; align-items:center; gap:12px; font-size:13px; }
-  .dlg-msg :global(.kbd-row kbd) { flex:none; min-width:56px; text-align:center; font-family:var(--mono); font-size:11.5px; color:var(--ink); background:var(--elevated); border:1px solid var(--border-strong); border-radius:6px; padding:3px 8px; }
+  .dlg-msg :global(.kbd-row) { display:flex; align-items:center; gap:12px; font-size:14px; }
+  .dlg-msg :global(.kbd-row kbd) { flex:none; min-width:56px; text-align:center; font-family:var(--mono); font-size:12.5px; color:var(--ink); background:var(--elevated); border:1px solid var(--border-strong); border-radius:6px; padding:3px 8px; }
   .dlg-msg :global(.kbd-row span) { color:var(--muted); }
 </style>

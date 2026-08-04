@@ -68,8 +68,9 @@ export type Selection =
 const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
 
-/** Drag bounds for the rail. Below ~230 the member chips stop being readable. */
-export const RAIL_MIN = 230;
+/** Drag bounds for the rail. Below this the member chips stop being readable — the floor
+    moved with the type scale, which went up a point across the app. */
+export const RAIL_MIN = 250;
 export const RAIL_MAX = 560;
 const RAIL_DEFAULT = 320;
 

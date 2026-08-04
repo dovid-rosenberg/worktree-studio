@@ -596,7 +596,7 @@
   .viewport-shell { position:relative; display:flex; flex-direction:column; min-height:0; flex:1; }
   .viewport {
     flex:1; min-height:0; overflow:auto; background:var(--bg);
-    font-family:var(--mono); font-size:12px; tab-size:4; outline-offset:-2px;
+    font-family:var(--mono); font-size:13px; tab-size:4; outline-offset:-2px;
   }
   .viewport.focused { box-shadow:inset 0 0 0 1px var(--border-strong); }
 
@@ -614,33 +614,33 @@
   .stick { position:sticky; left:0; display:flex; align-items:center; gap:9px; width:max-content; max-width:100%; padding:0 14px; height:100%; }
 
   .fileline { height:34px; background:var(--panel); border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
-  .filehd { display:flex; align-items:center; gap:9px; font-size:11.5px; cursor:pointer; border-radius:5px; padding:2px 4px; min-width:0; }
+  .filehd { display:flex; align-items:center; gap:9px; font-size:12.5px; cursor:pointer; border-radius:5px; padding:2px 4px; min-width:0; }
   .filehd:hover { background:var(--elevated); }
-  .filehd .tw { color:var(--faint); font-size:9px; width:9px; }
+  .filehd .tw { color:var(--faint); font-size:10px; width:9px; }
   .filehd .st { width:13px; text-align:center; font-weight:700; flex:none; }
   .filehd .st.m { color:var(--waiting); } .filehd .st.a { color:var(--add); }
   .filehd .st.d { color:var(--del); } .filehd .st.r { color:var(--working); }
   .filehd .nm { color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .filehd .ren { color:var(--working); font-size:10.5px; white-space:nowrap; }
-  .fstat { display:inline-flex; gap:6px; font-size:10.5px; white-space:nowrap; }
+  .filehd .ren { color:var(--working); font-size:11.5px; white-space:nowrap; }
+  .fstat { display:inline-flex; gap:6px; font-size:11.5px; white-space:nowrap; }
   .fileacts { display:inline-flex; gap:5px; flex:none; }
 
   .groupline { height:24px; background:var(--elevated); }
-  .glabel { font-size:9.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); }
+  .glabel { font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); }
   .glabel.unstaged { color:var(--waiting); }
   .glabel.staged { color:var(--done); }
 
   .hunkline { height:24px; background:var(--working-bg); }
-  .hh { color:var(--working); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .hstat { display:inline-flex; gap:6px; font-size:10px; }
+  .hh { color:var(--working); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hstat { display:inline-flex; gap:6px; font-size:11px; }
 
   .noteline { height:30px; }
-  .noteline .notetx { font-size:11px; color:var(--muted); }
+  .noteline .notetx { font-size:12px; color:var(--muted); }
   .noteline.warn .notetx { color:var(--waiting); }
   .noteline.error .notetx { color:var(--del); }
 
   .row { height:19px; line-height:19px; white-space:pre; display:flex; }
-  .row .ln { width:44px; flex:none; color:var(--faint); text-align:right; padding-right:8px; user-select:none; font-size:10.5px; }
+  .row .ln { width:44px; flex:none; color:var(--faint); text-align:right; padding-right:8px; user-select:none; font-size:11.5px; }
   .row .mk { width:12px; flex:none; text-align:center; user-select:none; }
   .row .tx { flex:1; }
   /* Tint per row in unified; per SIDE in split. Scoping these to `.uni` is load-bearing:
@@ -678,7 +678,7 @@
   .hbars { flex:none; display:grid; grid-template-columns:1fr 1fr; background:var(--panel); border-top:1px solid var(--border); }
   .hcell { min-width:0; padding-left:44px; }
   .hcell + .hcell { border-left:1px solid var(--border); }
-  .hbar { overflow-x:auto; overflow-y:hidden; height:11px; font-family:var(--mono); font-size:12px; outline-offset:-2px; }
+  .hbar { overflow-x:auto; overflow-y:hidden; height:11px; font-family:var(--mono); font-size:13px; outline-offset:-2px; }
   .hbar::-webkit-scrollbar { height:9px; }
   .hbar::-webkit-scrollbar-track { background:transparent; }
   .hbar::-webkit-scrollbar-thumb { background:var(--border-strong); border-radius:5px; border:2px solid var(--panel); }
@@ -686,9 +686,9 @@
   .hbar:focus-visible { outline:2px solid var(--brand); }
   .hspace { width:calc(var(--w) * 1ch); height:1px; }
 
-  .legend { flex:none; display:flex; align-items:center; gap:12px; padding:4px 14px; border-top:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:10px; color:var(--faint); }
+  .legend { flex:none; display:flex; align-items:center; gap:12px; padding:4px 14px; border-top:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:11px; color:var(--faint); }
   .legend .spacer { flex:1; }
-  .legend kbd { font-family:var(--mono); font-size:9.5px; border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:3px; padding:0 3px; margin-right:2px; color:var(--muted); }
+  .legend kbd { font-family:var(--mono); font-size:10.5px; border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:3px; padding:0 3px; margin-right:2px; color:var(--muted); }
 
   /* The file list. Sits over the diff rather than in a portal: it belongs to this
      surface, and `trapFocus` keeps Tab inside it while it is open. */
@@ -702,14 +702,14 @@
   }
   .jumpq {
     flex:none; border:0; border-bottom:1px solid var(--border); background:transparent;
-    color:var(--ink); font-family:var(--mono); font-size:12.5px; padding:10px 13px; outline:none;
+    color:var(--ink); font-family:var(--mono); font-size:13.5px; padding:10px 13px; outline:none;
   }
   .jumpq::placeholder { color:var(--faint); }
   .jumplist { overflow:auto; min-height:0; }
   .jumprow {
     display:flex; align-items:center; gap:9px; width:100%; text-align:left;
     border:0; background:none; cursor:pointer; padding:5px 13px;
-    font-family:var(--mono); font-size:11.5px; color:var(--ink);
+    font-family:var(--mono); font-size:12.5px; color:var(--ink);
   }
   .jumprow.at { background:var(--elevated); box-shadow:inset 2px 0 0 var(--brand); }
   .jumprow .st { width:13px; text-align:center; font-weight:700; flex:none; }
@@ -717,10 +717,10 @@
   .jumprow .st.d { color:var(--del); } .jumprow .st.r { color:var(--working); }
   /* Long paths matter at the END — `.../review/DiffViewport.svelte` — so clip the head. */
   .jumprow .nm { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left; }
-  .jumprow .fstat { flex:none; display:inline-flex; gap:6px; font-size:10.5px; }
-  .jumpnone { padding:12px 13px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
-  .jumpfoot { flex:none; padding:5px 13px; border-top:1px solid var(--border); font-family:var(--mono); font-size:9.5px; color:var(--faint); }
-  .jumpfoot kbd { font-family:var(--mono); font-size:9.5px; border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:3px; padding:0 3px; margin-right:2px; color:var(--muted); }
+  .jumprow .fstat { flex:none; display:inline-flex; gap:6px; font-size:11.5px; }
+  .jumpnone { padding:12px 13px; font-family:var(--mono); font-size:12.5px; color:var(--faint); }
+  .jumpfoot { flex:none; padding:5px 13px; border-top:1px solid var(--border); font-family:var(--mono); font-size:10.5px; color:var(--faint); }
+  .jumpfoot kbd { font-family:var(--mono); font-size:10.5px; border:1px solid var(--border-strong); border-bottom-width:2px; border-radius:3px; padding:0 3px; margin-right:2px; color:var(--muted); }
 
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; margin:0; }
 </style>

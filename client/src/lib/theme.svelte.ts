@@ -39,19 +39,37 @@ export function setTheme(next: ThemeName): void {
   try { localStorage.setItem(STORAGE_KEY, next); } catch { /* private mode — theme just won't persist */ }
 }
 
-// xterm can't read CSS custom properties, so the terminal palette is duplicated here as
-// literals. These are the same values style.css used for --term-bg / --brand; if the
-// tokens in app.css move, move these with them.
-const TERM_THEMES: Record<ThemeName, TermPalette> = {
+/*
+ * Last-resort palette, used only when there is no DOM to read tokens from (SSR, or a test
+ * that renders a Terminal without app.css). Everything else reads app.css — see below.
+ */
+const FALLBACK: Record<ThemeName, TermPalette> = {
   dark: { background: '#0c0f14', foreground: '#cdd4de', cursor: '#e0733f' },
-  light: { background: '#fbfaf7', foreground: '#1f232b', cursor: '#d05f30' },
+  light: { background: '#fdfcfa', foreground: '#181c24', cursor: '#c1521f' },
 };
 
 /**
- * The xterm `theme` option for the current app theme. Reading `theme.current` (not the
- * DOM) is what makes this reactive — every mounted Terminal re-themes on toggle. The old
- * code re-themed only the primary terminal, leaving a split pane on the previous palette.
+ * The xterm `theme` option for the current app theme.
+ *
+ * xterm cannot read CSS custom properties, so this used to be a hardcoded COPY of the
+ * `--term-bg` / `--term-fg` / `--term-cursor` tokens, with a comment asking whoever moved
+ * the tokens to move these too. That is a promise, not a mechanism, and it was broken the
+ * first time the light palette was retuned: the tokens said `#fdfcfa` while xterm was
+ * still painting `#fbfaf7`. So it reads the tokens instead, and the two cannot disagree.
+ *
+ * Reading `theme.current` is what makes this REACTIVE — every mounted Terminal re-themes
+ * on toggle. The DOM read has to happen after `setTheme` has stamped `data-theme`, which
+ * it does synchronously before this is ever recomputed.
  */
 export function termTheme(): TermPalette {
-  return TERM_THEMES[theme.current] || TERM_THEMES.dark;
+  const fallback = FALLBACK[theme.current] || FALLBACK.dark;
+  if (typeof document === 'undefined') return fallback;
+  const cs = getComputedStyle(document.documentElement);
+  const read = (name: string, or: string): string => cs.getPropertyValue(name).trim() || or;
+  return {
+    background: read('--term-bg', fallback.background),
+    foreground: read('--term-fg', fallback.foreground),
+    // --term-cursor is `var(--brand)` in app.css, and getPropertyValue resolves it.
+    cursor: read('--term-cursor', fallback.cursor),
+  };
 }

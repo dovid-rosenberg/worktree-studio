@@ -38,18 +38,26 @@
   --term-fg:#cdd4de;
   --term-cursor: var(--brand);
 }
+/* Light mode.
+   It read as washed out, and the cause was SEPARATION, not text colour: --panel (#fff),
+   --elevated (#fbfaf7) and --border (#e4ded4) all sat within ~3% of each other, so a card
+   had no edge, a button did not look raised, and the whole surface flattened into one
+   pale field. Every neutral below is pushed apart — the page is deeper so white panels
+   read as the raised thing, borders carry real weight, and the status hues gain the
+   saturation they need to survive on a light ground. */
 :root[data-theme="light"] {
-  --bg:#f4f2ee; --panel:#ffffff; --elevated:#fbfaf7; --border:#e4ded4; --border-strong:#d3ccbf;
-  --ink:#1b1e24; --muted:#5c6470; --faint:#666d78;
-  --working:#6b5be0; --working-bg:#ece9fb; --waiting:#d99413; --waiting-bg:#faf0d8;
-  --done:#2f9e5a; --done-bg:#dcf1e3; --idle:#9aa1ab; --idle-bg:#ecebe7;
-  --brand:#d05f30; --brand-ink:#ffffff; --brand-soft:#f7e4da;
-  --add:#1a7f37; --add-bg:#e6f4ea; --del:#cf222e; --del-bg:#fbe9e9;
-  --shadow:0 1px 2px rgba(20,22,28,.06),0 8px 24px -12px rgba(20,22,28,.18);
-  --term-bg:#fbfaf7;
-  --term-fg:#1f232b;
-  --scroll-thumb:#c9c1b4;
-  --scroll-thumb-hover:#ada596;
+  --bg:#e9e6e0; --panel:#ffffff; --elevated:#f3f0ea; --border:#d5cec1; --border-strong:#b3aa99;
+  --ink:#141922; --muted:#4d5563; --faint:#5f6775;
+  --working:#5b46d6; --working-bg:#e6e1fa; --waiting:#b87503; --waiting-bg:#f8ead0;
+  --done:#177f45; --done-bg:#d3edda; --idle:#8c94a0; --idle-bg:#e4e1d9;
+  --brand:#c1521f; --brand-ink:#ffffff; --brand-soft:#f6ddcf;
+  --add:#12703a; --add-bg:#dff0e4; --del:#bf1d29; --del-bg:#fbe2e2;
+  /* The dark theme's shadow is invisible on a light ground; this one actually lifts. */
+  --shadow:0 1px 2px rgba(20,22,28,.09),0 10px 28px -12px rgba(20,22,28,.26);
+  --term-bg:#fdfcfa;
+  --term-fg:#181c24;
+  --scroll-thumb:#b8b0a1;
+  --scroll-thumb-hover:#968c7b;
   --scroll-track:transparent;
 }
 
@@ -85,7 +93,7 @@ button { font-family:inherit; }
 .spacer { flex:1; }
 
 /* ---- buttons ---- */
-.btn { font-size:12.5px; font-weight:600; border-radius:8px; padding:7px 13px; border:1px solid var(--border-strong); background:var(--elevated); color:var(--ink); cursor:pointer; }
+.btn { font-size:13.5px; font-weight:600; border-radius:8px; padding:7px 13px; border:1px solid var(--border-strong); background:var(--elevated); color:var(--ink); cursor:pointer; }
 .btn:hover { border-color:var(--brand); }
 .btn.primary { background:var(--brand); border-color:var(--brand); color:var(--brand-ink); }
 .btn.primary:hover { filter:brightness(1.06); }
@@ -96,8 +104,8 @@ button { font-family:inherit; }
    different questions. Actions are the brand hue; only status wears --done. */
 .btn.ghost { background:transparent; border-color:transparent; color:var(--muted); }
 .btn.ghost:hover { color:var(--ink); border-color:var(--border); }
-.btn.sm { font-size:11.5px; padding:5px 10px; }
-.btn.xs { font-size:10.5px; padding:2px 8px; font-weight:600; }
+.btn.sm { font-size:12.5px; padding:5px 10px; }
+.btn.xs { font-size:11.5px; padding:2px 8px; font-weight:600; }
 .btn[disabled] { opacity:.5; cursor:not-allowed; }
 
 /* ---- status vocabulary (dot + pill), shared by rail, fleet and palette ---- */
@@ -109,22 +117,22 @@ button { font-family:inherit; }
 .dot.working { animation:pulse 1.4s ease-in-out infinite; }
 @media (prefers-reduced-motion:reduce){ .dot.working{ animation:none; } }
 
-.pill { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10.5px; font-weight:600; padding:2px 8px; border-radius:999px; }
+.pill { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:999px; }
 .pill.working{ color:var(--working); background:var(--working-bg); } .pill.waiting{ color:var(--waiting); background:var(--waiting-bg); }
 .pill.done{ color:var(--done); background:var(--done-bg); } .pill.idle{ color:var(--muted); background:var(--idle-bg); }
 .pill.stopped{ color:var(--faint); background:var(--idle-bg); }
 .pill.run{ color:var(--done); background:var(--done-bg); }
 .pill.run .pi{ font-style:normal; }
 .pill.agent { box-shadow:inset 2px 0 0 currentColor; padding-left:9px; }
-.pill.srv { opacity:.95; } .pill .pi { font-size:9px; margin-right:1px; }
+.pill.srv { opacity:.95; } .pill .pi { font-size:10px; margin-right:1px; }
 .pill.srv.nowt { color:var(--faint); }
 
-.chip { font-family:var(--mono); font-size:10.5px; color:var(--muted); border:1px solid var(--border); border-radius:20px; padding:2px 9px; display:inline-flex; gap:6px; align-items:center; }
+.chip { font-family:var(--mono); font-size:11.5px; color:var(--muted); border:1px solid var(--border); border-radius:20px; padding:2px 9px; display:inline-flex; gap:6px; align-items:center; }
 .chip .cdot { width:7px; height:7px; border-radius:50%; }
-.grp, .link, .src { font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; border:1px solid var(--border); border-radius:5px; padding:1px 6px; color:var(--muted); }
+.grp, .link, .src { font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; border:1px solid var(--border); border-radius:5px; padding:1px 6px; color:var(--muted); }
 .link { color:var(--brand); border-color:var(--brand); text-transform:none; }
 
 /* ---- form controls ---- */
-.select, .input, .textarea { background:var(--panel); border:1px solid var(--border-strong); border-radius:8px; padding:8px 11px; color:var(--ink); font-family:var(--mono); font-size:12.5px; width:100%; }
+.select, .input, .textarea { background:var(--panel); border:1px solid var(--border-strong); border-radius:8px; padding:8px 11px; color:var(--ink); font-family:var(--mono); font-size:13.5px; width:100%; }
 .textarea { resize:vertical; font-family:var(--sans); }
-.mini-select { background:var(--elevated); color:var(--muted); border:1px solid var(--border); border-radius:6px; font-size:11px; padding:2px 4px; font-family:var(--mono); max-width:120px; }
+.mini-select { background:var(--elevated); color:var(--muted); border:1px solid var(--border); border-radius:6px; font-size:12px; padding:2px 4px; font-family:var(--mono); max-width:120px; }

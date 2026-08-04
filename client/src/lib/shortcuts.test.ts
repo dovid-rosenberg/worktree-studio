@@ -63,10 +63,20 @@ describe('preventDefault is unconditional', () => {
   it.each([
     ['r', 'reloading the page'],
     ['d', 'bookmarking'],
-    ['Enter', 'submitting something'],
   ])('⌘%s does nothing rather than %s when there is no selection', (key) => {
     const e = press(key, { metaKey: true });
     expect(e.defaultPrevented).toBe(true);
+  });
+
+  /*
+   * ⌘↵ is the exception, and deliberately so: it belongs to the TERMINAL, where it is
+   * "newline without submitting". It used to be Promote — and was broken as well as
+   * conflicting, because preventDefault() ran before the `!worktreePath` guard, so on an
+   * already-promoted session it was swallowed and did nothing at all.
+   */
+  it('⌘↵ is NOT swallowed — the terminal needs it for a newline', () => {
+    const e = press('Enter', { metaKey: true });
+    expect(e.defaultPrevented).toBe(false);
   });
 });
 
