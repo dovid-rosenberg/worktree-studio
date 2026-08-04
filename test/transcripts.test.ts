@@ -134,9 +134,9 @@ test('a claudeSessionId that escapes the transcript root is refused, not resolve
   // A real file one level ABOVE the projects root — what a traversal would reach.
   const outside = path.join(path.dirname(root), `wts-outside-${process.pid}.jsonl`);
   fs.writeFileSync(outside, '{"type":"user","uuid":"u1","message":{"role":"user","content":"secret"}}\n');
-  const escape = path.relative(path.join(root, transcripts.projectSlug(cwd)), outside).replace(/\.jsonl$/, '');
+  const traversal = path.relative(path.join(root, transcripts.projectSlug(cwd)), outside).replace(/\.jsonl$/, '');
 
-  const loc = transcripts.locate({ home: cwd, claudeSessionId: escape }, { root });
+  const loc = transcripts.locate({ home: cwd, claudeSessionId: traversal }, { root });
   // The message is evaluated eagerly, so it must not assume the branch the assertion
   // is about to rule out — `found(loc)` here would throw on the passing case.
   assert.equal(loc.found, false, `locate() resolved a traversal: ${JSON.stringify(loc)}`);

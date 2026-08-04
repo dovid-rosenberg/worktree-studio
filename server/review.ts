@@ -232,7 +232,7 @@ async function commits(worktreePath: string, defaultBranch: string): Promise<{ b
 // Per-file breakdown (status + counts + unified diff) for a single commit, or for the
 // working tree when sha === 'uncommitted'. Diffs are inline so the pane can show all
 // files at once and filter to one client-side without another round-trip.
-async function commitDetail(worktreePath: string, defaultBranch: string, sha: string): Promise<{ files: ReviewFile[] }> {
+async function commitDetail(worktreePath: string, _defaultBranch: string, sha: string): Promise<{ files: ReviewFile[] }> {
   if (sha === 'uncommitted') return workingDetail(worktreePath);
   // Last line of defence — the routes reject this with a 400 first, but nothing
   // downstream of here should ever have to wonder whether `sha` is a flag.

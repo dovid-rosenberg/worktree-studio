@@ -12,7 +12,7 @@ interface AsanaTask {
   permalink_url: string;
 }
 
-function cfgOf(cfg: PartialDeep<Config>): AsanaConfig { return (cfg.sources && cfg.sources.asana) || {}; }
+function cfgOf(cfg: PartialDeep<Config>): AsanaConfig { return (cfg.sources?.asana) || {}; }
 
 // Unwraps the Asana envelope and hands back its `data`. Generic rather than `any`
 // because the shape varies by endpoint and only the caller knows which one it asked

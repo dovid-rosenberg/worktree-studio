@@ -206,7 +206,7 @@ function seedPrompt(seed: SessionSeed): string {
   // no duplication). Issue sources: the issue title + body + link (that IS the ask).
   if (seed.source === 'freetext') return (seed.body || seed.title || '').trim();
   const parts = [seed.title];
-  if (seed.body && seed.body.trim()) parts.push('', seed.body.trim());
+  if (seed.body?.trim()) parts.push('', seed.body.trim());
   if (seed.url) parts.push('', seed.url);
   return parts.join('\n').trim();
 }
@@ -326,7 +326,7 @@ class SessionManager extends EventEmitter {
   // persisted before the two were told apart keep naming siblings exactly as before.
   worktreeNameFor(s: Session): string {
     const primary = (s.repos || []).find((r) => r.primary);
-    return s.worktree || (primary && primary.worktree) || s.suggestedName || s.feature;
+    return s.worktree || (primary?.worktree) || s.suggestedName || s.feature;
   }
 
   /**
@@ -401,7 +401,7 @@ class SessionManager extends EventEmitter {
       try { cmd = this.mux.paneCommand ? await this.mux.paneCommand(muxName) : 'claude'; } catch { cmd = ''; }
       if (!cmd || isShell(cmd)) continue; // claude not in the foreground yet
       sawClaude = true;
-      const st = session && session.state;
+      const st = session?.state;
       const midTurn = st && st !== 'idle' && st !== 'waiting';
       if (midTurn && i < delays.length - 1) continue; // busy → back off and retry
       await this.mux.sendText(muxName, text);
@@ -418,9 +418,9 @@ class SessionManager extends EventEmitter {
   // we flip `home` to the worktree only once the command was actually delivered — if
   // it wasn't, the transcript stays in the original dir and `home` must stay with it.
   async _anchorInWorktree(s: Session | null | undefined): Promise<void> {
-    if (!s || !s.worktreePath || s.home === s.worktreePath) return;
+    if (!s?.worktreePath || s.home === s.worktreePath) return;
     const r = await this.sendWhenReady(s.muxName, `/cd ${s.worktreePath}`, s);
-    if (r && r.ok) { s.home = s.worktreePath; this._touch(s.id); }
+    if (r?.ok) { s.home = s.worktreePath; this._touch(s.id); }
   }
 
   // Add a repo to this session's feature: create a same-named worktree there and
@@ -820,7 +820,7 @@ class SessionManager extends EventEmitter {
     const s = this.get(id);
     if (!s) return;
     if (event === 'SessionStart') {
-      if (payload && payload.session_id) s.claudeSessionId = payload.session_id;
+      if (payload?.session_id) s.claudeSessionId = payload.session_id;
       // The seed is delivered as claude's launch arg (see claudeCmd) — nothing to inject.
     }
     const m = status.mapEvent(event, payload);
@@ -838,7 +838,7 @@ class SessionManager extends EventEmitter {
 
   async rename(id: string, title?: string) {
     const s = this.get(id);
-    if (!s || !title || !title.trim()) return { ok: false, error: 'invalid title' };
+    if (!s || !title?.trim()) return { ok: false, error: 'invalid title' };
     s.title = title.trim();
     this._touch(id);
     return { ok: true };

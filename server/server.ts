@@ -28,7 +28,6 @@ import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import type { Request } from 'express';
 import type { ScannedRepo } from './git.ts';
-import type { RunningServer } from './servers.ts';
 import type { EditorConfig, GroupConfig, Session, SessionRepo, StartConfig } from './types.ts';
 
 /**
@@ -93,7 +92,7 @@ async function main() {
   // dropped — see server/rescan.ts for the caller (POST /api/settings changing
   // baseDirs) that nothing on the filesystem would ever have re-triggered.
   const rescan = createRescan(async () => {
-    try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (e) { /* */ }
+    try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (_e) { /* */ }
     // The scan is the only thing that knows each worktree's branch, and the
     // branch/manifest identity strategies need it to answer from a path alone.
     identity.reindex(repos);
@@ -213,7 +212,7 @@ async function main() {
 
   // attention.seen(): SwiftBar and Alfred poll this route instead of subscribing to
   // /api/events, so a poll is what tells the watcher someone is still looking.
-  api.get('/state', async (req, res) => { attention.seen(); res.json(await buildState()); });
+  api.get('/state', async (_req, res) => { attention.seen(); res.json(await buildState()); });
 
   api.get('/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -231,7 +230,7 @@ async function main() {
   });
 
   // ---- settings / connections ----
-  api.get('/settings', async (req, res) => {
+  api.get('/settings', async (_req, res) => {
     const gh = await run('gh', ['auth', 'status'], {});
     res.json({
       sources: cfg.sources || {},
@@ -321,10 +320,10 @@ async function main() {
   });
 
   // ---- sources ----
-  api.get('/sources', (req, res) => res.json(sources.enabled(cfg)));
+  api.get('/sources', (_req, res) => res.json(sources.enabled(cfg)));
   api.get('/sources/:source/items', async (req, res) => {
     const repo = repos.find((r) => r.name === req.query.repo);
-    const out = await sources.list(cfg, req.params.source, { repoPath: repo && repo.path, q: req.query.q });
+    const out = await sources.list(cfg, req.params.source, { repoPath: repo?.path, q: req.query.q });
     res.json(out);
   });
 
@@ -345,7 +344,7 @@ async function main() {
   });
 
   api.post('/sessions/:id/rename', async (req, res) => {
-    res.json(await manager.rename(req.params.id, (req.body && req.body.title) || ''));
+    res.json(await manager.rename(req.params.id, (req.body?.title) || ''));
   });
   api.post('/sessions/:id/deactivate', async (req, res) => { res.json(await manager.deactivate(req.params.id)); });
   api.post('/sessions/:id/activate', async (req, res) => { res.json(await manager.activate(req.params.id)); });
@@ -357,8 +356,8 @@ async function main() {
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
   api.post('/sessions/:id/add-repo', async (req, res) => {
-    const repoObj = repos.find((r) => r.name === (req.body && req.body.repo));
-    if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body && req.body.repo}'` });
+    const repoObj = repos.find((r) => r.name === (req.body?.repo));
+    if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body?.repo}'` });
     const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the sibling worktree so the feature updates immediately
@@ -516,7 +515,7 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const entry = (s.repos || []).find((r) => r.repo === qs(req.query.repo));
-    if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
+    if (!entry?.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     const sha = qs(req.query.sha) || 'uncommitted';
     // Same boundary check as routes-review.ts: `sha` reaches a git argv, so it has
     // to be an object name and not an option (see server/review.ts).
@@ -529,8 +528,8 @@ async function main() {
     const { repo, message, paths, amend } = req.body || {};
     if (!s) return res.status(400).json({ error: 'no such session' });
     const entry = (s.repos || []).find((r) => r.repo === repo);
-    if (!entry || !entry.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
-    if (!message || !message.trim()) return res.status(400).json({ error: 'message is required' });
+    if (!entry?.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
+    if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
     const out = await review.commit(entry.worktreePath, message, { amend, paths });
     // A commit made through the UI writes refs/heads/<branch>, so the watcher would
     // find it anyway — but it can take a debounce plus a scan to get here, and we

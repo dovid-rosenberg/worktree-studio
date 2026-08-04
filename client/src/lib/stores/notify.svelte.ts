@@ -39,7 +39,7 @@ class Notify {
   async loadPrefs(): Promise<void> {
     try {
       const d = await api('GET', '/api/v1/settings');
-      if (d && d.notify) this.prefs = { ...this.prefs, ...d.notify };
+      if (d?.notify) this.prefs = { ...this.prefs, ...d.notify };
     } catch { /* the settings modal will surface a real failure */ }
   }
 
@@ -49,7 +49,7 @@ class Notify {
    * it over rather than this module reading the store.
    */
   onSessionFrame(frame: SessionStatePayload | null | undefined): void {
-    const sessions = (frame && frame.sessions) || [];
+    const sessions = (frame?.sessions) || [];
     const seen = new Set<string>();
     for (const s of sessions) {
       seen.add(s.id);

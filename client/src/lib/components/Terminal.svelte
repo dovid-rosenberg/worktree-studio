@@ -334,6 +334,19 @@
   /* Follows the theme via --term-bg. That token and TERM_THEMES in theme.svelte.ts
      must stay in step: xterm cannot read a CSS custom property, so the palette is
      declared twice — here for the padding around the canvas, there for the canvas. */
-  .term-wrap { flex:1; min-height:0; min-width:0; background:var(--term-bg); padding:8px 10px; }
+  /*
+   * `overflow:hidden` is load-bearing, not tidiness.
+   *
+   * FitAddon picks a whole number of rows, and a container height that is not an exact
+   * multiple of the cell height leaves a remainder. xterm still lays `.xterm-screen` out
+   * at rows × cellHeight, so that layer can end up TALLER than this box — measured at 6px
+   * over, which with the default `overflow:visible` painted the last partial row straight
+   * through the action bar below.
+   *
+   * It only became visible when the type scale went up a point and changed the cell
+   * height; the geometry was always able to do it. Clipping here is what makes the
+   * terminal end where its box ends, whatever the remainder happens to be.
+   */
+  .term-wrap { flex:1; min-height:0; min-width:0; overflow:hidden; background:var(--term-bg); padding:8px 10px; }
   .term-wrap :global(.xterm) { height:100%; }
 </style>

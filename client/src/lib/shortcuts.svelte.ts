@@ -113,10 +113,10 @@ export function handleShortcut(e: KeyboardEvent): void {
    */
   if (e.key === 'd' || e.key === 'D') {
     e.preventDefault();
-    if (s && s.worktreePath) { ui.goToSession(s.id); ui.dockView = 'changes'; }
+    if (s?.worktreePath) { ui.goToSession(s.id); ui.dockView = 'changes'; }
     return;
   }
   // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the
   // session-addressed op, which is the same worktrees without the conflict handling.
-  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (s && s.worktreePath && s.feature) runStack(s.feature); }
+  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (s?.worktreePath && s.feature) runStack(s.feature); }
 }

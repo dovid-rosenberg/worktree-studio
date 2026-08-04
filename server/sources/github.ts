@@ -18,9 +18,9 @@ const adapter: SourceAdapter = {
   label: 'GitHub',
   needsRepo: true,
   isEnabled(cfg) {
-    return !!(cfg.sources && cfg.sources.github && cfg.sources.github.enabled !== false) && has('gh');
+    return !!(cfg.sources?.github && cfg.sources.github.enabled !== false) && has('gh');
   },
-  async list(cfg, { repoPath, q }) {
+  async list(_cfg, { repoPath, q }) {
     if (!repoPath) return [];
     const args = ['issue', 'list', '--json', 'number,title,url,labels', '--limit', '30'];
     // `q` reaches an execFile argv, and it comes from `req.query.q` — which express
@@ -34,10 +34,10 @@ const adapter: SourceAdapter = {
     return items.map((it) => ({
       id: String(it.number),
       title: it.title,
-      subtitle: `#${it.number}` + (it.labels && it.labels.length ? ` · ${it.labels.map((l) => l.name).join(', ')}` : ''),
+      subtitle: `#${it.number}${it.labels?.length ? ` · ${it.labels.map((l) => l.name).join(', ')}` : ''}`,
     }));
   },
-  async seed(cfg, { repoPath, id }) {
+  async seed(_cfg, { repoPath, id }) {
     const r = await run('gh', ['issue', 'view', String(id), '--json', 'number,title,body,url'], { cwd: repoPath, env: ENV });
     if (r.code !== 0) throw new Error(r.stderr.trim() || 'gh issue view failed');
     const it = JSON.parse(r.stdout) as GithubIssue;

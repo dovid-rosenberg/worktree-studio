@@ -91,7 +91,7 @@ function costOf(
   usage: Partial<Usage> | null | undefined,
   opts: { speed?: string | null } = {},
 ): Cost {
-  const p = priceFor(model, opts.speed || (usage && usage.speed));
+  const p = priceFor(model, opts.speed || (usage?.speed));
   if (!p || !usage) return { usd: null, priced: false };
   const inRate = p.input / PER_MILLION;
   const outRate = p.output / PER_MILLION;

@@ -145,7 +145,7 @@ function parseFile(lines: string[], start: number, end: number): DiffFile {
     header: [], hunks: [], added: 0, deleted: 0,
   };
   let i = start;
-  if (lines[i] && lines[i].startsWith('diff --git ')) file.header.push(lines[i++]);
+  if (lines[i]?.startsWith('diff --git ')) file.header.push(lines[i++]);
   for (; i < end; i++) {
     const l = lines[i];
     if (l.startsWith('@@')) break;

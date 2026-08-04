@@ -140,7 +140,7 @@ const gitlab: Provider = {
     const pipe: GlPipeline = j.pipeline || j.head_pipeline || {};
     return { hasPR: true, provider: 'gitlab', number: j.iid, url: j.web_url, state: j.state, checks: glChecks(pipe.status) };
   },
-  async create(branch, cwd, env) {
+  async create(_branch, cwd, env) {
     const r = await run('glab', ['mr', 'create', '--fill', '--yes'], { cwd, env, timeout: CREATE_TIMEOUT_MS });
     if (r.code !== 0) return { ok: false, stderr: r.stderr };
     // glab's output is prose; pull the first URL out of it.
@@ -352,7 +352,7 @@ function createForge({ manager, resolveGroup, providers = PROVIDERS, isInstalled
 
     // Open a PR (gh) / MR (glab) for each of a feature's branches.
     app.post('/group/pr', async (req, res) => {
-      const { group: g } = await resolve(req.body && req.body.group);
+      const { group: g } = await resolve(req.body?.group);
       if (!g) return res.status(404).json({ error: 'no such feature' });
       const results: PrResult[] = [];
       for (const m of g.members) results.push(await openPullRequest(m, ENV));

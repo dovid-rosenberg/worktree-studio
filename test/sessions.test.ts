@@ -379,7 +379,7 @@ test('adopt sets home to the worktree launch dir (so resume resolves the convers
   const m = manager();
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-adopt-home-'));
   const s = await m.adopt({ worktreePath: wt, repoName: 'r', repoPath: '/tmp/r', branch: 'b', wtname: 'feat' });
-  assert.ok(s && s.id, 'session adopted');
+  assert.ok(s?.id, 'session adopted');
   assert.equal(s.home, wt, 'home is the worktree (launch/transcript dir), not repoPath');
   fs.rmSync(wt, { recursive: true, force: true });
 });
@@ -481,12 +481,16 @@ test('a session persisted before worktree name and identity were told apart stil
 // Three restorable sessions in a known order (all() sorts newest-first).
 function restorable(m: SessionManager, ids: string[]): void {
   const dir = present(m.cfg._stateDir, 'the state dir');
-  ids.forEach((id, i) => m.sessions.set(id, session({
-    id, title: id, repoName: 'api', repoPath: dir, home: dir, feature: id,
-    repos: [sessionRepo({ repo: 'api', repoPath: dir, primary: true })],
-    muxName: `mux-${id}`, tabs: [{ id: '0', title: 'claude' }],
-    state: 'idle', active: true, createdAt: ids.length - i,
-  })));
+  // A block body, not an expression: `Map.set` returns the Map, and an arrow that
+  // hands a value back to forEach reads as though the value is used.
+  ids.forEach((id, i) => {
+    m.sessions.set(id, session({
+      id, title: id, repoName: 'api', repoPath: dir, home: dir, feature: id,
+      repos: [sessionRepo({ repo: 'api', repoPath: dir, primary: true })],
+      muxName: `mux-${id}`, tabs: [{ id: '0', title: 'claude' }],
+      state: 'idle', active: true, createdAt: ids.length - i,
+    }));
+  });
 }
 
 test('restore() carries on past a session it cannot relaunch, and still saves', async () => {

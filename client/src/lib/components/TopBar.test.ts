@@ -22,7 +22,7 @@ const member = (repo: string, over: Record<string, unknown> = {}) => ({
 });
 const feature = (name: string, members: unknown[], session: unknown = null): Feature =>
   ({ name, auto: true, members, session } as unknown as Feature);
-const session = (id: string, state: string, over: Record<string, unknown> = {}): Session =>
+const _session = (id: string, state: string, over: Record<string, unknown> = {}): Session =>
   ({ id, title: id, state, activity: '', repoName: 'accept-blue', worktreePath: '/wt', ...over } as unknown as Session);
 
 function give(features: Feature[], sessions: Session[] = []) {

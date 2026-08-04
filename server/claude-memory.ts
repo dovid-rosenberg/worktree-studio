@@ -135,6 +135,6 @@ export function linkSessionMemory(
   projectsDir = PROJECTS_DIR,
 ): Array<{ repo?: string; outcome: LinkOutcome }> {
   return (repos || [])
-    .filter((r) => r && r.worktreePath && r.repoPath)
+    .filter((r) => r?.worktreePath && r.repoPath)
     .map((r) => ({ repo: r.repo, outcome: linkMemory(r.worktreePath!, r.repoPath!, projectsDir) }));
 }

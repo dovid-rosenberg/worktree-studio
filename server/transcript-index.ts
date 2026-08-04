@@ -301,7 +301,7 @@ class TranscriptIndex {
   async index(session: IndexableSession | null | undefined, opts: IndexOptions = {}): Promise<IndexResult> {
     const db = this._handle();
     if (!db) return { ok: false, reason: this.error || 'index unavailable' };
-    if (!session || !session.id) return { ok: false, reason: 'no session id' };
+    if (!session?.id) return { ok: false, reason: 'no session id' };
     const id = session.id;
     if (this._indexing.has(id)) return { ok: true, skipped: 'in flight' };
 

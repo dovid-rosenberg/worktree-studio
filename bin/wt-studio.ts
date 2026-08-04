@@ -23,7 +23,7 @@ if (cmd === 'add-repo') {
   if (!sessionId) { console.error('WT_STUDIO_SESSION not set — run this from inside a Worktree Studio session'); process.exit(1); }
   const cfgFile = process.env.WT_STUDIO_CONFIG || path.join(os.homedir(), '.config', 'worktree-studio', 'config.json');
   let port = 7788;
-  try { port = (JSON.parse(fs.readFileSync(cfgFile, 'utf8')).web || {}).port || 7788; } catch { /* */ }
+  try { port = JSON.parse(fs.readFileSync(cfgFile, 'utf8')).web?.port || 7788; } catch { /* */ }
   // The boot token lives in the state dir (mode 0600) — same place the server wrote
   // it. Reading it is the proof that we're a process of the user who owns the studio.
   const stateDir = process.env.WT_STUDIO_STATE || path.join(os.homedir(), '.local', 'state', 'worktree-studio');

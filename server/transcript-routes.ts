@@ -100,7 +100,7 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   // config.ts owns where state lives (and honors WT_STUDIO_STATE); `cfg._stateDir` is
   // that same value riding on the loaded config. Falling back to a path spelled here
   // is how the index ended up under a `~/.wt-studio` that exists nowhere else.
-  const stateDir = (cfg && cfg._stateDir) || STATE_DIR;
+  const stateDir = (cfg?._stateDir) || STATE_DIR;
   const index = new TranscriptIndex({ file: path.join(stateDir, 'transcripts.db') });
   if (!index.ready) console.warn(`[wt-studio] transcript index unavailable (${index.error}) — search falls back to file scan`);
 
@@ -120,7 +120,7 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   let draining = false;
 
   function enqueue(session: Session | null | undefined): void {
-    if (!session || !session.id || !index.ready) return;
+    if (!session?.id || !index.ready) return;
     queue.add(session.id);
     if (!draining) drain();
   }
@@ -185,7 +185,7 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
 
   const r = api;
 
-  r.get('/transcripts/status', async (req, res) => {
+  r.get('/transcripts/status', async (_req, res) => {
     res.json({ ...index.status(), pricing: pricingBlock() });
   });
 

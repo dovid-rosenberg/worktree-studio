@@ -33,7 +33,7 @@ const DEFAULT_DIR = '.worktrees';
 // back to today's behavior rather than throwing: this is a local dev tool and a
 // typo in config.json must not stop it booting.
 function resolve(cfg?: PartialDeep<Config> | null): ResolvedLayout {
-  const w: PartialDeep<WorktreeLayout> = (cfg && cfg.worktrees) || {};
+  const w: PartialDeep<WorktreeLayout> = (cfg?.worktrees) || {};
   const want = String(w.layout || 'nested');
   let mode = MODES.find((m) => m === want);
   if (!mode) {

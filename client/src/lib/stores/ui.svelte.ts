@@ -356,7 +356,7 @@ class UI {
    * without has no terminal to show, so the dock renders the feature pane instead.
    */
   selectFeature(f: Feature | null | undefined): void {
-    if (f && f.session && f.session.id) { this.select(f.session.id); return; }
+    if (f?.session?.id) { this.select(f.session.id); return; }
     this.#pick(f ? { kind: 'feature', name: f.name } : null);
   }
 

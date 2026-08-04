@@ -16,7 +16,7 @@ interface GitlabIssue {
   web_url: string;
 }
 
-function cfgOf(cfg: PartialDeep<Config>): GitlabConfig { return (cfg.sources && cfg.sources.gitlab) || {}; }
+function cfgOf(cfg: PartialDeep<Config>): GitlabConfig { return (cfg.sources?.gitlab) || {}; }
 
 // The REST fallback's two required settings, checked where they are read.
 //

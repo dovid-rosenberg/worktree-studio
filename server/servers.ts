@@ -247,7 +247,7 @@ class Servers {
   constructor(cfg: ServersConfig, identity?: Identity | null) {
     this.cfg = cfg;
     this.identity = identity || createIdentity(cfg);
-    this.selfPort = (cfg.web && cfg.web.port) || 0;
+    this.selfPort = (cfg.web?.port) || 0;
     // config.ts stamps `_stateDir` onto every config it loads and every caller passes
     // one; a config without it never reached this line, because path.join() threw on it.
     const stateDir = cfg._stateDir!;
@@ -288,8 +288,8 @@ class Servers {
   featureFor(worktreePath: string): string { return this.identity.ofPath(worktreePath); }
 
   // ---- concurrency: per-feature slot allocation + derived launch env ----
-  _concEnabled(): boolean { return !!(this.cfg.concurrency && this.cfg.concurrency.enabled); }
-  _repoConc(repo: string): RepoConcurrency | null { const c = this.cfg.concurrency; return (c && c.repos && c.repos[repo]) || null; }
+  _concEnabled(): boolean { return !!(this.cfg.concurrency?.enabled); }
+  _repoConc(repo: string): RepoConcurrency | null { const c = this.cfg.concurrency; return (c?.repos?.[repo]) || null; }
   // A repo that gets a concurrency slot runs on its own (offset) ports per feature,
   // so running it in two worktrees at once does NOT collide.
   isSlotted(repo: string): boolean { return this._concEnabled() && !!this._repoConc(repo); }
@@ -392,7 +392,7 @@ class Servers {
     const cp = rc.configPatch;
     if (cp) {
       const sib = this._repoConc(cp.siblingRepo);
-      const siblingPortEnv = sib && sib.portEnv;
+      const siblingPortEnv = sib?.portEnv;
       if (siblingPortEnv) return { env, ports, patch: { file: cp.file, siblingPortEnv, slot } };
     }
     return { env, ports };
@@ -402,7 +402,7 @@ class Servers {
   // Shifts every one of the sibling repo's port families (su/merchant/iso/…) uniformly.
   // Best-effort + file-exists guarded: silently no-op when the file isn't present.
   applyConfigPatch(worktreePath: string, patch?: ConfigPatchPlan | null): void {
-    if (!patch || !patch.file) return;
+    if (!patch?.file) return;
     try {
       const file = path.join(worktreePath, patch.file);
       if (!fs.existsSync(file)) return;
@@ -417,7 +417,7 @@ class Servers {
   }
 
   startCfg(repo: string): StartCommand | null {
-    const s = this.cfg.start && Object.prototype.hasOwnProperty.call(this.cfg.start, repo) ? this.cfg.start[repo] : null;
+    const s = this.cfg.start && Object.hasOwn(this.cfg.start, repo) ? this.cfg.start[repo] : null;
     if (!s) return null;
     if (typeof s === 'string') return { cmd: s, ports: [] };
     // An entry with no `cmd` is not a launchable config: canStart would advertise one
@@ -455,7 +455,7 @@ class Servers {
   // A process's start time is fixed at exec and cannot be inherited with the pid,
   // which is what makes the record self-validating.
   async _trackedPidState(t?: TrackedServer | null): Promise<TrackedPidState> {
-    if (!t || !t.pid) return 'gone';
+    if (!t?.pid) return 'gone';
     const info = await this._psInfo(t.pid);
     if (!info) return 'gone';
     if (t.startedAt) return Math.abs(info.startedAt - t.startedAt) <= PID_START_SKEW_MS ? 'ours' : 'stranger';
@@ -464,7 +464,7 @@ class Servers {
     // start time, but it still tells a dev server from someone else's daemon, and
     // it is strictly better than trusting the bare number.
     const sc = t.repo ? this.startCfg(t.repo) : null; // a record with no repo has no command to match either
-    return sc && sc.cmd && info.command.includes(sc.cmd) ? 'ours' : 'stranger';
+    return sc?.cmd && info.command.includes(sc.cmd) ? 'ours' : 'stranger';
   }
 
   // Drop every tracked record that no longer names a process we launched. Called at
@@ -667,7 +667,7 @@ class Servers {
     const sc = this.startCfg(repo);
     if (!sc) return { ok: false, error: `no start config for repo '${repo}'` };
     const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
-    const ports = opts.ports && opts.ports.length ? opts.ports : sc.ports;
+    const ports = opts.ports?.length ? opts.ports : sc.ports;
     const lock = this._lock(worktreePath);
     if (!lock) return { ok: false, error: `another launch for '${repo}' at ${worktreePath} is in progress` };
     // From here until the ports are up (or we give up waiting), this feature's slot
@@ -776,7 +776,7 @@ class Servers {
   // slot-derived ports when concurrency-slotted, else the repo's configured ports.
   _portsFor(repo: string, worktreePath: string): number[] {
     const opts = this.launchOpts(repo, this.featureFor(worktreePath));
-    if (opts.ports && opts.ports.length) return opts.ports;
+    if (opts.ports?.length) return opts.ports;
     const sc = this.startCfg(repo);
     return sc ? sc.ports : [];
   }
@@ -829,7 +829,7 @@ class Servers {
   // restart. Returns how many were trimmed.
   trimLogs(): number {
     let trimmed = 0;
-    for (const t of Object.values(this.tracked)) if (t && t.log && trimLog(t.log)) trimmed++;
+    for (const t of Object.values(this.tracked)) if (t?.log && trimLog(t.log)) trimmed++;
     return trimmed;
   }
 
@@ -843,7 +843,7 @@ class Servers {
     // incremental from" are one fact, and null is the form that carries both.
     const offset = typeof opts.offset === 'number' && Number.isFinite(opts.offset) ? opts.offset : null;
     const t = this.tracked[worktreePath];
-    const log = t && t.log;
+    const log = t?.log;
     const empty = { offset: offset ?? 0, text: '', size: 0, skipped: 0 };
     if (!log || !fs.existsSync(log)) return empty;
     let size: number;

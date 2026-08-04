@@ -310,7 +310,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
   app.post('/group/close', async (req, res) => {
-    const { group: g } = await resolveGroup(String((req.body && req.body.group) ?? ''));
+    const { group: g } = await resolveGroup(String((req.body?.group) ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     for (const m of g.members) {
       if (m.running) await servers.stop(m.repo, m.path);
@@ -348,7 +348,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
   app.post('/group/session', async (req, res) => {
-    const { group: g } = await resolveGroup(String((req.body && req.body.group) ?? ''));
+    const { group: g } = await resolveGroup(String((req.body?.group) ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const members = g.members;
     if (!members.length) return res.status(400).json({ error: 'feature has no members' });

@@ -263,7 +263,7 @@ function onDisk(n: number): { root: string; targets: string[]; links: string[]; 
 
 const sessionIdAt = (st: { repos: Array<{ worktrees: Worktree[] }> }, wtname: string) => {
   const w = present(st.repos[0], 'the first repo').worktrees.find((x) => x.wtname === wtname);
-  return w && w.session ? w.session.id : null;
+  return w?.session ? w.session.id : null;
 };
 
 test('every worktree path is resolved once, then served from cache on later builds', () => {
