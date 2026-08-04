@@ -165,7 +165,7 @@
             use:reorderable={{ index: i, onmove: (f, tIdx) => (rootRows = move(rootRows, f, tIdx)) }}
           >
             <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
-            <input bind:value={row.path} placeholder="~/Desktop/ab-code" aria-label="Repo root" />
+            <input bind:value={row.path} placeholder="~/code" aria-label="Repo root" />
             <button class="btn ghost xs" title="Move up" aria-label="Move up" disabled={i === 0} onclick={() => (rootRows = nudge(rootRows, i, -1))}>↑</button>
             <button class="btn ghost xs" title="Move down" aria-label="Move down" disabled={i === rootRows.length - 1} onclick={() => (rootRows = nudge(rootRows, i, 1))}>↓</button>
             <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (rootRows = rootRows.filter((r) => r.key !== row.key))}>✕</button>
@@ -266,7 +266,7 @@
              feature. A group is the manual override for when the names cannot match. -->
         <p class="secnote">
           Worktrees that share a name are already one feature — you need a group only when
-          they differ, e.g. <code>accept-blue/fix-mfa</code> with <code>ab-iso-fe/mfa-cleanup</code>.
+          they differ, e.g. <code>api/fix-login</code> with <code>web/login-cleanup</code>.
         </p>
         {#each groupRows as row, i (row.key)}
           <div

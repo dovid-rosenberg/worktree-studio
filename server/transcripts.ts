@@ -102,10 +102,10 @@ function projectsRoot(opts?: LocateOptions | null): string {
 // non-alphanumeric byte replaced by '-'. Verified against every project directory
 // on this machine (12/12 exact): the leading '/' becomes a leading '-', dots and
 // underscores collapse to '-', and '/.worktrees/' therefore becomes '--worktrees-'.
-//   /Users/davidr/Desktop/code/worktree-studio
-//     → -Users-davidr-Desktop-code-worktree-studio
-//   /Users/davidr/Desktop/ab-code/ab-be/accept-blue/.worktrees/fix-recurring-deleted-pm
-//     → -Users-davidr-Desktop-ab-code-ab-be-accept-blue--worktrees-fix-recurring-deleted-pm
+//   /Users/me/code/worktree-studio
+//     → -Users-me-code-worktree-studio
+//   /Users/me/code/api/.worktrees/fix-login
+//     → -Users-me-code-api--worktrees-fix-login
 function projectSlug(cwd: string | null | undefined): string { return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-'); }
 
 // A claudeSessionId is a uuid, and it is UNTRUSTED: it arrives verbatim in a

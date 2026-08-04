@@ -95,7 +95,7 @@ describe('the rail', () => {
       repos: [{ name: 'ab-iso-fe', worktrees: [member('ab-iso-fe', { isMain: true, running: true, ports: [5271], path: '/main' })] }],
       webRepos: ['ab-iso-fe'],
     });
-    expect(ui.railRows.map((r) => r.kind).sort()).toEqual(['agent', 'feature', 'mainserver']);
+    expect(ui.railRows.map((r) => r.kind).sort()).toEqual(['feature', 'mainserver', 'session']);
   });
 
   it('sorts active rows above quiet ones and marks the boundary', () => {

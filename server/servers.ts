@@ -377,7 +377,7 @@ class Servers {
 
   // Launch env + ports for a repo at a feature's current slot. {} / [] when
   // concurrency is off or the repo has no concurrency config (behaves as today).
-  // When the repo declares a `configPatch` (e.g. an FE that hardcodes accept-blue's
+  // When the repo declares a `configPatch` (e.g. an FE that hardcodes its backend's
   // ports), return a `patch` descriptor that start() applies to the worktree's config
   // file — shifting ALL of the sibling repo's port families to this feature's slot.
   launchOpts(repo: string, feature: string): LaunchOpts {

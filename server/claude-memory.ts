@@ -127,7 +127,7 @@ export interface RepoLike {
  * Link every repo a session spans.
  *
  * Per-repo, not per-session: a feature is several checkouts, and each worktree has to
- * reach its OWN repo's memories — pointing an `ab-iso-fe` worktree at `accept-blue`'s
+ * reach its OWN repo's memories — pointing a frontend worktree at the backend's
  * memories would be worse than pointing it at nothing.
  */
 export function linkSessionMemory(

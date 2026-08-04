@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Feature, Worktree } from '../../../../../server/types';
   /*
-   * What the dock shows for a feature with no agent.
+   * What the dock shows for a feature with no session.
    *
    * There is no terminal to mount, so this answers the question you actually have about
    * a worktree you are not currently working in: what is in here, and is it merged?
@@ -77,7 +77,7 @@
     {/if}
   </div>
   <p class="sub">
-    {ms.length} repo{ms.length === 1 ? '' : 's'} · no agent ·
+    {ms.length} repo{ms.length === 1 ? '' : 's'} · no session ·
     {feature.auto ? 'grouped by shared worktree name' : 'grouped by config.groups'}
   </p>
 

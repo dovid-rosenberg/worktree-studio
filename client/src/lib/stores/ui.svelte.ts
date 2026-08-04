@@ -42,7 +42,7 @@ export type LiveMember = Worktree;
  * a live agent, or a running dev server.
  */
 export type RailRow =
-  | { kind: 'agent'; key: string; name: string; session: Session; active: boolean }
+  | { kind: 'session'; key: string; name: string; session: Session; active: boolean }
   | { kind: 'mainserver'; key: string; name: string; worktree: Worktree; active: boolean }
   | { kind: 'feature'; key: string; name: string; feature: Feature; active: boolean };
 
@@ -206,10 +206,14 @@ class UI {
   );
 
   /**
-   * Unpromoted sessions — no worktree, so no feature to sit under. Stopped/deactivated
-   * ones linger, sorted after the live ones.
+   * Sessions with no worktree yet, so no feature to sit under. Stopped/deactivated ones
+   * linger, sorted after the live ones.
+   *
+   * "Session", never "agent". The UI used both for one thing — "no agent" on a card,
+   * "Start session" on the button beside it — and a reader cannot tell whether that is
+   * one concept or two. `session` wins: it is already the URL, the state file and the type.
    */
-  visibleAgents = $derived(
+  unpromotedSessions = $derived(
     world.sessions
       .filter((s) => !s.worktreePath && (!this.repoFilter || s.repoName === this.repoFilter))
       .slice()
@@ -246,8 +250,8 @@ class UI {
    */
   railRows = $derived<RailRow[]>((() => {
     const rows: RailRow[] = [
-      ...this.visibleAgents.map((s): RailRow => ({
-        kind: 'agent', key: `s:${s.id}`, name: s.title, session: s,
+      ...this.unpromotedSessions.map((s): RailRow => ({
+        kind: 'session', key: `s:${s.id}`, name: s.title, session: s,
         active: s.state !== 'stopped',
       })),
       ...this.visibleMainServers.map((w): RailRow => ({
@@ -280,8 +284,8 @@ class UI {
     this.railRows
       .filter((r) => r.kind !== 'mainserver') // nothing to select: it owns no session
       .map((r) => ({
-        kind: r.kind === 'agent' ? ('session' as const) : ('feature' as const),
-        id: r.kind === 'agent' ? r.session!.id : (r.feature?.session?.id ?? null),
+        kind: r.kind === 'session' ? ('session' as const) : ('feature' as const),
+        id: r.kind === 'session' ? r.session!.id : (r.feature?.session?.id ?? null),
         name: r.name,
       })),
   );

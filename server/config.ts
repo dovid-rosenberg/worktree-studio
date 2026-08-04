@@ -48,7 +48,10 @@ function defaults(): ShippedConfig {
   // untouched.
   const dash: DashConfig = readJson<DashConfig | null>(DASH_CONFIG, {}) || {};
   return {
-    baseDirs: dash.baseDirs || ['~/Desktop/ab-code'],
+    // `~/code` is a guess, not a convention — it exists so a first run scans SOMETHING
+    // rather than nothing, and the Settings modal is where you correct it. It used to
+    // name one organisation's directory, which is not a default anyone else can use.
+    baseDirs: dash.baseDirs || ['~/code'],
     scanDepth: dash.scanDepth || 3,
     web: { port: 7788, host: '127.0.0.1' },
     claude: { cmd: 'claude' },
@@ -83,9 +86,13 @@ function defaults(): ShippedConfig {
     copyAlways: { default: [...DEFAULT_COPY_ALWAYS] },
     // per-repo dev-server launch config { cmd, ports }
     start: dash.start || {},
-    // repos that serve a browsable frontend — get an "Open app ↗" button that
-    // opens their (lsof-discovered) running port, incl. concurrency-shifted ports.
-    webRepos: dash.webRepos || ['merchant-v3', 'ab-iso-fe', 'ab-su'],
+    // Repos that serve a browsable frontend — they get an "Open ‹repo› ↗" button
+    // pointing at their (lsof-discovered) running port, concurrency shift included.
+    //
+    // EMPTY, deliberately. There is no way to guess which of someone's repos serve a
+    // browser; this used to ship one organisation's three, which for everyone else is
+    // three names that match nothing.
+    webRepos: dash.webRepos || [],
     // manual feature groups: [{ name, members: ["repo/branch-or-wtname"] }]
     groups: dash.groups || [],
     // imported editor run/test configs: { "<repo>": [{ name, cmd, kind, source }] }

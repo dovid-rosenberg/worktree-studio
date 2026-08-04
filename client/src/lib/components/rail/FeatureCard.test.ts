@@ -69,9 +69,9 @@ describe('FeatureCard', () => {
     expect(screen.getByText('deps missing')).toBeInTheDocument();
   });
 
-  it('says "no agent" for a feature nothing is driving', () => {
+  it('says "no session" for a feature nothing is driving', () => {
     render(FeatureCard, { feature: feature() });
-    expect(screen.getByText('no agent')).toBeInTheDocument();
+    expect(screen.getByText('no session')).toBeInTheDocument();
   });
 
   it('shows the manual tag only for a config.groups feature', () => {

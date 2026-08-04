@@ -33,8 +33,8 @@ dashboard with a single page at **http://127.0.0.1:7788**.
 
 | Term | Meaning |
 |------|---------|
-| **Session** | A live Claude Code process running inside a tmux session, tracked by Studio with an id like `s_5ii11`. This is where you actually talk to Claude. |
-| **Repo** | One of your git repositories under `baseDirs` (e.g. `accept-blue`, `merchant-v3`, `ab-iso-fe`, `ab-su`). Discovered automatically. |
+| **Session** | A live Claude Code process running inside a tmux session, tracked by Studio with an id like `s_5ii11`. This is where you actually talk to Claude. **The UI says “session” everywhere** — it used to say “agent” in some places and “session” in others for this one thing. Where the docs say *agent*, they mean the process itself (`claude.cmd`, “agent-agnostic”), not the Studio object. |
+| **Repo** | One of your git repositories under `baseDirs` (e.g. `api`, `web`, `admin`, `portal`). Discovered automatically. |
 | **Worktree** | A git worktree checked out on a feature branch, living at `<repo>/.worktrees/<name>` by default (`worktrees.layout` — see [docs/config.md](docs/config.md)). Isolated working copy — you can have many per repo. |
 | **Promote** | Turn a session that started in the main checkout into one bound to a fresh worktree. The **same Claude conversation continues** (see [Claude integration](#claude-code-integration)). |
 | **Feature** | A named unit of work, identified by its worktree name. One feature can span multiple repos (BE + FE) — they’re grouped by sharing the same worktree name. |
@@ -60,7 +60,7 @@ npm start            # → http://127.0.0.1:7788
 Or via the CLI (same thing): `wt-studio`. Run tests with `npm test`.
 
 On first run Studio writes a default config to `~/.config/worktree-studio/config.json`
-and scans `baseDirs` (default `~/Desktop/ab-code`) for git repos.
+and scans `baseDirs` (default `~/code`) for git repos.
 
 ---
 
@@ -92,7 +92,7 @@ A feature often spans BE + FE. Add another repo either from the UI or from insid
 Claude session:
 
 ```bash
-wt-studio add-repo merchant-v3
+wt-studio add-repo web
 ```
 
 Studio creates a same-named worktree in that repo and grants the session access via
@@ -195,7 +195,7 @@ One screen, four regions. There is no view to switch between — Work and Fleet 
 merged, because Fleet was the same three lists the rail already drew.
 
 **The rail** (left) — one flat list, one row per thing: features, unpromoted sessions,
-and dev servers running from a repo's main checkout. Active first (a live agent or a
+and dev servers running from a repo's main checkout. Active first (a live session or a
 running server), then alphabetical, with an `idle · N` divider marking where the quiet
 ones start. Filter by repo at the top. Cards are readouts; they carry no buttons.
 
@@ -238,12 +238,12 @@ Studio can run **2–3 features at once** even though the repos normally hardcod
 ports and a shared dev database. Each feature gets a **slot** (0, 1, 2…); its ports and
 Redis DB are offset by `slot × offsetStep` (default 100).
 
-- **accept-blue (backend)** reads its ports from environment variables Studio injects, so
+- **api (backend)** reads its ports from environment variables Studio injects, so
   **no backend code change is needed**. Slot 0 uses the normal ports; slot 1 adds +100, etc.
-  Env keys: `api__port_su` (1231), `api__port_iso` (1232), `api__port` (1233),
-  `api__port_merchant` (1239), `api__port_internal` (1999); Redis via `redis__db`.
+  Env keys: `api__port_portal` (1231), `api__port_admin` (1232), `api__port` (1233),
+  `api__port_web` (1239), `api__port_internal` (1999); Redis via `redis__db`.
   (The `__` is nconf’s nested-key separator.)
-- **Frontends** (`merchant-v3` vite :3030, `ab-iso-fe` webpack :9000, `ab-su` vite :8000)
+- **Frontends** (`web` vite :3030, `admin` webpack :9000, `portal` vite :8000)
   are wired per slot by patching the gitignored local config in the worktree
   (`src/config.js` or `src/config/config.js`) to point at that slot’s backend. That half
   works with no repo change.
@@ -276,7 +276,7 @@ had before those conventions were configurable.
 
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `baseDirs` | `['~/Desktop/ab-code']` | Roots scanned for git repos |
+| `baseDirs` | `['~/code']` | Roots scanned for git repos |
 | `scanDepth` | `3` | How deep to scan for repos |
 | `web.port` / `web.host` | `7788` / `127.0.0.1` | Server bind (also the `Host`/`Origin` allowlist) |
 | `claude.cmd` | `claude` | The agent binary (swappable) |
@@ -293,7 +293,7 @@ had before those conventions were configurable.
 | `copyAlways.default` | `.idea/runConfigurations/*.xml` | Copied into new worktrees **whether or not git ignores them** — editor scratch. `[]` turns it off |
 | `copyAlways.<repo>` | — | Per-repo override list |
 | `start.<repo>` | `{}` | Dev-server launch: `{ cmd, ports:[…] }` |
-| `webRepos` | `merchant-v3`, `ab-iso-fe`, `ab-su` | Repos that get an “Open ‹repo› ↗” button |
+| `webRepos` | `[]` | Repos that serve a browser — each gets an “Open ‹repo› ↗” button |
 | `groups` | `[]` | Manual feature groups `{name, members:["repo/branch"]}` |
 | `runConfigs` | `{}` | Editor run-config import mapping |
 | `watch` | see `server/watch.ts` | fs-watch pacing; undocumented elsewhere, hand-edit only |
@@ -311,8 +311,8 @@ had before those conventions were configurable.
   Frontends: `WTS_FE_PORT`.
 
   **The repo has to actually read the variable.** Studio sets it in the launch
-  environment; it cannot make a dev server listen anywhere. `accept-blue` works because
-  its config calls `nconf.env({separator: '__'})`, which maps `api__port_su` to
+  environment; it cannot make a dev server listen anywhere. `api` works because
+  its config calls `nconf.env({separator: '__'})`, which maps `api__port_portal` to
   `api.port_su`. A frontend whose vite/webpack config ignores `WTS_FE_PORT` binds its
   hardcoded port on every slot — so a second feature's frontend hits `EADDRINUSE`, and a
   stack start reports `started on port N instead of the port this feature's slot expects`.
@@ -467,7 +467,7 @@ Claude-specific:
 **A frontend worktree won’t build — `Can't resolve '../config/config'`.**
 Its gitignored local config wasn’t copied in. Worktrees Studio creates get it automatically
 (`copyPatterns`), but a worktree made another way (e.g. an old `wt` run) won’t. Copy your
-main checkout’s `src/config/config.js` (iso-fe/su) or `src/config.js` (merchant-v3) into the
+main checkout’s `src/config/config.js` (iso-fe/su) or `src/config.js` (web) into the
 worktree.
 
 **Resume shows `No conversation found with session ID`.**
