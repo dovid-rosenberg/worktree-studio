@@ -79,24 +79,43 @@ async function boot(): Promise<Daemon> {
   );
 
   let out = '';
-  child.stdout?.on('data', (d) => { out += d; });
-  child.stderr?.on('data', (d) => { out += d; });
+  child.stdout?.on('data', (d) => {
+    out += d;
+  });
+  child.stderr?.on('data', (d) => {
+    out += d;
+  });
 
   // The daemon prints its URL when it is listening; that line is the ready signal.
   const url = await new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`daemon never reported a URL:\n${out}`)), TIMEOUT);
     const poll = setInterval(() => {
       const m = out.match(/http:\/\/127\.0\.0\.1:(\d+)/);
-      if (m) { clearInterval(poll); clearTimeout(timer); resolve(m[0]); }
+      if (m) {
+        clearInterval(poll);
+        clearTimeout(timer);
+        resolve(m[0]);
+      }
       if (child.exitCode !== null) {
-        clearInterval(poll); clearTimeout(timer);
+        clearInterval(poll);
+        clearTimeout(timer);
         reject(new Error(`daemon exited ${child.exitCode}:\n${out}`));
       }
     }, 100);
   });
 
   const token = fs.readFileSync(path.join(stateDir, 'token'), 'utf8').trim();
-  return { base: url, token, stop: () => { try { child.kill('SIGTERM'); } catch { /* already gone */ } } };
+  return {
+    base: url,
+    token,
+    stop: () => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already gone */
+      }
+    },
+  };
 }
 
 test('a real daemon serves the document with the token substituted', { timeout: TIMEOUT }, async () => {
@@ -110,7 +129,9 @@ test('a real daemon serves the document with the token substituted', { timeout: 
     assert.ok(!html.includes('__WTS_TOKEN__'), 'placeholder must not survive');
     assert.ok(html.includes(d.token), 'the real token must be in the document');
     assert.equal(res.headers.get('cache-control'), 'no-store');
-  } finally { d.stop(); }
+  } finally {
+    d.stop();
+  }
 });
 
 test('a real daemon refuses /api without the token and answers with it', { timeout: TIMEOUT }, async () => {
@@ -123,15 +144,19 @@ test('a real daemon refuses /api without the token and answers with it', { timeo
     assert.equal(ok.status, 200);
     // `res.json()` is `unknown` under strict, which is right — this is a wire payload,
     // and asserting its shape is the point of the test.
-    const state = await ok.json() as { sessions?: unknown; repos?: unknown; mux?: unknown };
+    const state = (await ok.json()) as { sessions?: unknown; repos?: unknown; mux?: unknown };
     // The shape every client boots against.
     assert.ok(Array.isArray(state.sessions), 'sessions[]');
     assert.ok(Array.isArray(state.repos), 'repos[]');
     assert.equal(typeof state.mux, 'string');
-  } finally { d.stop(); }
+  } finally {
+    d.stop();
+  }
 });
 
-test('an unknown /api path stays a 404 rather than becoming the SPA document', { timeout: TIMEOUT }, async () => {
+test('an unknown /api path stays a 404 rather than becoming the SPA document', {
+  timeout: TIMEOUT,
+}, async () => {
   // SwiftBar, Alfred and the CLI all depend on this: a 200 text/html for a mistyped
   // endpoint is far worse to debug than a 404.
   const d = await boot();
@@ -141,7 +166,9 @@ test('an unknown /api path stays a 404 rather than becoming the SPA document', {
     // Express's own 404 page is HTML, so the content type says nothing. What matters is
     // that this is NOT the app shell: the SPA fallback must not swallow /api.
     assert.ok(!(await res.text()).includes(d.token), 'must not be the injected document');
-  } finally { d.stop(); }
+  } finally {
+    d.stop();
+  }
 });
 
 test('a deep link falls back to the document, not a 404', { timeout: TIMEOUT }, async () => {
@@ -150,7 +177,9 @@ test('a deep link falls back to the document, not a 404', { timeout: TIMEOUT }, 
     const res = await fetch(`${d.base}/anything/deep`);
     assert.equal(res.status, 200);
     assert.ok((await res.text()).includes(d.token), 'the fallback must inject too');
-  } finally { d.stop(); }
+  } finally {
+    d.stop();
+  }
 });
 
 test('the SSE stream opens and delivers a first frame', { timeout: TIMEOUT }, async () => {
@@ -176,6 +205,13 @@ test('the SSE stream opens and delivers a first frame', { timeout: TIMEOUT }, as
     }
     // One of each half is written before a client joins the fan-out, so a first
     // connection starts from a complete snapshot rather than waiting for a change.
-    assert.match(buf, /^event: (topology|session-state|ci)$/m, `no named event arrived:\n${buf.slice(0, 300)}`);
-  } finally { ac.abort(); d.stop(); }
+    assert.match(
+      buf,
+      /^event: (topology|session-state|ci)$/m,
+      `no named event arrived:\n${buf.slice(0, 300)}`,
+    );
+  } finally {
+    ac.abort();
+    d.stop();
+  }
 });

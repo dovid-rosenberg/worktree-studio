@@ -40,21 +40,35 @@ export function trapFocus(node: HTMLElement, opts: TrapFocusOptions = {}): TrapF
   const onKey = (e: KeyboardEvent) => {
     if (!enabled || e.key !== 'Tab') return;
     const items = focusablesIn(node);
-    if (!items.length) { e.preventDefault(); return; }
+    if (!items.length) {
+      e.preventDefault();
+      return;
+    }
     const first = items[0];
     const last = items[items.length - 1];
-    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   };
 
   node.addEventListener('keydown', onKey);
 
   return {
-    update(next: TrapFocusOptions = {}) { enabled = next.enabled !== false; },
+    update(next: TrapFocusOptions = {}) {
+      enabled = next.enabled !== false;
+    },
     destroy() {
       node.removeEventListener('keydown', onKey);
       if (restoreFocus && prevFocus && document.contains(prevFocus)) {
-        try { prevFocus.focus(); } catch { /* node may have become unfocusable */ }
+        try {
+          prevFocus.focus();
+        } catch {
+          /* node may have become unfocusable */
+        }
       }
     },
   };

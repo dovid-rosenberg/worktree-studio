@@ -97,8 +97,11 @@ function compileBranchMatcher(pattern?: string | null, flags?: string | null): B
   // one call and miss on the next. Strip them; identity only ever wants the first match.
   const safe = String(flags || '').replace(/[gy]/g, '');
   let re: RegExp;
-  try { re = new RegExp(String(pattern), safe); }
-  catch (e) { return { error: (e as Error).message }; }
+  try {
+    re = new RegExp(String(pattern), safe);
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
   // A pattern with no capture group can only ever match, never extract, so it
   // would silently behave as `basename` for every worktree. Say so at load time.
   // `source + '|'` makes the pattern match the empty string without changing how
@@ -110,7 +113,9 @@ function compileBranchMatcher(pattern?: string | null, flags?: string | null): B
     // but a null would mean we learned nothing, which is the same as the catch below.
     const m = new RegExp(`${re.source}|`).exec('');
     groups = m ? m.length - 1 : 1;
-  } catch { groups = 1; }
+  } catch {
+    groups = 1;
+  }
   if (groups === 0) return { error: 'featureIdentity.branchPattern has no capture group' };
   return { re };
 }
@@ -260,7 +265,12 @@ function createIdentity(cfg: PartialDeep<Config> = {}): Identity {
     const live = new Set<string>();
     for (const repo of repos || []) {
       for (const w of repo.worktrees || []) {
-        const entry: IdentityInput = { repo: repo.name, wtname: w.wtname || w.name || path.basename(w.path), branch: w.branch, path: w.path };
+        const entry: IdentityInput = {
+          repo: repo.name,
+          wtname: w.wtname || w.name || path.basename(w.path),
+          branch: w.branch,
+          path: w.path,
+        };
         index.set(w.path, entry);
         live.add(w.path);
         // lsof hands us a resolved path while the scan hands us the spelling on

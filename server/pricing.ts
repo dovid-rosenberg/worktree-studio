@@ -30,9 +30,7 @@ export interface ModelPrice {
  * What a cost lookup answers with. `usd` is a number exactly when `priced` is
  * true, so a caller that checks the flag never has to re-check for null.
  */
-export type Cost =
-  | { usd: number; priced: true }
-  | { usd: null; priced: false };
+export type Cost = { usd: number; priced: true } | { usd: null; priced: false };
 
 // model id → { input, output } USD per million tokens.
 const PRICES: Record<string, ModelPrice> = {
@@ -80,7 +78,9 @@ function priceFor(model: string | null | undefined, speed?: string | null): Mode
   return PRICES[key] || null;
 }
 
-function isBillable(model: string | null | undefined): boolean { return !UNBILLED.has(normalizeModel(model)); }
+function isBillable(model: string | null | undefined): boolean {
+  return !UNBILLED.has(normalizeModel(model));
+}
 
 // usage: the normalized shape from transcripts.ts
 // ({ input, output, cacheWrite5m, cacheWrite1h, cacheRead }).
@@ -91,7 +91,7 @@ function costOf(
   usage: Partial<Usage> | null | undefined,
   opts: { speed?: string | null } = {},
 ): Cost {
-  const p = priceFor(model, opts.speed || (usage?.speed));
+  const p = priceFor(model, opts.speed || usage?.speed);
   if (!p || !usage) return { usd: null, priced: false };
   const inRate = p.input / PER_MILLION;
   const outRate = p.output / PER_MILLION;
@@ -113,9 +113,18 @@ function round(usd: number | null | undefined): number | null {
 
 // Surfaced so the API can tell a UI how old the numbers are.
 export const PRICING_VERIFIED = '2026-07-27';
-export const ESTIMATE_NOTE = 'Costs are estimates derived from a maintained price table (server/pricing.ts); transcripts record tokens, not billing.';
+export const ESTIMATE_NOTE =
+  'Costs are estimates derived from a maintained price table (server/pricing.ts); transcripts record tokens, not billing.';
 
 export {
-  PRICES, FAST_PRICES, CACHE_WRITE_5M, CACHE_WRITE_1H, CACHE_READ,
-  normalizeModel, priceFor, isBillable, costOf, round,
+  PRICES,
+  FAST_PRICES,
+  CACHE_WRITE_5M,
+  CACHE_WRITE_1H,
+  CACHE_READ,
+  normalizeModel,
+  priceFor,
+  isBillable,
+  costOf,
+  round,
 };

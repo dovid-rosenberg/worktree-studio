@@ -27,7 +27,9 @@ const adapter: SourceAdapter = {
     // parses to an ARRAY for `?q=a&q=b`. execFile rejects a non-string arg with a
     // TypeError, i.e. a 500 leaking an internal message for what is just a malformed
     // request. Coerce; `--search` wants one string either way.
-    if (q) { args.push('--search', String(q)); }
+    if (q) {
+      args.push('--search', String(q));
+    }
     const r = await run('gh', args, { cwd: repoPath, env: ENV });
     if (r.code !== 0) throw new Error(r.stderr.trim() || 'gh issue list failed');
     const items = JSON.parse(r.stdout || '[]') as GithubIssue[];
@@ -38,7 +40,10 @@ const adapter: SourceAdapter = {
     }));
   },
   async seed(_cfg, { repoPath, id }) {
-    const r = await run('gh', ['issue', 'view', String(id), '--json', 'number,title,body,url'], { cwd: repoPath, env: ENV });
+    const r = await run('gh', ['issue', 'view', String(id), '--json', 'number,title,body,url'], {
+      cwd: repoPath,
+      env: ENV,
+    });
     if (r.code !== 0) throw new Error(r.stderr.trim() || 'gh issue view failed');
     const it = JSON.parse(r.stdout) as GithubIssue;
     return { source: 'github', id: String(it.number), title: it.title, body: it.body || '', url: it.url };

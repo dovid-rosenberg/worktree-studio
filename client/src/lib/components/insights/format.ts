@@ -35,7 +35,11 @@ export function compactTokens(n: number): string {
 // where "9.4M" and "576.3M" make the eye do arithmetic to compare them.
 function trim(v: number): string {
   const a = Math.abs(v);
-  return a < 10 ? v.toFixed(2).replace(/\.?0+$/, '') : a < 100 ? v.toFixed(1).replace(/\.0$/, '') : String(Math.round(v));
+  return a < 10
+    ? v.toFixed(2).replace(/\.?0+$/, '')
+    : a < 100
+      ? v.toFixed(1).replace(/\.0$/, '')
+      : String(Math.round(v));
 }
 
 /**
@@ -72,7 +76,9 @@ export function pct(v: number): string {
   return `${Math.round(v)}%`;
 }
 
-const MIN = 60e3, HOUR = 3600e3, DAY = 86400e3;
+const MIN = 60e3,
+  HOUR = 3600e3,
+  DAY = 86400e3;
 
 /** "just now" / "14m ago" / "3h ago" / "6d ago" / a date past a week.
  */
@@ -92,14 +98,18 @@ export function stamp(ms: number | null | undefined): string {
   const t = Number(ms);
   if (!Number.isFinite(t)) return '';
   return new Date(t).toLocaleString('en-US', {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
   });
 }
 
 /** Elapsed wall-clock between the first and last priced turn.
  */
 export function span(fromMs: number | null | undefined, toMs: number | null | undefined): string {
-  const a = Number(fromMs), b = Number(toMs);
+  const a = Number(fromMs),
+    b = Number(toMs);
   if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return '';
   const d = b - a;
   if (d < HOUR) return `${Math.round(d / MIN)}m`;

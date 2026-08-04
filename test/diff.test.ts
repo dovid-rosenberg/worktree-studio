@@ -7,7 +7,14 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { present } from './helpers.ts';
 import type { DiffLineType } from '../server/types.ts';
-import { parsePatch, formatFilePatch, alignRows, normalizeSelection, stripPrefix, unquotePath } from '../server/diff.ts';
+import {
+  parsePatch,
+  formatFilePatch,
+  alignRows,
+  normalizeSelection,
+  stripPrefix,
+  unquotePath,
+} from '../server/diff.ts';
 
 // Patch fixtures are built line-by-line so trailing whitespace and the "\ No newline"
 // marker are visible and exact.
@@ -134,11 +141,7 @@ const BINARY = P(
   'Binary files a/b.bin and b/b.bin differ',
 );
 
-const MODE_ONLY = P(
-  'diff --git a/m.sh b/m.sh',
-  'old mode 100644',
-  'new mode 100755',
-);
+const MODE_ONLY = P('diff --git a/m.sh b/m.sh', 'old mode 100644', 'new mode 100755');
 
 const headersOf = (patch: string) => patch.split('\n').filter((l) => l.startsWith('@@'));
 
@@ -174,7 +177,14 @@ test('parsePatch numbers each line on the side it belongs to', () => {
 
 test('parsePatch counts added and deleted lines per hunk and per file', () => {
   const [f] = parsePatch(THREE_HUNKS);
-  assert.deepEqual(f.hunks.map((h) => [h.added, h.deleted]), [[4, 0], [0, 2], [1, 1]]);
+  assert.deepEqual(
+    f.hunks.map((h) => [h.added, h.deleted]),
+    [
+      [4, 0],
+      [0, 2],
+      [1, 1],
+    ],
+  );
   assert.equal(f.added, 5);
   assert.equal(f.deleted, 3);
 });
@@ -187,9 +197,14 @@ test('parsePatch keeps the @@ section heading with its hunk', () => {
 
 test('parsePatch splits a multi-file patch into one entry per file', () => {
   const files = parsePatch(MODIFIED + NEW_FILE + DELETED_FILE);
-  assert.deepEqual(files.map((f) => [f.path, f.status]), [
-    ['keep.txt', 'modified'], ['new.txt', 'added'], ['del.txt', 'deleted'],
-  ]);
+  assert.deepEqual(
+    files.map((f) => [f.path, f.status]),
+    [
+      ['keep.txt', 'modified'],
+      ['new.txt', 'added'],
+      ['del.txt', 'deleted'],
+    ],
+  );
 });
 
 test('parsePatch ignores the commit header `git show` prints before the first diff', () => {
@@ -208,13 +223,22 @@ test('parsePatch attaches "\\ No newline at end of file" to the line it belongs 
   const [f] = parsePatch(NO_NEWLINE);
   assert.deepEqual(
     f.hunks[0].lines.map((l) => [l.type, l.text, !!l.noNewline]),
-    [['context', 'a', false], ['del', 'b', false], ['del', 'c', true], ['add', 'B', false], ['add', 'C', true]],
+    [
+      ['context', 'a', false],
+      ['del', 'b', false],
+      ['del', 'c', true],
+      ['add', 'B', false],
+      ['add', 'C', true],
+    ],
   );
 });
 
 test('parsePatch keeps the \\r of a CRLF file inside the line text', () => {
   const [f] = parsePatch(CRLF);
-  assert.deepEqual(f.hunks[0].lines.map((l) => l.text), ['x\r', 'y\r', 'Y\r', 'z\r']);
+  assert.deepEqual(
+    f.hunks[0].lines.map((l) => l.text),
+    ['x\r', 'y\r', 'Y\r', 'z\r'],
+  );
 });
 
 test('parsePatch marks a new file as added with no old path', () => {
@@ -326,7 +350,9 @@ test('alignRows leaves a pure deletion with an empty right side', () => {
 test('alignRows pairs what it can and spills the rest into one-sided rows', () => {
   // 3 removals against 1 addition → one paired change row, two lone removals.
   const lines: Array<{ type: DiffLineType; text: string }> = [
-    { type: 'del', text: 'a' }, { type: 'del', text: 'b' }, { type: 'del', text: 'c' },
+    { type: 'del', text: 'a' },
+    { type: 'del', text: 'b' },
+    { type: 'del', text: 'c' },
     { type: 'add', text: 'A' },
   ];
   assert.deepEqual(alignRows(lines), [
@@ -341,7 +367,10 @@ test('rows index into lines, so unified and side-by-side render from one payload
   const h = f.hunks[0];
   // A `change` row is the one kind whose left AND right both index a line — that is
   // what this test is about, so `present()` states it instead of `?.` hiding a miss.
-  const change = present(h.rows.find((r) => r.type === 'change'), 'a change row');
+  const change = present(
+    h.rows.find((r) => r.type === 'change'),
+    'a change row',
+  );
   assert.equal(present(h.lines[present(change.left, 'left index')]).text, 'b');
   assert.equal(present(h.lines[present(change.right, 'right index')]).text, 'B');
 });

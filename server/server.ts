@@ -92,11 +92,15 @@ async function main() {
   // dropped — see server/rescan.ts for the caller (POST /api/settings changing
   // baseDirs) that nothing on the filesystem would ever have re-triggered.
   const rescan = createRescan(async () => {
-    try { repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth); } catch (_e) { /* */ }
+    try {
+      repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth);
+    } catch (_e) {
+      /* */
+    }
     // The scan is the only thing that knows each worktree's branch, and the
     // branch/manifest identity strategies need it to answer from a path alone.
     identity.reindex(repos);
-    prunePaths();        // the fresh scan is what says which worktrees still exist
+    prunePaths(); // the fresh scan is what says which worktrees still exist
     broadcastTopology(); // the scan IS the topology
     // A scan is also the server's only notice that git moved. watch.ts arms
     // fs.watch on `.git/refs` (recursive), so a commit writes refs/heads/<branch>,
@@ -122,7 +126,9 @@ async function main() {
       // actually drops something, so on the common path this is a pid check per
       // tracked worktree and nothing else.
       if ((await servers.pruneTracked()).length) runningSig = '';
-    } catch { return; }
+    } catch {
+      return;
+    }
     // Nothing else bounds a dev server that has been running for days without a
     // restart: it appends to its log the whole time, and only a sweep is ever going
     // to notice. One stat per tracked worktree (see Servers.trimLogs). Outside the
@@ -131,7 +137,10 @@ async function main() {
     // Discovery feeds the topology half (each worktree's running/ports), so a new
     // or vanished server has to push one — but only when what lsof found actually
     // changed, or this 3 s timer would re-send the slow half 20 times a minute.
-    const sig = [...runningCache].map(([p, v]) => `${p}:${(v.ports || []).join(',')}`).sort().join('|');
+    const sig = [...runningCache]
+      .map(([p, v]) => `${p}:${(v.ports || []).join(',')}`)
+      .sort()
+      .join('|');
     if (sig === runningSig) return;
     runningSig = sig;
     broadcastTopology();
@@ -140,7 +149,13 @@ async function main() {
   // The state payload lives in state.ts; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
   const { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor } = createState({
-    cfg, manager, servers, mux, identity, repos: () => repos, running: () => runningCache,
+    cfg,
+    manager,
+    servers,
+    mux,
+    identity,
+    repos: () => repos,
+    running: () => runningCache,
   });
 
   // ---- SSE live state ----
@@ -191,7 +206,12 @@ async function main() {
   // A UI that isn't on disk is a boot failure, not a 404 the user has to reverse-
   // engineer: say what is missing and how to get it, and stop.
   let ui: webui.ResolvedUi;
-  try { ui = webui.resolve(); } catch (e) { console.error(`[wt-studio] ${msg(e)}`); process.exit(1); }
+  try {
+    ui = webui.resolve();
+  } catch (e) {
+    console.error(`[wt-studio] ${msg(e)}`);
+    process.exit(1);
+  }
   console.log(`[wt-studio] serving the ${ui.label}`);
   webui.mount(app, { ui, token: cfg._token });
 
@@ -212,7 +232,10 @@ async function main() {
 
   // attention.seen(): SwiftBar and Alfred poll this route instead of subscribing to
   // /api/events, so a poll is what tells the watcher someone is still looking.
-  api.get('/state', async (_req, res) => { attention.seen(); res.json(await buildState()); });
+  api.get('/state', async (_req, res) => {
+    attention.seen();
+    res.json(await buildState());
+  });
 
   api.get('/events', (req, res) => {
     res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -225,8 +248,17 @@ async function main() {
     // nothing at all, so its snapshot may be stale or empty — this is what makes an
     // opened dashboard fill in within a second rather than at the next safety net.
     ciFeed.poke();
-    const hb = setInterval(() => { try { res.write(':hb\n\n'); } catch { /* */ } }, 25000);
-    req.on('close', () => { clearInterval(hb); unsubscribe(); });
+    const hb = setInterval(() => {
+      try {
+        res.write(':hb\n\n');
+      } catch {
+        /* */
+      }
+    }, 25000);
+    req.on('close', () => {
+      clearInterval(hb);
+      unsubscribe();
+    });
   });
 
   // ---- settings / connections ----
@@ -270,7 +302,8 @@ async function main() {
     if (isRecord(start)) {
       const coercePorts = (v: unknown): number[] =>
         (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\s,]+/))
-          .map((x) => parseInt(String(x), 10)).filter((n) => Number.isInteger(n) && n > 0);
+          .map((x) => parseInt(String(x), 10))
+          .filter((n) => Number.isInteger(n) && n > 0);
       const clean: Record<string, StartConfig> = {};
       for (const [repo, v] of Object.entries(start)) {
         const name = String(repo).trim();
@@ -298,14 +331,22 @@ async function main() {
     if (typeof defaultEditor === 'string' && defaultEditor.trim()) cfg.defaultEditor = defaultEditor.trim();
     // Manual feature groups [{ name, members:[…] }] — full replace, drop blank rows.
     if (Array.isArray(groups)) {
-      cfg.groups = groups.map((g): GroupConfig => ({
-        name: String((isRecord(g) && g.name) || '').trim(),
-        members: isRecord(g) && Array.isArray(g.members) ? g.members.map((m) => String(m).trim()).filter(Boolean) : [],
-      })).filter((g) => g.name && g.members.length);
+      cfg.groups = groups
+        .map(
+          (g): GroupConfig => ({
+            name: String((isRecord(g) && g.name) || '').trim(),
+            members:
+              isRecord(g) && Array.isArray(g.members)
+                ? g.members.map((m) => String(m).trim()).filter(Boolean)
+                : [],
+          }),
+        )
+        .filter((g) => g.name && g.members.length);
       rescanNeeded = true;
     }
     configMod.save(cfg);
-    if (rescanNeeded) await rescan(); else broadcastTopology();
+    if (rescanNeeded) await rescan();
+    else broadcastTopology();
     res.json({
       ok: true,
       sources: cfg.sources,
@@ -333,30 +374,51 @@ async function main() {
       const { source, sourceId, text, name, repo, additionalRepos } = req.body || {};
       const repoObj = repos.find((r) => r.name === repo);
       if (!repoObj) return res.status(400).json({ error: `unknown repo '${repo}'` });
-      const seed = await sources.seed(cfg, source || 'freetext', { repoPath: repoObj.path, id: sourceId, text, name });
+      const seed = await sources.seed(cfg, source || 'freetext', {
+        repoPath: repoObj.path,
+        id: sourceId,
+        text,
+        name,
+      });
       const extra = (Array.isArray(additionalRepos) ? additionalRepos : [])
         .map((rn: unknown) => repos.find((r) => r.name === rn))
         .filter((r): r is ScannedRepo => !!r)
         .map((r) => ({ repo: r.name, repoPath: r.path }));
-      const session = await manager.create({ seed, repoPath: repoObj.path, repoName: repoObj.name, additionalRepos: extra });
+      const session = await manager.create({
+        seed,
+        repoPath: repoObj.path,
+        repoName: repoObj.name,
+        additionalRepos: extra,
+      });
       res.json(session);
-    } catch (e) { res.status(500).json({ error: msg(e) }); }
+    } catch (e) {
+      res.status(500).json({ error: msg(e) });
+    }
   });
 
   api.post('/sessions/:id/rename', async (req, res) => {
-    res.json(await manager.rename(req.params.id, (req.body?.title) || ''));
+    res.json(await manager.rename(req.params.id, req.body?.title || ''));
   });
-  api.post('/sessions/:id/deactivate', async (req, res) => { res.json(await manager.deactivate(req.params.id)); });
-  api.post('/sessions/:id/activate', async (req, res) => { res.json(await manager.activate(req.params.id)); });
+  api.post('/sessions/:id/deactivate', async (req, res) => {
+    res.json(await manager.deactivate(req.params.id));
+  });
+  api.post('/sessions/:id/activate', async (req, res) => {
+    res.json(await manager.activate(req.params.id));
+  });
 
   /** Feature worktrees this session has no record of — see features.ts for why. */
   const attachableFor = (s: Session | undefined) =>
-    attachableWorktrees(repos, s?.feature, new Set((s?.repos || []).map((r: SessionRepo) => r.repoPath)), (i) => identity.of(i));
+    attachableWorktrees(
+      repos,
+      s?.feature,
+      new Set((s?.repos || []).map((r: SessionRepo) => r.repoPath)),
+      (i) => identity.of(i),
+    );
 
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
   api.post('/sessions/:id/add-repo', async (req, res) => {
-    const repoObj = repos.find((r) => r.name === (req.body?.repo));
+    const repoObj = repos.find((r) => r.name === req.body?.repo);
     if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body?.repo}'` });
     const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
     if (!out.ok) return res.status(400).json(out);
@@ -496,7 +558,7 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const out = [];
-    for (const entry of (s.repos || [])) {
+    for (const entry of s.repos || []) {
       if (!entry.worktreePath) continue;
       const def = defaultBranchOf(entry.repo);
       const { base, commits } = await review.commits(entry.worktreePath, def);
@@ -506,7 +568,15 @@ async function main() {
         added: wc.files.reduce((n, f) => n + (f.added || 0), 0),
         deleted: wc.files.reduce((n, f) => n + (f.deleted || 0), 0),
       };
-      out.push({ repo: entry.repo, worktreePath: entry.worktreePath, branch: entry.branch, base, defaultBranch: def, commits, uncommitted });
+      out.push({
+        repo: entry.repo,
+        worktreePath: entry.worktreePath,
+        branch: entry.branch,
+        base,
+        defaultBranch: def,
+        commits,
+        uncommitted,
+      });
     }
     res.json({ repos: out });
   });
@@ -519,7 +589,8 @@ async function main() {
     const sha = qs(req.query.sha) || 'uncommitted';
     // Same boundary check as routes-review.ts: `sha` reaches a git argv, so it has
     // to be an object name and not an option (see server/review.ts).
-    if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
+    if (!review.isValidSha(sha))
+      return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
     res.json(await review.commitDetail(entry.worktreePath, defaultBranchOf(entry.repo), sha));
   });
 
@@ -534,7 +605,10 @@ async function main() {
     // A commit made through the UI writes refs/heads/<branch>, so the watcher would
     // find it anyway — but it can take a debounce plus a scan to get here, and we
     // already know. Poke directly rather than wait to be told what we just did.
-    if (out.ok) { broadcastTopology(); ciFeed.poke({ force: true }); }
+    if (out.ok) {
+      broadcastTopology();
+      ciFeed.poke({ force: true });
+    }
     res.json(out);
   });
 
@@ -612,11 +686,18 @@ async function main() {
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
   orchestrator.register(api, {
-    cfg, servers, manager, repos: () => repos, resolveGroup, conflictsFor, refreshRunning,
+    cfg,
+    servers,
+    manager,
+    repos: () => repos,
+    resolveGroup,
+    conflictsFor,
+    refreshRunning,
     // A getter, not the Map: refreshRunning() REPLACES runningCache rather than mutating
     // it, so a captured reference would be the pre-refresh map every time.
     running: () => runningCache,
-    scheduleBroadcast: broadcastTopology, rescan,
+    scheduleBroadcast: broadcastTopology,
+    rescan,
   });
 
   // GET /sessions/:id/ci (still an on-demand answer for SwiftBar/Alfred and any
@@ -652,7 +733,11 @@ async function main() {
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
     // Dedupe: two repos of one feature are distinct worktrees, but a caller that passed
     // the same path twice must not open two windows on it.
-    const list = [...new Set((Array.isArray(paths) ? paths : [p]).filter((x): x is string => typeof x === 'string' && !!x))];
+    const list = [
+      ...new Set(
+        (Array.isArray(paths) ? paths : [p]).filter((x): x is string => typeof x === 'string' && !!x),
+      ),
+    ];
     if (!list.length) return res.status(400).json({ error: 'path or paths is required' });
     // split/join, not replace(): `$&`/`` $` ``/`$'`/`$$` in a REPLACEMENT string expand
     // after shq() quoted the path, so such a path would open the wrong file.
@@ -684,9 +769,16 @@ async function main() {
     const id = raw == null ? '' : String(Array.isArray(raw) ? raw[0] : raw);
     const known = id ? manager.get(id) : null;
     const deny = guard.denyToken(req);
-    if (deny && !(known && known.hookAuth !== true)) return res.status(deny.status).json({ error: deny.error });
+    if (deny && !(known && known.hookAuth !== true))
+      return res.status(deny.status).json({ error: deny.error });
     let payload = req.body;
-    if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch { payload = { raw: payload }; } }
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        payload = { raw: payload };
+      }
+    }
     if (id) manager.applyHook(id, req.params.event, payload || {});
     res.json({ ok: true });
   });
@@ -712,13 +804,23 @@ async function main() {
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
     let url: URL;
-    try { url = new URL(req.url || '', 'http://localhost'); } catch { socket.destroy(); return; }
-    if (url.pathname !== '/ws/term') { socket.destroy(); return; }
+    try {
+      url = new URL(req.url || '', 'http://localhost');
+    } catch {
+      socket.destroy();
+      return;
+    }
+    if (url.pathname !== '/ws/term') {
+      socket.destroy();
+      return;
+    }
     const deny = guard.denyBrowser(req) || guard.denyToken(req, url.searchParams.get('token'));
     if (deny) {
       // A plain HTTP response, then close: the client never reaches ws state OPEN, so
       // it sees a failed handshake rather than a socket that opens and dies.
-      socket.write(`HTTP/1.1 ${deny.status} ${deny.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\n\r\n`);
+      socket.write(
+        `HTTP/1.1 ${deny.status} ${deny.status === 401 ? 'Unauthorized' : 'Forbidden'}\r\nConnection: close\r\n\r\n`,
+      );
       socket.destroy();
       return;
     }
@@ -747,7 +849,13 @@ async function main() {
     const reaped = reapLaunchScripts();
     if (reaped) console.log(`[wt-studio] reaped ${reaped} stale launch script(s)`);
   }
-  await watchMod.start({ cfg, rescan, refreshRunning, reconcile: () => manager.reconcile(), hasViewers: attention.active });
+  await watchMod.start({
+    cfg,
+    rescan,
+    refreshRunning,
+    reconcile: () => manager.reconcile(),
+    hasViewers: attention.active,
+  });
   // restore() guards each session on its own, so a rejection here means the whole
   // pass went down and NOTHING was relaunched. Discarding the error left that state
   // indistinguishable from "there were no sessions to restore", since the success
@@ -759,8 +867,13 @@ async function main() {
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 
   server.listen(cfg.web.port, cfg.web.host, () => {
-    console.log(`[wt-studio] http://${cfg.web.host}:${cfg.web.port}  (${repos.length} repos, mux=${mux ? mux.name : 'none'})`);
+    console.log(
+      `[wt-studio] http://${cfg.web.host}:${cfg.web.port}  (${repos.length} repos, mux=${mux ? mux.name : 'none'})`,
+    );
   });
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

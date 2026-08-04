@@ -5,14 +5,16 @@ const adapter: SourceAdapter = {
   id: 'freetext',
   label: 'Free text',
   needsRepo: false,
-  isEnabled() { return true; },
-  async list() { return []; },
+  isEnabled() {
+    return true;
+  },
+  async list() {
+    return [];
+  },
   async seed(_cfg, { text, name }) {
     const body = (text || '').trim();
     // short title: explicit name, else first few words of the prompt (not the whole thing)
-    const title = (name?.trim())
-      || body.split(/\s+/).slice(0, 6).join(' ').slice(0, 60)
-      || 'New session';
+    const title = name?.trim() || body.split(/\s+/).slice(0, 6).join(' ').slice(0, 60) || 'New session';
     return { source: 'freetext', id: null, title, body, url: null };
   },
 };

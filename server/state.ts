@@ -17,8 +17,18 @@ import * as sources from './sources/index.ts';
 import type { RunningServer } from './servers.ts';
 import type { Identity } from './identity.ts';
 import type {
-  Config, EmbeddedSession, Feature, FeatureMember, PartialDeep, ResolvedFeature, Session,
-  SessionServers, SessionStatePayload, StatePayload, TopologyPayload, Worktree,
+  Config,
+  EmbeddedSession,
+  Feature,
+  FeatureMember,
+  PartialDeep,
+  ResolvedFeature,
+  Session,
+  SessionServers,
+  SessionStatePayload,
+  StatePayload,
+  TopologyPayload,
+  Worktree,
 } from './types.ts';
 
 // The collaborators are typed by the surface this file touches, not by the concrete
@@ -161,23 +171,37 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }: S
       const wts: Worktree[] = [];
       for (const w of repo.worktrees) {
         const dec = servers.decorate({ path: w.path, repo: repo.name }, active);
-        const sess = w.isMain ? null : (sessionsByPath.get(paths.resolve(w.path)) || null);
+        const sess = w.isMain ? null : sessionsByPath.get(paths.resolve(w.path)) || null;
         const wt: Worktree = {
-          repo: repo.name, wtname: w.name, branch: w.branch, path: w.path,
-          isMain: w.isMain, detached: w.detached, merged: w.merged,
-          baseBranch: repo.defaultBranch, baseDir: baseDirOf(repo.path),
+          repo: repo.name,
+          wtname: w.name,
+          branch: w.branch,
+          path: w.path,
+          isMain: w.isMain,
+          detached: w.detached,
+          merged: w.merged,
+          baseBranch: repo.defaultBranch,
+          baseDir: baseDirOf(repo.path),
           // Spread, not a hand-picked list. This was `running, pid, ports, canStart`,
           // so `depsMissing` — added later — was computed by decorate() and then
           // silently dropped here: the rail's "deps missing" pill could never render,
           // and nothing failed, because an absent field reads as false everywhere.
           // Spreading means the next field decorate() learns arrives on its own.
           ...dec,
-          session: sess ? { id: sess.id, state: sess.state, activity: sess.activity, muxName: sess.muxName } : null,
+          session: sess
+            ? { id: sess.id, state: sess.state, activity: sess.activity, muxName: sess.muxName }
+            : null,
         };
         wts.push(wt);
         flat.push(wt);
       }
-      reposOut.push({ name: repo.name, repo: repo.name, path: repo.path, defaultBranch: repo.defaultBranch, worktrees: wts });
+      reposOut.push({
+        name: repo.name,
+        repo: repo.name,
+        path: repo.path,
+        defaultBranch: repo.defaultBranch,
+        worktrees: wts,
+      });
     }
     const { features, groups } = computeFeatures(flat, cfg.groups || [], ident);
     // one session per feature: surface the single driving session on the feature,
@@ -216,12 +240,22 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }: S
     const serversById: SessionServers = {};
     for (const s of sessions) {
       const owned = (s.repos || []).filter((r): r is typeof r & { worktreePath: string } => !!r.worktreePath);
-      const list = owned.length ? owned : (s.worktreePath ? [{ repo: s.repoName, worktreePath: s.worktreePath }] : []);
+      const list = owned.length
+        ? owned
+        : s.worktreePath
+          ? [{ repo: s.repoName, worktreePath: s.worktreePath }]
+          : [];
       if (list.length) {
         serversById[s.id] = {
           repos: list.map((r) => {
             const hit = active.get(paths.resolve(r.worktreePath));
-            return { repo: r.repo, worktreePath: r.worktreePath, running: !!hit, ports: hit ? hit.ports : [], canStart: !!servers.startCfg(r.repo) };
+            return {
+              repo: r.repo,
+              worktreePath: r.worktreePath,
+              running: !!hit,
+              ports: hit ? hit.ports : [],
+              canStart: !!servers.startCfg(r.repo),
+            };
           }),
         };
       }
@@ -250,12 +284,15 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }: S
 
   // A member that is really on disk. A manual group can name a worktree that has
   // since been removed, and those arrive as { missing, ref } stubs.
-  function present(m: FeatureMember): m is Worktree { return !!m && !m.missing; }
+  function present(m: FeatureMember): m is Worktree {
+    return !!m && !m.missing;
+  }
 
   // Resolve a feature/group by name from current state; drop missing members.
   async function resolveGroup(name: string): Promise<{ group: ResolvedFeature | null; flat: Worktree[] }> {
     const st = await buildState();
-    const g = (st.features || []).find((x) => x.name === name) || (st.groups || []).find((x) => x.name === name);
+    const g =
+      (st.features || []).find((x) => x.name === name) || (st.groups || []).find((x) => x.name === name);
     if (!g) return { group: null, flat: [] };
     const flat = st.repos.flatMap((r) => r.worktrees);
     return { group: { ...g, members: g.members.filter(present) }, flat };
@@ -265,7 +302,10 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }: S
   // but a concurrency-slotted repo runs on its own offset ports per feature, so
   // running it in another worktree is NOT a conflict (no stop & switch needed).
   /** @param flat  every worktree in every repo */
-  function conflictsFor<W extends ConflictCandidate>(member: Pick<Worktree, 'repo' | 'path'>, flat: W[]): W[] {
+  function conflictsFor<W extends ConflictCandidate>(
+    member: Pick<Worktree, 'repo' | 'path'>,
+    flat: W[],
+  ): W[] {
     if (servers.isSlotted(member.repo)) return [];
     return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);
   }

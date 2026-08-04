@@ -41,7 +41,9 @@ export function activatable(node: HTMLElement, fn: ActivateHandler): Activatable
   return {
     // Rebinding the callback rather than tearing down keeps focus on the node when a
     // re-render hands us a fresh closure — otherwise keyboard users lose their place.
-    update(next: ActivateHandler) { handler = next; },
+    update(next: ActivateHandler) {
+      handler = next;
+    },
     destroy() {
       node.removeEventListener('click', onClick);
       node.removeEventListener('keydown', onKeydown);

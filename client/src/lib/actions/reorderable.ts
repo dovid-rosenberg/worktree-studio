@@ -72,7 +72,9 @@ export function reorderable(node: HTMLElement, options: ReorderableOptions) {
 
   return {
     // `index` changes as rows move, so the action has to be told rather than capturing it.
-    update(next: ReorderableOptions) { opts = next; },
+    update(next: ReorderableOptions) {
+      opts = next;
+    },
     destroy() {
       node.removeEventListener('dragstart', onDragStart);
       node.removeEventListener('dragend', onDragEnd);

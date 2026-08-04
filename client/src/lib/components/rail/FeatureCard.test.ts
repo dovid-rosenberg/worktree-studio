@@ -15,18 +15,27 @@ import type { Feature } from '../../../../../server/types';
  */
 
 const member = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo, wtname: 'wt', path: `/${repo}/wt`, branch: 'feature/x',
-  running: false, canStart: true, ports: [], isMain: false, session: null, merged: false,
+  repo,
+  wtname: 'wt',
+  path: `/${repo}/wt`,
+  branch: 'feature/x',
+  running: false,
+  canStart: true,
+  ports: [],
+  isMain: false,
+  session: null,
+  merged: false,
   ...over,
 });
 
-const feature = (over: Record<string, unknown> = {}): Feature => ({
-  name: 'token-race-fix',
-  auto: true,
-  members: [member('accept-blue')],
-  session: null,
-  ...over,
-} as unknown as Feature);
+const feature = (over: Record<string, unknown> = {}): Feature =>
+  ({
+    name: 'token-race-fix',
+    auto: true,
+    members: [member('accept-blue')],
+    session: null,
+    ...over,
+  }) as unknown as Feature;
 
 describe('FeatureCard', () => {
   it('names the feature and its member repos', () => {
@@ -47,7 +56,9 @@ describe('FeatureCard', () => {
   });
 
   it('labels an agent that is working or waiting, because those are worth finding', () => {
-    render(FeatureCard, { feature: feature({ session: { id: 's1', state: 'waiting', activity: '', muxName: 'm' } }) });
+    render(FeatureCard, {
+      feature: feature({ session: { id: 's1', state: 'waiting', activity: '', muxName: 'm' } }),
+    });
     expect(screen.getByText('waiting')).toBeInTheDocument();
   });
 
@@ -57,7 +68,9 @@ describe('FeatureCard', () => {
   });
 
   it('marks servers-up with the green edge rather than another pill', () => {
-    const { container } = render(FeatureCard, { feature: feature({ members: [member('accept-blue', { running: true })] }) });
+    const { container } = render(FeatureCard, {
+      feature: feature({ members: [member('accept-blue', { running: true })] }),
+    });
     expect(container.querySelector('.fcard.running')).toBeTruthy();
   });
 

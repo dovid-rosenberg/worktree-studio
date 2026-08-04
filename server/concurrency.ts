@@ -12,11 +12,11 @@ function deriveEnv(
   repoConc: RepoConcurrency | null | undefined,
   slot: number,
   offsetStep: number,
-): { env: Record<string, string>, ports: number[] } {
+): { env: Record<string, string>; ports: number[] } {
   const env: Record<string, string> = {};
   const ports: number[] = [];
-  const portEnv = (repoConc?.portEnv) || {};
-  const slotEnv = (repoConc?.slotEnv) || [];
+  const portEnv = repoConc?.portEnv || {};
+  const slotEnv = repoConc?.slotEnv || [];
   for (const key of Object.keys(portEnv)) {
     const port = portEnv[key] + slot * offsetStep;
     env[key] = String(port);

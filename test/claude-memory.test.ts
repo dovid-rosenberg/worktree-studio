@@ -15,24 +15,28 @@ function tmp(): string {
 }
 
 /** Give `repoPath` a memory directory holding one memory, as a real checkout has. */
-function seedMemories(projects: string, repoPath: string, files: Record<string, string> = { 'a.md': 'remember' }) {
+function seedMemories(
+  projects: string,
+  repoPath: string,
+  files: Record<string, string> = { 'a.md': 'remember' },
+) {
   const dir = memoryDirFor(repoPath, projects);
   fs.mkdirSync(dir, { recursive: true });
   for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), body);
   return dir;
 }
 
-test('projectDirName mirrors Claude Code\'s encoding, dots included', () => {
+test("projectDirName mirrors Claude Code's encoding, dots included", () => {
   // The double hyphen is `/` followed by `.` — the shape every worktree path takes under
   // the default `.worktrees` layout, and the reason a naive slash-only replace is wrong.
+  assert.equal(projectDirName('/Users/d/code/api/.worktrees/feat-x'), '-Users-d-code-api--worktrees-feat-x');
   assert.equal(
-    projectDirName('/Users/d/code/api/.worktrees/feat-x'),
-    '-Users-d-code-api--worktrees-feat-x',
+    projectDirName('/Users/d/Desktop/code/worktree-studio'),
+    '-Users-d-Desktop-code-worktree-studio',
   );
-  assert.equal(projectDirName('/Users/d/Desktop/code/worktree-studio'), '-Users-d-Desktop-code-worktree-studio');
 });
 
-test('a worktree with no memory directory gets a link to the checkout\'s', () => {
+test("a worktree with no memory directory gets a link to the checkout's", () => {
   const projects = tmp();
   const repo = '/code/api';
   const wt = '/code/api/.worktrees/feat-x';
@@ -62,7 +66,10 @@ test('a memory written from the worktree lands in the checkout, where the next o
     'from one',
     'worktrees of one repo share a single memory directory',
   );
-  assert.ok(fs.existsSync(path.join(memoryDirFor(repo, projects), 'learned.md')), 'and it outlives the worktree');
+  assert.ok(
+    fs.existsSync(path.join(memoryDirFor(repo, projects), 'learned.md')),
+    'and it outlives the worktree',
+  );
 });
 
 test('linking twice is a no-op, not an error', () => {
@@ -133,12 +140,18 @@ test('each repo of a multi-repo session links to its OWN memories', () => {
   seedMemories(projects, '/code/api', { 'api.md': 'backend rules' });
   seedMemories(projects, '/code/fe', { 'fe.md': 'frontend rules' });
 
-  const results = linkSessionMemory([
-    { repo: 'api', repoPath: '/code/api', worktreePath: '/code/api/.worktrees/feat' },
-    { repo: 'fe', repoPath: '/code/fe', worktreePath: '/code/fe/.worktrees/feat' },
-  ], projects);
+  const results = linkSessionMemory(
+    [
+      { repo: 'api', repoPath: '/code/api', worktreePath: '/code/api/.worktrees/feat' },
+      { repo: 'fe', repoPath: '/code/fe', worktreePath: '/code/fe/.worktrees/feat' },
+    ],
+    projects,
+  );
 
-  assert.deepEqual(results.map((r) => r.outcome.status), ['linked', 'linked']);
+  assert.deepEqual(
+    results.map((r) => r.outcome.status),
+    ['linked', 'linked'],
+  );
   // Crossing them would be worse than doing nothing: the FE worktree would read the
   // backend's conventions.
   assert.ok(fs.existsSync(path.join(memoryDirFor('/code/api/.worktrees/feat', projects), 'api.md')));

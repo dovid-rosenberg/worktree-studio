@@ -55,7 +55,9 @@ export function present<T>(v: T | null | undefined, what = 'value'): T {
 export type JsonBody = any;
 
 /** `res.json()` as a body the assertions can read. */
-export async function body(res: Response): Promise<JsonBody> { return res.json(); }
+export async function body(res: Response): Promise<JsonBody> {
+  return res.json();
+}
 
 // ---- fixtures ---------------------------------------------------------------
 
@@ -117,18 +119,42 @@ export function sessionRepo(over: Partial<SessionRepo> = {}): SessionRepo {
 export function muxStub(over: Partial<SessionMux> = {}): SessionMux {
   return {
     name: 'stub',
-    async ensure() { return {}; },
-    async hasSession() { return false; },
-    async kill() { return true; },
-    async rename() { return false; },
-    async sendText() { return undefined; },
-    async paneCommand() { return 'node'; },
-    async newTab() { return { ok: true }; },
-    async listTabs() { return []; },
-    async selectTab() { return true; },
-    async closeTab() { return true; },
-    async renameTab() { return true; },
-    attachSpawn(name: string) { return { file: 'true', args: [name] }; },
+    async ensure() {
+      return {};
+    },
+    async hasSession() {
+      return false;
+    },
+    async kill() {
+      return true;
+    },
+    async rename() {
+      return false;
+    },
+    async sendText() {
+      return undefined;
+    },
+    async paneCommand() {
+      return 'node';
+    },
+    async newTab() {
+      return { ok: true };
+    },
+    async listTabs() {
+      return [];
+    },
+    async selectTab() {
+      return true;
+    },
+    async closeTab() {
+      return true;
+    },
+    async renameTab() {
+      return true;
+    },
+    attachSpawn(name: string) {
+      return { file: 'true', args: [name] };
+    },
     ...over,
   };
 }

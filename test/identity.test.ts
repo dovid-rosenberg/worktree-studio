@@ -16,11 +16,14 @@ import type { Config, PartialDeep, Worktree } from '../server/types.ts';
 // Only the four fields every identity strategy reads; `as Worktree` is the fixture
 // boundary, because filling in the other twelve would imply they matter here.
 const wt = (repo: string, wtname: string, branch: string | null) =>
-  ({ repo, wtname, branch, path: `/r/${repo}/.worktrees/${wtname}`, running: false } as Worktree);
+  ({ repo, wtname, branch, path: `/r/${repo}/.worktrees/${wtname}`, running: false }) as Worktree;
 
 // A scan-shaped repo list, as server/git.ts emits it (worktrees carry `name`).
 const scan = (worktrees: Worktree[]) => {
-  const byRepo = new Map<string, { name: string; worktrees: Array<{ path: string; name: string; branch: string | null }> }>();
+  const byRepo = new Map<
+    string,
+    { name: string; worktrees: Array<{ path: string; name: string; branch: string | null }> }
+  >();
   for (const w of worktrees) {
     if (!byRepo.has(w.repo)) byRepo.set(w.repo, { name: w.repo, worktrees: [] });
     present(byRepo.get(w.repo)).worktrees.push({ path: w.path, name: w.wtname, branch: w.branch });
@@ -45,8 +48,8 @@ test('basename ofPath() equals the old featureFromPath() for every shape of path
   const paths = [
     '/code/api/.worktrees/feat-a',
     '/code/api/.worktrees/feat-a/src/deep',
-    '/code/api',                      // main checkout
-    '/code/api/.worktrees',           // degenerate
+    '/code/api', // main checkout
+    '/code/api/.worktrees', // degenerate
     '/code/api/.worktrees/a/.worktrees/b',
     '',
   ];
@@ -68,16 +71,29 @@ test('basename of() and ofPath() agree for indexed and unindexed worktrees', () 
 });
 
 test('computeFeatures with the default identity is unchanged from grouping on wtname', () => {
-  const worktrees = [wt('api', 'api', 'main'), wt('api', 'shared', 'x'), wt('fe', 'shared', 'y'), wt('api', 'solo', 'z')];
+  const worktrees = [
+    wt('api', 'api', 'main'),
+    wt('api', 'shared', 'x'),
+    wt('fe', 'shared', 'y'),
+    wt('api', 'solo', 'z'),
+  ];
   const before = computeFeatures(worktrees, []);
   const after = computeFeatures(worktrees, [], createIdentity({}));
-  assert.deepEqual(after.features.map((f) => f.name), before.features.map((f) => f.name));
-  assert.deepEqual(after.groups.map((g) => g.name), before.groups.map((g) => g.name));
+  assert.deepEqual(
+    after.features.map((f) => f.name),
+    before.features.map((f) => f.name),
+  );
+  assert.deepEqual(
+    after.groups.map((g) => g.name),
+    before.groups.map((g) => g.name),
+  );
 });
 
 // ------------------------------------------------------------------ branch
 
-const BRANCH_CFG: PartialDeep<Config> = { featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' } };
+const BRANCH_CFG: PartialDeep<Config> = {
+  featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' },
+};
 
 test('branch groups two differently-named worktrees that share a ticket number', () => {
   const id = createIdentity(BRANCH_CFG);
@@ -93,7 +109,11 @@ test('branch makes computeFeatures group across repos despite different basename
   const f = features.find((x) => x.name === '123');
   assert.ok(f, 'the ticket number is the feature');
   assert.equal(present(f).members.length, 2);
-  assert.deepEqual(groups.map((g) => g.name), ['123'], 'and it is a real multi-repo group');
+  assert.deepEqual(
+    groups.map((g) => g.name),
+    ['123'],
+    'and it is a real multi-repo group',
+  );
 });
 
 test('branch ofPath() agrees with of() once the index is fed', () => {
@@ -117,7 +137,10 @@ test('branch: a branch that does not match falls back to the worktree name', () 
 
 test('branch: a worktree with no branch (detached) falls back to the worktree name', () => {
   const id = createIdentity(BRANCH_CFG);
-  assert.equal(id.of({ repo: 'api', wtname: 'detached-wt', branch: null, path: '/r/api/.worktrees/detached-wt' }), 'detached-wt');
+  assert.equal(
+    id.of({ repo: 'api', wtname: 'detached-wt', branch: null, path: '/r/api/.worktrees/detached-wt' }),
+    'detached-wt',
+  );
 });
 
 test('branch: reindex() drops a worktree that no longer exists', () => {
@@ -130,18 +153,24 @@ test('branch: reindex() drops a worktree that no longer exists', () => {
 });
 
 test('branch: multiple capture groups use the leftmost that captured', () => {
-  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-(.*)$' } });
+  const id = createIdentity({
+    featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-(.*)$' },
+  });
   assert.equal(id.of(wt('api', 'x', 'fix/123-payment')), '123');
 });
 
 test('branch: an alternation where the first group misses uses the second', () => {
-  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^(?:(?:JIRA-(\\d+))|(?:TICKET-(\\d+)))' } });
+  const id = createIdentity({
+    featureIdentity: { strategy: 'branch', branchPattern: '^(?:(?:JIRA-(\\d+))|(?:TICKET-(\\d+)))' },
+  });
   assert.equal(id.of(wt('api', 'x', 'JIRA-7-thing')), '7');
   assert.equal(id.of(wt('api', 'x', 'TICKET-9-thing')), '9');
 });
 
 test('branch: a g flag does not make matching stateful', () => {
-  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '(\\d+)', branchFlags: 'g' } });
+  const id = createIdentity({
+    featureIdentity: { strategy: 'branch', branchPattern: '(\\d+)', branchFlags: 'g' },
+  });
   const w = wt('api', 'x', 'fix/42-a');
   assert.equal(id.of(w), '42');
   assert.equal(id.of(w), '42', 'a second call returns the same answer');
@@ -149,7 +178,9 @@ test('branch: a g flag does not make matching stateful', () => {
 });
 
 test('branch: branchFlags are honoured (case-insensitive)', () => {
-  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^ab-(\\d+)', branchFlags: 'i' } });
+  const id = createIdentity({
+    featureIdentity: { strategy: 'branch', branchPattern: '^ab-(\\d+)', branchFlags: 'i' },
+  });
   assert.equal(id.of(wt('api', 'x', 'AB-55-thing')), '55');
 });
 
@@ -183,10 +214,10 @@ test('an unknown strategy falls back to basename', () => {
 test('compileBranchMatcher reports the regex error instead of throwing', () => {
   assert.ok(compileBranchMatcher('([', '').error);
   assert.ok(compileBranchMatcher('', '').error);
-  assert.ok(compileBranchMatcher('abc', '').error);       // no group
-  assert.ok(compileBranchMatcher('a[(]b(c)', '').re);     // a paren in a class is not a group
-  assert.ok(compileBranchMatcher('\\((x)', '').re);       // an escaped paren is not a group
-  assert.ok(compileBranchMatcher('(?:a)', '').error);     // non-capturing only
+  assert.ok(compileBranchMatcher('abc', '').error); // no group
+  assert.ok(compileBranchMatcher('a[(]b(c)', '').re); // a paren in a class is not a group
+  assert.ok(compileBranchMatcher('\\((x)', '').re); // an escaped paren is not a group
+  assert.ok(compileBranchMatcher('(?:a)', '').error); // non-capturing only
 });
 
 test('firstCapture skips undefined and empty groups', () => {
@@ -241,7 +272,11 @@ test('identity follows a non-default worktree layout', () => {
   const id = createIdentity({ worktrees: { layout: 'sibling' } });
   assert.equal(id.layout.mode, 'sibling');
   assert.equal(id.ofPath('/code/feat-a'), 'feat-a');
-  assert.equal(id.of({ repo: 'api', path: '/code/feat-a' }), 'feat-a', 'derives the name when wtname is absent');
+  assert.equal(
+    id.of({ repo: 'api', path: '/code/feat-a' }),
+    'feat-a',
+    'derives the name when wtname is absent',
+  );
 });
 
 test('manifest picks up a live edit to config.groups (POST /settings replaces the array)', () => {
@@ -276,20 +311,27 @@ test('a worktree indexed before its path resolves is re-resolved once it does', 
   fs.mkdirSync(real);
 
   // `branch` (any non-basename strategy) is what builds the path index at all.
-  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' } });
+  const id = createIdentity({
+    featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' },
+  });
   const repos = [{ name: 'api', worktrees: [{ path: link, name: 'link-wt', branch: 'feat/123-ui' }] }];
 
   // First pass: `link` does not exist yet, so realpath() falls back to `link` itself.
   id.reindex(repos);
   assert.equal(id.ofPath(link), '123', 'the spelling on disk resolves either way');
-  assert.equal(id.ofPath(real), 'real-wt', 'the resolved path is not indexed yet — nothing to resolve through');
+  assert.equal(
+    id.ofPath(real),
+    'real-wt',
+    'the resolved path is not indexed yet — nothing to resolve through',
+  );
 
   // The symlink appears (a worktree created, or a checkout that was still being set up).
   fs.symlinkSync(real, link);
   id.reindex(repos);
 
   assert.equal(
-    id.ofPath(real), '123',
+    id.ofPath(real),
+    '123',
     'lsof reports the RESOLVED path; a cached failure would keep this at the layout name forever',
   );
   fs.rmSync(root, { recursive: true, force: true });
@@ -302,7 +344,9 @@ test('a path that resolves is memoized, and dropped once its worktree goes away'
   fs.mkdirSync(real);
   fs.symlinkSync(real, link);
 
-  const id = createIdentity({ featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' } });
+  const id = createIdentity({
+    featureIdentity: { strategy: 'branch', branchPattern: '^(?:fix|feat)/(\\d+)-' },
+  });
   id.reindex([{ name: 'api', worktrees: [{ path: link, name: 'link-wt', branch: 'feat/123-ui' }] }]);
   assert.equal(id.ofPath(real), '123');
 

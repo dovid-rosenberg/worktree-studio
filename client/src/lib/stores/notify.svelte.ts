@@ -40,7 +40,9 @@ class Notify {
     try {
       const d = await api('GET', '/api/v1/settings');
       if (d?.notify) this.prefs = { ...this.prefs, ...d.notify };
-    } catch { /* the settings modal will surface a real failure */ }
+    } catch {
+      /* the settings modal will surface a real failure */
+    }
   }
 
   /**
@@ -49,7 +51,7 @@ class Notify {
    * it over rather than this module reading the store.
    */
   onSessionFrame(frame: SessionStatePayload | null | undefined): void {
-    const sessions = (frame?.sessions) || [];
+    const sessions = frame?.sessions || [];
     const seen = new Set<string>();
     for (const s of sessions) {
       seen.add(s.id);
@@ -89,11 +91,22 @@ function desktopNotification(s: Session, kind: AttentionKind): void {
     const body = s.activity || s.title || '';
     try {
       const n = new Notification(title, { body, tag: `wts-${s.id}` });
-      n.onclick = () => { ui.goToSession(s.id); window.focus(); n.close(); };
-    } catch { /* some platforms throw on construction */ }
+      n.onclick = () => {
+        ui.goToSession(s.id);
+        window.focus();
+        n.close();
+      };
+    } catch {
+      /* some platforms throw on construction */
+    }
   };
   if (Notification.permission === 'granted') fire();
-  else Notification.requestPermission().then((p) => { if (p === 'granted') fire(); }).catch(() => {});
+  else
+    Notification.requestPermission()
+      .then((p) => {
+        if (p === 'granted') fire();
+      })
+      .catch(() => {});
 }
 
 /**
@@ -102,8 +115,9 @@ function desktopNotification(s: Session, kind: AttentionKind): void {
  */
 export function playBeep(): void {
   try {
-    const AC = window.AudioContext
-      || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const AC =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AC) return;
     if (!audioCtx) audioCtx = new AC();
     if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
@@ -119,5 +133,7 @@ export function playBeep(): void {
     gain.connect(audioCtx.destination);
     osc.start(t0);
     osc.stop(t0 + 0.13);
-  } catch { /* no audio — silent */ }
+  } catch {
+    /* no audio — silent */
+  }
 }

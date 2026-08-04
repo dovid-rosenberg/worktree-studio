@@ -15,8 +15,15 @@ import { present } from './helpers.ts';
 class FakeSocket extends EventEmitter {
   sent: string[] = [];
   closed = false;
-  send(d: string) { if (this.closed) throw new Error('socket is closed'); this.sent.push(d); }
-  close() { if (this.closed) return; this.closed = true; this.emit('close'); }
+  send(d: string) {
+    if (this.closed) throw new Error('socket is closed');
+    this.sent.push(d);
+  }
+  close() {
+    if (this.closed) return;
+    this.closed = true;
+    this.emit('close');
+  }
 }
 
 // A pty stand-in that also records what it was spawned WITH (`args`) and exposes the
@@ -32,12 +39,25 @@ interface FakeTerm extends TerminalPty {
 }
 function fakeTerm(args: Parameters<TerminalSpawn>): FakeTerm {
   const t: FakeTerm = {
-    killed: 0, written: [], resized: null, args,
-    onData(fn) { t._data = fn; },
-    onExit(fn) { t._exit = fn; },
-    write(d) { t.written.push(d); },
-    resize(c, r) { t.resized = [c, r]; },
-    kill() { t.killed += 1; },
+    killed: 0,
+    written: [],
+    resized: null,
+    args,
+    onData(fn) {
+      t._data = fn;
+    },
+    onExit(fn) {
+      t._exit = fn;
+    },
+    write(d) {
+      t.written.push(d);
+    },
+    resize(c, r) {
+      t.resized = [c, r];
+    },
+    kill() {
+      t.killed += 1;
+    },
   };
   return t;
 }
@@ -54,7 +74,11 @@ function harness({ session = SESSION }: { session?: TerminalSession } = {}) {
       attachSpawn: (name: string) => ({ file: 'tmux', args: ['attach-session', '-t', name], env: {} }),
     },
   };
-  const spawn: TerminalSpawn = (...a) => { const t = fakeTerm(a); terms.push(t); return t; };
+  const spawn: TerminalSpawn = (...a) => {
+    const t = fakeTerm(a);
+    terms.push(t);
+    return t;
+  };
   const handler = createTerminalHandler({ manager, spawn });
   return { handler, terms, manager };
 }

@@ -13,67 +13,82 @@ import type { Feature, Repo, Session } from '../../../../server/types';
  * Everything below is about that contract. It is pure, so it is cheap to pin.
  */
 
-const session = (over: Partial<Session> = {}): Session => ({
-  id: 's1',
-  title: 'one',
-  state: 'working',
-  activity: 'Edit file',
-  muxName: 'wts-one-s1',
-  repoName: 'accept-blue',
-  repoPath: '/repo',
-  home: '/repo',
-  worktree: null,
-  worktreePath: null,
-  branch: null,
-  feature: 'one',
-  repos: [],
-  tabs: [],
-  active: true,
-  ...over,
-} as Session);
+const session = (over: Partial<Session> = {}): Session =>
+  ({
+    id: 's1',
+    title: 'one',
+    state: 'working',
+    activity: 'Edit file',
+    muxName: 'wts-one-s1',
+    repoName: 'accept-blue',
+    repoPath: '/repo',
+    home: '/repo',
+    worktree: null,
+    worktreePath: null,
+    branch: null,
+    feature: 'one',
+    repos: [],
+    tabs: [],
+    active: true,
+    ...over,
+  }) as Session;
 
 /** A frame as the daemon sends it: embedded copies carry whatever was true at build time. */
-const worldOf = (over: Record<string, unknown> = {}) => ({
-  mux: 'tmux',
-  repos: [] as Repo[],
-  sessions: [] as Session[],
-  servers: {},
-  features: [] as Feature[],
-  groups: [] as Feature[],
-  webRepos: [] as string[],
-  baseDirs: [],
-  editors: [],
-  ci: {},
-  ...over,
-}) as Parameters<typeof stitchSessions>[0];
+const worldOf = (over: Record<string, unknown> = {}) =>
+  ({
+    mux: 'tmux',
+    repos: [] as Repo[],
+    sessions: [] as Session[],
+    servers: {},
+    features: [] as Feature[],
+    groups: [] as Feature[],
+    webRepos: [] as string[],
+    baseDirs: [],
+    editors: [],
+    ci: {},
+    ...over,
+  }) as Parameters<typeof stitchSessions>[0];
 
 describe('stitchSessions', () => {
   it('refreshes a stale embedded session from the live list', () => {
     const live = session({ state: 'waiting', activity: 'needs you' });
-    const out = stitchSessions(worldOf({
-      sessions: [live],
-      features: [{
-        name: 'one', auto: true,
-        // The topology half was built when the agent was 'working'.
-        session: { id: 's1', state: 'working', activity: 'Edit file', muxName: 'wts-one-s1' },
-        members: [],
-      } as unknown as Feature],
-    }));
+    const out = stitchSessions(
+      worldOf({
+        sessions: [live],
+        features: [
+          {
+            name: 'one',
+            auto: true,
+            // The topology half was built when the agent was 'working'.
+            session: { id: 's1', state: 'working', activity: 'Edit file', muxName: 'wts-one-s1' },
+            members: [],
+          } as unknown as Feature,
+        ],
+      }),
+    );
     expect(out.features[0].session).toEqual({
-      id: 's1', state: 'waiting', activity: 'needs you', muxName: 'wts-one-s1',
+      id: 's1',
+      state: 'waiting',
+      activity: 'needs you',
+      muxName: 'wts-one-s1',
     });
   });
 
   it('drops an embedded session that no longer exists', () => {
     // A closed session lingered on its worktree forever before this projection existed.
-    const out = stitchSessions(worldOf({
-      sessions: [],
-      features: [{
-        name: 'gone', auto: true,
-        session: { id: 'dead', state: 'working', activity: '', muxName: 'm' },
-        members: [],
-      } as unknown as Feature],
-    }));
+    const out = stitchSessions(
+      worldOf({
+        sessions: [],
+        features: [
+          {
+            name: 'gone',
+            auto: true,
+            session: { id: 'dead', state: 'working', activity: '', muxName: 'm' },
+            members: [],
+          } as unknown as Feature,
+        ],
+      }),
+    );
     expect(out.features[0].session).toBeNull();
   });
 
@@ -82,21 +97,44 @@ describe('stitchSessions', () => {
     // side they are distinct objects and each needs the same refresh.
     const live = session({ state: 'idle', activity: 'done' });
     const embedded = { id: 's1', state: 'working', activity: 'stale', muxName: 'wts-one-s1' };
-    const out = stitchSessions(worldOf({
-      sessions: [live],
-      repos: [{ name: 'accept-blue', worktrees: [{ repo: 'accept-blue', path: '/wt', session: embedded }] } as unknown as Repo],
-      features: [{ name: 'one', auto: true, session: embedded, members: [{ repo: 'accept-blue', path: '/wt', session: embedded }] } as unknown as Feature],
-    }));
+    const out = stitchSessions(
+      worldOf({
+        sessions: [live],
+        repos: [
+          {
+            name: 'accept-blue',
+            worktrees: [{ repo: 'accept-blue', path: '/wt', session: embedded }],
+          } as unknown as Repo,
+        ],
+        features: [
+          {
+            name: 'one',
+            auto: true,
+            session: embedded,
+            members: [{ repo: 'accept-blue', path: '/wt', session: embedded }],
+          } as unknown as Feature,
+        ],
+      }),
+    );
     expect(out.repos[0].worktrees[0].session?.state).toBe('idle');
     expect((out.features[0].members[0] as { session?: { state: string } }).session?.state).toBe('idle');
   });
 
   it('leaves a missing member alone rather than reaching into it', () => {
     // A MissingMember is a dangling config reference: { missing, ref } and nothing else.
-    const out = stitchSessions(worldOf({
-      sessions: [],
-      features: [{ name: 'f', auto: true, session: null, members: [{ missing: true, ref: 'repo/gone' }] } as unknown as Feature],
-    }));
+    const out = stitchSessions(
+      worldOf({
+        sessions: [],
+        features: [
+          {
+            name: 'f',
+            auto: true,
+            session: null,
+            members: [{ missing: true, ref: 'repo/gone' }],
+          } as unknown as Feature,
+        ],
+      }),
+    );
     expect(out.features[0].members[0]).toEqual({ missing: true, ref: 'repo/gone' });
   });
 
@@ -117,9 +155,9 @@ describe('webAppsFor', () => {
   it('offers only web repos that are running with a discovered port', () => {
     const rows = [
       { repo: 'merchant-v3', running: true, ports: [5273] },
-      { repo: 'accept-blue', running: true, ports: [1233] },   // not a web repo
-      { repo: 'ab-iso-fe', running: false, ports: [9000] },    // not running
-      { repo: 'ab-su', running: true, ports: [] },             // no port discovered
+      { repo: 'accept-blue', running: true, ports: [1233] }, // not a web repo
+      { repo: 'ab-iso-fe', running: false, ports: [9000] }, // not running
+      { repo: 'ab-su', running: true, ports: [] }, // no port discovered
     ];
     // webRepos comes off the world, which is empty here, so nothing qualifies…
     expect(webAppsFor(rows)).toEqual([]);

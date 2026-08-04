@@ -34,8 +34,11 @@ async function serving<T>(app: express.Express, fn: (get: Fetcher) => Promise<T>
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as import('net').AddressInfo).port}`;
-  try { return await fn((p, init) => fetch(base + p, init)); }
-  finally { server.close(); }
+  try {
+    return await fn((p, init) => fetch(base + p, init));
+  } finally {
+    server.close();
+  }
 }
 
 // The daemon's own wiring order: static mount, then the API, then the SPA fallback.
@@ -62,12 +65,15 @@ test('resolve() serves the SvelteKit build', () => {
 
 test('resolve() refuses to boot when the client has not been built, and says how', () => {
   const root = fixture(); // nothing laid down
-  assert.throws(() => webui.resolve(root), (e: unknown) => {
-    assert.ok(e instanceof Error);
-    assert.match(e.message, /has not been built/);
-    assert.match(e.message, /npm run build/);
-    return true;
-  });
+  assert.throws(
+    () => webui.resolve(root),
+    (e: unknown) => {
+      assert.ok(e instanceof Error);
+      assert.match(e.message, /has not been built/);
+      assert.match(e.message, /npm run build/);
+      return true;
+    },
+  );
 });
 
 // ------------------------------------------------------------------ mount ----

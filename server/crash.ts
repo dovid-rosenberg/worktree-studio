@@ -53,10 +53,10 @@ export interface ErrorResponse {
 // discriminator — the message is localized/formatted and the class isn't
 // (Node throws plain Error for most of these).
 const CONNECTION_ERROR_CODES = new Set([
-  'EPIPE',                        // wrote to a peer that closed its end
-  'ECONNRESET',                   // peer reset mid-exchange
-  'ERR_STREAM_DESTROYED',         // stream torn down under an in-flight write
-  'ERR_STREAM_WRITE_AFTER_END',   // ditto, after the writable side finished
+  'EPIPE', // wrote to a peer that closed its end
+  'ECONNRESET', // peer reset mid-exchange
+  'ERR_STREAM_DESTROYED', // stream torn down under an in-flight write
+  'ERR_STREAM_WRITE_AFTER_END', // ditto, after the writable side finished
   'ERR_STREAM_ALREADY_FINISHED',
 ]);
 
@@ -91,8 +91,10 @@ function listenErrorMessage(err: unknown, { host, port }: Addr = {}): string | n
   if (!err || typeof err !== 'object') return null;
   const { code } = err as Thrown;
   const at = `${host || '?'}:${port || '?'}`;
-  if (code === 'EADDRINUSE') return `port ${port} is already in use — something is already listening on ${at} (another Studio daemon?). Refusing to run without an HTTP server.`;
-  if (code === 'EACCES') return `not allowed to bind ${at} — ports below 1024 need privileges. Pick another port in config.json (web.port).`;
+  if (code === 'EADDRINUSE')
+    return `port ${port} is already in use — something is already listening on ${at} (another Studio daemon?). Refusing to run without an HTTP server.`;
+  if (code === 'EACCES')
+    return `not allowed to bind ${at} — ports below 1024 need privileges. Pick another port in config.json (web.port).`;
   if (code === 'EADDRNOTAVAIL') return `cannot bind ${at} — that address does not exist on this machine.`;
   return null;
 }
@@ -113,7 +115,11 @@ interface InstallIo extends Io {
  * `handleException` reports whether the error was survived (true) or fatal
  * (false), for tests.
  */
-function install({ log = console.error, exit = process.exit, on = process.on.bind(process) }: InstallIo = {}): { handleException(err: unknown): boolean } {
+function install({
+  log = console.error,
+  exit = process.exit,
+  on = process.on.bind(process),
+}: InstallIo = {}): { handleException(err: unknown): boolean } {
   function handle(kind: string, err: unknown): boolean {
     if (isConnectionError(err)) {
       // One connection died under a write. Say so at a level nobody greps for a
@@ -121,7 +127,10 @@ function install({ log = console.error, exit = process.exit, on = process.on.bin
       log(`[wt-studio] ${kind}: ${err.code} on a client connection — that connection is gone, continuing`);
       return true;
     }
-    log(`[wt-studio] fatal ${kind} — exiting so this is visible instead of running on in an unknown state`, err);
+    log(
+      `[wt-studio] fatal ${kind} — exiting so this is visible instead of running on in an unknown state`,
+      err,
+    );
     exit(1);
     return false;
   }
@@ -144,7 +153,11 @@ interface ListenErrorSource {
  * ever reached the blanket handler in the first place; handling it here is what
  * turns it into a sentence the user can act on.
  */
-function guardListen(server: ListenErrorSource, { host, port }: Addr = {}, { log = console.error, exit = process.exit }: Io = {}): void {
+function guardListen(
+  server: ListenErrorSource,
+  { host, port }: Addr = {},
+  { log = console.error, exit = process.exit }: Io = {},
+): void {
   server.on('error', (err: unknown) => {
     const why = listenErrorMessage(err, { host, port });
     if (why) log(`[wt-studio] ${why}`);

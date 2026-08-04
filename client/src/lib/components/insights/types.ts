@@ -22,10 +22,10 @@ export interface Hit {
   sessionId: string;
   uuid: string;
   role?: string;
-  model?: string|null;
-  ts?: string|null;
-  tsMs?: number|null;
-  gitBranch?: string|null;
+  model?: string | null;
+  ts?: string | null;
+  tsMs?: number | null;
+  gitBranch?: string | null;
   sidechain?: boolean;
   /** may carry the FTS5 « » highlight markers */
   snippet: string;
@@ -48,7 +48,7 @@ export interface TranscriptStatus {
   backend: string;
   fts5: boolean;
   file?: string;
-  error?: string|null;
+  error?: string | null;
   sessions: number;
   messages: number;
   pricing?: PricingBlock;

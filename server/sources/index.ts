@@ -7,7 +7,13 @@ import github from './github.ts';
 import gitlab from './gitlab.ts';
 import asana from './asana.ts';
 import type {
-  Config, PartialDeep, SourceAdapter, SourceInfo, SourceItem, SourceParams, SourceSeed,
+  Config,
+  PartialDeep,
+  SourceAdapter,
+  SourceInfo,
+  SourceItem,
+  SourceParams,
+  SourceSeed,
 } from '../types.ts';
 
 const ADAPTERS: Record<string, SourceAdapter> = { freetext, github, gitlab, asana };
@@ -37,8 +43,11 @@ interface ListResult {
 async function list(cfg: PartialDeep<Config>, source: string, params?: SourceParams): Promise<ListResult> {
   const a = adapterFor(source);
   if (!a?.isEnabled(cfg)) return { ok: false, error: `source '${source}' not available`, items: [] };
-  try { return { ok: true, items: await a.list(cfg, params || {}) }; }
-  catch (e) { return { ok: false, error: (e as Error).message, items: [] }; }
+  try {
+    return { ok: true, items: await a.list(cfg, params || {}) };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message, items: [] };
+  }
 }
 
 async function seed(cfg: PartialDeep<Config>, source: string, params?: SourceParams): Promise<SourceSeed> {

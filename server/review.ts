@@ -63,7 +63,9 @@ const SHA_RE = /^[0-9a-f]{4,40}$/i;
 
 // `sha` is whatever the query string carried, which is why it is not typed as a
 // string: express parses `?sha=a&sha=b` to an array and `?sha[x]=y` to an object.
-function isValidSha(sha: unknown): boolean { return sha === 'uncommitted' || SHA_RE.test(String(sha == null ? '' : sha)); }
+function isValidSha(sha: unknown): boolean {
+  return sha === 'uncommitted' || SHA_RE.test(String(sha == null ? '' : sha));
+}
 
 // The review baseline: the merge-base of HEAD with the default branch. A branch is
 // often cut from origin/<default> while the LOCAL <default> ref lags behind — basing
@@ -75,7 +77,8 @@ async function base(worktreePath: string, defaultBranch: string): Promise<string
   const local = await git(worktreePath, ['merge-base', 'HEAD', defaultBranch]);
   const remote = await git(worktreePath, ['merge-base', 'HEAD', `origin/${defaultBranch}`]);
   if (local && remote && local !== remote) {
-    const localIsAncestor = (await gitFull(worktreePath, ['merge-base', '--is-ancestor', local, remote])).code === 0;
+    const localIsAncestor =
+      (await gitFull(worktreePath, ['merge-base', '--is-ancestor', local, remote])).code === 0;
     return localIsAncestor ? remote : local;
   }
   return local || remote || defaultBranch;
@@ -88,7 +91,9 @@ function countLines(worktreePath: string, rel: string): number {
     const parts = content.split('\n');
     if (parts[parts.length - 1] === '') parts.pop();
     return parts.length;
-  } catch { return 0; }
+  } catch {
+    return 0;
+  }
 }
 
 // `-z` is the only unambiguous way to read a rename out of git. The human-readable
@@ -128,7 +133,10 @@ function parseNumstatZ(raw: string): NumstatEntry[] {
     if (parts.length < 3) continue; // not a record header
     const [a, d, inline] = parts;
     const num = (v: string) => (v === '-' ? 0 : Number(v) || 0);
-    if (inline) { out.push({ added: num(a), deleted: num(d), file: inline }); continue; }
+    if (inline) {
+      out.push({ added: num(a), deleted: num(d), file: inline });
+      continue;
+    }
     // empty third field → the next two tokens are the old and new paths
     const oldFile = tok[++i];
     const file = tok[++i];
@@ -140,13 +148,16 @@ function parseNumstatZ(raw: string): NumstatEntry[] {
 // `X\0path\0` per file — except a rename/copy, which is `Rnnn\0old\0new\0`.
 function parseNameStatusZ(raw: string): NameStatusEntry[] {
   const out: NameStatusEntry[] = [];
-  const tok = String(raw || '').split('\0').filter((t) => t !== '');
+  const tok = String(raw || '')
+    .split('\0')
+    .filter((t) => t !== '');
   for (let i = 0; i < tok.length; i++) {
     const code = tok[i];
     if (!/^[A-Z]/.test(code)) continue;
     const letter = code[0];
     if (letter === 'R' || letter === 'C') {
-      const oldFile = tok[++i]; const file = tok[++i];
+      const oldFile = tok[++i];
+      const file = tok[++i];
       if (file) out.push({ status: letter, file, oldFile });
     } else {
       const file = tok[++i];
@@ -208,10 +219,19 @@ async function workingFileDiff(worktreePath: string, file: string): Promise<stri
 
 // The commits on this branch (base..HEAD), newest first, each with its totals. One
 // `git log --numstat` call: a REC-prefixed header line per commit, then its numstat rows.
-async function commits(worktreePath: string, defaultBranch: string): Promise<{ base: string, commits: ReviewCommit[] }> {
+async function commits(
+  worktreePath: string,
+  defaultBranch: string,
+): Promise<{ base: string; commits: ReviewCommit[] }> {
   const b = await base(worktreePath, defaultBranch);
-  const SEP = '\x1f'; const REC = '\x1e';
-  const raw = await git(worktreePath, ['log', `--format=${REC}%H${SEP}%an${SEP}%ar${SEP}%s`, '--numstat', `${b}..HEAD`]);
+  const SEP = '\x1f';
+  const REC = '\x1e';
+  const raw = await git(worktreePath, [
+    'log',
+    `--format=${REC}%H${SEP}%an${SEP}%ar${SEP}%s`,
+    '--numstat',
+    `${b}..HEAD`,
+  ]);
   const list: ReviewCommit[] = [];
   let cur: ReviewCommit | null = null;
   for (const line of raw.split('\n')) {
@@ -232,7 +252,11 @@ async function commits(worktreePath: string, defaultBranch: string): Promise<{ b
 // Per-file breakdown (status + counts + unified diff) for a single commit, or for the
 // working tree when sha === 'uncommitted'. Diffs are inline so the pane can show all
 // files at once and filter to one client-side without another round-trip.
-async function commitDetail(worktreePath: string, _defaultBranch: string, sha: string): Promise<{ files: ReviewFile[] }> {
+async function commitDetail(
+  worktreePath: string,
+  _defaultBranch: string,
+  sha: string,
+): Promise<{ files: ReviewFile[] }> {
   if (sha === 'uncommitted') return workingDetail(worktreePath);
   // Last line of defence — the routes reject this with a 400 first, but nothing
   // downstream of here should ever have to wonder whether `sha` is a flag.
@@ -245,13 +269,17 @@ async function commitDetail(worktreePath: string, _defaultBranch: string, sha: s
     byPath.set(f, made);
     return made;
   };
-  for (const r of parseNumstatZ(await git(worktreePath, ['show', '--format=', '--numstat', '-z', sha, '--']))) {
+  for (const r of parseNumstatZ(
+    await git(worktreePath, ['show', '--format=', '--numstat', '-z', sha, '--']),
+  )) {
     const e = get(r.file);
     e.added = r.added;
     e.deleted = r.deleted;
     if (r.oldFile) e.oldFile = r.oldFile;
   }
-  for (const r of parseNameStatusZ(await git(worktreePath, ['show', '--format=', '--name-status', '-z', sha, '--']))) {
+  for (const r of parseNameStatusZ(
+    await git(worktreePath, ['show', '--format=', '--name-status', '-z', sha, '--']),
+  )) {
     const e = get(r.file);
     e.status = r.status;
     if (r.oldFile) e.oldFile = r.oldFile;
@@ -285,15 +313,21 @@ function structure(diffText: string | undefined): DiffFile | null {
 }
 
 // Stage the given paths (or everything) and commit. Returns { ok, sha, error }.
-async function commit(worktreePath: string, message: string, { amend, paths }: { amend?: boolean, paths?: unknown } = {}): Promise<CommitResult> {
+async function commit(
+  worktreePath: string,
+  message: string,
+  { amend, paths }: { amend?: boolean; paths?: unknown } = {},
+): Promise<CommitResult> {
   // `paths` is req.body.paths, and it was spread straight into the argv. Without a
   // `--` separator an element beginning with `-` is an OPTION to git add
   // (`--chmod=+x`, `--pathspec-from-file=…`), and a non-string element reaches
   // execFile and throws a TypeError — a 500 for what is a bad request. Every other
   // git call in this file already separates paths from flags; this one didn't.
-  if (paths != null && !Array.isArray(paths)) return { ok: false, error: 'paths must be an array of strings' };
+  if (paths != null && !Array.isArray(paths))
+    return { ok: false, error: 'paths must be an array of strings' };
   const list: unknown[] = paths || [];
-  if (!list.every((p): p is string => typeof p === 'string' && !!p)) return { ok: false, error: 'every entry in paths must be a non-empty string' };
+  if (!list.every((p): p is string => typeof p === 'string' && !!p))
+    return { ok: false, error: 'every entry in paths must be a non-empty string' };
   const add = list.length ? ['add', '--', ...list] : ['add', '-A'];
   const a = await gitFull(worktreePath, add);
   if (a.code !== 0) return { ok: false, error: a.stderr.trim() || 'git add failed' };

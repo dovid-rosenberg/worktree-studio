@@ -95,7 +95,7 @@ export type LocateResult =
   | { found: false; reason: string };
 
 function projectsRoot(opts?: LocateOptions | null): string {
-  return (opts?.root) || process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
+  return opts?.root || process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 }
 
 // Claude Code names a project directory after the launch cwd with every
@@ -106,7 +106,9 @@ function projectsRoot(opts?: LocateOptions | null): string {
 //     → -Users-me-code-worktree-studio
 //   /Users/me/code/api/.worktrees/fix-login
 //     → -Users-me-code-api--worktrees-fix-login
-function projectSlug(cwd: string | null | undefined): string { return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-'); }
+function projectSlug(cwd: string | null | undefined): string {
+  return String(cwd || '').replace(/[^A-Za-z0-9]/g, '-');
+}
 
 // A claudeSessionId is a uuid, and it is UNTRUSTED: it arrives verbatim in a
 // SessionStart hook payload (`session_id`) and is then joined into a filesystem path.
@@ -115,7 +117,9 @@ function projectSlug(cwd: string | null | undefined): string { return String(cwd
 // than sanitising it: anything that is not a uuid is not a session id, so there is
 // nothing to salvage.
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isSessionId(id: unknown): id is string { return typeof id === 'string' && UUID.test(id); }
+function isSessionId(id: unknown): id is string {
+  return typeof id === 'string' && UUID.test(id);
+}
 
 // Where a session's transcript lives. `session.home` tracks the cwd claude is
 // actually running in (promote sends `/cd`, which relocates BOTH cwd and transcript),
@@ -138,7 +142,11 @@ function locate(session: LocatableSession | null | undefined, opts: LocateOption
     if (fs.existsSync(file)) return { found: true, file, cwd, slug };
   }
   let entries: string[];
-  try { entries = fs.readdirSync(root); } catch { return { found: false, reason: `no projects dir at ${root}` }; }
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return { found: false, reason: `no projects dir at ${root}` };
+  }
   for (const slug of entries) {
     const file = path.join(root, slug, `${id}.jsonl`);
     if (fs.existsSync(file)) return { found: true, file, slug, cwd: null, viaScan: true };
@@ -179,9 +187,21 @@ type RecordSink = (rec: TranscriptRecord) => boolean | undefined;
 // short read would persist a bogus offset).
 function scan(file: string, opts: ScanOptions = {}, onRecord?: RecordSink): Promise<ScanStats> {
   return new Promise<ScanStats>((resolve, reject) => {
-    const out: ScanStats = { offset: 0, size: 0, lines: 0, parsed: 0, skipped: 0, truncatedTail: false, stopped: false };
+    const out: ScanStats = {
+      offset: 0,
+      size: 0,
+      lines: 0,
+      parsed: 0,
+      skipped: 0,
+      truncatedTail: false,
+      stopped: false,
+    };
     let size: number;
-    try { size = fs.statSync(file).size; } catch { return resolve(out); }
+    try {
+      size = fs.statSync(file).size;
+    } catch {
+      return resolve(out);
+    }
     out.size = size;
 
     const from0 = opts.start;
@@ -196,7 +216,11 @@ function scan(file: string, opts: ScanOptions = {}, onRecord?: RecordSink): Prom
     let pos = start;
     let done = false;
 
-    const finish = () => { if (done) return; done = true; resolve(out); };
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve(out);
+    };
 
     const handle = (raw: Buffer) => {
       let buf = raw;
@@ -206,8 +230,16 @@ function scan(file: string, opts: ScanOptions = {}, onRecord?: RecordSink): Prom
       if (!text.trim()) return;
       out.lines++;
       let rec: unknown;
-      try { rec = JSON.parse(text); } catch { out.skipped++; return; }
-      if (!rec || typeof rec !== 'object' || Array.isArray(rec)) { out.skipped++; return; }
+      try {
+        rec = JSON.parse(text);
+      } catch {
+        out.skipped++;
+        return;
+      }
+      if (!rec || typeof rec !== 'object' || Array.isArray(rec)) {
+        out.skipped++;
+        return;
+      }
       out.parsed++;
       if (onRecord && onRecord(rec as TranscriptRecord) === false) {
         out.stopped = true;
@@ -225,7 +257,7 @@ function scan(file: string, opts: ScanOptions = {}, onRecord?: RecordSink): Prom
       let from = 0;
       let i: number;
       while (!out.stopped && (i = all.indexOf(NL, from)) !== -1) {
-        pos += (i - from) + 1;
+        pos += i - from + 1;
         handle(all.subarray(from, i));
         from = i + 1;
       }
@@ -234,9 +266,17 @@ function scan(file: string, opts: ScanOptions = {}, onRecord?: RecordSink): Prom
       pending = rest.length ? [rest] : [];
       pendingLen = rest.length;
     });
-    stream.on('error', (e) => { if (!done) { done = true; reject(e); } });
+    stream.on('error', (e) => {
+      if (!done) {
+        done = true;
+        reject(e);
+      }
+    });
     stream.on('close', finish);
-    stream.on('end', () => { out.truncatedTail = pendingLen > 0; finish(); });
+    stream.on('end', () => {
+      out.truncatedTail = pendingLen > 0;
+      finish();
+    });
   });
 }
 
@@ -245,7 +285,11 @@ function scan(file: string, opts: ScanOptions = {}, onRecord?: RecordSink): Prom
 function safeJson(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (typeof v === 'string') return v;
-  try { return JSON.stringify(v); } catch { return ''; }
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return '';
+  }
 }
 
 function blockText(b: unknown): string {
@@ -253,12 +297,18 @@ function blockText(b: unknown): string {
   if (!b || typeof b !== 'object') return '';
   const blk = b as RawBlock;
   switch (blk.type) {
-    case 'text': return String(blk.text || '');
-    case 'thinking': return String(blk.thinking || '');
-    case 'tool_use': return `[tool ${String(blk.name || '?')}] ${safeJson(blk.input)}`;
-    case 'tool_result': return contentText(blk.content);
-    case 'image': return '[image]';
-    default: return '';
+    case 'text':
+      return String(blk.text || '');
+    case 'thinking':
+      return String(blk.thinking || '');
+    case 'tool_use':
+      return `[tool ${String(blk.name || '?')}] ${safeJson(blk.input)}`;
+    case 'tool_result':
+      return contentText(blk.content);
+    case 'image':
+      return '[image]';
+    default:
+      return '';
   }
 }
 
@@ -285,12 +335,20 @@ function normalizeUsage(u: unknown): Usage | null {
   if (!u || typeof u !== 'object') return null;
   const raw = u as RawUsage;
   const totalWrite = num(raw.cache_creation_input_tokens);
-  const cc = raw.cache_creation && typeof raw.cache_creation === 'object' ? raw.cache_creation as RawCacheCreation : null;
+  const cc =
+    raw.cache_creation && typeof raw.cache_creation === 'object'
+      ? (raw.cache_creation as RawCacheCreation)
+      : null;
   let w1h = cc ? num(cc.ephemeral_1h_input_tokens) : 0;
   let w5m = cc ? num(cc.ephemeral_5m_input_tokens) : 0;
-  if (!cc) { w1h = 0; w5m = totalWrite; }
-  else if (w1h + w5m !== totalWrite) w5m = Math.max(0, totalWrite - w1h);
-  const st: RawServerToolUse = raw.server_tool_use && typeof raw.server_tool_use === 'object' ? raw.server_tool_use as RawServerToolUse : {};
+  if (!cc) {
+    w1h = 0;
+    w5m = totalWrite;
+  } else if (w1h + w5m !== totalWrite) w5m = Math.max(0, totalWrite - w1h);
+  const st: RawServerToolUse =
+    raw.server_tool_use && typeof raw.server_tool_use === 'object'
+      ? (raw.server_tool_use as RawServerToolUse)
+      : {};
   return {
     input: num(raw.input_tokens),
     output: num(raw.output_tokens),
@@ -311,7 +369,7 @@ function normalizeUsage(u: unknown): Usage | null {
 function toEntry(rec: TranscriptRecord): TranscriptEntry | null {
   const type = rec.type;
   if (type !== 'assistant' && type !== 'user') return null;
-  const msg: RawMessage = rec.message && typeof rec.message === 'object' ? rec.message as RawMessage : {};
+  const msg: RawMessage = rec.message && typeof rec.message === 'object' ? (rec.message as RawMessage) : {};
   let text = type === 'user' ? contentText(msg.content) : contentText(msg.content);
   if (text.length > ENTRY_CAP) text = `${text.slice(0, ENTRY_CAP)}…`;
   const ts: IsoTimestamp | null = typeof rec.timestamp === 'string' ? rec.timestamp : null;
@@ -327,7 +385,7 @@ function toEntry(rec: TranscriptRecord): TranscriptEntry | null {
     requestId: rec.requestId || null,
     ts,
     tsMs: Number.isFinite(tsMs) ? tsMs : null,
-    model: type === 'assistant' ? (msg.model || null) : null,
+    model: type === 'assistant' ? msg.model || null : null,
     speed: usage ? usage.speed : null,
     cwd: rec.cwd || null,
     gitBranch: rec.gitBranch || null,
@@ -360,16 +418,26 @@ type ModelAccum = Omit<UsageByModel, 'costUsd' | 'priced'>;
 
 function blankTotals(): TokenTotals {
   return {
-    input: 0, output: 0, cacheWrite5m: 0, cacheWrite1h: 0, cacheWrite: 0, cacheRead: 0,
-    webSearch: 0, webFetch: 0,
+    input: 0,
+    output: 0,
+    cacheWrite5m: 0,
+    cacheWrite1h: 0,
+    cacheWrite: 0,
+    cacheRead: 0,
+    webSearch: 0,
+    webFetch: 0,
   };
 }
 
 function addUsage(t: TokenTotals, u: TokenTotals): void {
-  t.input += u.input; t.output += u.output;
-  t.cacheWrite5m += u.cacheWrite5m; t.cacheWrite1h += u.cacheWrite1h;
-  t.cacheWrite += u.cacheWrite; t.cacheRead += u.cacheRead;
-  t.webSearch += u.webSearch; t.webFetch += u.webFetch;
+  t.input += u.input;
+  t.output += u.output;
+  t.cacheWrite5m += u.cacheWrite5m;
+  t.cacheWrite1h += u.cacheWrite1h;
+  t.cacheWrite += u.cacheWrite;
+  t.cacheRead += u.cacheRead;
+  t.webSearch += u.webSearch;
+  t.webFetch += u.webFetch;
 }
 
 // The dedup key for one API response. Claude Code writes ONE JSONL LINE PER CONTENT
@@ -378,7 +446,9 @@ function addUsage(t: TokenTotals, u: TokenTotals): void {
 // Summing lines over-counts by ~2.9x on a tool-heavy session (measured). Dedup on
 // the API message id; fall back to requestId, then the line uuid (always unique, so
 // a record with neither id degrades to counting once rather than being dropped).
-function usageKey(e: TranscriptEntry): string | null { return e.msgId || e.requestId || e.uuid; }
+function usageKey(e: TranscriptEntry): string | null {
+  return e.msgId || e.requestId || e.uuid;
+}
 
 // Total tokens + derived cost for one transcript. Returns per-model breakdowns
 // because a single session routinely spans models (opus-4-8 + fable-5 subagents),
@@ -398,7 +468,10 @@ async function aggregate(file: string, opts: ScanOptions = {}): Promise<UsageTot
       if (firstAt === null || e.tsMs < firstAt) firstAt = e.tsMs;
       if (lastAt === null || e.tsMs > lastAt) lastAt = e.tsMs;
     }
-    if (e.kind === 'user') { userMessages++; return; }
+    if (e.kind === 'user') {
+      userMessages++;
+      return;
+    }
     if (!e.usage) return;
     const key = usageKey(e);
     if (key && seen.has(key)) return;
@@ -407,7 +480,10 @@ async function aggregate(file: string, opts: ScanOptions = {}): Promise<UsageTot
     addUsage(totals, e.usage);
     const model = e.model || 'unknown';
     let m = models.get(model);
-    if (!m) { m = { model, speed: e.speed, messages: 0, ...blankTotals() }; models.set(model, m); }
+    if (!m) {
+      m = { model, speed: e.speed, messages: 0, ...blankTotals() };
+      models.set(model, m);
+    }
     m.messages++;
     addUsage(m, e.usage);
   });
@@ -418,7 +494,10 @@ async function aggregate(file: string, opts: ScanOptions = {}): Promise<UsageTot
   for (const m of models.values()) {
     const { usd, priced } = pricing.costOf(m.model, m, { speed: m.speed });
     if (!priced) {
-      if (pricing.isBillable(m.model)) { allPriced = false; unpriced.add(m.model); }
+      if (pricing.isBillable(m.model)) {
+        allPriced = false;
+        unpriced.add(m.model);
+      }
     } else costUsd += usd;
     byModel.push({ ...m, costUsd: pricing.round(usd), priced });
   }
@@ -475,8 +554,13 @@ async function search(file: string, opts: SearchOptions = {}): Promise<SearchHit
     const i = e.text.toLowerCase().indexOf(q);
     if (i === -1) return;
     hits.push({
-      uuid: e.uuid, role: e.role, model: e.model, ts: e.ts, tsMs: e.tsMs,
-      gitBranch: e.gitBranch, sidechain: e.sidechain,
+      uuid: e.uuid,
+      role: e.role,
+      model: e.model,
+      ts: e.ts,
+      tsMs: e.tsMs,
+      gitBranch: e.gitBranch,
+      sidechain: e.sidechain,
       snippet: excerpt(e.text, i, q.length),
     });
     if (hits.length >= limit) return false;
@@ -491,7 +575,19 @@ function excerpt(text: string, at: number, len: number, pad = 90): string {
 }
 
 export {
-  projectsRoot, projectSlug, isSessionId, locate,
-  scan, readTranscript, toEntry, normalizeUsage, contentText,
-  aggregate, search, blankTotals, addUsage, usageKey, excerpt,
+  projectsRoot,
+  projectSlug,
+  isSessionId,
+  locate,
+  scan,
+  readTranscript,
+  toEntry,
+  normalizeUsage,
+  contentText,
+  aggregate,
+  search,
+  blankTotals,
+  addUsage,
+  usageKey,
+  excerpt,
 };

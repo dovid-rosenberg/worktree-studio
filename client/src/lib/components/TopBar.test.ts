@@ -17,13 +17,29 @@ const { ui } = await import('$lib/stores/ui.svelte.js');
 const { world } = await import('$lib/stores/world.svelte.js');
 
 const member = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo, wtname: 'wt', path: `/${repo}/wt`, branch: 'feature/x',
-  running: false, canStart: true, ports: [], isMain: false, session: null, ...over,
+  repo,
+  wtname: 'wt',
+  path: `/${repo}/wt`,
+  branch: 'feature/x',
+  running: false,
+  canStart: true,
+  ports: [],
+  isMain: false,
+  session: null,
+  ...over,
 });
 const feature = (name: string, members: unknown[], session: unknown = null): Feature =>
-  ({ name, auto: true, members, session } as unknown as Feature);
+  ({ name, auto: true, members, session }) as unknown as Feature;
 const _session = (id: string, state: string, over: Record<string, unknown> = {}): Session =>
-  ({ id, title: id, state, activity: '', repoName: 'accept-blue', worktreePath: '/wt', ...over } as unknown as Session);
+  ({
+    id,
+    title: id,
+    state,
+    activity: '',
+    repoName: 'accept-blue',
+    worktreePath: '/wt',
+    ...over,
+  }) as unknown as Session;
 
 function give(features: Feature[], sessions: Session[] = []) {
   world.topology = { features, groups: [], repos: [], webRepos: [] } as never;
@@ -36,10 +52,6 @@ beforeEach(() => {
 });
 
 describe('TopBar summary', () => {
-
-
-
-
   it('no longer carries the fleet counts — they live beside the rows they count', () => {
     give([feature('f', [member('accept-blue', { running: true })])]);
     const { container } = render(TopBar);

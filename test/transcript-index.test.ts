@@ -26,7 +26,14 @@ const CWD = '/Users/d/repo/.worktrees/feat';
 // carries them, which is the point of using a session-shaped fixture at all.
 type IndexFixtureSession = IndexableSession & { title: string; feature: string };
 function session(over: Partial<IndexFixtureSession> = {}): IndexFixtureSession {
-  return { id: 's_1', title: 'demo', feature: 'feat', home: CWD, claudeSessionId: 'cccccccc-0000-4000-8000-000000000015', ...over };
+  return {
+    id: 's_1',
+    title: 'demo',
+    feature: 'feat',
+    home: CWD,
+    claudeSessionId: 'cccccccc-0000-4000-8000-000000000015',
+    ...over,
+  };
 }
 
 function transcriptFile(root: string, id = 'cccccccc-0000-4000-8000-000000000015') {
@@ -42,8 +49,10 @@ function append(file: string, records: unknown[]) {
 
 function usage(over: Record<string, unknown> = {}) {
   return {
-    input_tokens: 10, output_tokens: 100,
-    cache_creation_input_tokens: 1000, cache_read_input_tokens: 5000,
+    input_tokens: 10,
+    output_tokens: 100,
+    cache_creation_input_tokens: 1000,
+    cache_read_input_tokens: 5000,
     cache_creation: { ephemeral_5m_input_tokens: 1000, ephemeral_1h_input_tokens: 0 },
     server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
     ...over,
@@ -58,16 +67,37 @@ interface AsstOpts {
   blockType?: 'text' | 'thinking';
   ts?: string;
 }
-function asst({ msgId, text, model = 'claude-opus-5', use = usage(), blockType = 'text', ts = '2026-07-27T12:00:00.000Z' }: AsstOpts) {
+function asst({
+  msgId,
+  text,
+  model = 'claude-opus-5',
+  use = usage(),
+  blockType = 'text',
+  ts = '2026-07-27T12:00:00.000Z',
+}: AsstOpts) {
   const block = blockType === 'thinking' ? { type: 'thinking', thinking: text } : { type: 'text', text };
   return {
-    type: 'assistant', uuid: `u${++n}`, sessionId: 'cccccccc-0000-4000-8000-000000000015', timestamp: ts, cwd: CWD, gitBranch: 'feat/x',
-    requestId: `req-${msgId}`, message: { id: msgId, role: 'assistant', model, content: [block], usage: use },
+    type: 'assistant',
+    uuid: `u${++n}`,
+    sessionId: 'cccccccc-0000-4000-8000-000000000015',
+    timestamp: ts,
+    cwd: CWD,
+    gitBranch: 'feat/x',
+    requestId: `req-${msgId}`,
+    message: { id: msgId, role: 'assistant', model, content: [block], usage: use },
   };
 }
 
 function user(text: string, ts = '2026-07-27T11:59:00.000Z') {
-  return { type: 'user', uuid: `u${++n}`, sessionId: 'cccccccc-0000-4000-8000-000000000015', timestamp: ts, cwd: CWD, gitBranch: 'feat/x', message: { role: 'user', content: text } };
+  return {
+    type: 'user',
+    uuid: `u${++n}`,
+    sessionId: 'cccccccc-0000-4000-8000-000000000015',
+    timestamp: ts,
+    cwd: CWD,
+    gitBranch: 'feat/x',
+    message: { role: 'user', content: text },
+  };
 }
 
 // ---- availability -----------------------------------------------------------
@@ -148,7 +178,11 @@ test('a relocated transcript is re-read from the start, not from a stale offset'
 
   // promote: /cd moves cwd AND the transcript, which carries the whole history over
   const newFile = transcriptFile(root);
-  append(newFile, [user('pre-promote'), asst({ msgId: 'm1', text: 'before' }), asst({ msgId: 'm2', text: 'after' })]);
+  append(newFile, [
+    user('pre-promote'),
+    asst({ msgId: 'm1', text: 'before' }),
+    asst({ msgId: 'm2', text: 'after' }),
+  ]);
   const p = expectOk(await index.index(session({ home: CWD })));
   assert.equal(p.file, newFile);
   assert.equal(p.added, 3, 'the moved file is read whole rather than sliced at the old offset');
@@ -159,11 +193,14 @@ test('a relocated transcript is re-read from the start, not from a stale offset'
 test('malformed lines are counted and skipped without stalling the offset', async () => {
   const { root, index } = fixture();
   const file = transcriptFile(root);
-  fs.writeFileSync(file, `${[
-    JSON.stringify(user('good one')),
-    '{ broken json',
-    JSON.stringify(asst({ msgId: 'm1', text: 'good two' })),
-  ].join('\n')}\n`);
+  fs.writeFileSync(
+    file,
+    `${[
+      JSON.stringify(user('good one')),
+      '{ broken json',
+      JSON.stringify(asst({ msgId: 'm1', text: 'good two' })),
+    ].join('\n')}\n`,
+  );
   const p = expectOk(await index.index(session()));
   assert.equal(p.added, 2);
   assert.equal(p.malformedLines, 1);
@@ -176,7 +213,13 @@ test('malformed lines are counted and skipped without stalling the offset', asyn
 test('the index dedupes per-content-block usage the same way the reader does', async () => {
   const { root, index } = fixture();
   const file = transcriptFile(root);
-  const use = usage({ input_tokens: 2, output_tokens: 1017, cache_creation_input_tokens: 0, cache_read_input_tokens: 20576, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } });
+  const use = usage({
+    input_tokens: 2,
+    output_tokens: 1017,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 20576,
+    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+  });
   // one API response → four JSONL lines, identical usage on each
   append(file, [
     asst({ msgId: 'msg_A', text: 'thinking', use, blockType: 'thinking' }),
@@ -198,7 +241,15 @@ test('index telemetry matches a direct read of the same transcript', async () =>
   const file = transcriptFile(root);
   append(file, [
     user('go'),
-    asst({ msgId: 'm1', text: 'a', use: usage({ output_tokens: 111, cache_creation_input_tokens: 2000, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 2000 } }) }),
+    asst({
+      msgId: 'm1',
+      text: 'a',
+      use: usage({
+        output_tokens: 111,
+        cache_creation_input_tokens: 2000,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 2000 },
+      }),
+    }),
     asst({ msgId: 'm2', text: 'b', model: 'claude-haiku-4-5', use: usage({ output_tokens: 222 }) }),
   ]);
   await index.index(session());
@@ -224,7 +275,13 @@ test('usage rolls up per model and flags gaps in the price table', async () => {
   const s = summarize(index.usageRows('s_1'));
   assert.equal(s.byModel.length, 2);
   assert.deepEqual(s.unpricedModels, ['claude-unreleased-9']);
-  assert.equal(present(s.byModel.find((m) => m.model === 'claude-unreleased-9'), 'the unpriced model row').costUsd, null);
+  assert.equal(
+    present(
+      s.byModel.find((m) => m.model === 'claude-unreleased-9'),
+      'the unpriced model row',
+    ).costUsd,
+    null,
+  );
   assert.ok(present(s.costUsd, 'a cost') > 0);
   index.close();
 });
@@ -244,7 +301,10 @@ test('forget drops a closed session from the index', async () => {
 test('index reports why it cannot find a transcript', async () => {
   const { index } = fixture();
   assert.equal((await index.index(session({ claudeSessionId: null }))).ok, false);
-  assert.match(expectErr(await index.index(session({ claudeSessionId: 'cccccccc-0000-4000-8000-000000009999' }))).reason, /not found/);
+  assert.match(
+    expectErr(await index.index(session({ claudeSessionId: 'cccccccc-0000-4000-8000-000000009999' }))).reason,
+    /not found/,
+  );
   // Not a uuid → refused before it can be joined into a path at all (see locate()).
   assert.match(expectErr(await index.index(session({ claudeSessionId: 'missing' }))).reason, /uuid/);
   index.close();
@@ -289,10 +349,7 @@ test('search filters by session, role and time', async () => {
 
 test('all terms must match — search is an AND, not an OR', async () => {
   const { root, index } = fixture();
-  append(transcriptFile(root), [
-    user('alpha only'),
-    asst({ msgId: 'm1', text: 'alpha and beta together' }),
-  ]);
+  append(transcriptFile(root), [user('alpha only'), asst({ msgId: 'm1', text: 'alpha and beta together' })]);
   await index.index(session());
   assert.equal(expectOk(index.search('alpha')).total, 2);
   assert.equal(expectOk(index.search('alpha beta')).total, 1);
@@ -315,7 +372,10 @@ test('ftsQuery quotes every term and returns null for an empty query', () => {
   assert.equal(ftsQuery('byte offset'), '"byte" AND "offset"');
   assert.equal(ftsQuery('  '), null);
   assert.equal(ftsQuery('"'), null);
-  assert.ok(!present(ftsQuery('a"b'), 'a compiled query').includes('a"b'), 'the embedded quote is neutralised');
+  assert.ok(
+    !present(ftsQuery('a"b'), 'a compiled query').includes('a"b'),
+    'the embedded quote is neutralised',
+  );
 });
 
 test('likePattern escapes sql wildcards so they are searched, not matched', () => {

@@ -19,7 +19,9 @@ import { expectErr, expectOk, present } from './helpers.ts';
 const side = (fh: FileHunks, which: 'staged' | 'unstaged'): DiffFile =>
   present(fh[which], `the ${which} diff for ${fh.file}`);
 
-function sh(cwd: string, args: string[]) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
+function sh(cwd: string, args: string[]) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
 
 // A repo with one commit. core.autocrlf=false so the CRLF case is about the diff model,
 // not about git's line-ending conversion.
@@ -34,8 +36,12 @@ function repo(files: Record<string, string | Buffer>) {
   sh(dir, ['commit', '-qm', 'base']);
   return dir;
 }
-function write(dir: string, name: string, content: string | Buffer) { fs.writeFileSync(path.join(dir, name), content); }
-function rm(dir: string) { fs.rmSync(dir, { recursive: true, force: true }); }
+function write(dir: string, name: string, content: string | Buffer) {
+  fs.writeFileSync(path.join(dir, name), content);
+}
+function rm(dir: string) {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
 const numbered = (n: number, prefix = 'L') => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 const cached = (dir: string) => sh(dir, ['diff', '--cached']);
 const unstaged = (dir: string) => sh(dir, ['diff']);
@@ -44,7 +50,10 @@ const atAt = (text: string) => text.split('\n').filter((l: string) => l.startsWi
 // The strongest check we have: hand git back a patch we built from its own diff and see
 // whether it would apply it to the index.
 function applies(dir: string, patch: string, extra: string[] = []) {
-  const r = spawnSync('git', ['-C', dir, 'apply', '--cached', '--check', ...extra, '-'], { input: patch, encoding: 'utf8' });
+  const r = spawnSync('git', ['-C', dir, 'apply', '--cached', '--check', ...extra, '-'], {
+    input: patch,
+    encoding: 'utf8',
+  });
   return { ok: r.status === 0, err: (r.stderr || '').trim() };
 }
 
@@ -136,8 +145,10 @@ function unbalancedRepo() {
 test('stage() of a late hunk rewrites its @@ offset for the hunks it left behind', async () => {
   const dir = unbalancedRepo();
   const before = await hunks.fileHunks(dir, 'o.txt');
-  assert.deepEqual(side(before, 'unstaged').hunks.map((h) => h.header),
-    ['@@ -1,6 +1,10 @@', '@@ -22,8 +26,6 @@ b21', '@@ -47,7 +49,7 @@ b46']);
+  assert.deepEqual(
+    side(before, 'unstaged').hunks.map((h) => h.header),
+    ['@@ -1,6 +1,10 @@', '@@ -22,8 +26,6 @@ b21', '@@ -47,7 +49,7 @@ b46'],
+  );
   const out = await hunks.stage(dir, { file: 'o.txt', hunks: [2] });
   expectOk(out);
   // Full patch says +49; with the +4 and −2 hunks skipped it has to be +47.
@@ -157,7 +168,13 @@ test('unstage() of a late hunk rewrites the other side’s offset the same way',
 
 test('staging every hunk one at a time ends up identical to staging the whole file', async () => {
   const dir = unbalancedRepo();
-  const expected = (() => { const d = unbalancedRepo(); sh(d, ['add', 'o.txt']); const t = sh(d, ['rev-parse', ':o.txt']); rm(d); return t; })();
+  const expected = (() => {
+    const d = unbalancedRepo();
+    sh(d, ['add', 'o.txt']);
+    const t = sh(d, ['rev-parse', ':o.txt']);
+    rm(d);
+    return t;
+  })();
   for (let i = 0; i < 3; i++) {
     const out = await hunks.stage(dir, { file: 'o.txt', hunks: [0] }); // always the first remaining
     expectOk(out);
@@ -194,16 +211,28 @@ test('a second stage() on a partially staged file still applies cleanly', async 
 
 test('a file staged and then edited again offers both sides independently', async () => {
   const dir = repo({ 'w.txt': `${numbered(10).join('\n')}\n` });
-  const v1 = numbered(10); v1[0] = 'L1 staged';
+  const v1 = numbered(10);
+  v1[0] = 'L1 staged';
   write(dir, 'w.txt', `${v1.join('\n')}\n`);
   sh(dir, ['add', 'w.txt']);
-  const v2 = [...v1]; v2[9] = 'L10 unstaged';
+  const v2 = [...v1];
+  v2[9] = 'L10 unstaged';
   write(dir, 'w.txt', `${v2.join('\n')}\n`);
   const fh = await hunks.fileHunks(dir, 'w.txt');
   assert.equal(side(fh, 'staged').hunks.length, 1);
   assert.equal(side(fh, 'unstaged').hunks.length, 1);
-  assert.match(side(fh, 'staged').hunks[0].lines.map((l) => l.text).join('\n'), /L1 staged/);
-  assert.match(side(fh, 'unstaged').hunks[0].lines.map((l) => l.text).join('\n'), /L10 unstaged/);
+  assert.match(
+    side(fh, 'staged')
+      .hunks[0].lines.map((l) => l.text)
+      .join('\n'),
+    /L1 staged/,
+  );
+  assert.match(
+    side(fh, 'unstaged')
+      .hunks[0].lines.map((l) => l.text)
+      .join('\n'),
+    /L10 unstaged/,
+  );
   rm(dir);
 });
 
@@ -239,7 +268,10 @@ test('a CRLF file keeps its line endings byte for byte through staging', async (
   const dir = repo({ 'c.txt': 'x\r\ny\r\nz\r\n' });
   write(dir, 'c.txt', 'x\r\nY\r\nz\r\n');
   const fh = await hunks.fileHunks(dir, 'c.txt');
-  assert.deepEqual(side(fh, 'unstaged').hunks[0].lines.map((l) => l.text), ['x\r', 'y\r', 'Y\r', 'z\r']);
+  assert.deepEqual(
+    side(fh, 'unstaged').hunks[0].lines.map((l) => l.text),
+    ['x\r', 'y\r', 'Y\r', 'z\r'],
+  );
   const out = await hunks.stage(dir, { file: 'c.txt', hunks: [0] });
   expectOk(out);
   assert.equal(sh(dir, ['show', ':c.txt']), 'x\r\nY\r\nz\r\n');
@@ -328,7 +360,13 @@ test('a mode-only change is refused with a message pointing at file-level stagin
 
 test('a mode change alongside content rides along when a hunk is staged', async () => {
   const dir = repo({ 'm.sh': `#!/bin/sh\n${numbered(5).join('\n')}\n` });
-  write(dir, 'm.sh', `#!/bin/sh\n${numbered(5).map((l, i) => (i === 2 ? 'L3 CHANGED' : l)).join('\n')}\n`);
+  write(
+    dir,
+    'm.sh',
+    `#!/bin/sh\n${numbered(5)
+      .map((l, i) => (i === 2 ? 'L3 CHANGED' : l))
+      .join('\n')}\n`,
+  );
   fs.chmodSync(path.join(dir, 'm.sh'), 0o755);
   const out = await hunks.stage(dir, { file: 'm.sh', hunks: [0] });
   expectOk(out);
@@ -351,7 +389,11 @@ test('a stale `expect` header is refused instead of staging the wrong hunk', asy
 test('a matching `expect` header goes through', async () => {
   const dir = threeHunkRepo();
   const fh = await hunks.fileHunks(dir, 'p.txt');
-  const out = await hunks.stage(dir, { file: 'p.txt', hunks: [1], expect: [side(fh, 'unstaged').hunks[1].header] });
+  const out = await hunks.stage(dir, {
+    file: 'p.txt',
+    hunks: [1],
+    expect: [side(fh, 'unstaged').hunks[1].header],
+  });
   expectOk(out);
   rm(dir);
 });
@@ -428,7 +470,13 @@ test('re-serializing a real diff of an awkward file reproduces git’s bytes exa
   });
   write(dir, 'nonl.txt', 'a\nB\nc');
   write(dir, 'crlf.txt', 'x\r\nY\r\nz\r\n');
-  write(dir, 'plain.txt', `${numbered(10).map((l, i) => (i === 4 ? 'L5 CHANGED' : l)).join('\n')}\n`);
+  write(
+    dir,
+    'plain.txt',
+    `${numbered(10)
+      .map((l, i) => (i === 4 ? 'L5 CHANGED' : l))
+      .join('\n')}\n`,
+  );
   fs.rmSync(path.join(dir, 'gone.txt'));
   write(dir, 'added.txt', 'brand\nnew\n');
   for (const file of ['nonl.txt', 'crlf.txt', 'plain.txt', 'gone.txt', 'added.txt']) {

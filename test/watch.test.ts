@@ -12,7 +12,10 @@ import type { WatchDeps } from '../server/watch.ts';
 import { expectOk } from './helpers.ts';
 import * as worktree from '../server/worktree.ts';
 
-const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
+const sleep = (ms: number) =>
+  new Promise<void>((r) => {
+    setTimeout(r, ms);
+  });
 
 async function waitFor(fn: () => unknown, { timeout = 6000, label = 'condition' } = {}) {
   const until = Date.now() + timeout;
@@ -67,7 +70,11 @@ async function boot(base: string, { intervals = {}, rescan, ...deps }: BootOpts 
   const calls: number[] = [];
   const h = await watch.start({
     cfg: { baseDirs: [base], scanDepth: 3 },
-    rescan: rescan || (async () => { calls.push(Date.now()); }),
+    rescan:
+      rescan ||
+      (async () => {
+        calls.push(Date.now());
+      }),
     intervals: { ...QUIET, ...intervals },
     ...deps,
   });
@@ -80,11 +87,14 @@ async function boot(base: string, { intervals = {}, rescan, ...deps }: BootOpts 
   return { h, calls };
 }
 
-test('a worktree add collapses git\'s burst of writes into exactly one rescan', async (t) => {
+test("a worktree add collapses git's burst of writes into exactly one rescan", async (t) => {
   const base = tempBase();
   const repo = makeRepo(path.join(base, 'alpha'));
   const { h, calls } = await boot(base);
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   expectOk(await worktree.create(repo, 'feature/watched', 'watched', { fetch: false }), 'create()');
 
@@ -99,7 +109,10 @@ test('a worktree remove triggers a rescan', async (t) => {
   const out = expectOk(await worktree.create(repo, 'feature/gone', 'gone', { fetch: false }), 'create()');
 
   const { h, calls } = await boot(base);
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   expectOk(await worktree.remove(repo, out.path), 'remove()');
   await waitFor(() => calls.length >= 1, { label: 'a rescan after worktree remove' });
@@ -111,7 +124,10 @@ test('a commit triggers a rescan (the merged/ahead computation reads refs)', asy
   const base = tempBase();
   const repo = makeRepo(path.join(base, 'alpha'));
   const { h, calls } = await boot(base);
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   fs.writeFileSync(path.join(repo, 'next.txt'), 'x');
   execFileSync('git', ['add', '.'], { cwd: repo, stdio: 'ignore' });
@@ -123,7 +139,10 @@ test('ordinary churn — working-tree saves and git index writes — triggers no
   const base = tempBase();
   const repo = makeRepo(path.join(base, 'alpha'));
   const { h, calls } = await boot(base);
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   fs.mkdirSync(path.join(repo, 'src', 'deep'), { recursive: true });
   for (let i = 0; i < 25; i++) fs.writeFileSync(path.join(repo, 'src', 'deep', `f${i}.js`), `// ${i}\n`);
@@ -140,13 +159,19 @@ test('a repo appearing under a baseDir triggers a rescan and gets watched', asyn
   const staging = tempBase();
   const built = makeRepo(path.join(staging, 'beta'));
   const { h, calls } = await boot(base);
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); fs.rmSync(staging, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
+  });
 
   const landed = path.join(base, 'beta');
   fs.renameSync(built, landed); // appears fully-formed, like a finished clone/move
 
   await waitFor(() => calls.length >= 1, { label: 'a rescan for the new repo' });
-  await waitFor(() => h.watched().includes(path.join(landed, '.git')), { label: 'the new repo to be watched' });
+  await waitFor(() => h.watched().includes(path.join(landed, '.git')), {
+    label: 'the new repo to be watched',
+  });
 });
 
 test('watchers are released when a repo disappears', async (t) => {
@@ -154,15 +179,23 @@ test('watchers are released when a repo disappears', async (t) => {
   makeRepo(path.join(base, 'alpha'));
   const doomed = makeRepo(path.join(base, 'beta'));
   const { h, calls } = await boot(base);
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
-  assert.ok(h.watched().some((p) => p.startsWith(doomed + path.sep)), 'the doomed repo starts out watched');
+  assert.ok(
+    h.watched().some((p) => p.startsWith(doomed + path.sep)),
+    'the doomed repo starts out watched',
+  );
   const before = h.stats().watchers;
 
   fs.rmSync(doomed, { recursive: true, force: true });
 
   await waitFor(() => calls.length >= 1, { label: 'a rescan after the repo was removed' });
-  await waitFor(() => !h.watched().some((p) => p.startsWith(doomed + path.sep)), { label: 'the dead watchers to be pruned' });
+  await waitFor(() => !h.watched().some((p) => p.startsWith(doomed + path.sep)), {
+    label: 'the dead watchers to be pruned',
+  });
   assert.ok(h.stats().watchers < before, `watcher count fell (${before} → ${h.stats().watchers})`);
 });
 
@@ -197,7 +230,10 @@ test('rescans never overlap; events arriving mid-scan collapse into one follow-u
       done += 1;
     },
   });
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   // Twelve real ref writes spread across the whole of a scan and then some.
   for (let i = 0; i < 12; i++) {
@@ -221,10 +257,15 @@ test('the dev-server sweep backs off while no dashboard is attached, and catches
   let sweeps = 0;
   const { h } = await boot(base, {
     intervals: { tickMs: 15, runningActiveMs: 40, runningIdleMs: 3600000 },
-    refreshRunning: async () => { sweeps += 1; },
+    refreshRunning: async () => {
+      sweeps += 1;
+    },
     hasViewers: () => viewers,
   });
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   assert.equal(sweeps, 1, 'boot primes the sweep exactly once (as the old boot did)');
   await sleep(400);
@@ -250,7 +291,11 @@ test('attention counts a poll as much as an open stream, and forgets a stale one
   bare.seen();
   assert.equal(bare.active(), true, 'works with no stream source wired at all');
 
-  const broken = watch.attention({ streams: () => { throw new Error('nope'); } });
+  const broken = watch.attention({
+    streams: () => {
+      throw new Error('nope');
+    },
+  });
   assert.equal(broken.active(), true, 'a throwing probe never silently drops us to idle');
 });
 
@@ -263,10 +308,15 @@ test('a bare /api/state poll with no SSE client keeps the dev-server sweep fast'
   let sweeps = 0;
   const { h } = await boot(base, {
     intervals: { tickMs: 15, runningActiveMs: 40, runningIdleMs: 3600000 },
-    refreshRunning: async () => { sweeps += 1; },
+    refreshRunning: async () => {
+      sweeps += 1;
+    },
     hasViewers: att.active,
   });
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   const quiet = sweeps;
   await sleep(300);
@@ -289,10 +339,15 @@ test('reconcile is left alone at boot so restore() can still bring sessions back
   let reconciles = 0;
   const { h } = await boot(base, {
     intervals: { tickMs: 15, reconcileActiveMs: 400, reconcileIdleMs: 3600000 },
-    reconcile: async () => { reconciles += 1; },
+    reconcile: async () => {
+      reconciles += 1;
+    },
     hasViewers: () => true,
   });
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   assert.equal(reconciles, 0, 'not run during start() — its first run is a full interval away');
   await waitFor(() => reconciles >= 1, { label: 'reconcile to run on the tick' });
@@ -301,8 +356,14 @@ test('reconcile is left alone at boot so restore() can still bring sessions back
 test('the safety net still rescans when the filesystem said nothing at all', async (t) => {
   const base = tempBase();
   makeRepo(path.join(base, 'alpha'));
-  const { h, calls } = await boot(base, { intervals: { tickMs: 15, netActiveMs: 60, netIdleMs: 3600000 }, hasViewers: () => true });
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  const { h, calls } = await boot(base, {
+    intervals: { tickMs: 15, netActiveMs: 60, netIdleMs: 3600000 },
+    hasViewers: () => true,
+  });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   await waitFor(() => calls.length >= 2, { label: 'the safety-net rescans' });
 });
@@ -313,9 +374,15 @@ test('a failing rescan does not take the watcher down', async (t) => {
   let attempts = 0;
   const { h } = await boot(base, {
     intervals: { debounceMs: 40, maxDebounceMs: 200 },
-    rescan: async () => { attempts += 1; throw new Error('scan blew up'); },
+    rescan: async () => {
+      attempts += 1;
+      throw new Error('scan blew up');
+    },
   });
-  t.after(() => { h.stop(); fs.rmSync(base, { recursive: true, force: true }); });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
 
   execFileSync('git', ['branch', '-f', 'one', 'HEAD'], { cwd: repo, stdio: 'ignore' });
   await waitFor(() => attempts >= 1, { label: 'the first (throwing) rescan' });

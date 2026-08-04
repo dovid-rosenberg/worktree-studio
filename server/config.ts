@@ -76,8 +76,13 @@ function defaults(): ShippedConfig {
     // editor-agnostic counterpart of the JetBrains run configs in copyAlways.
     copyPatterns: {
       default: [
-        '.env', '.env.local', '.env.*.local', '.env*',
-        'config/*-config.ts', 'src/config.ts', 'src/config/config.ts',
+        '.env',
+        '.env.local',
+        '.env.*.local',
+        '.env*',
+        'config/*-config.ts',
+        'src/config.ts',
+        'src/config/config.ts',
         '.vscode/*.json',
       ],
     },
@@ -133,10 +138,12 @@ function validateConcurrency(cfg: PartialDeep<Config> | null | undefined): void 
   const step = c.offsetStep || 0;
   const max = c.maxSlots || 1;
   if (max > 16) {
-    console.warn(`[wt-studio] concurrency.maxSlots=${max} exceeds 16 (redis DB index limit); slots >= 16 collide on redis__db.`);
+    console.warn(
+      `[wt-studio] concurrency.maxSlots=${max} exceeds 16 (redis DB index limit); slots >= 16 collide on redis__db.`,
+    );
   }
   for (const [repo, rc] of Object.entries(c.repos || {})) {
-    const bases = Object.values((rc?.portEnv) || {});
+    const bases = Object.values(rc?.portEnv || {});
     for (let i = 0; i < bases.length; i++) {
       for (let j = i + 1; j < bases.length; j++) {
         // A parsed JSON object has no holes, so neither does Object.values over one:
@@ -145,8 +152,10 @@ function validateConcurrency(cfg: PartialDeep<Config> | null | undefined): void 
         // what the arithmetic on an absent value already did.
         const diff = Math.abs((bases[i] ?? NaN) - (bases[j] ?? NaN));
         if (step > 0 && diff % step === 0 && diff / step <= max - 1) {
-          console.warn(`[wt-studio] concurrency: repo '${repo}' ports ${bases[i]} and ${bases[j]} collide across slots 0..${max - 1} `
-            + `at offsetStep ${step} (diff ${diff} is a multiple of the step within slot range); increase offsetStep or reduce maxSlots.`);
+          console.warn(
+            `[wt-studio] concurrency: repo '${repo}' ports ${bases[i]} and ${bases[j]} collide across slots 0..${max - 1} ` +
+              `at offsetStep ${step} (diff ${diff} is a multiple of the step within slot range); increase offsetStep or reduce maxSlots.`,
+          );
         }
       }
     }
@@ -173,8 +182,9 @@ function isJsonObject(v: unknown): v is OnDiskConfig {
 // what is on disk is still exactly what they wrote.
 function readConfigFile(): { absent: true; cfg?: undefined } | { absent?: false; cfg: OnDiskConfig } {
   let text: string;
-  try { text = fs.readFileSync(CONFIG_FILE, 'utf8'); }
-  catch (e) {
+  try {
+    text = fs.readFileSync(CONFIG_FILE, 'utf8');
+  } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === 'ENOENT') return { absent: true };
     throw new Error(`[wt-studio] cannot read ${CONFIG_FILE}: ${err.message}`);
@@ -183,21 +193,22 @@ function readConfigFile(): { absent: true; cfg?: undefined } | { absent?: false;
   // there is nothing in it to lose — seed it like an absent one.
   if (!text.trim()) return { absent: true };
   let parsed: unknown;
-  try { parsed = JSON.parse(text); }
-  catch (e) {
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
     throw new Error(
-      `[wt-studio] ${CONFIG_FILE} is not valid JSON: ${(e as Error).message}\n`
-      + '  Your config has NOT been modified — fix the syntax error and start Studio again.\n'
-      + '  (Refusing to boot on purpose: seeding defaults over it would lose baseDirs,\n'
-      + '   start commands, editors, groups and the concurrency port map.)',
+      `[wt-studio] ${CONFIG_FILE} is not valid JSON: ${(e as Error).message}\n` +
+        '  Your config has NOT been modified — fix the syntax error and start Studio again.\n' +
+        '  (Refusing to boot on purpose: seeding defaults over it would lose baseDirs,\n' +
+        '   start commands, editors, groups and the concurrency port map.)',
     );
   }
   // `[]`, `"x"` or `null` parse fine but cannot be merged with defaults, and
   // treating them as absent would overwrite the file just the same.
   if (!isJsonObject(parsed)) {
     throw new Error(
-      `[wt-studio] ${CONFIG_FILE} must contain a JSON object, found ${Array.isArray(parsed) ? 'an array' : typeof parsed}.\n`
-      + '  Your config has NOT been modified.',
+      `[wt-studio] ${CONFIG_FILE} must contain a JSON object, found ${Array.isArray(parsed) ? 'an array' : typeof parsed}.\n` +
+        '  Your config has NOT been modified.',
     );
   }
   return { cfg: parsed };

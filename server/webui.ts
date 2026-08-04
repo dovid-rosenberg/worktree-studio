@@ -46,8 +46,8 @@ function resolve(root: string = process.env.WT_STUDIO_UI_ROOT || ROOT): Resolved
   const index = path.join(uiRoot, 'index.html');
   if (!fs.existsSync(index)) {
     throw new Error(
-      'cannot serve the client: it has not been built yet — run `npm run build` '
-      + '(or `npm install`, which builds it).',
+      'cannot serve the client: it has not been built yet — run `npm run build` ' +
+        '(or `npm install`, which builds it).',
     );
   }
   return { label: 'SvelteKit client (client/build)', root: uiRoot, index };
@@ -64,7 +64,11 @@ function resolve(root: string = process.env.WT_STUDIO_UI_ROOT || ROOT): Resolved
 // API call from a page that otherwise looks fine.
 function sendIndex(ui: ResolvedUi, token: string, res: Response): Response {
   let html: string;
-  try { html = fs.readFileSync(ui.index, 'utf8'); } catch { return res.status(500).send('index.html is missing'); }
+  try {
+    html = fs.readFileSync(ui.index, 'utf8');
+  } catch {
+    return res.status(500).send('index.html is missing');
+  }
   return res.type('html').set('Cache-Control', 'no-store').send(html.split(PLACEHOLDER).join(token));
 }
 

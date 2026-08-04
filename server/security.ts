@@ -66,10 +66,16 @@ function loadToken(stateDir: string): string {
     const existing = fs.readFileSync(file, 'utf8').trim();
     // Anything short enough to brute force is treated as absent and replaced.
     if (existing.length >= 32) {
-      try { fs.chmodSync(file, 0o600); } catch { /* best effort — a wrong mode is not fatal */ }
+      try {
+        fs.chmodSync(file, 0o600);
+      } catch {
+        /* best effort — a wrong mode is not fatal */
+      }
       return existing;
     }
-  } catch { /* not written yet */ }
+  } catch {
+    /* not written yet */
+  }
   const token = crypto.randomBytes(32).toString('hex');
   fs.mkdirSync(stateDir, { recursive: true });
   // Write through a temp file with the restrictive mode already set, so the token is
@@ -85,7 +91,8 @@ function loadToken(stateDir: string): string {
 function splitHostPort(value: string | undefined | null): { host: string; port: string } | null {
   const v = String(value || '').trim();
   if (!v) return null;
-  if (v.startsWith('[')) { // bracketed IPv6: [::1]:7788
+  if (v.startsWith('[')) {
+    // bracketed IPv6: [::1]:7788
     const end = v.indexOf(']');
     if (end < 0) return null;
     const rest = v.slice(end + 1);
@@ -113,8 +120,8 @@ function timingSafeEqual(a: string, b: string): boolean {
 function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }) {
   // Read the bind config lazily: cfg.web.port is rewritten to the real port when the
   // configured one is 0 (ephemeral), which happens after the guard is built.
-  const bindHost = () => String((cfg.web?.host) || '127.0.0.1').toLowerCase();
-  const bindPort = () => String((cfg.web?.port) || '');
+  const bindHost = () => String(cfg.web?.host || '127.0.0.1').toLowerCase();
+  const bindPort = () => String(cfg.web?.port || '');
 
   // A refusal is usually a stale client, not an attack, and the client only gets a
   // bare 401/403 — so log one line for the human. Deduplicated per reason for a
@@ -126,12 +133,14 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
     const last = loggedAt.get(error);
     if (last === undefined || last <= now - 60000) {
       loggedAt.set(error, now);
-      const h = (req.headers?.host) || '-';
-      const o = (req.headers?.origin) || '-';
+      const h = req.headers?.host || '-';
+      const o = req.headers?.origin || '-';
       // originalUrl, not url: express rewrites req.url to be relative to the mount
       // point, which would log a bare '/state' for a refused '/api/v1/state'.
       const where = String(req.originalUrl || req.url || '').split('?')[0];
-      console.warn(`[wt-studio] refused ${req.method || 'UPGRADE'} ${where} — ${error} (host=${h} origin=${o})`);
+      console.warn(
+        `[wt-studio] refused ${req.method || 'UPGRADE'} ${where} — ${error} (host=${h} origin=${o})`,
+      );
     }
     return { status, error };
   }
@@ -151,7 +160,8 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   // loopback name is what defeats DNS rebinding.
   function denyHost(req: GuardedRequest): Denial | null {
     const parsed = splitHostPort(req.headers?.host);
-    if (!parsed || !hostAllowed(parsed.host) || !portAllowed(parsed.port)) return deny(403, 'forbidden host', req);
+    if (!parsed || !hostAllowed(parsed.host) || !portAllowed(parsed.port))
+      return deny(403, 'forbidden host', req);
     return null;
   }
 
@@ -166,7 +176,11 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
     const raw = req.headers?.origin;
     if (!raw) return null;
     let u: URL;
-    try { u = new URL(raw); } catch { return deny(403, 'forbidden origin', req); }
+    try {
+      u = new URL(raw);
+    } catch {
+      return deny(403, 'forbidden origin', req);
+    }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return deny(403, 'forbidden origin', req);
     const host = u.hostname.toLowerCase();
     // URL normalises [::1] to ::1 in `hostname`; both spellings are in LOOPBACK.
@@ -174,7 +188,9 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
     return null;
   }
 
-  function denyBrowser(req: GuardedRequest): Denial | null { return denyHost(req) || denyOrigin(req); }
+  function denyBrowser(req: GuardedRequest): Denial | null {
+    return denyHost(req) || denyOrigin(req);
+  }
 
   // The token may arrive as a header (the web UI's fetches, the CLI, SwiftBar,
   // Alfred) or as a query param — EventSource and WebSocket cannot set headers, and
@@ -182,7 +198,7 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   function presented(req: GuardedRequest, queryToken?: string | null): string {
     const h = req.headers?.['x-wts-token'];
     if (h) return String(h);
-    const auth = (req.headers?.authorization) || '';
+    const auth = req.headers?.authorization || '';
     const m = /^Bearer\s+(.+)$/i.exec(auth);
     if (m) return m[1].trim();
     if (queryToken != null) return String(queryToken);
@@ -191,7 +207,9 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   }
 
   function denyToken(req: GuardedRequest, queryToken?: string | null): Denial | null {
-    return timingSafeEqual(presented(req, queryToken), token) ? null : deny(401, 'missing or invalid token', req);
+    return timingSafeEqual(presented(req, queryToken), token)
+      ? null
+      : deny(401, 'missing or invalid token', req);
   }
 
   // Express middleware. `browser` guards everything (including the static assets and

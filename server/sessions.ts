@@ -169,11 +169,16 @@ export interface HookBody extends HookPayload {
   session_id?: string;
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
+const sleep = (ms: number) =>
+  new Promise<void>((r) => {
+    setTimeout(r, ms);
+  });
 
 // Collapse a (possibly multi-line) seed to a single line so it can ride along as
 // one launch arg / one submitted message.
-function collapse(text: string | null | undefined): string { return (text || '').replace(/\s*\n\s*/g, ' ').trim(); }
+function collapse(text: string | null | undefined): string {
+  return (text || '').replace(/\s*\n\s*/g, ' ').trim();
+}
 
 // Is `cmd` a bare login/interactive shell (i.e. claude is NOT the foreground
 // program in the pane)? tmux's pane_current_command may be prefixed with '-'.
@@ -196,7 +201,9 @@ function muxNameFor(name: string | null | undefined, id: string): string {
 
 function deriveBranch(seed: Pick<SessionSeed, 'title' | 'body' | 'id'>): string {
   const s = slug(seed.title);
-  const type = /\b(fix|bug|error|broken|regression|crash|fails?)\b/i.test(`${seed.title} ${seed.body}`) ? 'fix' : 'feature';
+  const type = /\b(fix|bug|error|broken|regression|crash|fails?)\b/i.test(`${seed.title} ${seed.body}`)
+    ? 'fix'
+    : 'feature';
   const num = seed.id && /^\d+$/.test(String(seed.id)) ? `${seed.id}-` : '';
   return `${type}/${num}${s}`;
 }
@@ -259,10 +266,19 @@ class SessionManager extends EventEmitter {
   }
 
   /** Every session, newest first. */
-  all(): Session[] { return [...this.sessions.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)); }
-  get(id: string): Session | undefined { return this.sessions.get(id); }
-  _save(): void { writeJson(this.file, this.all()); }
-  _touch(id: string): void { this._save(); this.emit('change', { type: 'session', id }); }
+  all(): Session[] {
+    return [...this.sessions.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }
+  get(id: string): Session | undefined {
+    return this.sessions.get(id);
+  }
+  _save(): void {
+    writeJson(this.file, this.all());
+  }
+  _touch(id: string): void {
+    this._save();
+    this.emit('change', { type: 'session', id });
+  }
 
   // (Re)write a session's Claude Code hook settings file and record that its URLs now
   // carry the boot token. The flag is what lets the /hook receiver keep accepting
@@ -326,7 +342,7 @@ class SessionManager extends EventEmitter {
   // persisted before the two were told apart keep naming siblings exactly as before.
   worktreeNameFor(s: Session): string {
     const primary = (s.repos || []).find((r) => r.primary);
-    return s.worktree || (primary?.worktree) || s.suggestedName || s.feature;
+    return s.worktree || primary?.worktree || s.suggestedName || s.feature;
   }
 
   /**
@@ -349,7 +365,9 @@ class SessionManager extends EventEmitter {
       } else if (outcome.status === 'occupied') {
         // Loud: the session is starting WITHOUT the repo's memories and that is a
         // silent behaviour change unless it is said out loud.
-        console.warn(`[wt-studio] ${repo}: left its memory directory alone (${outcome.reason}: ${outcome.at})`);
+        console.warn(
+          `[wt-studio] ${repo}: left its memory directory alone (${outcome.reason}: ${outcome.at})`,
+        );
       } else if (outcome.status === 'error') {
         console.warn(`[wt-studio] ${repo}: could not share Claude memories: ${outcome.error}`);
       }
@@ -392,13 +410,21 @@ class SessionManager extends EventEmitter {
   // foreground program AND (preferably) not mid-turn. If claude never comes up we
   // no-op and flag it for the UI rather than typing a command into a bare shell.
   // Used for live injections: /add-dir on add-repo and the promote "cd" guidance.
-  async sendWhenReady(muxName: string, text: string, session?: Session | null): Promise<{ ok: boolean; skipped?: boolean; reason?: string }> {
+  async sendWhenReady(
+    muxName: string,
+    text: string,
+    session?: Session | null,
+  ): Promise<{ ok: boolean; skipped?: boolean; reason?: string }> {
     const delays = [0, 400, 800, 1500, 2500];
     let sawClaude = false;
     for (let i = 0; i < delays.length; i++) {
       if (delays[i]) await sleep(delays[i]);
       let cmd = '';
-      try { cmd = this.mux.paneCommand ? await this.mux.paneCommand(muxName) : 'claude'; } catch { cmd = ''; }
+      try {
+        cmd = this.mux.paneCommand ? await this.mux.paneCommand(muxName) : 'claude';
+      } catch {
+        cmd = '';
+      }
       if (!cmd || isShell(cmd)) continue; // claude not in the foreground yet
       sawClaude = true;
       const st = session?.state;
@@ -408,7 +434,10 @@ class SessionManager extends EventEmitter {
       return { ok: true };
     }
     // Never saw claude → don't type into a shell; surface it so the UI can prompt.
-    if (session) { session.activity = 'action pending (claude not ready)'; this._touch(session.id); }
+    if (session) {
+      session.activity = 'action pending (claude not ready)';
+      this._touch(session.id);
+    }
     return { ok: false, skipped: true, reason: sawClaude ? 'busy' : 'no-claude' };
   }
 
@@ -420,7 +449,10 @@ class SessionManager extends EventEmitter {
   async _anchorInWorktree(s: Session | null | undefined): Promise<void> {
     if (!s?.worktreePath || s.home === s.worktreePath) return;
     const r = await this.sendWhenReady(s.muxName, `/cd ${s.worktreePath}`, s);
-    if (r?.ok) { s.home = s.worktreePath; this._touch(s.id); }
+    if (r?.ok) {
+      s.home = s.worktreePath;
+      this._touch(s.id);
+    }
   }
 
   // Add a repo to this session's feature: create a same-named worktree there and
@@ -439,12 +471,32 @@ class SessionManager extends EventEmitter {
     if (!res.ok) {
       // the repo already has this feature's worktree → attach it instead of failing
       if (/already exists/i.test(res.error || '') && res.path) {
-        const a = await this.attachRepo(id, { repo, repoPath, worktreePath: res.path, branch: res.branch, wtname: res.name });
-        return a.ok ? { ok: true, session: s, worktree: { name: res.name, path: res.path, branch: res.branch }, attached: true } : a;
+        const a = await this.attachRepo(id, {
+          repo,
+          repoPath,
+          worktreePath: res.path,
+          branch: res.branch,
+          wtname: res.name,
+        });
+        return a.ok
+          ? {
+              ok: true,
+              session: s,
+              worktree: { name: res.name, path: res.path, branch: res.branch },
+              attached: true,
+            }
+          : a;
       }
       return res;
     }
-    s.repos.push({ repo, repoPath, worktree: res.name, worktreePath: res.path, branch: res.branch, primary: false });
+    s.repos.push({
+      repo,
+      repoPath,
+      worktree: res.name,
+      worktreePath: res.path,
+      branch: res.branch,
+      primary: false,
+    });
     // grant the running session access, live (gated on claude being ready)
     await this.sendWhenReady(s.muxName, `/add-dir ${res.path}`, s);
     this._touch(id);
@@ -457,7 +509,14 @@ class SessionManager extends EventEmitter {
     const s = this.get(id);
     if (!s) return { ok: false };
     if ((s.repos || []).some((r) => r.worktreePath === worktreePath)) return { ok: true, already: true };
-    s.repos.push({ repo, repoPath, worktree: wtname ?? null, worktreePath, branch: branch ?? null, primary: false });
+    s.repos.push({
+      repo,
+      repoPath,
+      worktree: wtname ?? null,
+      worktreePath,
+      branch: branch ?? null,
+      primary: false,
+    });
     await this.sendWhenReady(s.muxName, `/add-dir ${worktreePath}`, s);
     this._touch(id);
     return { ok: true };
@@ -506,8 +565,10 @@ class SessionManager extends EventEmitter {
     this._shareMemories(session);
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
-    if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
-    else await this._syncTabs(session); // trade the placeholder id for the real window id
+    if (r.error) {
+      session.state = 'stopped';
+      session.activity = `failed to start: ${r.error}`;
+    } else await this._syncTabs(session); // trade the placeholder id for the real window id
     this._touch(id);
     return session;
   }
@@ -518,7 +579,14 @@ class SessionManager extends EventEmitter {
    * session here"). `seed` is optional: without one the worktree name is the title.
    * @returns null while an adopt of the same worktree is already in flight
    */
-  async adopt({ worktreePath, repoName, repoPath, branch, wtname, seed }: SessionAdoptArgs): Promise<Session | null> {
+  async adopt({
+    worktreePath,
+    repoName,
+    repoPath,
+    branch,
+    wtname,
+    seed,
+  }: SessionAdoptArgs): Promise<Session | null> {
     // dedup: never open two sessions for the same worktree, even on concurrent calls
     const existing = this.sessionForWorktree(worktreePath);
     if (existing) return existing;
@@ -526,36 +594,77 @@ class SessionManager extends EventEmitter {
     this._adopting.add(worktreePath);
     try {
       return await this._doAdopt({ worktreePath, repoName, repoPath, branch, wtname, seed });
-    } finally { this._adopting.delete(worktreePath); }
+    } finally {
+      this._adopting.delete(worktreePath);
+    }
   }
 
-  async _doAdopt({ worktreePath, repoName, repoPath, branch, wtname, seed }: SessionAdoptArgs): Promise<Session> {
-    const s: SessionSeed = seed || { source: 'freetext', title: wtname || path.basename(worktreePath), body: '', url: null };
+  async _doAdopt({
+    worktreePath,
+    repoName,
+    repoPath,
+    branch,
+    wtname,
+    seed,
+  }: SessionAdoptArgs): Promise<Session> {
+    const s: SessionSeed = seed || {
+      source: 'freetext',
+      title: wtname || path.basename(worktreePath),
+      body: '',
+      url: null,
+    };
     const id = makeId('s_');
     const title = s.title;
     const muxName = muxNameFor(slug(wtname || title), id);
     const session: Session = {
-      id, title, source: s.source, sourceId: s.id || null, sourceUrl: s.url || null,
-      repoName, repoPath, home: worktreePath, // launch/transcript dir (claude runs here) — so --resume finds it
-      worktree: wtname ?? null, worktreePath, branch: branch || null,
+      id,
+      title,
+      source: s.source,
+      sourceId: s.id || null,
+      sourceUrl: s.url || null,
+      repoName,
+      repoPath,
+      home: worktreePath, // launch/transcript dir (claude runs here) — so --resume finds it
+      worktree: wtname ?? null,
+      worktreePath,
+      branch: branch || null,
       // The identity the worktree ALREADY has under the configured strategy — this
       // worktree exists on disk and features.ts is grouping it right now, so the
       // session has to record the same answer, not a slug of its own devising.
       feature: this.featureOf({ repo: repoName, wtname: wtname ?? undefined, branch, path: worktreePath }),
-      repos: [{ repo: repoName, repoPath, worktree: wtname ?? null, worktreePath, branch: branch || null, primary: true }],
+      repos: [
+        {
+          repo: repoName,
+          repoPath,
+          worktree: wtname ?? null,
+          worktreePath,
+          branch: branch || null,
+          primary: true,
+        },
+      ],
       pendingRepos: [],
-      suggestedBranch: branch || null, suggestedName: wtname || slug(title),
-      muxName, claudeSessionId: null, state: 'idle', activity: 'starting…',
-      tabs: [{ id: PENDING_TAB, title: 'claude' }], seed: seed ? collapse(seedPrompt(seed)) : null, active: true,
-      createdAt: Date.now(), promotedAt: Date.now(), adopted: true,
+      suggestedBranch: branch || null,
+      suggestedName: wtname || slug(title),
+      muxName,
+      claudeSessionId: null,
+      state: 'idle',
+      activity: 'starting…',
+      tabs: [{ id: PENDING_TAB, title: 'claude' }],
+      seed: seed ? collapse(seedPrompt(seed)) : null,
+      active: true,
+      createdAt: Date.now(),
+      promotedAt: Date.now(),
+      adopted: true,
     };
     this._writeHookSettings(session);
     this.sessions.set(id, session);
     this._shareMemories(session);
     const cmd = this.claudeCmd(session);
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
-    if (r.error) { session.state = 'stopped'; session.activity = `failed to start: ${r.error}`; }
-    else await this._syncTabs(session); // trade the placeholder id for the real window id
+    if (r.error) {
+      session.state = 'stopped';
+      session.activity = `failed to start: ${r.error}`;
+    } else await this._syncTabs(session); // trade the placeholder id for the real window id
     this._touch(id);
     return session;
   }
@@ -566,8 +675,13 @@ class SessionManager extends EventEmitter {
     try {
       const r = await run('git', ['-C', repoPath, 'status', '--porcelain']);
       if (r.code !== 0) return [];
-      return r.stdout.split('\n').filter(Boolean).map((l) => l.slice(3));
-    } catch { return []; }
+      return r.stdout
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => l.slice(3));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -590,13 +704,22 @@ class SessionManager extends EventEmitter {
       const branch = head.stdout.trim();
       // Detached HEAD has no branch to be "ahead" of and no sensible thing to offer.
       if (!branch || branch === 'HEAD') return empty;
-      const sym = await run('git', ['-C', repoPath, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+      const sym = await run('git', [
+        '-C',
+        repoPath,
+        'symbolic-ref',
+        '--quiet',
+        '--short',
+        'refs/remotes/origin/HEAD',
+      ]);
       const base = sym.stdout.trim();
       if (!base) return empty;
       const log = await run('git', ['-C', repoPath, 'log', '--oneline', '--no-decorate', `${base}..HEAD`]);
       if (log.code !== 0) return empty;
       return { branch, base, commits: log.stdout.split('\n').filter(Boolean) };
-    } catch { return empty; }
+    } catch {
+      return empty;
+    }
   }
 
   /**
@@ -611,7 +734,10 @@ class SessionManager extends EventEmitter {
    * and dropping it to keep the return shape tidy would destroy it. A user told
    * "couldn't apply — your changes are in stash@{0}" has lost nothing.
    */
-  async _moveDirtyInto(repoPath: string, worktreePath: string): Promise<{ ok: boolean; error?: string; moved?: number }> {
+  async _moveDirtyInto(
+    repoPath: string,
+    worktreePath: string,
+  ): Promise<{ ok: boolean; error?: string; moved?: number }> {
     const before = await this._dirtyMain(repoPath);
     if (!before.length) return { ok: true, moved: 0 };
 
@@ -628,9 +754,10 @@ class SessionManager extends EventEmitter {
     if (swept) {
       return {
         ok: false,
-        error: `refusing to move changes: "${container}/" is not gitignored in ${repoPath}, `
-          + `so it shows as uncommitted work and would be stashed along with your edits. `
-          + `Add "${container}/" to .gitignore, then promote again.`,
+        error:
+          `refusing to move changes: "${container}/" is not gitignored in ${repoPath}, ` +
+          `so it shows as uncommitted work and would be stashed along with your edits. ` +
+          `Add "${container}/" to .gitignore, then promote again.`,
       };
     }
 
@@ -638,15 +765,17 @@ class SessionManager extends EventEmitter {
     // --include-untracked: a new file is the commonest thing to be sitting on, and
     // leaving those behind while moving the edits would split one change in half.
     const push = await run('git', ['-C', repoPath, 'stash', 'push', '--include-untracked', '-m', label]);
-    if (push.code !== 0) return { ok: false, error: `could not stash: ${push.stderr.trim() || push.stdout.trim()}` };
+    if (push.code !== 0)
+      return { ok: false, error: `could not stash: ${push.stderr.trim() || push.stdout.trim()}` };
 
     const pop = await run('git', ['-C', worktreePath, 'stash', 'pop']);
     if (pop.code !== 0) {
       return {
         ok: false,
-        error: `worktree created, but your changes could not be replayed onto ${worktreePath}: `
-          + `${pop.stderr.trim() || pop.stdout.trim()}. They are safe in the stash — `
-          + `\`git stash list\` shows "${label}"; \`git stash pop\` in either checkout retries.`,
+        error:
+          `worktree created, but your changes could not be replayed onto ${worktreePath}: ` +
+          `${pop.stderr.trim() || pop.stdout.trim()}. They are safe in the stash — ` +
+          `\`git stash list\` shows "${label}"; \`git stash pop\` in either checkout retries.`,
       };
     }
     return { ok: true, moved: before.length };
@@ -654,8 +783,19 @@ class SessionManager extends EventEmitter {
 
   async promote(
     id: string,
-    { branch, name, confirm, bringChanges, bringCommits }:
-      { branch?: string; name?: string; confirm?: boolean; bringChanges?: boolean; bringCommits?: boolean } = {},
+    {
+      branch,
+      name,
+      confirm,
+      bringChanges,
+      bringCommits,
+    }: {
+      branch?: string;
+      name?: string;
+      confirm?: boolean;
+      bringChanges?: boolean;
+      bringCommits?: boolean;
+    } = {},
   ): Promise<PromoteResult> {
     const s = this.get(id);
     if (!s) return { ok: false, error: 'no such session' };
@@ -713,7 +853,11 @@ class SessionManager extends EventEmitter {
     s.promotedAt = Date.now();
     // record the primary repo's worktree
     const primary = (s.repos || []).find((r) => r.primary);
-    if (primary) { primary.worktree = res.name; primary.worktreePath = res.path; primary.branch = res.branch; }
+    if (primary) {
+      primary.worktree = res.name;
+      primary.worktreePath = res.path;
+      primary.branch = res.branch;
+    }
     // rename the mux session to the worktree (best-effort; harmless if unsupported)
     const newMux = `wts-${res.name}`.slice(0, 60);
     if (await this.mux.rename(s.muxName, newMux)) s.muxName = newMux;
@@ -723,7 +867,11 @@ class SessionManager extends EventEmitter {
     this._touch(id);
     // fan out to any repos chosen up front, serialized (each addRepo is itself gated)
     for (const pr of s.pendingRepos || []) {
-      try { await this.addRepo(id, pr); } catch { /* */ }
+      try {
+        await this.addRepo(id, pr);
+      } catch {
+        /* */
+      }
     }
     s.pendingRepos = [];
     // Report what actually came along so the toast can say it. Both are undefined when
@@ -744,8 +892,10 @@ class SessionManager extends EventEmitter {
     const r = await this.mux.newTab(s.muxName, { title: title || 'shell', cwd, cmd });
     // Only record a tab the multiplexer actually gave us an id for; without one we
     // cannot address it later, and a positional entry is exactly the bug this avoids.
-    if (r.ok && r.id) { s.tabs.push({ id: r.id, title: title || 'shell' }); this._touch(id); }
-    else if (r.ok) await this._syncTabs(s);
+    if (r.ok && r.id) {
+      s.tabs.push({ id: r.id, title: title || 'shell' });
+      this._touch(id);
+    } else if (r.ok) await this._syncTabs(s);
     return r;
   }
 
@@ -772,7 +922,9 @@ class SessionManager extends EventEmitter {
     if (!s) return { ok: false, error: 'no such session' };
     const tab = this.#tabAt(s, ref);
     if (!tab) return { ok: false, error: 'no such tab' };
-    const clean = String(title || '').trim().slice(0, 40);
+    const clean = String(title || '')
+      .trim()
+      .slice(0, 40);
     if (!clean) return { ok: false, error: 'a tab needs a name' };
     if (!(await this.mux.renameTab(s.muxName, tab.id, clean))) {
       return { ok: false, error: 'the multiplexer did not rename that tab' };
@@ -807,7 +959,13 @@ class SessionManager extends EventEmitter {
     if (!s) return { ok: false };
     if (kill) await this.mux.kill(s.muxName);
     // clean up the per-session hook settings file (best-effort)
-    if (s.settingsFile) { try { fs.unlinkSync(s.settingsFile); } catch { /* */ } }
+    if (s.settingsFile) {
+      try {
+        fs.unlinkSync(s.settingsFile);
+      } catch {
+        /* */
+      }
+    }
     this.sessions.delete(id);
     this._save();
     this.emit('change', { type: 'session-removed', id });
@@ -824,7 +982,10 @@ class SessionManager extends EventEmitter {
       // The seed is delivered as claude's launch arg (see claudeCmd) — nothing to inject.
     }
     const m = status.mapEvent(event, payload);
-    if (m) { s.state = m.state; if (m.activity) s.activity = m.activity; }
+    if (m) {
+      s.state = m.state;
+      if (m.activity) s.activity = m.activity;
+    }
     // the agent's own process exited — mark inactive so the UI offers Reactivate
     if (event === 'SessionEnd') s.active = false;
     s.lastEventAt = Date.now();
@@ -863,7 +1024,9 @@ class SessionManager extends EventEmitter {
     // A promoted session whose worktree vanished can't continue — flag it instead of
     // faking a resume into a dead directory.
     if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
-      s.active = true; s.state = 'stopped'; s.activity = 'worktree missing';
+      s.active = true;
+      s.state = 'stopped';
+      s.activity = 'worktree missing';
       this._touch(id);
       return { ok: false, error: 'worktree missing' };
     }
@@ -899,7 +1062,9 @@ class SessionManager extends EventEmitter {
       // naming a terminal that is not the one it selects.
       const byId = new Map(prev.filter((t) => t.id).map((t) => [t.id, t.title]));
       s.tabs = live.map((w) => ({ id: w.id, title: byId.get(w.id) || w.title }));
-    } catch { /* leave tabs as-is if the mux can't be queried */ }
+    } catch {
+      /* leave tabs as-is if the mux can't be queried */
+    }
   }
 
   // Self-heal live state against the multiplexer: a session whose tmux session was
@@ -911,7 +1076,11 @@ class SessionManager extends EventEmitter {
     for (const s of this.sessions.values()) {
       if (!s.muxName || s.active === false || s.state === 'stopped') continue;
       let alive = true;
-      try { alive = await this.mux.hasSession(s.muxName); } catch { alive = true; }
+      try {
+        alive = await this.mux.hasSession(s.muxName);
+      } catch {
+        alive = true;
+      }
       if (alive) continue;
       s.state = 'stopped';
       s.active = false;
@@ -946,7 +1115,8 @@ class SessionManager extends EventEmitter {
         // A promoted session whose worktree is gone can't be resumed meaningfully —
         // flag it rather than launch a dead pane and claim success.
         if (s.worktreePath && !fs.existsSync(s.worktreePath)) {
-          s.state = 'stopped'; s.activity = 'worktree missing';
+          s.state = 'stopped';
+          s.activity = 'worktree missing';
           continue;
         }
         // Refresh the hook settings file to the current install path/port before relaunch.

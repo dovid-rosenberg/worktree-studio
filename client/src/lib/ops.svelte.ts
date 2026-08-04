@@ -69,13 +69,17 @@ export async function promote(s: Session) {
         });
       }
       // Newest first, and only a few: the list is for recognising the work, not reading it.
-      const preview = commits.slice(0, 5).map((c) => `  ${c}`).join('\n');
+      const preview = commits
+        .slice(0, 5)
+        .map((c) => `  ${c}`)
+        .join('\n');
 
       const choice = await uiDialog({
         title: 'Work that would stay in main',
-        message: `The new worktree branches off ${ahead.base || 'the default branch'}, so `
-          + `${lines.join(' and ')} would stay behind.`
-          + (preview ? `\n\n${preview}${commits.length > 5 ? `\n  …and ${commits.length - 5} more` : ''}` : ''),
+        message:
+          `The new worktree branches off ${ahead.base || 'the default branch'}, so ` +
+          `${lines.join(' and ')} would stay behind.` +
+          (preview ? `\n\n${preview}${commits.length > 5 ? `\n  …and ${commits.length - 5} more` : ''}` : ''),
         fields,
         okLabel: 'Promote',
       });
@@ -103,16 +107,19 @@ export async function promote(s: Session) {
     if (attachable.length) {
       const names = attachable.map((a) => a.repo);
       const ok = await uiConfirm(
-        `This feature already has worktrees in ${names.join(', ')}, but the session cannot see `
-        + `them — Changes would show nothing for those repos and the agent could not edit them. `
-        + `Attach ${names.length === 1 ? 'it' : 'them'}?`,
+        `This feature already has worktrees in ${names.join(', ')}, but the session cannot see ` +
+          `them — Changes would show nothing for those repos and the agent could not edit them. ` +
+          `Attach ${names.length === 1 ? 'it' : 'them'}?`,
         { title: 'Other repos in this feature', okLabel: 'Attach' },
       );
       if (ok) {
         for (const a of attachable) {
           // Serially: each grants /add-dir to the same live session.
-          try { await api('POST', `/api/v1/sessions/${s.id}/add-repo`, { repo: a.repo }); }
-          catch (e) { toast(`${a.repo}: ${errMessage(e)}`, true); }
+          try {
+            await api('POST', `/api/v1/sessions/${s.id}/add-repo`, { repo: a.repo });
+          } catch (e) {
+            toast(`${a.repo}: ${errMessage(e)}`, true);
+          }
         }
       }
     }
@@ -123,10 +130,14 @@ export async function promote(s: Session) {
     const carried = [
       r.brought ? `${r.brought} change(s)` : '',
       r.broughtCommits ? `${r.broughtCommits} commit(s)` : '',
-    ].filter(Boolean).join(' and ');
+    ]
+      .filter(Boolean)
+      .join(' and ');
     if (warn) toast(`Promoted as “${w.name}” — ${warn}`);
     else toast(`Promoted → ${w.branch || branch}${carried ? `, brought ${carried}` : ''}`);
-  } catch (e) { toast(errMessage(e), true); }
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export async function addRepoToSession(s: Session) {
@@ -147,7 +158,9 @@ export async function addRepoToSession(s: Session) {
   try {
     const r = await api('POST', `/api/v1/sessions/${s.id}/add-repo`, { repo: pick });
     toast(r.already ? `${pick} already in feature` : `Added ${pick} → ${r.worktree.name}`);
-  } catch (e) { toast(errMessage(e), true); }
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 /*
@@ -174,20 +187,31 @@ export async function addTab(s: Session, title = 'shell') {
      * Guarded on `r.id`: a driver that could not report an id leaves the strip alone
      * rather than clearing the highlight to a tab that does not exist.
      */
-    if (r?.id) { ui.dockView = 'term'; ui.activeTabId = r.id; }
-  } catch (e) { toast(errMessage(e), true); }
+    if (r?.id) {
+      ui.dockView = 'term';
+      ui.activeTabId = r.id;
+    }
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export async function selectTab(s: Session, tab: string) {
   ui.dockView = 'term';
   ui.activeTabId = tab;
-  try { await api('POST', `/api/v1/sessions/${s.id}/select-tab`, { tab }); }
-  catch (e) { toast(errMessage(e), true); }
+  try {
+    await api('POST', `/api/v1/sessions/${s.id}/select-tab`, { tab });
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export async function renameTab(s: Session, tab: string, title: string) {
-  try { await api('POST', `/api/v1/sessions/${s.id}/rename-tab`, { tab, title }); }
-  catch (e) { toast(errMessage(e), true); }
+  try {
+    await api('POST', `/api/v1/sessions/${s.id}/rename-tab`, { tab, title });
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 /**
@@ -198,30 +222,40 @@ export async function renameTab(s: Session, tab: string, title: string) {
 export async function closeTab(s: Session, tab: string) {
   const tabs = s.tabs || [];
   const i = tabs.findIndex((t) => t.id === tab);
-  const next = i >= 0 ? (tabs[i + 1] || tabs[i - 1]) : null;
+  const next = i >= 0 ? tabs[i + 1] || tabs[i - 1] : null;
   try {
     await api('POST', `/api/v1/sessions/${s.id}/close-tab`, { tab });
     if (ui.activeTabId === tab && next) await selectTab(s, next.id);
-  } catch (e) { toast(errMessage(e), true); }
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export async function closeSession(s: Session) {
   const ok = await uiConfirm(`Delete “${s.title}”? This kills its ${world.mux} session and removes it.`, {
-    title: 'Delete session', okLabel: 'Delete', danger: true,
+    title: 'Delete session',
+    okLabel: 'Delete',
+    danger: true,
   });
   if (!ok) return;
   try {
     await api('DELETE', `/api/v1/sessions/${s.id}`);
     if (ui.selectedId === s.id) ui.clearSelection();
     toast('Session deleted');
-  } catch (e) { toast(errMessage(e), true); }
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export async function renameSession(s: Session) {
   const title = await uiPrompt('Rename session:', s.title);
   if (title === null || !title.trim()) return;
-  try { await api('POST', `/api/v1/sessions/${s.id}/rename`, { title }); toast('Renamed'); }
-  catch (e) { toast(errMessage(e), true); }
+  try {
+    await api('POST', `/api/v1/sessions/${s.id}/rename`, { title });
+    toast('Renamed');
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export async function deactivateSession(s: Session) {
@@ -230,13 +264,21 @@ export async function deactivateSession(s: Session) {
     { title: 'Deactivate', okLabel: 'Deactivate' },
   );
   if (!ok) return;
-  try { await api('POST', `/api/v1/sessions/${s.id}/deactivate`, {}); toast('Deactivated'); }
-  catch (e) { toast(errMessage(e), true); }
+  try {
+    await api('POST', `/api/v1/sessions/${s.id}/deactivate`, {});
+    toast('Deactivated');
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export async function activateSession(s: Session) {
-  try { await api('POST', `/api/v1/sessions/${s.id}/activate`, {}); toast('Resuming session'); }
-  catch (e) { toast(errMessage(e), true); }
+  try {
+    await api('POST', `/api/v1/sessions/${s.id}/activate`, {});
+    toast('Resuming session');
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 /*
@@ -252,8 +294,11 @@ export async function activateSession(s: Session) {
  */
 
 export async function openEditor(p: string): Promise<void> {
-  try { await api('POST', '/api/v1/open', { path: p }); }
-  catch (e) { toast(errMessage(e), true); }
+  try {
+    await api('POST', '/api/v1/open', { path: p });
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 /**
@@ -276,7 +321,9 @@ export async function openSessionRepos(s: Session): Promise<void> {
   try {
     const r = await api('POST', '/api/v1/open', { paths });
     if (r.opened > 1) toast(`Opened ${r.opened} repos`);
-  } catch (e) { toast(errMessage(e), true); }
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 /* ---------------- features / fleet ---------------- */
@@ -288,12 +335,15 @@ export async function openSessionRepos(s: Session): Promise<void> {
 class Pending {
   #keys = $state(new Set<string>());
 
-  has(key: string): boolean { return this.#keys.has(key); }
+  has(key: string): boolean {
+    return this.#keys.has(key);
+  }
 
   async run<T>(key: string, fn: () => Promise<T>): Promise<T> {
     this.#keys = new Set([...this.#keys, key]);
-    try { return await fn(); }
-    finally {
+    try {
+      return await fn();
+    } finally {
       const next = new Set(this.#keys);
       next.delete(key);
       this.#keys = next;
@@ -313,9 +363,15 @@ export function startFeatureSession(f: Feature) {
         // agent from a sessionless feature kept FeaturePane on screen while the
         // ActionBar — which tests the session first — switched to session verbs.
         ui.select(r.session.id);
-        toast(r.existed ? 'Session already open — “Go to session ▸”' : `Session started for ${f.name} — “Go to session ▸”`);
+        toast(
+          r.existed
+            ? 'Session already open — “Go to session ▸”'
+            : `Session started for ${f.name} — “Go to session ▸”`,
+        );
       }
-    } catch (e) { toast(errMessage(e), true); }
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
@@ -342,9 +398,10 @@ function startResult(
   if (!skipped.length) return head;
   // One skipped member names its reason; several would make the toast a paragraph, so
   // they are listed by repo with the shared count.
-  const detail = skipped.length === 1
-    ? `${skipped[0].repo} — ${skipped[0].reason}`
-    : `${skipped.map((s) => s.repo).join(', ')} — see the rail for why`;
+  const detail =
+    skipped.length === 1
+      ? `${skipped[0].repo} — ${skipped[0].reason}`
+      : `${skipped.map((s) => s.repo).join(', ')} — see the rail for why`;
   return `${head}. Skipped ${detail}`;
 }
 
@@ -365,14 +422,20 @@ export function runStack(name: string) {
       } else {
         toast(startResult('Started', r), !r.ok);
       }
-    } catch (e) { toast(errMessage(e), true); }
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
 export function stopStack(name: string) {
   return pending.run(name, async () => {
-    try { await api('POST', '/api/v1/group/stop', { group: name }); toast(`Stopped ${name}`); }
-    catch (e) { toast(errMessage(e), true); }
+    try {
+      await api('POST', '/api/v1/group/stop', { group: name });
+      toast(`Stopped ${name}`);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
@@ -380,14 +443,21 @@ export function restartStack(name: string) {
   return pending.run(name, async () => {
     // "Restarting …" was fire-and-forget optimism: the route now returns a real verdict
     // (and what it skipped), so report that instead of announcing an intention.
-    try { const r = await api('POST', '/api/v1/group/restart', { group: name }); toast(startResult('Restarted', r), !r.ok); }
-    catch (e) { toast(errMessage(e), true); }
+    try {
+      const r = await api('POST', '/api/v1/group/restart', { group: name });
+      toast(startResult('Restarted', r), !r.ok);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
 export async function openGroup(name: string): Promise<void> {
-  try { await api('POST', '/api/v1/group/open', { group: name }); }
-  catch (e) { toast(errMessage(e), true); }
+  try {
+    await api('POST', '/api/v1/group/open', { group: name });
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 export function prFeature(name: string) {
@@ -396,7 +466,9 @@ export function prFeature(name: string) {
       toast('Opening PR / MR…');
       const r = await api('POST', '/api/v1/group/pr', { group: name });
       await showPrResults(r);
-    } catch (e) { toast(errMessage(e), true); }
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
@@ -411,10 +483,19 @@ export interface PrResult {
 }
 
 export async function showPrResults(r: { results?: PrResult[] }): Promise<void> {
-  const html = (r.results || []).map((x) => (x.url
-    ? `<div>${esc(x.repo)}: <a href="${esc(x.url)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`
-    : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`)).join('');
-  await uiDialog({ title: 'Pull / merge requests', messageHtml: html || 'No results', okLabel: 'Done', cancelLabel: '' });
+  const html = (r.results || [])
+    .map((x) =>
+      x.url
+        ? `<div>${esc(x.repo)}: <a href="${esc(x.url)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`
+        : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`,
+    )
+    .join('');
+  await uiDialog({
+    title: 'Pull / merge requests',
+    messageHtml: html || 'No results',
+    okLabel: 'Done',
+    cancelLabel: '',
+  });
 }
 
 export async function closeFeature(name: string) {
@@ -424,8 +505,12 @@ export async function closeFeature(name: string) {
   );
   if (!ok) return;
   return pending.run(name, async () => {
-    try { await api('POST', '/api/v1/group/close', { group: name }); toast(`Closed ${name}`); }
-    catch (e) { toast(errMessage(e), true); }
+    try {
+      await api('POST', '/api/v1/group/close', { group: name });
+      toast(`Closed ${name}`);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
@@ -445,7 +530,9 @@ export async function deleteFeature(f: Feature) {
     try {
       const r = await api('POST', '/api/v1/group/delete', { group: f.name, deleteBranches });
       toast(r.ok ? `Deleted ${f.name}` : 'Some removals failed', !r.ok);
-    } catch (e) { toast(errMessage(e), true); }
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
@@ -461,8 +548,10 @@ export async function installDeps(w: { repo: string; path: string }): Promise<vo
     toast(`Installing dependencies in ${w.repo}…`);
     try {
       const r = await api('POST', '/api/v1/worktrees/install-deps', { worktreePath: w.path });
-      toast(r.ok ? `${w.repo} is ready` : (r.error || 'install failed'), !r.ok);
-    } catch (e) { toast(errMessage(e), true); }
+      toast(r.ok ? `${w.repo} is ready` : r.error || 'install failed', !r.ok);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
@@ -470,7 +559,9 @@ export async function stopMainServer(w: { repo: string; path: string }): Promise
   try {
     await api('POST', '/api/v1/servers/stop', { repo: w.repo, worktreePath: w.path });
     toast(`Stopped ${w.repo}`);
-  } catch (e) { toast(errMessage(e), true); }
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
 }
 
 /** Minimal escaper for the one place we still hand a dialog raw HTML. */

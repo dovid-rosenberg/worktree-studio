@@ -15,10 +15,22 @@ export interface TermPalette {
   foreground: string;
   cursor: string;
   selectionBackground: string;
-  black: string; red: string; green: string; yellow: string;
-  blue: string; magenta: string; cyan: string; white: string;
-  brightBlack: string; brightRed: string; brightGreen: string; brightYellow: string;
-  brightBlue: string; brightMagenta: string; brightCyan: string; brightWhite: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
 }
 
 /*
@@ -45,22 +57,44 @@ export interface TermPalette {
 const ANSI: Record<ThemeName, Omit<TermPalette, 'background' | 'foreground' | 'cursor'>> = {
   dark: {
     selectionBackground: '#2c3a4d',
-    black: '#3b4252', red: '#ef6b73', green: '#71c383', yellow: '#e0b464',
-    blue: '#6fa8f5', magenta: '#b48ded', cyan: '#5fc9d6', white: '#c7cedb',
-    brightBlack: '#5d6673', brightRed: '#ff8b91', brightGreen: '#8fdc9f',
-    brightYellow: '#f2ca7e', brightBlue: '#8fc0ff', brightMagenta: '#cba9f7',
-    brightCyan: '#84dfe9', brightWhite: '#f0f4fa',
+    black: '#3b4252',
+    red: '#ef6b73',
+    green: '#71c383',
+    yellow: '#e0b464',
+    blue: '#6fa8f5',
+    magenta: '#b48ded',
+    cyan: '#5fc9d6',
+    white: '#c7cedb',
+    brightBlack: '#5d6673',
+    brightRed: '#ff8b91',
+    brightGreen: '#8fdc9f',
+    brightYellow: '#f2ca7e',
+    brightBlue: '#8fc0ff',
+    brightMagenta: '#cba9f7',
+    brightCyan: '#84dfe9',
+    brightWhite: '#f0f4fa',
   },
   light: {
     selectionBackground: '#cfe0f5',
     // Deliberately dark: on a light ground the "normal" set has to carry the text, so
     // each is a saturated dark tone rather than a mid one.
-    black: '#1b1f27', red: '#bf1d29', green: '#12703a', yellow: '#7a4c00',
-    blue: '#0a4fae', magenta: '#7126c4', cyan: '#0f6b73', white: '#6b7280',
+    black: '#1b1f27',
+    red: '#bf1d29',
+    green: '#12703a',
+    yellow: '#7a4c00',
+    blue: '#0a4fae',
+    magenta: '#7126c4',
+    cyan: '#0f6b73',
+    white: '#6b7280',
     // "Bright" cannot mean lighter here or it would vanish; it means MORE saturated.
-    brightBlack: '#4d5563', brightRed: '#d92534', brightGreen: '#16853f',
-    brightYellow: '#8f5b00', brightBlue: '#1263cc', brightMagenta: '#8a34e0',
-    brightCyan: '#12808a', brightWhite: '#1b1f27',
+    brightBlack: '#4d5563',
+    brightRed: '#d92534',
+    brightGreen: '#16853f',
+    brightYellow: '#8f5b00',
+    brightBlue: '#1263cc',
+    brightMagenta: '#8a34e0',
+    brightCyan: '#12808a',
+    brightWhite: '#1b1f27',
   },
 };
 
@@ -84,7 +118,11 @@ export function toggleTheme(): void {
 export function setTheme(next: ThemeName): void {
   theme.current = next;
   document.documentElement.setAttribute('data-theme', next);
-  try { localStorage.setItem(STORAGE_KEY, next); } catch { /* private mode — theme just won't persist */ }
+  try {
+    localStorage.setItem(STORAGE_KEY, next);
+  } catch {
+    /* private mode — theme just won't persist */
+  }
 }
 
 /*

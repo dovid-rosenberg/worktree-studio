@@ -44,7 +44,9 @@ function isLinkedWorktree(dir: string): boolean {
   try {
     if (fs.statSync(dotgit).isDirectory()) return false;
     return /^gitdir:.*[/\\]worktrees[/\\]/.test(fs.readFileSync(dotgit, 'utf8').trim());
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 function walkTree(baseDirs: string[], depth: number): { repos: string[]; dirs: string[] } {
@@ -53,11 +55,18 @@ function walkTree(baseDirs: string[], depth: number): { repos: string[]; dirs: s
   const seen = new Set<string>();
   function walk(dir: string, d: number): void {
     let entries: fs.Dirent[];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
     if (fs.existsSync(path.join(dir, '.git'))) {
       if (isLinkedWorktree(dir)) return; // not a repo — its main checkout reports it
       const real = fs.realpathSync(dir);
-      if (!seen.has(real)) { seen.add(real); repos.push(dir); }
+      if (!seen.has(real)) {
+        seen.add(real);
+        repos.push(dir);
+      }
       return; // don't descend into a repo (its worktrees handled via git)
     }
     dirs.push(dir);
@@ -107,8 +116,10 @@ async function defaultBranch(repoPath: string): Promise<string> {
 async function describeRepo(repoPath: string): Promise<ScannedRepo> {
   const name = path.basename(repoPath);
   const def = await defaultBranch(repoPath);
-  const defHead = await git(repoPath, ['rev-parse', `refs/heads/${def}`]) ||
-    await git(repoPath, ['rev-parse', `origin/${def}`]) || '';
+  const defHead =
+    (await git(repoPath, ['rev-parse', `refs/heads/${def}`])) ||
+    (await git(repoPath, ['rev-parse', `origin/${def}`])) ||
+    '';
   const porcelain = await git(repoPath, ['worktree', 'list', '--porcelain']);
   const parsed = parseWorktrees(porcelain);
   const worktrees: RepoWorktree[] = [];
@@ -132,7 +143,11 @@ async function scan(baseDirs: string[], depth: number): Promise<ScannedRepo[]> {
   const repoPaths = findRepos(baseDirs, depth);
   const repos: ScannedRepo[] = [];
   for (const p of repoPaths) {
-    try { repos.push(await describeRepo(p)); } catch { /* skip unreadable */ }
+    try {
+      repos.push(await describeRepo(p));
+    } catch {
+      /* skip unreadable */
+    }
   }
   repos.sort((a, b) => a.name.localeCompare(b.name));
   return repos;

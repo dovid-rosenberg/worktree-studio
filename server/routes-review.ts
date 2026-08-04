@@ -93,7 +93,7 @@ function register(api: Router, deps: ReviewDeps): void {
     // A repo the scan cache has not seen (outside every baseDir, or a rescan that has
     // not landed) has no default branch to report; 'main' is the floor git.ts falls
     // back to for exactly the same reason.
-    return (hit?.defaultBranch) || 'main';
+    return hit?.defaultBranch || 'main';
   };
 
   // The structured per-file diff for one commit, or for the working tree when
@@ -108,7 +108,8 @@ function register(api: Router, deps: ReviewDeps): void {
     const sha = String(req.query.sha ?? '') || 'uncommitted';
     // Reject at the boundary, so a `sha` that is really a git option never reaches
     // an argv (see review.ts). A bad request is a 400, not a 500.
-    if (!review.isValidSha(sha)) return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
+    if (!review.isValidSha(sha))
+      return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
     const detail = await review.commitDetail(r.entry.worktreePath, defaultBranchOf(r.entry.repo), sha);
     res.json({ repo: r.entry.repo, worktreePath: r.entry.worktreePath, sha, files: detail.files });
   });
@@ -132,7 +133,9 @@ function register(api: Router, deps: ReviewDeps): void {
     const r = resolveWorktree(deps, req, body.repo);
     if (!r.entry) return res.status(r.status).json({ error: r.error });
     const out = await hunks[op](r.entry.worktreePath, {
-      file: body.file, hunks: selection(body), expect: body.expect,
+      file: body.file,
+      hunks: selection(body),
+      expect: body.expect,
     });
     // 400, not 500: a refusal here means the request no longer matches the repo (stale
     // hunk, binary file, nothing to stage), which is the caller's to resolve.

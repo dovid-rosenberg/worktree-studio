@@ -77,14 +77,22 @@ const api = (id: string): string => `/api/v1/sessions/${encodeURIComponent(id)}`
 
 /**
  */
-export async function fetchCommits(sessionId: string, signal?: AbortSignal): Promise<{ repos: RepoCommits[] }> {
+export async function fetchCommits(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<{ repos: RepoCommits[] }> {
   return request('GET', `${api(sessionId)}/commits`, { signal });
 }
 
 /**
  * `sha` is a real sha, or the literal `'uncommitted'` for the working tree.
  */
-export async function fetchCommitDetail(sessionId: string, repo: string, sha: string, signal?: AbortSignal): Promise<{ files: DetailFile[] }> {
+export async function fetchCommitDetail(
+  sessionId: string,
+  repo: string,
+  sha: string,
+  signal?: AbortSignal,
+): Promise<{ files: DetailFile[] }> {
   const q = `?repo=${encodeURIComponent(repo)}&sha=${encodeURIComponent(sha)}`;
   return request('GET', `${api(sessionId)}/commit-detail${q}`, { signal });
 }
@@ -92,7 +100,12 @@ export async function fetchCommitDetail(sessionId: string, repo: string, sha: st
 /**
  * Both sides of one working file: `unstaged` can be staged, `staged` can be unstaged.
  */
-export async function fetchHunks(sessionId: string, repo: string, file: string, signal?: AbortSignal): Promise<FileHunks> {
+export async function fetchHunks(
+  sessionId: string,
+  repo: string,
+  file: string,
+  signal?: AbortSignal,
+): Promise<FileHunks> {
   const q = `?repo=${encodeURIComponent(repo)}&file=${encodeURIComponent(file)}`;
   return request('GET', `${api(sessionId)}/hunks${q}`, { signal });
 }
@@ -108,6 +121,10 @@ export async function fetchHunks(sessionId: string, repo: string, file: string, 
  * place rather than refetching.
  *
  */
-export async function applyHunks(op: 'stage' | 'unstage', sessionId: string, sel: { repo: string; file: string; hunks: number[]; expect: string[] }): Promise<FileHunks & { ok: true; hunks: number[] }> {
+export async function applyHunks(
+  op: 'stage' | 'unstage',
+  sessionId: string,
+  sel: { repo: string; file: string; hunks: number[]; expect: string[] },
+): Promise<FileHunks & { ok: true; hunks: number[] }> {
   return request('POST', `${api(sessionId)}/hunks/${op}`, { body: sel });
 }

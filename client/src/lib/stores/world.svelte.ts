@@ -57,8 +57,17 @@ import { tokenQuery } from '$lib/api.js';
  * boundary drags in no module graph, and `import type` is erased before Vite sees it.
  */
 import type {
-  CiPayload, CiRepo, EmbeddedSession, Feature, FeatureMember, Repo, Session,
-  SessionServers, SessionStatePayload, TopologyPayload, Worktree,
+  CiPayload,
+  CiRepo,
+  EmbeddedSession,
+  Feature,
+  FeatureMember,
+  Repo,
+  Session,
+  SessionServers,
+  SessionStatePayload,
+  TopologyPayload,
+  Worktree,
 } from '../../../../server/types';
 
 /** The two halves as received, plus the CI half, all optional before first frame. */
@@ -112,13 +121,14 @@ export function stitchSessions(next: WorldView): WorldView {
   };
   // A feature's members are serialized separately from repos[].worktrees, so on this
   // side they are distinct objects and need the same projection.
-  const feat = (list: Feature[]): Feature[] => (list || []).map((f) => ({
-    ...f,
-    session: fresh(f.session),
-    members: (f.members || []).map(
-      (m: FeatureMember) => (m && !('missing' in m && m.missing) ? { ...m, session: fresh((m as Worktree).session) } : m),
-    ),
-  }));
+  const feat = (list: Feature[]): Feature[] =>
+    (list || []).map((f) => ({
+      ...f,
+      session: fresh(f.session),
+      members: (f.members || []).map((m: FeatureMember) =>
+        m && !('missing' in m && m.missing) ? { ...m, session: fresh((m as Worktree).session) } : m,
+      ),
+    }));
   return {
     ...next,
     repos: (next.repos || []).map((r) => ({
@@ -150,18 +160,38 @@ class World {
   /** The stitched view. Recomputed from the two pristine halves on every frame. */
   view = $derived(stitchSessions({ ...EMPTY, ...this.topology, ...this.sessionHalf, ...this.ciHalf }));
 
-  get mux(): string { return this.view.mux; }
-  get repos(): Repo[] { return this.view.repos; }
-  get sessions(): Session[] { return this.view.sessions; }
-  get servers(): SessionServers { return this.view.servers; }
-  get sources(): TopologyPayload['sources'] { return this.view.sources ?? []; }
-  get features(): Feature[] { return this.view.features; }
-  get groups(): Feature[] { return this.view.groups; }
-  get webRepos(): string[] { return this.view.webRepos; }
+  get mux(): string {
+    return this.view.mux;
+  }
+  get repos(): Repo[] {
+    return this.view.repos;
+  }
+  get sessions(): Session[] {
+    return this.view.sessions;
+  }
+  get servers(): SessionServers {
+    return this.view.servers;
+  }
+  get sources(): TopologyPayload['sources'] {
+    return this.view.sources ?? [];
+  }
+  get features(): Feature[] {
+    return this.view.features;
+  }
+  get groups(): Feature[] {
+    return this.view.groups;
+  }
+  get webRepos(): string[] {
+    return this.view.webRepos;
+  }
   /** sessionId → the repos array `GET /sessions/:id/ci` would answer with. */
-  get ci(): Record<string, CiRepo[]> { return this.view.ci; }
+  get ci(): Record<string, CiRepo[]> {
+    return this.view.ci;
+  }
 
-  session(id: string): Session | null { return this.sessions.find((s) => s.id === id) || null; }
+  session(id: string): Session | null {
+    return this.sessions.find((s) => s.id === id) || null;
+  }
 }
 
 export const world = new World();
@@ -186,7 +216,11 @@ export function connectStream(hooks: StreamHooks = {}): () => void {
     // fields typed by the wire contract, and the daemon is the only writer of this
     // stream. Naming the type is what stops it being an *implicit* any.
     let frame: any;
-    try { frame = JSON.parse(e.data); } catch { return; }
+    try {
+      frame = JSON.parse(e.data);
+    } catch {
+      return;
+    }
     if (half === 'sessions') {
       hooks.onSessionFrame?.(frame); // diff BEFORE swapping in
       world.sessionHalf = frame;
@@ -206,9 +240,17 @@ export function connectStream(hooks: StreamHooks = {}): () => void {
   ev.addEventListener('ci', apply('ci'));
   // The browser reconnects on its own and the server re-snapshots, so this is only a
   // surface for the UI to say "stale" while that is happening.
-  ev.onerror = () => { world.streamError = 'stream interrupted — reconnecting'; };
+  ev.onerror = () => {
+    world.streamError = 'stream interrupted — reconnecting';
+  };
 
-  return () => { try { ev.close(); } catch { /* already closed */ } };
+  return () => {
+    try {
+      ev.close();
+    } catch {
+      /* already closed */
+    }
+  };
 }
 
 /** The minimum a row needs for `webAppsFor` to judge it — a worktree or a session repo. */

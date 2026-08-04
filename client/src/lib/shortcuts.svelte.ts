@@ -70,13 +70,27 @@ export function handleShortcut(e: KeyboardEvent): void {
   // Cmd is always ours. Ctrl is ours only when nothing is listening for control codes.
   const mod = e.metaKey || (e.ctrlKey && !typing);
 
-  if (mod && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); overlays.togglePalette(); return; }
+  if (mod && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    overlays.togglePalette();
+    return;
+  }
 
   // Only swallow Escape when there is something to close. A bare Escape is how you
   // interrupt the agent, and it has to reach the pty.
-  if (e.key === 'Escape') { if (overlays.any) { e.preventDefault(); overlays.escape(); } return; }
+  if (e.key === 'Escape') {
+    if (overlays.any) {
+      e.preventDefault();
+      overlays.escape();
+    }
+    return;
+  }
 
-  if (e.key === '?' && !typing && !overlays.any) { e.preventDefault(); showShortcuts(); return; }
+  if (e.key === '?' && !typing && !overlays.any) {
+    e.preventDefault();
+    showShortcuts();
+    return;
+  }
 
   /*
    * ⌥1–9 rather than ⌘1–9. Chrome reserves ⌘1–8 for tab switching in a normal tab and a
@@ -100,8 +114,16 @@ export function handleShortcut(e: KeyboardEvent): void {
   if (overlays.any || !mod) return;
 
   const s = ui.selected;
-  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); overlays.openIntake(); return; }
-  if (e.key === '\\') { e.preventDefault(); ui.toggleUsage(); return; }
+  if (e.key === 'n' || e.key === 'N') {
+    e.preventDefault();
+    overlays.openIntake();
+    return;
+  }
+  if (e.key === '\\') {
+    e.preventDefault();
+    ui.toggleUsage();
+    return;
+  }
   /*
    * ⌘↵ belongs to the TERMINAL — it is "newline without submitting" there (Terminal.svelte
    * maps it to LF, like every macOS terminal).
@@ -113,10 +135,16 @@ export function handleShortcut(e: KeyboardEvent): void {
    */
   if (e.key === 'd' || e.key === 'D') {
     e.preventDefault();
-    if (s?.worktreePath) { ui.goToSession(s.id); ui.dockView = 'changes'; }
+    if (s?.worktreePath) {
+      ui.goToSession(s.id);
+      ui.dockView = 'changes';
+    }
     return;
   }
   // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the
   // session-addressed op, which is the same worktrees without the conflict handling.
-  if (e.key === 'r' || e.key === 'R') { e.preventDefault(); if (s?.worktreePath && s.feature) runStack(s.feature); }
+  if (e.key === 'r' || e.key === 'R') {
+    e.preventDefault();
+    if (s?.worktreePath && s.feature) runStack(s.feature);
+  }
 }
