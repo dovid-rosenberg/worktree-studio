@@ -246,6 +246,29 @@ export async function openEditor(p: string): Promise<void> {
   catch (e) { toast(errMessage(e), true); }
 }
 
+/**
+ * Open every worktree this session spans, not just its primary one.
+ *
+ * A feature is several repos, and a session started for it carries one `repos` entry per
+ * repo — but the button called `openEditor(session.worktreePath)`, which is the PRIMARY
+ * worktree alone. On a BE+FE feature that opened the BE and silently left the FE behind.
+ *
+ * Driven from `session.repos` rather than the feature's members: the two can drift (a
+ * worktree made with a plain `wt` joins the feature but not the session), and the repos
+ * the agent can actually write to are the honest answer to "show me what I'm working on".
+ */
+export async function openSessionRepos(s: Session): Promise<void> {
+  const paths = s.repos.map((r) => r.worktreePath).filter((p): p is string => !!p);
+  // A session with no promoted repo still has its own worktreePath; nothing to open
+  // beyond that, and nothing at all before promote.
+  if (!paths.length && s.worktreePath) paths.push(s.worktreePath);
+  if (!paths.length) return;
+  try {
+    const r = await api('POST', '/api/open', { paths });
+    if (r.opened > 1) toast(`Opened ${r.opened} repos`);
+  } catch (e) { toast(errMessage(e), true); }
+}
+
 /* ---------------- features / fleet ---------------- */
 
 /**

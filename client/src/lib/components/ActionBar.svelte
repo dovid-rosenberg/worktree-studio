@@ -24,7 +24,7 @@
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
-    deleteFeature, installDeps, openEditor, openGroup, pending, prFeature, promote,
+    deleteFeature, installDeps, openGroup, openSessionRepos, pending, prFeature, promote,
     renameSession, restartStack, runStack, startFeatureSession, stopStack,
   } from '$lib/ops.svelte.js';
 
@@ -109,8 +109,14 @@
         {#if session.worktreePath}
           <!-- Bound to a const: the narrowing inside the block does not survive into an
                arrow function, since `session` could be reassigned before it runs. -->
-          {@const wt = session.worktreePath}
-          <button class="btn sm" onclick={() => openEditor(wt)}>Open in editor</button>
+          {@const sess = session}
+          <!-- Opens EVERY repo the session spans. It used to pass session.worktreePath —
+               the primary alone — so a BE+FE feature opened half of itself. -->
+          <button
+            class="btn sm"
+            title={sess.repos.length > 1 ? `Open all ${sess.repos.length} repos in the editor` : 'Open in editor'}
+            onclick={() => openSessionRepos(sess)}
+          >Open in editor{sess.repos.length > 1 ? ` (${sess.repos.length})` : ''}</button>
         {:else}
           <button class="btn sm primary" disabled={busy} onclick={() => guard(() => promote(session))}>Promote to worktree</button>
         {/if}

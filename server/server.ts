@@ -662,16 +662,33 @@ async function main() {
     res.json(s || { error: 'session is already being opened' });
   });
 
-  // ---- editor open ----
+  /*
+   * ---- editor open ----
+   *
+   * Takes `path` (one) or `paths` (many). A feature spans several repos, so a session
+   * driving it has several worktrees to look at, and this route could only ever open
+   * one — the caller's only option was to open the primary and go find the rest by hand.
+   *
+   * `paths` uses the editor's `openGroup` template when it has one (Zed takes every path
+   * as a single workspace) and otherwise loops `open`, which is exactly what
+   * /group/open does — WebStorm has no openGroup, so it gets one window per repo.
+   */
   api.post('/open', async (req, res) => {
-    const { path: p, editor } = req.body || {};
+    const { path: p, paths, editor } = req.body || {};
     const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
     if (!ed) return res.status(400).json({ error: 'no editor configured' });
+    // Dedupe: two repos of one feature are distinct worktrees, but a caller that passed
+    // the same path twice must not open two windows on it.
+    const list = [...new Set((Array.isArray(paths) ? paths : [p]).filter((x): x is string => typeof x === 'string' && !!x))];
+    if (!list.length) return res.status(400).json({ error: 'path or paths is required' });
     // split/join, not replace(): `$&`/`` $` ``/`$'`/`$$` in a REPLACEMENT string expand
     // after shq() quoted the path, so such a path would open the wrong file.
-    const cmd = ed.open.split('{path}').join(shq(p));
-    await run('bash', ['-lc', cmd]);
-    res.json({ ok: true });
+    if (list.length > 1 && ed.openGroup) {
+      await run('bash', ['-lc', ed.openGroup.split('{paths}').join(list.map(shq).join(' '))]);
+    } else {
+      for (const one of list) await run('bash', ['-lc', ed.open.split('{path}').join(shq(one))]);
+    }
+    res.json({ ok: true, opened: list.length });
   });
 
   transcriptRoutes.register(api, { manager, cfg });
