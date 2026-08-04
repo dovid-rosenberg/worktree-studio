@@ -33,7 +33,7 @@ export async function promote(s: Session) {
   const branch = await uiPrompt('Branch to create for this worktree:', s.suggestedBranch || 'feature/x');
   if (!branch) return;
   try {
-    let r = await api('POST', `/api/sessions/${s.id}/promote`, { branch });
+    let r = await api('POST', `/api/v1/sessions/${s.id}/promote`, { branch });
     /*
      * A promote can strand work two ways, and both are questions rather than failures.
      *
@@ -85,7 +85,7 @@ export async function promote(s: Session) {
       let i = 0;
       const bringChanges = dirty ? choice[i++] === true : false;
       const bringCommits = commits.length ? choice[i++] === true : false;
-      r = await api('POST', `/api/sessions/${s.id}/promote`, {
+      r = await api('POST', `/api/v1/sessions/${s.id}/promote`, {
         branch,
         // `confirm` is what says "I have seen this and want neither" — without it the
         // server would just ask again.
@@ -111,7 +111,7 @@ export async function promote(s: Session) {
       if (ok) {
         for (const a of attachable) {
           // Serially: each grants /add-dir to the same live session.
-          try { await api('POST', `/api/sessions/${s.id}/add-repo`, { repo: a.repo }); }
+          try { await api('POST', `/api/v1/sessions/${s.id}/add-repo`, { repo: a.repo }); }
           catch (e) { toast(`${a.repo}: ${errMessage(e)}`, true); }
         }
       }
@@ -145,7 +145,7 @@ export async function addRepoToSession(s: Session) {
   const pick = String(r0[0] ?? '');
   if (!avail.includes(pick)) return;
   try {
-    const r = await api('POST', `/api/sessions/${s.id}/add-repo`, { repo: pick });
+    const r = await api('POST', `/api/v1/sessions/${s.id}/add-repo`, { repo: pick });
     toast(r.already ? `${pick} already in feature` : `Added ${pick} → ${r.worktree.name}`);
   } catch (e) { toast(errMessage(e), true); }
 }
@@ -162,19 +162,19 @@ export async function addRepoToSession(s: Session) {
  */
 export async function addTab(s: Session, title = 'shell') {
   try {
-    await api('POST', `/api/sessions/${s.id}/tabs`, { title });
+    await api('POST', `/api/v1/sessions/${s.id}/tabs`, { title });
   } catch (e) { toast(errMessage(e), true); }
 }
 
 export async function selectTab(s: Session, tab: string) {
   ui.dockView = 'term';
   ui.activeTabId = tab;
-  try { await api('POST', `/api/sessions/${s.id}/select-tab`, { tab }); }
+  try { await api('POST', `/api/v1/sessions/${s.id}/select-tab`, { tab }); }
   catch (e) { toast(errMessage(e), true); }
 }
 
 export async function renameTab(s: Session, tab: string, title: string) {
-  try { await api('POST', `/api/sessions/${s.id}/rename-tab`, { tab, title }); }
+  try { await api('POST', `/api/v1/sessions/${s.id}/rename-tab`, { tab, title }); }
   catch (e) { toast(errMessage(e), true); }
 }
 
@@ -188,7 +188,7 @@ export async function closeTab(s: Session, tab: string) {
   const i = tabs.findIndex((t) => t.id === tab);
   const next = i >= 0 ? (tabs[i + 1] || tabs[i - 1]) : null;
   try {
-    await api('POST', `/api/sessions/${s.id}/close-tab`, { tab });
+    await api('POST', `/api/v1/sessions/${s.id}/close-tab`, { tab });
     if (ui.activeTabId === tab && next) await selectTab(s, next.id);
   } catch (e) { toast(errMessage(e), true); }
 }
@@ -199,7 +199,7 @@ export async function closeSession(s: Session) {
   });
   if (!ok) return;
   try {
-    await api('DELETE', `/api/sessions/${s.id}`);
+    await api('DELETE', `/api/v1/sessions/${s.id}`);
     if (ui.selectedId === s.id) ui.clearSelection();
     toast('Session deleted');
   } catch (e) { toast(errMessage(e), true); }
@@ -208,7 +208,7 @@ export async function closeSession(s: Session) {
 export async function renameSession(s: Session) {
   const title = await uiPrompt('Rename session:', s.title);
   if (title === null || !title.trim()) return;
-  try { await api('POST', `/api/sessions/${s.id}/rename`, { title }); toast('Renamed'); }
+  try { await api('POST', `/api/v1/sessions/${s.id}/rename`, { title }); toast('Renamed'); }
   catch (e) { toast(errMessage(e), true); }
 }
 
@@ -218,12 +218,12 @@ export async function deactivateSession(s: Session) {
     { title: 'Deactivate', okLabel: 'Deactivate' },
   );
   if (!ok) return;
-  try { await api('POST', `/api/sessions/${s.id}/deactivate`, {}); toast('Deactivated'); }
+  try { await api('POST', `/api/v1/sessions/${s.id}/deactivate`, {}); toast('Deactivated'); }
   catch (e) { toast(errMessage(e), true); }
 }
 
 export async function activateSession(s: Session) {
-  try { await api('POST', `/api/sessions/${s.id}/activate`, {}); toast('Resuming session'); }
+  try { await api('POST', `/api/v1/sessions/${s.id}/activate`, {}); toast('Resuming session'); }
   catch (e) { toast(errMessage(e), true); }
 }
 
@@ -240,7 +240,7 @@ export async function activateSession(s: Session) {
  */
 
 export async function openEditor(p: string): Promise<void> {
-  try { await api('POST', '/api/open', { path: p }); }
+  try { await api('POST', '/api/v1/open', { path: p }); }
   catch (e) { toast(errMessage(e), true); }
 }
 
@@ -262,7 +262,7 @@ export async function openSessionRepos(s: Session): Promise<void> {
   if (!paths.length && s.worktreePath) paths.push(s.worktreePath);
   if (!paths.length) return;
   try {
-    const r = await api('POST', '/api/open', { paths });
+    const r = await api('POST', '/api/v1/open', { paths });
     if (r.opened > 1) toast(`Opened ${r.opened} repos`);
   } catch (e) { toast(errMessage(e), true); }
 }
@@ -293,7 +293,7 @@ export const pending = new Pending();
 export function startFeatureSession(f: Feature) {
   return pending.run(f.name, async () => {
     try {
-      const r = await api('POST', '/api/group/session', { group: f.name });
+      const r = await api('POST', '/api/v1/group/session', { group: f.name });
       if (r.session) {
         // ui.select(), not a bare selectedId write: the store keeps exactly one of
         // selectedId / selectedFeatureName non-null, and Dock tests the feature first.
@@ -339,7 +339,7 @@ function startResult(
 export function runStack(name: string) {
   return pending.run(name, async () => {
     try {
-      const r = await api('POST', '/api/group/start', { group: name });
+      const r = await api('POST', '/api/v1/group/start', { group: name });
       if (r.needsConfirm) {
         const names = [...new Set(r.conflicts.map((c: { wtname: string }) => c.wtname))];
         const list = names.map((n) => `“${n}”`).join(', ');
@@ -348,7 +348,7 @@ export function runStack(name: string) {
           { title: 'Stop & switch?', okLabel: 'Stop & switch' },
         );
         if (!ok) return;
-        const r2 = await api('POST', '/api/group/start', { group: name, stopConflicts: true });
+        const r2 = await api('POST', '/api/v1/group/start', { group: name, stopConflicts: true });
         toast(startResult('Switched — started', r2), !r2.ok);
       } else {
         toast(startResult('Started', r), !r.ok);
@@ -359,7 +359,7 @@ export function runStack(name: string) {
 
 export function stopStack(name: string) {
   return pending.run(name, async () => {
-    try { await api('POST', '/api/group/stop', { group: name }); toast(`Stopped ${name}`); }
+    try { await api('POST', '/api/v1/group/stop', { group: name }); toast(`Stopped ${name}`); }
     catch (e) { toast(errMessage(e), true); }
   });
 }
@@ -368,13 +368,13 @@ export function restartStack(name: string) {
   return pending.run(name, async () => {
     // "Restarting …" was fire-and-forget optimism: the route now returns a real verdict
     // (and what it skipped), so report that instead of announcing an intention.
-    try { const r = await api('POST', '/api/group/restart', { group: name }); toast(startResult('Restarted', r), !r.ok); }
+    try { const r = await api('POST', '/api/v1/group/restart', { group: name }); toast(startResult('Restarted', r), !r.ok); }
     catch (e) { toast(errMessage(e), true); }
   });
 }
 
 export async function openGroup(name: string): Promise<void> {
-  try { await api('POST', '/api/group/open', { group: name }); }
+  try { await api('POST', '/api/v1/group/open', { group: name }); }
   catch (e) { toast(errMessage(e), true); }
 }
 
@@ -382,7 +382,7 @@ export function prFeature(name: string) {
   return pending.run(name, async () => {
     try {
       toast('Opening PR / MR…');
-      const r = await api('POST', '/api/group/pr', { group: name });
+      const r = await api('POST', '/api/v1/group/pr', { group: name });
       await showPrResults(r);
     } catch (e) { toast(errMessage(e), true); }
   });
@@ -412,7 +412,7 @@ export async function closeFeature(name: string) {
   );
   if (!ok) return;
   return pending.run(name, async () => {
-    try { await api('POST', '/api/group/close', { group: name }); toast(`Closed ${name}`); }
+    try { await api('POST', '/api/v1/group/close', { group: name }); toast(`Closed ${name}`); }
     catch (e) { toast(errMessage(e), true); }
   });
 }
@@ -431,7 +431,7 @@ export async function deleteFeature(f: Feature) {
   const deleteBranches = Boolean(r0[0]);
   return pending.run(f.name, async () => {
     try {
-      const r = await api('POST', '/api/group/delete', { group: f.name, deleteBranches });
+      const r = await api('POST', '/api/v1/group/delete', { group: f.name, deleteBranches });
       toast(r.ok ? `Deleted ${f.name}` : 'Some removals failed', !r.ok);
     } catch (e) { toast(errMessage(e), true); }
   });
@@ -448,7 +448,7 @@ export async function installDeps(w: { repo: string; path: string }): Promise<vo
   return pending.run(`deps:${w.path}`, async () => {
     toast(`Installing dependencies in ${w.repo}…`);
     try {
-      const r = await api('POST', '/api/worktrees/install-deps', { worktreePath: w.path });
+      const r = await api('POST', '/api/v1/worktrees/install-deps', { worktreePath: w.path });
       toast(r.ok ? `${w.repo} is ready` : (r.error || 'install failed'), !r.ok);
     } catch (e) { toast(errMessage(e), true); }
   });
@@ -456,7 +456,7 @@ export async function installDeps(w: { repo: string; path: string }): Promise<vo
 
 export async function stopMainServer(w: { repo: string; path: string }): Promise<void> {
   try {
-    await api('POST', '/api/servers/stop', { repo: w.repo, worktreePath: w.path });
+    await api('POST', '/api/v1/servers/stop', { repo: w.repo, worktreePath: w.path });
     toast(`Stopped ${w.repo}`);
   } catch (e) { toast(errMessage(e), true); }
 }

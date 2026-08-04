@@ -179,7 +179,7 @@ export interface StreamHooks {
 
 export function connectStream(hooks: StreamHooks = {}): () => void {
   // EventSource cannot set headers, so the boot token rides in the query string.
-  const ev = new EventSource(`/api/events${tokenQuery('?')}`);
+  const ev = new EventSource(`/api/v1/events${tokenQuery('?')}`);
 
   const apply = (half: 'topology' | 'sessions' | 'ci') => (e: MessageEvent) => {
     let frame;

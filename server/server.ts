@@ -1,7 +1,6 @@
 import http from 'http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import * as muxSelect from './multiplexer/index.ts';
 import * as gitMod from './git.ts';
 import * as watchMod from './watch.ts';
 import * as worktree from './worktree.ts';
@@ -72,7 +71,9 @@ interface SettingsBody {
 
 async function main() {
   const cfg = configMod.load();
-  const mux = await muxSelect.select();
+  // Was `muxSelect.select()` in an 11-line module that returned tmux-or-null — and
+  // server.ts imported tmux directly as well, so the indirection was already bypassed.
+  const mux = (await tmux.available()) ? tmux : null;
   if (!mux) {
     console.error('[wt-studio] tmux not found — install it (brew install tmux) and retry.');
   } else {
@@ -411,21 +412,13 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const toStart = (s.repos || []).filter(promoted).filter((x) => servers.startCfg(x.repo));
-    // Key the slot on the per-worktree feature identity (server/identity.ts) — the
-    // one canonical key used everywhere. A session's repos resolve to the same
-    // identity → one slot.
-    for (const r of toStart) {
-      const alloc = servers.allocSlotFor(servers.featureFor(r.worktreePath));
-      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    }
-    const results = [];
-    for (const r of toStart) {
-      const feat = servers.featureFor(r.worktreePath);
-      results.push({ repo: r.repo, ...(await servers.start(r.repo, r.worktreePath, servers.launchOpts(r.repo, feat))) });
-    }
+    // Slot keys come from the per-worktree feature identity (server/identity.ts) inside
+    // startAll — the one canonical key used everywhere.
+    const out = await servers.startAll(toStart);
+    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
     await refreshRunning();
     broadcastTopology();
-    res.json({ ok: results.some((r) => r.ok), results });
+    res.json({ ok: out.results.some((r) => r.ok), results: out.results });
   });
   api.post('/sessions/:id/servers/stop', async (req, res) => {
     const s = manager.get(req.params.id);
@@ -588,13 +581,11 @@ async function main() {
 
   api.post('/servers/start', async (req, res) => {
     const { repo, worktreePath } = req.body || {};
-    const feature = servers.featureFor(worktreePath);
-    const alloc = servers.allocSlotFor(feature);
-    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    const out = await servers.start(repo, worktreePath, servers.launchOpts(repo, feature));
+    const out = await servers.startAll([{ repo, worktreePath }]);
+    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
     await refreshRunning();
     broadcastTopology();
-    res.json(out);
+    res.json(out.results[0]);
   });
   api.post('/servers/stop', async (req, res) => {
     const { repo, worktreePath } = req.body || {};

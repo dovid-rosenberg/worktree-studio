@@ -741,6 +741,37 @@ class Servers {
     } finally { this._endStart(feature); this._unlock(lock); }
   }
 
+  /**
+   * Allocate the slots, then launch — the whole sequence, once.
+   *
+   * Three routes spelled this out independently (`/sessions/:id/servers/start`,
+   * `/servers/start`, `/group/start`): featureFor → allocSlotFor → 409 on error →
+   * start(repo, path, launchOpts(repo, feature)). Three copies is how the stop
+   * counterparts came to disagree about when a slot may be released, and it is how the
+   * next divergence would have arrived too.
+   *
+   * ALL slots are allocated before ANY launch, deliberately. Allocating as you go means
+   * a stack that runs out of slots half way has already spawned the first half, and the
+   * caller's 409 then describes a state it has partly created.
+   *
+   * Launches run concurrently: start() takes a per-worktree lock, so distinct worktrees
+   * never contend, and a multi-repo stack should not pay the sum of its members' boot
+   * times. (The session route used to do this serially, for no stated reason.)
+   */
+  async startAll(
+    targets: Array<{ repo: string; worktreePath: string }>,
+  ): Promise<{ ok: false; slotError: string } | { ok: true; results: Array<{ repo: string } & StartResult> }> {
+    for (const t of targets) {
+      const alloc = this.allocSlotFor(this.featureFor(t.worktreePath));
+      if (alloc.error) return { ok: false, slotError: alloc.error };
+    }
+    const results = await Promise.all(targets.map(async (t) => {
+      const feature = this.featureFor(t.worktreePath);
+      return { repo: t.repo, ...(await this.start(t.repo, t.worktreePath, this.launchOpts(t.repo, feature))) };
+    }));
+    return { ok: true, results };
+  }
+
   // Ports a server in this worktree would be listening on: the feature's
   // slot-derived ports when concurrency-slotted, else the repo's configured ports.
   _portsFor(repo: string, worktreePath: string): number[] {

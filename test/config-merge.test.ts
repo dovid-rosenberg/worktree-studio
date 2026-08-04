@@ -4,8 +4,13 @@
 //
 // Two cases, and they are not the same:
 //   - a config that spells `concurrency` out  → left exactly as written
-//   - a config that never had the key         → was silently running on the old
-//     defaults, so it gets them written in, once (server/config.ts migrate())
+//   - a config with an empty `repos`           → left empty, never re-seeded
+//
+// A one-time migrate() used to write the old accept.blue port map into any config that
+// predated the `concurrency` key. Its own comment said to delete it once no such config
+// remained; that point was reached, so the migration and its five tests are gone. What
+// those tests actually protected — that loading an existing config never loses or
+// weakens what the install was running on — is still covered below.
 //
 // Every test here runs against a throwaway temp config. Nothing reads or writes
 // ~/.config/worktree-studio/config.json.
@@ -26,7 +31,7 @@ process.env.WT_STUDIO_STATE = path.join(TMP, 'state');
 // evaluation time. Under CommonJS the require ran here, in source order; under ESM
 // only `await import` still does, and getting this wrong points load() at the real
 // ~/.config/worktree-studio/config.json.
-const { load, defaults, migrate } = await import('../server/config.ts');
+const { load, defaults } = await import('../server/config.ts');
 
 const FILE = process.env.WT_STUDIO_CONFIG;
 const writeConfig = (obj: unknown) => fs.writeFileSync(FILE, JSON.stringify(obj, null, 2));
@@ -101,54 +106,10 @@ test('a config with an empty concurrency.repos is left empty (not re-seeded)', (
 
 // ---------------------- an existing config that PREDATES the concurrency key --
 
-test('a pre-concurrency config is migrated to what it was actually running on', () => {
-  // exactly the shape of an install that never wrote the key: defaults() supplied it
-  writeConfig({ baseDirs: ['~/Desktop/ab-code'], scanDepth: 3, start: { 'accept-blue': { cmd: 'node app.js', ports: [1231] } } });
-  const cfg = load();
-  assert.deepEqual(cfg.concurrency, OLD_CONCURRENCY, 'behavior is preserved, not silently dropped');
-});
 
-test('the migration is persisted, so it happens exactly once', () => {
-  writeConfig({ baseDirs: ['~/x'] });
-  load();
-  const onDisk = readConfig();
-  assert.deepEqual(onDisk.concurrency, OLD_CONCURRENCY, 'written back to the file');
-  // A second load of the now-migrated file takes the untouched path.
-  assert.deepEqual(load().concurrency, OLD_CONCURRENCY);
-});
 
-test('the migration writes ONLY the concurrency key — it does not bloat the file with defaults', () => {
-  writeConfig({ baseDirs: ['~/x'], web: { port: 7788 } });
-  load();
-  assert.deepEqual(Object.keys(readConfig()).sort(), ['baseDirs', 'concurrency', 'web']);
-});
 
-test('the migration preserves every other key the user had written', () => {
-  const original = {
-    baseDirs: ['~/Desktop/ab-code'],
-    scanDepth: 3,
-    web: { port: 7788, host: '127.0.0.1' },
-    editors: { WebStorm: { open: 'open -na WebStorm --args {path}' } },
-    defaultEditor: 'WebStorm',
-    copyPatterns: { default: ['.env', '.env.local', '.env.*.local', 'config/*-config.ts'] },
-    start: { 'accept-blue': { cmd: 'node app.js', ports: [1231, 1232, 1233, 1239, 1999] }, 'ab-iso-fe': 'npm start' },
-  };
-  writeConfig(original);
-  load();
-  const after = readConfig();
-  for (const [k, v] of Object.entries(original)) assert.deepEqual(after[k], v, `${k} was altered`);
-});
 
-test('migrate() is a pure predicate on the raw object', () => {
-  // migrate() takes a RAW parsed config.json and mutates it, so the fixture is typed
-  // as what JSON.parse hands back — the whole point is that the key is absent.
-  const raw: PartialDeep<Config> = { baseDirs: [] };
-  assert.equal(migrate(raw), true);
-  assert.deepEqual(raw.concurrency, OLD_CONCURRENCY);
-  assert.equal(migrate(raw), false, 'idempotent — a second call is a no-op');
-  assert.equal(migrate({ concurrency: null as unknown as undefined }), false, 'an explicit null is still "the key is present"');
-  assert.equal(migrate(null), false);
-});
 
 test('a config created from scratch gets the EMPTY defaults, never the legacy block', () => {
   fs.rmSync(FILE, { force: true });

@@ -97,6 +97,21 @@ function harness({ group, flat = [], conflicts = [], allocError = null, startErr
       calls.started.push([repo, p]);
       return startError ? { ok: false, error: startError } : { ok: true, listening: startListening, boundElsewhere };
     },
+    // Mirrors servers.startAll: allocate every slot first (so a slot failure spawns
+    // nothing), then launch. The fake records the same calls the old inline loop did.
+    startAll: async (targets: Array<{ repo: string; worktreePath: string }>) => {
+      for (const t2 of targets) {
+        calls.allocated.push(identity.ofPath(t2.worktreePath));
+        if (allocError) return { ok: false as const, slotError: allocError };
+      }
+      const results = targets.map((t2) => {
+        calls.started.push([t2.repo, t2.worktreePath] as [string, string]);
+        return startError
+          ? { repo: t2.repo, ok: false, error: startError }
+          : { repo: t2.repo, ok: true, listening: startListening, boundElsewhere };
+      });
+      return { ok: true as const, results };
+    },
     restart: async (repo: string, p: string) => { calls.started.push([repo, p]); return startError ? { ok: false, error: startError } : { ok: true }; },
   };
   const deps = {

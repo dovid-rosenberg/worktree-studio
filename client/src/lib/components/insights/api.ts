@@ -7,11 +7,10 @@
 // must be cancellable or a slow query can land after a fast one and overwrite it.
 //
 // Same-origin does NOT mean unauthenticated: every /api route is behind the boot token
-// (server/security.js). The token comes from $lib/api.js — the one module that knows it
-// may still be an un-substituted placeholder and that dev gets it from Vite — rather
-// than being resolved a second time here.
+// (server/security.ts). Auth, parsing and the non-2xx error shape all come from
+// $lib/api.js's `request` — this module used to re-implement all three.
 
-import { TOKEN } from '$lib/api.js';
+import { request } from '$lib/api.js';
 import { adoptPricing } from './pricing.svelte.js';
 import type { FleetUsage, SearchResponse, StateSession, TranscriptStatus, Usage } from './types';
 
@@ -30,41 +29,13 @@ function adopt<T>(json: T): T {
   return json;
 }
 
-const headers = (extra: Record<string, string>): Record<string, string> => (TOKEN ? { ...extra, 'x-wts-token': TOKEN } : extra);
+// Transport comes from $lib/api.js; these two add the one thing that is this module's
+// own — adopting the pricing block off every response.
+const get = async (url: string, signal?: AbortSignal): Promise<any> =>
+  adopt(await request('GET', url, { signal, strictJson: true }));
 
-async function get(url: string, signal?: AbortSignal): Promise<any> {
-  let res;
-  try {
-    res = await fetch(url, { signal, headers: headers({ accept: 'application/json' }) });
-  } catch (e) {
-    if (e instanceof Error && e.name === 'AbortError') throw e;
-    // The daemon being down is the common case here, and `TypeError: Failed to fetch`
-    // is not something to put in front of a user.
-    throw new Error('Cannot reach the Worktree Studio daemon.');
-  }
-  const body = await res.text();
-  let json = null;
-  try { json = body ? JSON.parse(body) : null; } catch { /* handled below */ }
-  if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
-  // A 200 that isn't JSON means something other than the daemon answered — the SPA
-  // fallback serving index.html for a mistyped path is the way this actually happens.
-  if (json === null) throw new Error('The daemon returned a non-JSON response.');
-  return adopt(json);
-}
-
-async function post(url: string, body: unknown, signal?: AbortSignal): Promise<any> {
-  const res = await fetch(url, {
-    method: 'POST',
-    signal,
-    headers: headers({ 'content-type': 'application/json', accept: 'application/json' }),
-    body: JSON.stringify(body || {}),
-  });
-  const text = await res.text();
-  let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* handled below */ }
-  if (!res.ok) throw new Error(json?.error || `${res.status} ${res.statusText}`);
-  return adopt(json);
-}
+const post = async (url: string, body: unknown, signal?: AbortSignal): Promise<any> =>
+  adopt(await request('POST', url, { body: body || {}, signal }));
 
 const qs = (params: Record<string, string | number | boolean | null | undefined>): string => {
   const s = new URLSearchParams();
@@ -118,7 +89,7 @@ export const reindex = (
 
 /** The session list, for the search scope picker and session titles. */
 export async function listSessions(signal?: AbortSignal): Promise<StateSession[]> {
-  const state = await get('/api/state', signal);
+  const state = await get('/api/v1/state', signal);
   return Array.isArray(state?.sessions) ? state.sessions : [];
 }
 

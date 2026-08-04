@@ -59,7 +59,7 @@
     let alive = true;
     roll = [];
     rollError = '';
-    api('GET', `/api/group/${encodeURIComponent(name)}/commits`)
+    api('GET', `/api/v1/group/${encodeURIComponent(name)}/commits`)
       .then((d) => { if (alive) roll = d.repos || []; })
       .catch((e) => { if (alive) rollError = e instanceof Error ? e.message : String(e); });
     return () => { alive = false; };

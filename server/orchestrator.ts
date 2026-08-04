@@ -86,9 +86,14 @@ interface Servers {
   // `listening` is the strong verdict: true = every expected port bound, false = the
   // poll window expired with one still down, undefined = nothing to check. See
   // servers.ts's StartResult for why the third case is not folded into the others.
-  start(repo: string, worktreePath: string, opts: LaunchOpts): Promise<{
-    ok: boolean; error?: string; listening?: boolean; boundElsewhere?: number[];
-  }>;
+  /**
+   * Allocate every slot, then launch every target. One implementation of a sequence three
+   * routes used to spell out independently — see servers.ts.
+   */
+  startAll(targets: Array<{ repo: string; worktreePath: string }>): Promise<
+    | { ok: false; slotError: string }
+    | { ok: true; results: Array<{ repo: string; ok: boolean; error?: string; listening?: boolean; boundElsewhere?: number[] }> }
+  >;
   stop(repo: string, worktreePath: string): Promise<unknown>;
   // Was `Promise<unknown>` while /group/restart threw the result away and answered a
   // hardcoded `ok: true`. The verdict is only reportable if the type admits it exists.
@@ -188,15 +193,14 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // Members of a real feature resolve to the same identity → one slot; under the
     // default `basename` strategy a degenerate mixed-name manual group gets a
     // per-worktree slot each (the `manifest` strategy is what fixes that).
-    for (const m of toStart) {
-      const alloc = servers.allocSlotFor(servers.featureFor(m.path));
-      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    }
+    // Slots first, then launches — servers.startAll owns that sequence for all three
+    // routes that need it, so they cannot drift apart again.
+    const out = await servers.startAll(toStart.map((m) => ({ repo: m.repo, worktreePath: m.path })));
+    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
+
     let started = 0; const failures: Array<{ repo: string; error?: string }> = [];
-    await Promise.all(toStart.map(async (m) => {
-      const feat = servers.featureFor(m.path);
-      const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, feat));
-      if (!r.ok) { failures.push({ repo: m.repo, error: r.error }); return; }
+    for (const r of out.results) {
+      if (!r.ok) { failures.push({ repo: r.repo, error: r.error }); continue; }
       // Spawned but never bound. This used to count as a start, which is the precise
       // shape of "it said it started and nothing is running": the process was created,
       // so `ok` was true, and whether it survived long enough to listen was never asked.
@@ -205,15 +209,15 @@ function register(app: Router, deps: OrchestratorDeps): void {
         // message: a server on an unexpected port is UP and misconfigured (its repo does
         // not read the slot's port env var), where one on no port at all is down.
         failures.push({
-          repo: m.repo,
+          repo: r.repo,
           error: r.boundElsewhere?.length
             ? `started on port ${r.boundElsewhere.join(', ')} instead of the port this feature's slot expects — this repo does not appear to read its configured port env var, so a second feature cannot run it`
             : 'started but no port was listening — check its log',
         });
-        return;
+        continue;
       }
       started++;
-    }));
+    }
     await refreshRunning();
     scheduleBroadcast();
     /*

@@ -55,7 +55,7 @@
       try {
         const near = el ? el.scrollHeight - el.scrollTop - el.clientHeight < 60 : true;
         const q = offset === undefined ? '' : `&offset=${offset}`;
-        const res = await api('GET', `/api/servers/logs?worktreePath=${encodeURIComponent(path)}${q}`);
+        const res = await api('GET', `/api/v1/servers/logs?worktreePath=${encodeURIComponent(path)}${q}`);
         if (!alive) return;
         offset = res.offset;
         if (res.text) {

@@ -38,7 +38,7 @@ class Notify {
 
   async loadPrefs(): Promise<void> {
     try {
-      const d = await api('GET', '/api/settings');
+      const d = await api('GET', '/api/v1/settings');
       if (d && d.notify) this.prefs = { ...this.prefs, ...d.notify };
     } catch { /* the settings modal will surface a real failure */ }
   }

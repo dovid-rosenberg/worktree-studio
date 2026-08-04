@@ -64,7 +64,7 @@
     let alive = true;
     const t = setTimeout(async () => {
       try {
-        const data = await api('GET', `/api/sessions/${id}/commits`);
+        const data = await api('GET', `/api/v1/sessions/${id}/commits`);
         if (!alive) return;
         changesCount = (data.repos || []).reduce(
           (n: number, r: { uncommitted?: { fileCount?: number } }) => n + (r.uncommitted?.fileCount || 0),
