@@ -31,7 +31,32 @@ interface Member {
   wtname?: string;
   running?: boolean;
   canStart?: boolean;
+  /** Why `canStart` is false — see servers.decorate(). Both feed skipReason(). */
+  depsMissing?: boolean;
+  noStartCmd?: boolean;
   session?: { id: string } | null;
+}
+
+/** A member /group/start declined to launch, and the reason a user can act on. */
+interface SkippedMember {
+  repo: string;
+  path: string;
+  reason: string;
+}
+
+/**
+ * Why a member cannot be launched, in words the UI can show verbatim.
+ *
+ * `canStart` is `configured && !depsMissing` (servers.decorate), so a false value has
+ * exactly two causes and both are fixable by the user — one with the Install button,
+ * one by adding the repo to `config.start`. Naming them is the whole point: the stack
+ * used to drop these members before the launch loop and report the remainder as a
+ * complete success.
+ */
+function skipReason(m: Member): string {
+  if (m.depsMissing) return 'dependencies not installed';
+  if (m.noStartCmd) return 'no start command configured for this repo';
+  return 'cannot start';
 }
 
 /** A feature/group as resolveGroup() answers it — every member is really on disk. */
@@ -50,9 +75,16 @@ interface Servers {
   allocSlotFor(feature: string): { slot?: number; error?: string };
   releaseSlot(feature: string): void;
   launchOpts(repo: string, feature: string): LaunchOpts;
-  start(repo: string, worktreePath: string, opts: LaunchOpts): Promise<{ ok: boolean; error?: string }>;
+  // `listening` is the strong verdict: true = every expected port bound, false = the
+  // poll window expired with one still down, undefined = nothing to check. See
+  // servers.ts's StartResult for why the third case is not folded into the others.
+  start(repo: string, worktreePath: string, opts: LaunchOpts): Promise<{
+    ok: boolean; error?: string; listening?: boolean; boundElsewhere?: number[];
+  }>;
   stop(repo: string, worktreePath: string): Promise<unknown>;
-  restart(repo: string, worktreePath: string, opts: LaunchOpts): Promise<unknown>;
+  // Was `Promise<unknown>` while /group/restart threw the result away and answered a
+  // hardcoded `ok: true`. The verdict is only reportable if the type admits it exists.
+  restart(repo: string, worktreePath: string, opts: LaunchOpts): Promise<{ ok: boolean; error?: string }>;
 }
 
 /** The session these routes hand back untouched; only its id is ever read. */
@@ -110,11 +142,24 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group: g, flat } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const toStart = g.members.filter((m) => !m.running && m.canStart);
+    /*
+     * The members that SHOULD come up and cannot. Previously these were dropped by the
+     * same filter that built `toStart` and never mentioned again: a two-repo feature
+     * whose BE worktree had no node_modules — the normal state of a fresh `wt`
+     * worktree — answered `{ok:true, started:1, total:1, failures:[]}`, which is
+     * byte-identical to a full success. Half a stack, reported as a win, with the
+     * missing half named nowhere in the response.
+     */
+    const skipped: SkippedMember[] = g.members
+      .filter((m) => !m.running && !m.canStart)
+      .map((m) => ({ repo: m.repo, path: m.path, reason: skipReason(m) }));
     const conflicts: Member[] = [];
     const seen = new Set<string>();
     for (const m of toStart) for (const c of conflictsFor(m, flat)) if (!seen.has(c.path)) { seen.add(c.path); conflicts.push(c); }
     if (conflicts.length && !stopConflicts) {
-      return res.json({ ok: true, needsConfirm: true, conflicts, willStart: toStart });
+      // `skipped` rides along so the confirm dialog can say what this start will NOT
+      // bring up, before the user agrees to stop something else for it.
+      return res.json({ ok: true, needsConfirm: true, conflicts, willStart: toStart, skipped });
     }
     if (stopConflicts) {
       for (const c of conflicts) await servers.stop(c.repo, c.path);
@@ -132,16 +177,45 @@ function register(app: Router, deps: OrchestratorDeps): void {
     await Promise.all(toStart.map(async (m) => {
       const feat = servers.featureFor(m.path);
       const r = await servers.start(m.repo, m.path, servers.launchOpts(m.repo, feat));
-      if (r.ok) started++; else failures.push({ repo: m.repo, error: r.error });
+      if (!r.ok) { failures.push({ repo: m.repo, error: r.error }); return; }
+      // Spawned but never bound. This used to count as a start, which is the precise
+      // shape of "it said it started and nothing is running": the process was created,
+      // so `ok` was true, and whether it survived long enough to listen was never asked.
+      if (r.listening === false) {
+        // Two very different diagnoses, and the difference is the whole value of the
+        // message: a server on an unexpected port is UP and misconfigured (its repo does
+        // not read the slot's port env var), where one on no port at all is down.
+        failures.push({
+          repo: m.repo,
+          error: r.boundElsewhere?.length
+            ? `started on port ${r.boundElsewhere.join(', ')} instead of the port this feature's slot expects — this repo does not appear to read its configured port env var, so a second feature cannot run it`
+            : 'started but no port was listening — check its log',
+        });
+        return;
+      }
+      started++;
     }));
     await refreshRunning();
     scheduleBroadcast();
-    // `ok` means what a client keying on it assumes: every member that was going to
-    // be started is up. It was hardcoded true, so a stack where all three members
-    // failed to bind answered `{ ok: true, started: 0, failures: [3 things] }` and
-    // a client that read only `ok` called total failure a success. Nothing to start
-    // is still ok — that is a no-op, not a failure.
-    res.json({ ok: failures.length === 0, started, total: toStart.length, failures });
+    /*
+     * `ok` means what a client keying on it assumes: every member that should be up is
+     * up. It was hardcoded true, so a stack where all three members failed to bind
+     * answered `{ ok: true, started: 0, failures: [3 things] }` and a client that read
+     * only `ok` called total failure a success. Nothing to start is still ok — that is
+     * a no-op, not a failure.
+     *
+     * A skipped member fails it too. Skipping is not a no-op: the user asked for the
+     * stack and part of it is not running, for a reason they can fix. `total` counts
+     * what should be up rather than what was attempted, so `started/total` can finally
+     * show the shortfall — it read `1/1` for a half-started two-repo stack.
+     */
+    res.json({
+      ok: failures.length === 0 && skipped.length === 0,
+      started,
+      total: toStart.length + skipped.length,
+      skipped,
+      failures,
+    });
   });
 
   app.post('/group/stop', async (req, res) => {
@@ -160,14 +234,33 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const toRestart = g.members.filter((m) => m.running || m.canStart);
+    // Same omission /group/start had: a member that is neither running nor startable is
+    // dropped here too, and a restart that silently brings back less than was asked for
+    // is the same lie in a different verb.
+    const skipped: SkippedMember[] = g.members
+      .filter((m) => !m.running && !m.canStart)
+      .map((m) => ({ repo: m.repo, path: m.path, reason: skipReason(m) }));
     for (const m of toRestart) {
       const alloc = servers.allocSlotFor(servers.featureFor(m.path)); // reuse the feature's slot across the restart
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
-    await Promise.all(toRestart.map((m) => servers.restart(m.repo, m.path, servers.launchOpts(m.repo, servers.featureFor(m.path)))));
+    // The results were discarded and `ok` hardcoded true, so a restart where every
+    // member failed to rebind reported success.
+    const failures: Array<{ repo: string; error?: string }> = [];
+    let restarted = 0;
+    await Promise.all(toRestart.map(async (m) => {
+      const r = await servers.restart(m.repo, m.path, servers.launchOpts(m.repo, servers.featureFor(m.path)));
+      if (r.ok) restarted++; else failures.push({ repo: m.repo, error: r.error });
+    }));
     await refreshRunning();
     scheduleBroadcast();
-    res.json({ ok: true });
+    res.json({
+      ok: failures.length === 0 && skipped.length === 0,
+      started: restarted,
+      total: toRestart.length + skipped.length,
+      skipped,
+      failures,
+    });
   });
 
   app.post('/group/open', async (req, res) => {

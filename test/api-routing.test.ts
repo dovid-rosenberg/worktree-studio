@@ -59,8 +59,12 @@ interface HarnessOpts {
   conflicts?: Member[];
   allocError?: string | null;
   startError?: string | null;
+  /** What servers.start() reports about the ports binding — see servers.ts StartResult. */
+  startListening?: boolean;
+  /** Ports the worktree turned out to hold instead of the expected ones. */
+  boundElsewhere?: number[];
 }
-function harness({ group, flat = [], conflicts = [], allocError = null, startError = null }: HarnessOpts = {}) {
+function harness({ group, flat = [], conflicts = [], allocError = null, startError = null, startListening, boundElsewhere }: HarnessOpts = {}) {
   const calls = {
     stopped: [] as Array<[string, string]>,
     started: [] as Array<[string, string]>,
@@ -75,8 +79,11 @@ function harness({ group, flat = [], conflicts = [], allocError = null, startErr
     releaseSlot: (f: string) => calls.released.push(f),
     launchOpts: () => ({ env: {}, ports: [] }),
     stop: async (repo: string, p: string) => { calls.stopped.push([repo, p]); return { ok: true }; },
-    start: async (repo: string, p: string) => { calls.started.push([repo, p]); return startError ? { ok: false, error: startError } : { ok: true }; },
-    restart: async (repo: string, p: string) => { calls.started.push([repo, p]); return { ok: true }; },
+    start: async (repo: string, p: string) => {
+      calls.started.push([repo, p]);
+      return startError ? { ok: false, error: startError } : { ok: true, listening: startListening, boundElsewhere };
+    },
+    restart: async (repo: string, p: string) => { calls.started.push([repo, p]); return startError ? { ok: false, error: startError } : { ok: true }; },
   };
   const deps = {
     cfg: { editors: {}, defaultEditor: '' },
@@ -190,7 +197,7 @@ test('group/start starts the members that can start and are not already running'
   const { app, calls } = harness({ group: FEATURE });
   await serving(app, async (get) => {
     const r = await get('/api/v1/group/start', post({ group: 'feat-a' }));
-    assert.deepEqual(await r.json(), { ok: true, started: 1, total: 1, failures: [] });
+    assert.deepEqual(await r.json(), { ok: true, started: 1, total: 1, skipped: [], failures: [] });
   });
   assert.deepEqual(calls.started, [['fe', '/code/fe/.worktrees/feat-a']]);
   assert.deepEqual(calls.allocated, ['feat-a'], 'the slot is keyed on the member\'s .worktrees/<name> basename');
@@ -249,7 +256,7 @@ test('group/start reports ok:false for a partial start too', async () => {
   const { app } = harness({ group: FEATURE, startError: 'no start config for repo \'fe\'' });
   await serving(app, async (get) => {
     const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-a' })));
-    assert.deepEqual(body, { ok: false, started: 0, total: 1, failures: [{ repo: 'fe', error: "no start config for repo 'fe'" }] });
+    assert.deepEqual(body, { ok: false, started: 0, total: 1, skipped: [], failures: [{ repo: 'fe', error: "no start config for repo 'fe'" }] });
   });
 });
 
@@ -258,7 +265,148 @@ test('group/start with nothing to start is a no-op, not a failure', async () => 
   const { app } = harness({ group: allRunning });
   await serving(app, async (get) => {
     const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-c' })));
-    assert.deepEqual(body, { ok: true, started: 0, total: 0, failures: [] });
+    assert.deepEqual(body, { ok: true, started: 0, total: 0, skipped: [], failures: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A member that cannot start is REPORTED, not dropped
+//
+// The bug these pin: `toStart` filtered on `canStart` and `total` counted `toStart`, so
+// a member that could not launch vanished before anything was counted. A two-repo
+// feature whose BE worktree had no node_modules — the normal state of a fresh `wt`
+// worktree — answered `{ok:true, started:1, total:1, failures:[]}`, which is exactly
+// what a complete success looks like. The user saw "started" and half a stack.
+// ---------------------------------------------------------------------------
+
+// One member is up, the other cannot start because its worktree has no node_modules.
+const DEPS_MISSING = {
+  name: 'feat-d',
+  members: [
+    { repo: 'api', path: WT('feat-d'), running: false, canStart: true },
+    { repo: 'fe', path: '/code/fe/.worktrees/feat-d', running: false, canStart: false, depsMissing: true },
+  ],
+};
+
+test('group/start names the member it could not start, and does not call that success', async () => {
+  const { app, calls } = harness({ group: DEPS_MISSING });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-d' })));
+    assert.deepEqual(body, {
+      ok: false,
+      started: 1,
+      total: 2,
+      skipped: [{ repo: 'fe', path: '/code/fe/.worktrees/feat-d', reason: 'dependencies not installed' }],
+      failures: [],
+    });
+  });
+  assert.deepEqual(calls.started, [['api', WT('feat-d')]], 'the skipped member is still never launched');
+});
+
+test('group/start distinguishes a missing start command from missing dependencies', async () => {
+  const group = {
+    name: 'feat-e',
+    members: [{ repo: 'docs', path: WT('feat-e'), running: false, canStart: false, noStartCmd: true }],
+  };
+  const { app } = harness({ group });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-e' })));
+    assert.equal(body.ok, false, 'a stack that started nothing is not a success');
+    assert.equal(body.total, 1, 'total counts what should be up, not what was attempted');
+    assert.deepEqual(body.skipped, [
+      { repo: 'docs', path: WT('feat-e'), reason: 'no start command configured for this repo' },
+    ]);
+  });
+});
+
+test('an already-running member is not "skipped" — there is nothing to fix', async () => {
+  // FEATURE's first member is running:true. Skipping it is a no-op, not a shortfall,
+  // so it must not appear in `skipped` or inflate `total`.
+  const { app } = harness({ group: FEATURE });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-a' })));
+    assert.deepEqual(body.skipped, []);
+    assert.equal(body.total, 1);
+    assert.equal(body.ok, true);
+  });
+});
+
+test('the needsConfirm answer carries what the start will not bring up', async () => {
+  const conflict = { repo: 'other', path: '/code/fe/.worktrees/other', running: true };
+  const { app } = harness({ group: DEPS_MISSING, conflicts: [conflict] });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-d' })));
+    assert.equal(body.needsConfirm, true);
+    assert.deepEqual(body.skipped, [
+      { repo: 'fe', path: '/code/fe/.worktrees/feat-d', reason: 'dependencies not installed' },
+    ], 'the user agrees to stop something else knowing what will still be missing');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// "Spawned" is not "listening"
+// ---------------------------------------------------------------------------
+
+test('group/start counts a server that spawned but never bound as a failure', async () => {
+  const { app } = harness({ group: STARTABLE, startListening: false });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-b' })));
+    assert.equal(body.started, 0, 'a process that never listened did not start');
+    assert.equal(body.ok, false);
+    assert.equal(body.failures.length, 2);
+    assert.match(body.failures[0].error, /no port was listening/);
+  });
+});
+
+test('group/start tells "up on the wrong port" apart from "not up at all"', async () => {
+  // The signature of a concurrency slot the repo does not implement: Studio derived a
+  // per-slot port and passed it as an env var, the repo ignored it and bound its
+  // hardcoded one. The server IS running — reporting that as a dead process sends the
+  // user to read a log that says "ready".
+  const { app } = harness({ group: STARTABLE, startListening: false, boundElsewhere: [3030] });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-b' })));
+    assert.equal(body.ok, false);
+    assert.match(body.failures[0].error, /started on port 3030 instead of/);
+    assert.match(body.failures[0].error, /does not appear to read its configured port env var/);
+  });
+});
+
+test('group/start still counts an unverifiable start — no ports is not a failure', async () => {
+  // listening: undefined — the repo has no knowable ports, so nothing was checked.
+  // That must not be read as "it failed to bind".
+  const { app } = harness({ group: STARTABLE, startListening: undefined });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/start', post({ group: 'feat-b' })));
+    assert.equal(body.started, 2);
+    assert.equal(body.ok, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /group/restart answers with a verdict too
+// ---------------------------------------------------------------------------
+
+test('group/restart reports what it restarted and what it skipped', async () => {
+  const { app } = harness({ group: DEPS_MISSING });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/restart', post({ group: 'feat-d' })));
+    assert.equal(body.ok, false, 'ok was hardcoded true regardless of the outcome');
+    assert.equal(body.started, 1);
+    assert.equal(body.total, 2);
+    assert.deepEqual(body.skipped, [
+      { repo: 'fe', path: '/code/fe/.worktrees/feat-d', reason: 'dependencies not installed' },
+    ]);
+  });
+});
+
+test('group/restart reports ok:false when a member fails to come back', async () => {
+  const { app } = harness({ group: STARTABLE, startError: 'port 3030 already in use (pid 991)' });
+  await serving(app, async (get) => {
+    const body = await jsonBody(await get('/api/v1/group/restart', post({ group: 'feat-b' })));
+    assert.equal(body.ok, false);
+    assert.equal(body.started, 0);
+    assert.equal(body.failures.length, 2);
   });
 });
 

@@ -98,7 +98,36 @@ export interface LaunchOpts {
   patch?: ConfigPatchPlan;
 }
 
-export type StartResult = { ok: false; error: string } | { ok: true; pid?: number; log: string };
+/**
+ * `ok` is "the launch was accepted", not "the server answered".
+ *
+ * `listening` is the stronger claim, and it is deliberately three-valued: true when
+ * every expected port bound inside the poll window, false when the window expired with
+ * one still down, and undefined when there was nothing to check — a repo whose ports
+ * are not knowable (the string form of `config.start` with no concurrency entry) can
+ * only be spawned, never verified. Collapsing "unverified" into "listening" is what let
+ * a stack report success for a server that never came up.
+ */
+export type StartResult =
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      pid?: number;
+      log: string;
+      listening?: boolean;
+      /**
+       * Set only when `listening` is false AND the worktree turned out to be listening
+       * on something else: the ports it actually bound.
+       *
+       * This is the signature of a concurrency slot the repo does not implement. Studio
+       * derives a per-slot port from `concurrency.repos[repo].portEnv` and passes it as
+       * an env var; a repo that never reads that variable binds its hardcoded port on
+       * every slot. The result is a dev server that is genuinely up, on a port Studio is
+       * not watching — which looks identical to one that died, and silently defeats
+       * running two features at once. Naming both numbers is what tells them apart.
+       */
+      boundElsewhere?: number[];
+    };
 
 /** A record pruneTracked() dropped, for the boot-time log. */
 export interface DroppedRecord {
@@ -652,14 +681,38 @@ class Servers {
       child.unref();
       this.tracked[worktreePath] = { pid: child.pid, repo, log, startedAt };
       this._save();
-      // poll for ports to bind (best-effort)
-      for (let i = 0; i < 16 && ports.length; i++) {
-        await new Promise((r) => setTimeout(r, 500));
-        let allUp = true;
-        for (const p of ports) if (!(await this.portPid(p))) allUp = false;
-        if (allUp) break;
+      /*
+       * Poll for the ports to bind. The verdict is REPORTED now rather than discarded:
+       * this loop always ran to completion and then returned `ok: true` either way, so
+       * a dev server that spent the whole window failing to bind was indistinguishable
+       * from one that came up in 500 ms.
+       *
+       * `undefined` when there are no ports to watch — see StartResult. That is not the
+       * same as "it came up", and the caller has to be able to tell them apart.
+       */
+      let listening: boolean | undefined;
+      if (ports.length) {
+        for (let i = 0; i < 16; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          let allUp = true;
+          for (const p of ports) if (!(await this.portPid(p))) allUp = false;
+          if (allUp) { listening = true; break; }
+          listening = false;
+        }
       }
-      return { ok: true, pid: child.pid, log };
+      // The expected ports never came up. Before calling that a dead server, ask whether
+      // this worktree is listening on something else — see `boundElsewhere`. One full
+      // lsof scan, on the failure path only, to turn "it didn't start" into "it started
+      // on a port you weren't expecting".
+      let boundElsewhere: number[] | undefined;
+      if (listening === false) {
+        try {
+          const hit = (await this.discoverRunning()).get(realpath(worktreePath));
+          const other = (hit?.ports || []).filter((p) => !ports.includes(p));
+          if (other.length) boundElsewhere = other;
+        } catch { /* diagnosis is a bonus; never let it change the launch outcome */ }
+      }
+      return { ok: true, pid: child.pid, log, listening, boundElsewhere };
     } finally { this._endStart(feature); this._unlock(lock); }
   }
 
