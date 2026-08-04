@@ -50,10 +50,11 @@
     add('＋', 'New session', '⌘N', () => overlays.openIntake());
     if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '⌘↵', () => promote(cur));
     if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { ui.goToSession(cur.id); ui.dockView = 'changes'; });
-    if (cur) add('◔', 'Session insights', '', () => { ui.goToSession(cur.id); ui.dockView = 'insights'; });
+    // Opens the one Insights view already drilled into this session.
+    if (cur) add('◔', 'Session insights', '', () => ui.openInsights(cur.id));
     // Was labelled 'Run stack' while calling startSessionServers — the other verb.
     if (cur && cur.worktreePath && cur.feature) add('▶', 'Run stack', '⌘R', () => runStack(cur.feature));
-    add('◔', 'Toggle Insights', '⌘\\', () => ui.toggleUsage());
+    add('◔', 'Insights', '⌘\\', () => ui.toggleUsage());
     if (cur) {
       if (cur.active === false) add('↻', 'Resume current', '', () => activateSession(cur));
       else add('⏻', 'Deactivate current', '', () => deactivateSession(cur));

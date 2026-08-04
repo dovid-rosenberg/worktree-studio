@@ -9,15 +9,14 @@
  *
  * It used to iterate `world.sessions` and bucket by `s.worktree`. That shape cannot
  * express a worktree with no session — there is no object to render — so half the
- * worktrees on disk were invisible in Work and you had to switch to Fleet to see them.
+ * worktrees on disk were simply invisible.
  * The rail now iterates `world.features` and treats the session as decoration on a
- * feature, which is the same unit Fleet always used. Fleet itself survives verbatim as
- * the Overview dock pane; nothing about it was rewritten.
+ * feature.
  *
  * Two behaviours came across with the rows and are easy to drop by accident:
  *
- *   ORDERING. Fleet sorted active-first, then alphabetical, so that "a feature does not
- *   jump around the list the moment its stack starts" (Fleet.svelte). The rail had no
+ *   ORDERING. Active first, then alphabetical, so that a feature does not jump around
+ *   the list the moment its stack starts. The rail had no
  *   ordering at all — Map insertion order — so without `sortFeatures` below, rows
  *   visibly reshuffle every time an agent changes state. Nothing fails loudly; it just
  *   feels broken.
@@ -28,7 +27,6 @@
  *   the grouping the shared-worktree-name convention exists to create.
  */
 
-import { SvelteSet } from 'svelte/reactivity';
 import { world } from '$lib/stores/world.svelte.js';
 import type { Feature, FeatureMember, Session, Worktree } from '../../../../server/types';
 
@@ -54,6 +52,19 @@ export interface RailEntry {
   name: string;
 }
 
+/**
+ * What is selected, as ONE value.
+ *
+ * The three kinds are the three kinds of rail row, so "what is selected" and "what is
+ * highlighted" cannot disagree. `null` is nothing selected — a state the old pair of
+ * fields could also express three different ways.
+ */
+export type Selection =
+  | { kind: 'session'; id: string }
+  | { kind: 'feature'; name: string }
+  | { kind: 'mainserver'; path: string }
+  | null;
+
 const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
 
@@ -63,17 +74,19 @@ export const RAIL_MAX = 560;
 const RAIL_DEFAULT = 320;
 
 /**
- * The app-level views are the two that render with nothing selected. Everything else
- * in DockView is a panel of the selected session.
+ * `usage` (Insights) is the one view that renders with nothing selected — it is about
+ * every session that ever ran. Everything else is a panel of the selected session.
+ *
+ * This used to be an APP_VIEWS array with `includes()` checks at four call sites, which
+ * made sense when Overview was the second entry. Overview is gone; a one-element array is
+ * machinery around a single comparison.
  */
-export type DockView = 'term' | 'changes' | 'logs' | 'insights' | 'usage';
-const APP_VIEWS: DockView[] = ['usage'];
+export type DockView = 'term' | 'changes' | 'logs' | 'usage';
 
 function savedDock(): DockView {
-  try {
-    const v = localStorage.getItem(DOCK_KEY);
-    return APP_VIEWS.includes(v as DockView) ? (v as DockView) : 'term';
-  } catch { return 'term'; }
+  // Only Insights is worth restoring: the panel views belong to a session and reset with
+  // the selection anyway.
+  try { return localStorage.getItem(DOCK_KEY) === 'usage' ? 'usage' : 'term'; } catch { return 'term'; }
 }
 
 function savedRailWidth(): number {
@@ -84,8 +97,8 @@ function savedRailWidth(): number {
 }
 
 /**
- * Active = a live agent or a running dev server. Ported from Fleet.svelte, where it is
- * the sort key; it is the only thing that decides whether a feature sits at the top.
+ * Active = a live agent or a running dev server. The rail's only sort key, and the only
+ * thing that decides whether a feature sits at the top.
  */
 export function featureActive(f: Feature): boolean {
   return (f.members || []).some((m: FeatureMember) => {
@@ -95,7 +108,7 @@ export function featureActive(f: Feature): boolean {
   });
 }
 
-/** Fleet's ordering, verbatim: active first, then alphabetical. Returns a new array. */
+/** Active first, then alphabetical. Returns a new array. */
 export function sortFeatures(list: Feature[]): Feature[] {
   return list.slice().sort(
     (a, b) => (Number(featureActive(b)) - Number(featureActive(a))) || String(a.name).localeCompare(String(b.name)),
@@ -110,20 +123,23 @@ export function liveMembers(f: Feature): LiveMember[] {
 }
 
 class UI {
-  /** Selected session id, or null. */
-  selectedId = $state<string | null>(null);
   /**
-   * Selected feature NAME, set only when the picked feature has no session — there is no
-   * session id to hold in that case, and the dock shows the feature pane instead of a
-   * terminal. Exactly one of these two is ever non-null.
+   * WHAT IS SELECTED — one value, not one field per kind.
+   *
+   * This was two fields (`selectedId` and `selectedFeatureName`) carrying an invariant
+   * that exactly one was non-null, maintained by convention in four methods. Convention
+   * lost: a call site set `selectedId` without clearing `selectedFeatureName`, the dock
+   * tests the feature first, and starting an agent from a sessionless feature left the
+   * feature table on screen while the terminal it had just created was hidden behind it.
+   *
+   * A tagged value cannot express that state at all, which is why the tests for it are
+   * gone rather than expanded. `selectedId` / `selectedFeatureName` survive below as
+   * READ-ONLY projections, so the components that only ask "is this me?" are unchanged.
    */
-  selectedFeatureName = $state<string | null>(null);
+  selection = $state<Selection>(null);
   /** Rail repo filter — '' means all repos. */
   repoFilter = $state('');
-  /**
-   * Which dock panel is showing. 'term' keeps the live terminal mounted; 'overview' is
-   * the old Fleet view, now a pane, and is the one value that renders with no selection.
-   */
+  /** Which dock panel is showing. 'term' keeps the live terminal mounted. */
   dockView = $state<DockView>(savedDock());
   /** Rail width in px — dragged by the splitter, persisted, clamped to [MIN, MAX]. */
   railWidth = $state(savedRailWidth());
@@ -135,10 +151,19 @@ class UI {
    */
   activeTabId = $state('');
   /**
-   * Session ids whose split pane is engaged. A Set (not a boolean) because the split
-   * persists per session across selection changes, exactly as app.js's splitSessions did.
+   * Which session Insights should open drilled into, if any.
+   *
+   * Insights used to be TWO destinations sharing one word and one glyph: a session-scoped
+   * dock tab and a fleet-wide view. They are one now — an overview that drills down — and
+   * this is how a caller (the palette's "Session insights") asks for a particular row
+   * without the view needing a selection it has just been told to clear.
    */
-  splitSessions = new SvelteSet<string>();
+  insightsFocus = $state<string | null>(null);
+
+  /** Selected session id, or null. Read-only — go through select(). */
+  get selectedId(): string | null { return this.selection?.kind === 'session' ? this.selection.id : null; }
+  /** Selected sessionless feature's name, or null. Read-only — go through selectFeature(). */
+  get selectedFeatureName(): string | null { return this.selection?.kind === 'feature' ? this.selection.name : null; }
 
   /** The selected session object, or null. Follows the live `sessions` list. */
   selected = $derived(this.selectedId ? world.session(this.selectedId) : null);
@@ -150,13 +175,28 @@ class UI {
       : null,
   );
 
+  /**
+   * The selected main-checkout dev server, or null.
+   *
+   * These rows used to be the ONLY ones in the rail carrying buttons — an admitted
+   * exception to the rail's own rule — because they could not be selected, so the
+   * ActionBar had nothing to act on. Making them a selection kind is what let their
+   * Open ↗ / Stop join every other verb at the bottom.
+   */
+  selectedMainServer = $derived(
+    this.selection?.kind === 'mainserver'
+      ? (world.repos.flatMap((r) => r.worktrees || [])
+          .find((w) => w.path === (this.selection as { path: string }).path) || null)
+      : null,
+  );
+
   #featureMatches = (f: Feature): boolean => !this.repoFilter
     // A MissingMember is a dangling config reference with no repo, so it can never
     // match a filter — guard on the discriminant rather than casting it away.
     || (f.members || []).some((m) => Boolean(m) && !('missing' in m && m.missing)
       && (m as Worktree).repo === this.repoFilter);
 
-  /** Features after the repo filter, in Fleet's order. Whole features, never split. */
+  /** Features after the repo filter, in rail order. Whole features, never split. */
   visibleFeatures = $derived(sortFeatures(world.features.filter(this.#featureMatches)));
 
   /** Features with at least one dev server up. */
@@ -166,7 +206,7 @@ class UI {
 
   /**
    * Unpromoted sessions — no worktree, so no feature to sit under. Stopped/deactivated
-   * ones linger, sorted after the live ones, as Fleet listed them.
+   * ones linger, sorted after the live ones.
    */
   visibleAgents = $derived(
     world.sessions
@@ -265,25 +305,32 @@ class UI {
    */
   selectionPending = $derived(!!this.selectedId && !this.selected);
 
-  /** True while an app-level view (Overview / Insights) owns the dock. */
-  appView = $derived(APP_VIEWS.includes(this.dockView));
+  /** True while Insights owns the dock — i.e. the view that ignores the selection. */
+  appView = $derived(this.dockView === 'usage');
 
   setDockView(v: DockView): void {
     this.dockView = v;
-    // Only the app-level views are worth persisting: the panel views belong to a
-    // session and reset on selection anyway.
-    try { localStorage.setItem(DOCK_KEY, APP_VIEWS.includes(v) ? v : 'term'); } catch { /* private mode */ }
+    try { localStorage.setItem(DOCK_KEY, v === 'usage' ? 'usage' : 'term'); } catch { /* private mode */ }
   }
 
   /**
-   * Fleet-wide token/cost telemetry. Entering it CLEARS the selection: Insights is about
-   * every session that ever ran, not the one you happen to have open, and leaving a
-   * selection standing left the ActionBar offering Stop stack / Delete feature for
-   * something no longer on screen.
+   * Open Insights, optionally drilled into one session.
+   *
+   * Entering CLEARS the selection: Insights is about every session that ever ran, not the
+   * one you happen to have open, and leaving a selection standing left the ActionBar
+   * offering Stop stack / Delete feature for something no longer on screen.
    */
+  openInsights(sessionId: string | null = null): void {
+    this.insightsFocus = sessionId;
+    this.selection = null;
+    this.setDockView('usage');
+  }
+
   toggleUsage(): void {
-    if (this.dockView !== 'usage') { this.selectedId = null; this.selectedFeatureName = null; }
-    this.setDockView(this.dockView === 'usage' ? 'term' : 'usage');
+    if (this.dockView === 'usage') { this.setDockView('term'); return; }
+    // Seed the drill-down with whatever is open, so opening Insights while looking at a
+    // session lands on that session's breakdown rather than nowhere.
+    this.openInsights(this.selectedId);
   }
 
   setRailWidth(px: number): void {
@@ -291,13 +338,16 @@ class UI {
     try { localStorage.setItem(RAIL_KEY, String(this.railWidth)); } catch { /* private mode */ }
   }
 
-  select(id: string): void {
-    if (this.selectedId === id && !this.selectedFeatureName) return;
-    this.selectedId = id;
-    this.selectedFeatureName = null;
-    // Per-session dock state resets with the selection, as it did in rebuildDock().
+  /** Replace the selection and reset the per-selection dock state, as rebuildDock() did. */
+  #pick(next: Selection): void {
+    this.selection = next;
     this.dockView = 'term';
     this.activeTabId = '';
+  }
+
+  select(id: string): void {
+    if (this.selection?.kind === 'session' && this.selection.id === id) return;
+    this.#pick({ kind: 'session', id });
   }
 
   /**
@@ -306,24 +356,24 @@ class UI {
    */
   selectFeature(f: Feature | null | undefined): void {
     if (f && f.session && f.session.id) { this.select(f.session.id); return; }
-    this.selectedFeatureName = f ? f.name : null;
-    this.selectedId = null;
-    this.dockView = 'term';
-    this.activeTabId = '';
+    this.#pick(f ? { kind: 'feature', name: f.name } : null);
   }
+
+  /** Pick a dev server running from a repo's main checkout. */
+  selectMainServer(path: string): void {
+    if (this.selection?.kind === 'mainserver' && this.selection.path === path) return;
+    this.#pick({ kind: 'mainserver', path });
+  }
+
+  /** Nothing selected. */
+  clearSelection(): void { this.selection = null; }
 
   goToSession(id: string): void {
     this.select(id);
-    // Leaving an app-level view up would hide the session we were just asked to go to.
-    if (APP_VIEWS.includes(this.dockView)) this.setDockView('term');
+    // Leaving Insights up would hide the session we were just asked to go to.
+    if (this.dockView === 'usage') this.setDockView('term');
   }
 
-  splitOn(id: string): boolean { return this.splitSessions.has(id); }
-
-  toggleSplit(id: string): void {
-    if (this.splitSessions.has(id)) this.splitSessions.delete(id);
-    else this.splitSessions.add(id);
-  }
 }
 
 export function labelForSource(s: Pick<Session, 'source' | 'sourceId'>): string {

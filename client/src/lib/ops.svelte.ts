@@ -200,7 +200,7 @@ export async function closeSession(s: Session) {
   if (!ok) return;
   try {
     await api('DELETE', `/api/sessions/${s.id}`);
-    if (ui.selectedId === s.id) ui.selectedId = null;
+    if (ui.selectedId === s.id) ui.clearSelection();
     toast('Session deleted');
   } catch (e) { toast(errMessage(e), true); }
 }
@@ -227,19 +227,17 @@ export async function activateSession(s: Session) {
   catch (e) { toast(errMessage(e), true); }
 }
 
-/* ---------------- dev servers ---------------- */
-
-export async function startSessionServers(s: Session) {
-  try {
-    const r = await api('POST', `/api/sessions/${s.id}/servers/start`, {});
-    toast(r.ok ? 'Workspace servers starting' : 'Some failed to start', !r.ok);
-  } catch (e) { toast(errMessage(e), true); }
-}
-
-export async function stopSessionServers(s: Session) {
-  try { await api('POST', `/api/sessions/${s.id}/servers/stop`, {}); toast('Workspace servers stopped'); }
-  catch (e) { toast(errMessage(e), true); }
-}
+/*
+ * Dev servers are started and stopped by `runStack` / `stopStack` below, and by nothing
+ * else on this side.
+ *
+ * `startSessionServers` / `stopSessionServers` used to sit here, posting to the SESSION
+ * endpoints while the stack verbs posted to the GROUP ones — two routes, two vocabularies
+ * ("workspace servers" vs "stack"), one capability, acting on the same worktrees. The
+ * group route does strictly more: it detects a port conflict with another feature and
+ * offers to stop and switch, where the session route just 409s. So the session pair is
+ * gone from the UI. The server routes remain for SwiftBar and the CLI, which call them.
+ */
 
 export async function openEditor(p: string): Promise<void> {
   try { await api('POST', '/api/open', { path: p }); }

@@ -1,6 +1,6 @@
 <script lang="ts">
   /*
-   * The dock: header, tab strip, the live terminal (plus its split), the DOM panels,
+   * The dock: header, tab strip, the live terminal, the DOM panels,
    * and the server bar.
    *
    * Structural rule, carried straight over from app.js: switching to Changes/Logs/
@@ -13,10 +13,8 @@
   import DockHead from '$lib/components/dock/DockHead.svelte';
   import TabStrip from '$lib/components/dock/TabStrip.svelte';
   import ServerBar from '$lib/components/dock/ServerBar.svelte';
-  import SplitPane from '$lib/components/dock/SplitPane.svelte';
   import LogsPanel from '$lib/components/dock/LogsPanel.svelte';
   import ReviewMount from '$lib/components/dock/ReviewMount.svelte';
-  import InsightsMount from '$lib/components/dock/InsightsMount.svelte';
   import FeaturePane from '$lib/components/dock/FeaturePane.svelte';
   import FleetInsights from '$lib/components/insights/FleetInsights.svelte';
   import { api } from '$lib/api.js';
@@ -33,7 +31,6 @@
    * drawn wide, so it went when the rail became one honest list.)
    */
   const isUsage = $derived(ui.dockView === 'usage');
-  const splitOn = $derived(!!session && ui.splitOn(session.id));
 
   /*
    * `session` is a NEW object on every session-state frame — the store derives the world
@@ -111,19 +108,14 @@
     <TabStrip {session} {changesCount} />
 
     <!-- Hidden, never unmounted: see the note at the top of this file. -->
-    <div class="term-area" class:term-split={splitOn} hidden={!isTerm}>
+    <div class="term-area" hidden={!isTerm}>
       <Terminal {sessionId} active={isTerm} />
-      {#if splitOn}
-        <SplitPane {sessionId} />
-      {/if}
     </div>
 
     {#if ui.dockView === 'changes'}
       <ReviewMount {session} />
     {:else if ui.dockView === 'logs'}
       <LogsPanel {session} />
-    {:else if ui.dockView === 'insights'}
-      <InsightsMount {session} />
     {/if}
 
     <ServerBar {session} />
@@ -139,7 +131,4 @@
   .empty-cta { display:flex; gap:8px; justify-content:center; margin-top:16px; }
 
   .term-area { flex:1; min-height:0; min-width:0; display:flex; flex-direction:column; }
-  /* The 2px gap showing --border is the divider; no extra element to keep aligned. */
-  .term-area.term-split { display:grid; grid-template-columns:1fr 1fr; gap:2px; background:var(--border); }
-  .term-area.term-split > :global(.term-wrap) { min-width:0; }
 </style>

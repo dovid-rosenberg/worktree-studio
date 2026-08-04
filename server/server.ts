@@ -401,32 +401,6 @@ async function main() {
     res.json(await manager.renameTab(req.params.id, b.tab ?? b.index ?? 0, b.title));
   });
 
-  // The split pane is a standalone `-split` session with its own tabs. These operate on
-  // it directly through the mux (tmux is the source of truth for its window list).
-  api.get('/sessions/:id/split/tabs', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
-    res.json({ tabs: await manager.mux.listTabs(`${s.muxName}-split`) });
-  });
-  api.post('/sessions/:id/split/tabs', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    await manager.mux.ensureSplit(s.muxName, { cwd: s.worktreePath || s.repoPath });
-    const r = await manager.mux.newTab(`${s.muxName}-split`, { title: (req.body && req.body.title) || 'shell', cwd: s.worktreePath || s.repoPath });
-    res.json(r);
-  });
-  api.post('/sessions/:id/split/select-tab', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    res.json({ ok: await manager.mux.selectTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
-  });
-  api.post('/sessions/:id/split/close-tab', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    res.json({ ok: await manager.mux.closeTab(`${s.muxName}-split`, (req.body && req.body.index) || 0) });
-  });
-
   api.post('/sessions/:id/close-tab', async (req, res) => {
     const b = req.body || {};
     res.json(await manager.closeTab(req.params.id, b.tab ?? b.index ?? 0));

@@ -59,8 +59,7 @@ export interface TmuxDriver {
   available(): Promise<boolean>;
   hasSession(name: string): Promise<boolean>;
   ensure(name: string, opts?: TmuxLaunchOptions): Promise<TmuxEnsureResult>;
-  attachSpawn(name: string, opts?: { group?: string }): AttachSpec;
-  ensureSplit(name: string, opts?: { cwd?: string }): Promise<void>;
+  attachSpawn(name: string): AttachSpec;
   newTab(name: string, opts?: TmuxNewTabOptions): Promise<TmuxNewTabResult>;
   listTabs(name: string): Promise<TmuxTab[]>;
   capture(name: string, target?: string): Promise<string>;
@@ -160,26 +159,8 @@ const tmux: TmuxDriver = {
   },
 
   // For node-pty: attach an interactive client to the session.
-  //  - split: attach the embedded second pane to the `-split` session — a SEPARATE,
-  //    standalone tmux session (not grouped) with its own window list. It's just
-  //    "another terminal" in the same worktree, with its own independent tabs, so
-  //    nothing mirrors the primary. Call ensureSplit(name, {cwd}) first.
-  //  - default: attach the embedded primary client to the session.
-  attachSpawn(name, { group } = {}) {
-    const base = ['-L', SOCK];
-    if (group === 'split') {
-      return { file: 'tmux', args: [...base, 'attach-session', '-t', `${name}-split`], env: ENV };
-    }
-    return { file: 'tmux', args: [...base, 'attach-session', '-t', name], env: ENV };
-  },
-
-  // Ensure the standalone `-split` session exists with its own shell window. It is
-  // independent of the primary (not grouped): its own tabs, no shared windows. Tab
-  // ops (newTab/selectTab/closeTab/listTabs) target `${name}-split` and just work.
-  async ensureSplit(name, { cwd } = {}) {
-    if (await this.hasSession(`${name}-split`)) return;
-    await T(['new-session', '-d', '-s', `${name}-split`, '-n', 'shell', '-x', '220', '-y', '50', '-c', cwd || HOME]);
-    await T(['set-option', '-t', `${name}-split`, 'remain-on-exit', 'off']);
+  attachSpawn(name) {
+    return { file: 'tmux', args: ['-L', SOCK, 'attach-session', '-t', name], env: ENV };
   },
 
   // `-P -F #{window_id}` returns tmux's STABLE window id (@7), not its index.
@@ -244,7 +225,8 @@ const tmux: TmuxDriver = {
 
   async kill(name) {
     await T(['kill-session', '-t', `=${name}`]);
-    // still killed: sessions created before pop-out was removed may have one alive
+    // Still killed, and deliberately: sessions created before pop-out and the split pane
+    // were removed may have one of these alive, and nothing else would ever reap them.
     await T(['kill-session', '-t', `=${name}-popout`]);
     await T(['kill-session', '-t', `=${name}-split`]);
     return true;

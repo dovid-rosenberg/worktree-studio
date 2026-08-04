@@ -85,17 +85,11 @@ export interface SessionMux {
   closeTab(name: string, id: string | number): Promise<boolean>;
   renameTab(name: string, id: string | number, title: string): Promise<boolean>;
   /**
-   * Create the standalone `<name>-split` session the embedded second pane attaches
-   * to. Not called from this file — server.ts's `/sessions/:id/split/*` routes reach
-   * it through `manager.mux`, which is the only handle on the driver they have.
-   */
-  ensureSplit(name: string, opts?: { cwd?: string }): Promise<void>;
-  /**
    * The command node-pty runs to attach a client. Also not called here: server/term.ts
    * reaches it through `manager.mux` for the same reason, and declares its own
    * two-member `TerminalMux` to say so.
    */
-  attachSpawn(name: string, opts?: { group?: string }): MuxAttachSpec;
+  attachSpawn(name: string): MuxAttachSpec;
 }
 
 /** What `attachSpawn` hands back for node-pty to run. */

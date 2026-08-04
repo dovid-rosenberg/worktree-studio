@@ -17,19 +17,26 @@
    * worktrees — a session's repos are its feature's members — so the pair read as two
    * different capabilities and were one. The stack verbs win because they do strictly
    * more: `/group/start` detects a port conflict with another feature and offers to stop
-   * and switch, where the session route just 409s. The per-session controls still live in
-   * the dock's ServerBar, next to the ports they affect.
+   * and switch, where the session route just 409s. The ServerBar kept a duplicate pair
+   * (`Run all` / `Stop all`) for a while; it is a readout now and these are the only
+   * server verbs on screen.
+   *
+   * THREE selection kinds, one bar: a session, a sessionless feature, and a dev server
+   * running from a repo's main checkout. The last used to carry its own buttons inside
+   * its rail card — the only buttons in the rail — because it could not be selected.
    */
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
     deleteFeature, installDeps, openGroup, openSessionRepos, pending, prFeature, promote,
-    renameSession, restartStack, runStack, startFeatureSession, stopStack,
+    renameSession, restartStack, runStack, startFeatureSession, stopMainServer, stopStack,
   } from '$lib/ops.svelte.js';
 
   const session = $derived(ui.selected);
   const feature = $derived(ui.selectedFeature);
+  /** A dev server running from a repo's main checkout — the third kind of rail row. */
+  const mainServer = $derived(ui.selectedMainServer);
 
   /** The feature a selected SESSION belongs to, so stack verbs work from either side. */
   const sessionFeature = $derived(
@@ -47,13 +54,15 @@
   const webApps = $derived(webAppsFor(ms));
   const isPending = $derived(!!target && pending.has(target.name));
 
-  const label = $derived(session ? session.title : (feature ? feature.name : ''));
-  const sub = $derived(
-    session
-      ? `${session.repoName}${session.branch ? ` · ${session.branch}` : ''}`
-      : (feature ? `${ms.length} repo${ms.length === 1 ? '' : 's'} · no agent` : ''),
-  );
-
+  /*
+   * No identity block here.
+   *
+   * The bar used to open with the selection's name, repo and branch — which DockHead
+   * already shows for a session, and FeaturePane's own heading shows for a feature. Three
+   * readouts of one selection (rail card, dock header, this) stacked down the screen is
+   * what made every glance cost a second look. The bar is buttons now: the top says WHAT
+   * you are looking at, the bottom DOES something to it.
+   */
   let busy = $state(false);
   /** @param {() => Promise<any>} fn */
   async function guard(fn: () => Promise<unknown>) {
@@ -62,16 +71,22 @@
   }
 </script>
 
-<div class="actionbar" class:idle={!session && !feature}>
-  {#if !session && !feature}
-    <span class="hint">Select a feature or agent to act on it.</span>
+<div class="actionbar" class:idle={!session && !feature && !mainServer}>
+  {#if !session && !feature && !mainServer}
+    <span class="hint">Select a feature, session or server to act on it.</span>
+  {:else if mainServer}
+    <!-- A main-checkout server has no feature and no session: two verbs, and they used
+         to be the only buttons in the rail. -->
+    <span class="grow"></span>
+    {#if (mainServer.ports || []).length}
+      <button class="btn sm" onclick={() => openApp(mainServer.ports[0])}>Open {mainServer.repo} ↗</button>
+    {/if}
+    <button
+      class="btn sm ghost dangertext"
+      title="Stop the dev server running in {mainServer.repo}'s main checkout"
+      onclick={() => stopMainServer(mainServer)}
+    >Stop server</button>
   {:else}
-    <span class="who">
-      <span class="dot {session ? session.state : (anyRunning ? 'done' : 'idle')}"></span>
-      <span class="nm">{label}</span>
-      <span class="sb">{sub}</span>
-    </span>
-
     <span class="grow"></span>
 
     {#if isPending}
@@ -156,9 +171,6 @@
   .actionbar.idle { color: var(--faint); }
   .hint { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 
-  .who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 46%; }
-  .who .nm { font-weight: 620; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .who .sb { font-family: var(--mono); font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .grow { flex: 1; }
   .dangertext { color: #e5484d; }
 </style>

@@ -17,7 +17,6 @@ import type { Feature, Session } from '../../../../../server/types';
  * real daemon.
  */
 vi.mock('$lib/components/Terminal.svelte', () => ({ default: (() => {}) as never }));
-vi.mock('$lib/components/dock/SplitPane.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/components/dock/ReviewMount.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/components/dock/InsightsMount.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/components/dock/LogsPanel.svelte', () => ({ default: (() => {}) as never }));
@@ -50,8 +49,7 @@ function give(features: Feature[] = [], sessions: Session[] = []) {
 
 beforeEach(() => {
   ui.dockView = 'term';
-  ui.selectedId = null;
-  ui.selectedFeatureName = null;
+  ui.clearSelection();
   ui.repoFilter = '';
   give();
 });
@@ -69,7 +67,7 @@ describe('Dock routing', () => {
     // Selection happens when the create call returns; the session arrives with the next
     // SSE frame. Calling that window "no session selected" is what made starting an
     // agent look like a no-op and sent people clicking the rail to fix it.
-    ui.selectedId = 'not-here-yet';
+    ui.select('not-here-yet');
     render(Dock);
     expect(screen.getByText('Starting the session…')).toBeInTheDocument();
     expect(screen.queryByText('No session selected')).not.toBeInTheDocument();
@@ -77,14 +75,14 @@ describe('Dock routing', () => {
 
   it('shows the feature pane for a feature with no agent', () => {
     give([feature()]);
-    ui.selectedFeatureName = 'bare';
+    ui.selectFeature({ name: 'bare' } as never);
     render(Dock);
     expect(screen.getByRole('heading', { name: 'bare' })).toBeInTheDocument();
   });
 
   it('shows the session surface once the session lands', () => {
     give([], [session()]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     const { container } = render(Dock);
     expect(container.querySelector('.dock-head')).toBeTruthy();
     expect(container.querySelector('.tabstrip')).toBeTruthy();
@@ -93,28 +91,34 @@ describe('Dock routing', () => {
 
   it('lets Insights win over any selection — it is about the fleet, not the row', () => {
     give([], [session()]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     ui.dockView = 'usage';
     const { container } = render(Dock);
     // The session surface must not be underneath it.
     expect(container.querySelector('.dock-head')).toBeNull();
   });
 
-  it('prefers the feature branch over the session branch — the precedence that bit', () => {
-    // If both fields are ever set, the feature wins. That is why selecting a session
-    // MUST clear selectedFeatureName, and why ui.select() exists rather than a bare
-    // assignment. Pinning the precedence makes the invariant's importance explicit.
+  /*
+   * This used to pin a PRECEDENCE: with both selection fields set, the feature branch
+   * won — which is why a call site that set `selectedId` without clearing
+   * `selectedFeatureName` left the feature table on screen over a live terminal.
+   *
+   * `ui.selection` is one tagged value now, so "both set" cannot be written down. The
+   * precedence has nothing left to arbitrate; what is worth pinning is that selecting a
+   * session after a feature genuinely replaces it.
+   */
+  it('selecting a session replaces a feature selection outright', () => {
     give([feature()], [session()]);
-    ui.selectedFeatureName = 'bare';
-    ui.selectedId = 's1';
+    ui.selectFeature({ name: 'bare' } as never);
+    ui.select('s1');
     const { container } = render(Dock);
-    expect(screen.getByRole('heading', { name: 'bare' })).toBeInTheDocument();
-    expect(container.querySelector('.dock-head')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'bare' })).toBeNull();
+    expect(container.querySelector('.dock-head')).not.toBeNull();
   });
 
   it('keeps the server bar with the session, where the ports are', () => {
     give([], [session()]);
-    ui.selectedId = 's1';
+    ui.select('s1');
     const { container } = render(Dock);
     expect(container.querySelector('.serverbar')).toBeTruthy();
   });

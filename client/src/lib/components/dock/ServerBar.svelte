@@ -2,7 +2,13 @@
   import type { CiRepo, Session } from '../../../../../server/types';
   /*
    * The bar under the dock: the whole shared workspace (every repo this session owns),
-   * its dev-server ports, the frontend "Open ↗" buttons, run/stop, and the PR/CI pills.
+   * its dev-server ports, and the PR/CI pills.
+   *
+   * A READOUT, not a control surface. It used to carry `Run all` / `Run rest` / `Stop all`
+   * and an `Open <repo> ↗` per frontend — the same worktrees the ActionBar's `Run stack` /
+   * `Stop stack` act on, by a different route (the session endpoints rather than the group
+   * ones), so one capability wore two sets of words and could disagree with itself. The
+   * verbs live at the bottom now; this says what is true.
    *
    * CI is PUSHED, not polled: the daemon owns when to look (server/ci.js debounces,
    * gates on a live subscriber, and only emits when the snapshot changed) and sends a
@@ -11,19 +17,15 @@
    * they are just derived state.
    */
   import { activatable } from '$lib/actions/activatable.js';
-  import { world, webAppsFor, openApp } from '$lib/stores/world.svelte.js';
+  import { world } from '$lib/stores/world.svelte.js';
   import { ui } from '$lib/stores/ui.svelte.js';
-  import { startSessionServers, stopSessionServers } from '$lib/ops.svelte.js';
 
   let { session }: { session: Session } = $props();
 
   const sessionId = $derived(session.id);
   const promoted = $derived(!!session.worktreePath);
   const reps = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
-  const anyRunning = $derived(reps.some((r) => r.running));
-  const anyStopped = $derived(reps.some((r) => r.canStart && !r.running));
   const configured = $derived(reps.some((r) => r.canStart));
-  const webApps = $derived(webAppsFor(reps));
 
   // Keyed by session id, so the pills follow the selection with no effect and no timer:
   // a session the feed knows nothing about yet simply has none, and a merged or closed
@@ -31,9 +33,6 @@
   const ciRepos = $derived(
     ((world.ci || {})[sessionId] || []).filter((r) => r && r.hasPR),
   );
-
-  let busyStart = $state(false);
-  let busyStop = $state(false);
 
   /** One repo's check summary, in the compact form the bar has room for. */
   function checks(r: CiRepo) {
@@ -78,33 +77,11 @@
       </span>
     {/each}
 
-    <span class="spacer"></span>
-
-    {#each webApps as web (web.repo)}
-      <button class="btn sm primary" title="Open the frontend — http://localhost:{web.port}" onclick={() => openApp(web.port)}>
-        Open {web.repo} ↗
-      </button>
-    {/each}
-    {#if anyStopped}
-      <button
-        class="btn sm primary"
-        disabled={busyStart}
-        onclick={async () => { busyStart = true; try { await startSessionServers(session); } finally { busyStart = false; } }}
-      >{anyRunning ? 'Run rest' : 'Run all'}</button>
-    {/if}
-    {#if anyRunning}
-      <button
-        class="btn sm danger"
-        disabled={busyStop}
-        onclick={async () => { busyStop = true; try { await stopSessionServers(session); } finally { busyStop = false; } }}
-      >Stop all</button>
-    {/if}
   {/if}
 </div>
 
 <style>
   .serverbar { display:flex; align-items:center; gap:10px; row-gap:8px; flex-wrap:wrap; padding:8px 16px; border-top:1px solid var(--border); background:var(--panel); font-family:var(--mono); font-size:11.5px; color:var(--muted); flex:none; }
-  .serverbar .spacer { flex:1; }
   .portchip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:6px; padding:2px 8px; }
   .cistat { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border); border-radius:6px; padding:2px 9px; cursor:pointer; color:var(--ink); }
   .cistat:hover { border-color:var(--brand); }

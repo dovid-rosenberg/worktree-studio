@@ -34,8 +34,7 @@ const textarea = () => {
 
 beforeEach(() => {
   document.body.innerHTML = '';
-  ui.selectedId = null;
-  ui.selectedFeatureName = null;
+  ui.clearSelection();
   while (overlays.any) overlays.escape();
 });
 
