@@ -13,8 +13,8 @@ import type { Feature, Session } from '../../../../server/types';
  */
 const ops = vi.hoisted(() => Object.fromEntries([
   'activateSession', 'addRepoToSession', 'closeFeature', 'closeSession', 'deactivateSession',
-  'deleteFeature', 'openEditor', 'openGroup', 'prFeature', 'promote', 'renameSession',
-  'restartStack', 'runStack', 'startFeatureSession', 'stopStack',
+  'deleteFeature', 'installDeps', 'openEditor', 'openGroup', 'openSessionRepos', 'prFeature',
+  'promote', 'renameSession', 'restartStack', 'runStack', 'startFeatureSession', 'stopStack',
 ].map((k) => [k, vi.fn()])));
 vi.mock('$lib/ops.svelte.js', () => ({ ...ops, pending: new Set() }));
 
@@ -30,9 +30,18 @@ const member = (repo: string, over: Record<string, unknown> = {}) => ({
 const feature = (over: Record<string, unknown> = {}): Feature =>
   ({ name: 'token-race-fix', auto: true, members: [member('accept-blue')], session: null, ...over } as unknown as Feature);
 
+/** One entry of a session's `repos` — the worktrees the agent can actually write to. */
+const sessionRepo = (repo: string, over: Record<string, unknown> = {}) => ({
+  repo, repoPath: `/${repo}`, worktree: 'wt', worktreePath: `/${repo}/wt`, branch: 'fix/x', ...over,
+});
+
+// `repos` is always present on the wire (server/types.ts declares it required), so the
+// fixture carries it: the bar reads it to decide how many worktrees "Open in editor"
+// has to open, and a fixture without it tests a session shape the server never sends.
 const session = (over: Record<string, unknown> = {}): Session =>
   ({ id: 's1', title: 'token-race-fix', state: 'working', repoName: 'accept-blue',
-     worktreePath: '/wt', branch: 'fix/x', feature: 'token-race-fix', active: true, ...over } as unknown as Session);
+     worktreePath: '/wt', branch: 'fix/x', feature: 'token-race-fix', active: true,
+     repos: [sessionRepo('accept-blue', { primary: true })], ...over } as unknown as Session);
 
 function give(features: Feature[], sessions: Session[]) {
   world.topology = { features, groups: [], repos: [], webRepos: [] } as never;
@@ -77,6 +86,30 @@ describe('ActionBar', () => {
     render(ActionBar);
     expect(screen.getByText(/Promote to worktree/)).toBeInTheDocument();
     expect(screen.queryByText('Open in editor')).not.toBeInTheDocument();
+  });
+
+  /*
+   * The bug: the button called `openEditor(session.worktreePath)` — the PRIMARY worktree
+   * alone — so a BE+FE feature opened the BE and silently left the FE behind. A feature
+   * is several repos by definition, which makes "open one of them" the wrong default.
+   */
+  it('opens every repo the session spans, not just the primary one', async () => {
+    const s = session({
+      repos: [sessionRepo('accept-blue', { primary: true }), sessionRepo('ab-iso-fe')],
+    });
+    give([], [s]);
+    ui.selectedId = 's1';
+    render(ActionBar);
+    // The count is on the button, so a two-repo feature says so before it is clicked.
+    screen.getByText(/Open in editor \(2\)/).click();
+    expect(ops.openSessionRepos).toHaveBeenCalledWith(s);
+  });
+
+  it('does not count-label a single-repo session', () => {
+    give([], [session()]);
+    ui.selectedId = 's1';
+    render(ActionBar);
+    expect(screen.getByText('Open in editor')).toBeInTheDocument();
   });
 
   it('offers Resume for a deactivated session and Deactivate for a live one', () => {

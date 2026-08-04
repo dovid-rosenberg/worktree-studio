@@ -246,6 +246,29 @@ export async function openEditor(p: string): Promise<void> {
   catch (e) { toast(errMessage(e), true); }
 }
 
+/**
+ * Open every worktree this session spans, not just its primary one.
+ *
+ * A feature is several repos, and a session started for it carries one `repos` entry per
+ * repo — but the button called `openEditor(session.worktreePath)`, which is the PRIMARY
+ * worktree alone. On a BE+FE feature that opened the BE and silently left the FE behind.
+ *
+ * Driven from `session.repos` rather than the feature's members: the two can drift (a
+ * worktree made with a plain `wt` joins the feature but not the session), and the repos
+ * the agent can actually write to are the honest answer to "show me what I'm working on".
+ */
+export async function openSessionRepos(s: Session): Promise<void> {
+  const paths = s.repos.map((r) => r.worktreePath).filter((p): p is string => !!p);
+  // A session with no promoted repo still has its own worktreePath; nothing to open
+  // beyond that, and nothing at all before promote.
+  if (!paths.length && s.worktreePath) paths.push(s.worktreePath);
+  if (!paths.length) return;
+  try {
+    const r = await api('POST', '/api/open', { paths });
+    if (r.opened > 1) toast(`Opened ${r.opened} repos`);
+  } catch (e) { toast(errMessage(e), true); }
+}
+
 /* ---------------- features / fleet ---------------- */
 
 /**
@@ -286,12 +309,33 @@ export function startFeatureSession(f: Feature) {
   });
 }
 
-// Summarize a /group/start answer. `ok` is the server's verdict (false unless every
-// member came up), so the toast never reports a stack where nothing started as a
-// success — which is what "started 0/3" used to look like on the stop-and-switch path.
-function startResult(verb: string, r: { started: number; total: number; failures?: unknown[] }): string {
+/**
+ * Summarize a /group/start (or /group/restart) answer.
+ *
+ * `ok` is the server's verdict — false unless every member that should be up is up — so
+ * the toast never reports a stack where nothing started as a success, which is what
+ * "started 0/3" used to look like on the stop-and-switch path.
+ *
+ * A SKIPPED member has to be named, not just counted. The server used to drop members it
+ * could not launch before it counted anything, so a two-repo feature whose BE had no
+ * node_modules said "Started 1/1" — a number that is both true and useless, because the
+ * repo that never ran appeared nowhere. The reason is the actionable half: "dependencies
+ * not installed" points straight at the Install button.
+ */
+function startResult(
+  verb: string,
+  r: { started: number; total: number; failures?: unknown[]; skipped?: { repo: string; reason: string }[] },
+): string {
   const failed = (r.failures || []).length;
-  return `${verb} ${r.started}/${r.total}${failed ? ` (${failed} failed)` : ''}`;
+  const skipped = r.skipped || [];
+  const head = `${verb} ${r.started}/${r.total}${failed ? ` (${failed} failed)` : ''}`;
+  if (!skipped.length) return head;
+  // One skipped member names its reason; several would make the toast a paragraph, so
+  // they are listed by repo with the shared count.
+  const detail = skipped.length === 1
+    ? `${skipped[0].repo} — ${skipped[0].reason}`
+    : `${skipped.map((s) => s.repo).join(', ')} — see the rail for why`;
+  return `${head}. Skipped ${detail}`;
 }
 
 export function runStack(name: string) {
@@ -324,7 +368,9 @@ export function stopStack(name: string) {
 
 export function restartStack(name: string) {
   return pending.run(name, async () => {
-    try { await api('POST', '/api/group/restart', { group: name }); toast(`Restarting ${name}`); }
+    // "Restarting …" was fire-and-forget optimism: the route now returns a real verdict
+    // (and what it skipped), so report that instead of announcing an intention.
+    try { const r = await api('POST', '/api/group/restart', { group: name }); toast(startResult('Restarted', r), !r.ok); }
     catch (e) { toast(errMessage(e), true); }
   });
 }
