@@ -171,6 +171,22 @@
     try { f.fit(); } catch { /* not laid out yet — the observer refits */ }
 
     /*
+     * Refit once the font metrics have settled.
+     *
+     * The first fit runs against whatever font is resolved at that instant. If the real
+     * monospace face loads afterwards the cell height shifts, and the row count chosen
+     * for the old metrics no longer matches the box.
+     *
+     * Nothing else would catch it: the ResizeObserver fires on SIZE changes, and the
+     * container does not change size — only the contents of a cell do. (This is
+     * insurance; the row overflow that prompted it was the padding bug, see the CSS.)
+     */
+    document.fonts?.ready?.then(() => {
+      if (host !== el) return; // remounted while the fonts loaded
+      try { f.fit(); sendResize(); } catch { /* disposed mid-flight */ }
+    }).catch(() => { /* no font loading API, or it rejected — the fit above stands */ });
+
+    /*
      * Shift+Enter has to be spelled differently from Enter, or it does not exist.
      *
      * xterm has no binding for it: both emit a bare CR, so an app on the other end of
@@ -347,6 +363,28 @@
    * height; the geometry was always able to do it. Clipping here is what makes the
    * terminal end where its box ends, whatever the remainder happens to be.
    */
-  .term-wrap { flex:1; min-height:0; min-width:0; overflow:hidden; background:var(--term-bg); padding:8px 10px; }
-  .term-wrap :global(.xterm) { height:100%; }
+  /*
+   * THE PADDING LIVES ON .xterm, NOT ON .term-wrap. This is not cosmetic.
+   *
+   * FitAddon computes its row count as:
+   *
+   *     available = getComputedStyle(PARENT).height − padding of the XTERM ELEMENT
+   *     rows      = floor(available / cellHeight)
+   *
+   * It reads the height off the parent and the padding off the child. With
+   * `box-sizing: border-box` (set globally in app.css) the parent's computed height
+   * INCLUDES its own padding — so padding on the parent is invisible to that formula and
+   * gets counted as usable space. Measured: parent 691.5px, real content box 676px,
+   * FitAddon believed 691. It laid out one row too many, and that row hung 13px past the
+   * bottom, over the action bar.
+   *
+   * Moving the padding onto .xterm makes the two halves of the formula agree, and
+   * `floor()` then does what it was always supposed to: the terminal ends exactly where
+   * its box ends.
+   *
+   * overflow:hidden stays as a guard, not as the fix — so any future disagreement clips a
+   * pixel instead of painting over the bar.
+   */
+  .term-wrap { flex:1; min-height:0; min-width:0; overflow:hidden; background:var(--term-bg); }
+  .term-wrap :global(.xterm) { height:100%; padding:8px 10px; }
 </style>

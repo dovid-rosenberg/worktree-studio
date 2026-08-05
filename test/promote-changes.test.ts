@@ -268,3 +268,55 @@ test('commits and uncommitted changes can come along together', async (t) => {
   );
   assert.ok(existsSync(join(wt, 'new.txt')));
 });
+
+/*
+ * A commit that is ALREADY UPSTREAM under a different sha is not stranded.
+ *
+ * The bug: `_aheadOfBase` asked `origin/HEAD..HEAD`, which compares by sha. A rebased or
+ * squashed merge keeps the change and changes the sha, so a branch whose work was fully
+ * merged still reported a commit "left behind", and promote offered to COPY something
+ * already in the base. Seen on a real repo: the offered commit's patch-id was identical
+ * to the base tip's.
+ *
+ * `--cherry-pick --right-only` with three dots compares patch-ids, which is the question
+ * actually being asked — is this CHANGE missing?
+ */
+const strandedByPatch = async (dir: string) => {
+  const r = await run('git', [
+    '-C',
+    dir,
+    'log',
+    '--oneline',
+    '--no-decorate',
+    '--cherry-pick',
+    '--right-only',
+    'origin/main...HEAD',
+  ]);
+  return r.stdout.split('\n').filter(Boolean);
+};
+
+test('a commit already merged upstream under another sha is NOT reported as stranded', async (t) => {
+  const { dir, g, cleanup } = await repoWithOrigin();
+  t.after(cleanup);
+
+  // The same change lands twice: once locally, once upstream with a different sha —
+  // exactly what a rebase-merge or squash-merge produces.
+  await writeFile(join(dir, 'feature.txt'), 'the change\n');
+  await g('add', '.');
+  await g('commit', '-qm', 'add the feature');
+
+  // Rebuild it on the base as a separate commit, and make that the remote's tip.
+  await g('checkout', '-q', '-b', 'upstream-copy', 'origin/main');
+  await writeFile(join(dir, 'feature.txt'), 'the change\n');
+  await g('add', '.');
+  await g('commit', '-qm', 'add the feature (merged)');
+  await g('push', '-q', 'origin', 'upstream-copy:main');
+  await g('checkout', '-q', 'main');
+  await run('git', ['-C', dir, 'fetch', '-q', 'origin']);
+
+  const bySha = await aheadOf(dir);
+  const byPatch = await strandedByPatch(dir);
+
+  assert.equal(bySha.length, 1, 'by sha it still looks stranded — this is what misled promote');
+  assert.deepEqual(byPatch, [], 'by patch-id nothing is stranded, which is the truth');
+});

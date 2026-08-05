@@ -9,6 +9,7 @@ import * as status from './status.ts';
 import * as worktree from './worktree.ts';
 import * as layoutMod from './layout.ts';
 import { linkSessionMemory } from './claude-memory.ts';
+import { describe as describeCheckout, prepareForSession } from './checkout.ts';
 import { createIdentity } from './identity.ts';
 import type { HookPayload } from './status.ts';
 import type { WorktreeCreateResult } from './worktree.ts';
@@ -523,6 +524,25 @@ class SessionManager extends EventEmitter {
   }
 
   async create({ seed, repoPath, repoName, additionalRepos }: SessionCreateArgs): Promise<Session> {
+    /*
+     * Start from the repo's default branch, at its latest commit.
+     *
+     * The main checkout is whatever you last left it on, and a new session inherits that:
+     * a half-finished branch, someone else's fix, scratch files. The agent reads it as
+     * its starting state, and promote then offers to carry it along.
+     *
+     * NEVER destructive — see server/checkout.ts. It fetches (read-only), switches only a
+     * checkout with no modified tracked files, and fast-forwards only. Anything it
+     * declines to do is reported on the session rather than silently skipped.
+     *
+     * Skipped when another unpromoted session already lives in this checkout: they share
+     * one working copy, and moving it under a running agent is not ours to do.
+     */
+    const shared = this.all().some(
+      (s) => s.active && !s.worktreePath && realpath(s.repoPath) === realpath(repoPath),
+    );
+    const checkout = await prepareForSession(repoPath, { switchBranch: !shared });
+
     const id = makeId('s_');
     const title = seed.title || 'New session';
     const name = slug(title);
@@ -552,7 +572,9 @@ class SessionManager extends EventEmitter {
       muxName,
       claudeSessionId: null,
       state: 'idle',
-      activity: 'starting…',
+      // Say which branch it started on when that is not simply "the default, up to date" —
+      // a session that began somewhere unexpected should not be silent about it.
+      activity: describeCheckout(checkout) || 'starting…',
       tabs: [{ id: PENDING_TAB, title: 'claude' }],
       seed: collapse(seedPrompt(seed)), // single-line seed, delivered as claude's launch arg
       active: true,
@@ -714,7 +736,28 @@ class SessionManager extends EventEmitter {
       ]);
       const base = sym.stdout.trim();
       if (!base) return empty;
-      const log = await run('git', ['-C', repoPath, 'log', '--oneline', '--no-decorate', `${base}..HEAD`]);
+      /*
+       * `--cherry-pick --right-only` with THREE dots, not a plain `base..HEAD`.
+       *
+       * Two dots asks "which commits are not in the base by SHA", and a rebased or
+       * squashed merge changes the sha while keeping the change — so a branch whose work
+       * is already fully merged still reported one commit "stranded", and promote offered
+       * to copy something that was already upstream. `--cherry-pick` compares patch-ids,
+       * which is the question actually being asked: is this CHANGE missing?
+       *
+       * Proven on a real repo: `origin/develop..HEAD` listed one commit whose patch-id
+       * was identical to develop's own tip.
+       */
+      const log = await run('git', [
+        '-C',
+        repoPath,
+        'log',
+        '--oneline',
+        '--no-decorate',
+        '--cherry-pick',
+        '--right-only',
+        `${base}...HEAD`,
+      ]);
       if (log.code !== 0) return empty;
       return { branch, base, commits: log.stdout.split('\n').filter(Boolean) };
     } catch {
