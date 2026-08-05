@@ -20,6 +20,7 @@
   import Toasts from '$lib/components/Toasts.svelte';
   import DialogHost from '$lib/components/DialogHost.svelte';
   import Palette from '$lib/components/Palette.svelte';
+  import SearchOverlay from '$lib/components/SearchOverlay.svelte';
   import IntakeModal from '$lib/components/IntakeModal.svelte';
   import SettingsModal from '$lib/components/SettingsModal.svelte';
 
@@ -49,6 +50,7 @@
 <Toasts />
 {#if overlays.intake}<IntakeModal />{/if}
 {#if overlays.settings}<SettingsModal />{/if}
+{#if overlays.search}<SearchOverlay />{/if}
 {#if overlays.palette}<Palette />{/if}
 <!-- Last, so a dialog opened from any of the above paints over it. -->
 <DialogHost />

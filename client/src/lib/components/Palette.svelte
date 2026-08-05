@@ -48,6 +48,7 @@
       cmds.push({ key: `c:${title}`, glyph, title, sub, run });
 
     add('＋', 'New session', '⌘N', () => overlays.openIntake());
+    add('⌕', 'Search transcripts', '⌘⇧F', () => overlays.openSearch());
     if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '⌘↵', () => promote(cur));
     if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { ui.goToSession(cur.id); ui.dockView = 'changes'; });
     // Opens the one Insights view already drilled into this session.

@@ -42,6 +42,7 @@ import { runStack } from '$lib/ops.svelte.js';
 
 const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
+  ['⌘⇧F', 'Search every transcript'],
   ['⌘N', 'New session'],
   ['⌘\\', 'Toggle Insights'],
   ['⌥1–9', 'Jump to the Nth rail row'],
@@ -73,6 +74,22 @@ export function handleShortcut(e: KeyboardEvent): void {
   if (mod && (e.key === 'k' || e.key === 'K')) {
     e.preventDefault();
     overlays.togglePalette();
+    return;
+  }
+
+  /*
+   * ⌘⇧F — search every transcript, from anywhere.
+   *
+   * Checked BEFORE the `overlays.any` gate further down, because it has to work while
+   * the palette is open: "Search transcripts" is one of the palette's commands, so the
+   * two are the same thought and the key should not stop working half way through it.
+   *
+   * ⇧ is what keeps it usable: a bare ⌘F is the browser's find-in-page, and ⌘⇧F is what
+   * editors already use for search-across-everything.
+   */
+  if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault();
+    overlays.openSearch();
     return;
   }
 
