@@ -444,13 +444,21 @@ test('tmux sendText sends the body literally (-l) then submits with a separate E
   // tokens like `Enter`/`;` verbatim (an interpreted send would fire real keys).
   await tmux.ensure(name, { cwd: os.tmpdir(), cmd: `cat > ${shq(outFile)}` });
   try {
-    // wait for cat to become the pane's foreground program
-    for (let i = 0; i < 50 && (await tmux.paneCommand(name)) !== 'cat'; i++)
+    /*
+     * Wait for `cat` to become the pane's foreground program.
+     *
+     * 15s, not 5s. This drives a REAL tmux, and the budget has to cover the worst case
+     * rather than the typical one: it passed alone and failed inside the full suite,
+     * where several hundred other tests are competing for the machine. A poll loop exits
+     * as soon as the condition holds, so a longer ceiling costs a healthy run nothing and
+     * only buys headroom for a loaded one.
+     */
+    for (let i = 0; i < 150 && (await tmux.paneCommand(name)) !== 'cat'; i++)
       await new Promise((r) => setTimeout(r, 100));
     const literal = 'echo hi; Enter Space done';
     await tmux.sendText(name, literal);
     let got = '';
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 150; i++) {
       got = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
       if (got.includes('done')) break;
       await new Promise((r) => setTimeout(r, 100));
