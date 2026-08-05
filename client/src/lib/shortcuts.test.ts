@@ -122,3 +122,42 @@ describe('⌥1–9 for the rail', () => {
     expect(e.defaultPrevented).toBe(false);
   });
 });
+
+/*
+ * Search has been buried twice — a section of the session-scoped Insights tab, then a
+ * drill-down inside fleet Insights. Both times it was something you could only reach
+ * after arriving somewhere else for a different reason. These pin that it is reachable
+ * on its own.
+ */
+describe('⌘⇧F opens transcript search', () => {
+  it('opens search from anywhere', () => {
+    const e = press('f', { metaKey: true, shiftKey: true });
+    expect(e.defaultPrevented).toBe(true);
+    expect(overlays.search).toBe(true);
+    overlays.closeSearch();
+  });
+
+  it('still works with the palette open — they are the same thought', () => {
+    overlays.togglePalette();
+    expect(overlays.any).toBe(true);
+    press('f', { metaKey: true, shiftKey: true });
+    expect(overlays.search).toBe(true);
+    // Opening search closes the palette rather than stacking two overlays.
+    expect(overlays.palette).toBe(false);
+    overlays.closeSearch();
+  });
+
+  it('does not fire without shift — a bare ⌘F is the browser find-in-page', () => {
+    press('f', { metaKey: true });
+    expect(overlays.search).toBe(false);
+  });
+
+  it('Escape closes it, and closes it BEFORE settings', () => {
+    overlays.openSearch();
+    overlays.openSettings();
+    press('Escape');
+    expect(overlays.search).toBe(false);
+    expect(overlays.settings).toBe(true);
+    overlays.closeSettings();
+  });
+});

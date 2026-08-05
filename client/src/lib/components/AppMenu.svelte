@@ -71,6 +71,9 @@
       <button role="menuitem" onclick={() => pick(() => overlays.togglePalette())}>
         <span class="g">⌘K</span> Command palette
       </button>
+      <button role="menuitem" onclick={() => pick(() => overlays.openSearch())}>
+        <span class="g">⌘⇧F</span> Search transcripts
+      </button>
       <button role="menuitem" onclick={() => pick(showShortcuts)}>
         <span class="g">?</span> Keyboard shortcuts
       </button>

@@ -12,13 +12,13 @@
    * to 'term' — so inspecting the second-biggest spender threw you out of the view you
    * were reading.
    *
-   * `SearchPanel` comes with the drill-down. It is app-level transcript search that was
-   * only ever reachable through the session tab, which is why it locks its own scope
-   * picker: it was buried inside the thing it was scoped to. It appears when a session is
-   * picked, which is the moment its scope means anything.
+   * Search does NOT live here. It was a section of the old session-scoped Insights tab,
+   * and moving it into this drill-down buried it one level out instead of fixing it —
+   * still something you reach only after arriving somewhere else for a different reason.
+   * It is its own overlay now: ⌘⇧F, or "Search transcripts" in the palette and the ⋮ menu.
+   * This view is cost and tokens, which is one subject.
    */
   import UsagePanel from '$lib/components/insights/UsagePanel.svelte';
-  import SearchPanel from '$lib/components/insights/SearchPanel.svelte';
   import { ui } from '$lib/stores/ui.svelte.js';
 
   /*
@@ -33,24 +33,9 @@
 
 <div class="fleetinsights">
   <UsagePanel sessionId={picked} onselect={(id: string) => (picked = id)} />
-
-  {#if picked}
-    <!-- Keyed so switching rows starts the panel over rather than leaving the previous
-         session's query and results on screen. -->
-    {#key picked}
-      <div class="search-block">
-        <!-- autofocus={false}: this appeared because a row was clicked, not because a
-             modal opened over the user — stealing the caret would fight that click. -->
-        <SearchPanel sessionId={picked} autofocus={false} />
-      </div>
-    {/key}
-  {/if}
 </div>
 
 <style>
-  /* One scroller for the whole view. The overview is short and the search results are the
-     part that grows; nesting scrollers produces the classic "scrolled the wrong pane"
-     problem. */
+  /* One scroller for the whole view. */
   .fleetinsights { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); }
-  .search-block { border-top: 1px solid var(--border); display: flex; flex-direction: column; }
 </style>
