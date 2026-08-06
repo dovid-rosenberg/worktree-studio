@@ -252,5 +252,137 @@ test('a tab tmux does not know yet falls back to the live window name', async ()
   const s = seed(mgr, [{ id: 'pending', title: 'claude' }]);
 
   await (mgr as any)._syncTabs(s);
-  assert.deepEqual(s.tabs, [{ id: '@7', title: 'claude' }], 'the placeholder is replaced by the real id');
+  assert.deepEqual(
+    s.tabs,
+    [{ id: '@7', title: 'claude', active: true }],
+    "the placeholder is replaced by the real id, and tmux's selected flag comes with it",
+  );
+});
+
+/*
+ * The strip must follow the MULTIPLEXER, not a private idea of the selected tab.
+ *
+ * tmux's `new-window` selects what it creates, so any path that adds a tab — the ＋
+ * button, a run configuration, a command typed into tmux — changes which window is
+ * current without the client asking. `listTabs` reports that, and `_syncTabs` used to
+ * discard it, so the strip highlighted the tab you were on while the terminal showed the
+ * new one. Reported twice, from two different features, because it was never one
+ * feature's bug.
+ */
+test('a newly added tab is the active one, so the strip can follow it', async () => {
+  const mgr = managerWith(
+    muxStub({
+      async newTab() {
+        return { ok: true, id: '@9' };
+      },
+    }),
+  );
+  const s = seed(mgr, [{ id: '@0', title: 'claude', active: true }]);
+
+  const r = await mgr.addTab(s.id, { title: 'test:unit' });
+  assert.equal(r.ok, true);
+
+  assert.equal(s.tabs.length, 2);
+  assert.equal(s.tabs[0].active, false, 'the tab you were on is no longer current');
+  assert.equal(s.tabs[1].active, true, 'the new one is — tmux selected it');
+});
+
+test("_syncTabs carries the multiplexer's active window through", async () => {
+  const mgr = managerWith(
+    muxStub({
+      async listTabs() {
+        return [
+          { id: '@0', title: 'claude', active: false },
+          { id: '@7', title: 'shell', active: true },
+        ];
+      },
+    }),
+  );
+  const s = seed(mgr, [{ id: '@0', title: 'claude' }]);
+
+  await (mgr as any)._syncTabs(s);
+
+  assert.deepEqual(
+    s.tabs.map((x) => [x.id, x.active]),
+    [
+      ['@0', false],
+      ['@7', true],
+    ],
+  );
+});
+
+/*
+ * A dead AGENT in a live session.
+ *
+ * `reconcile` asked only "does the tmux session exist?", which was the same question as
+ * "is the agent running?" only while the agent's window was the session's only window.
+ * A run configuration opens a tab, so claude can exit while the session lives on in a
+ * test tab — and the session then sat at whatever state its last hook reported, glowing
+ * "working" with nothing behind it.
+ */
+test('a session whose agent window is gone is marked stopped, even though tmux still has the session', async () => {
+  const mgr = managerWith(
+    muxStub({
+      async hasSession() {
+        return true;
+      },
+      // The agent's window (@0) is gone; only a task tab remains.
+      async listTabs() {
+        return [{ id: '@9', title: 'test:unit', active: true }];
+      },
+    }),
+  );
+  const s = seed(mgr, [{ id: '@9', title: 'test:unit' }]);
+  s.agentTabId = '@0';
+  s.state = 'working';
+  s.active = true;
+
+  await mgr.reconcile();
+
+  assert.equal(s.state, 'stopped');
+  assert.equal(s.active, false);
+  assert.equal(s.activity, 'agent exited');
+});
+
+test('a session whose agent window is still there is left alone', async () => {
+  const mgr = managerWith(
+    muxStub({
+      async hasSession() {
+        return true;
+      },
+      async listTabs() {
+        return [
+          { id: '@0', title: 'claude', active: false },
+          { id: '@9', title: 'test:unit', active: true },
+        ];
+      },
+    }),
+  );
+  const s = seed(mgr, [{ id: '@0', title: 'claude' }]);
+  s.agentTabId = '@0';
+  s.state = 'working';
+
+  await mgr.reconcile();
+
+  assert.equal(s.state, 'working', 'a busy agent is not declared dead because a tab is in front of it');
+});
+
+test('a session from before agentTabId existed keeps the old session-level behaviour', async () => {
+  const mgr = managerWith(
+    muxStub({
+      async hasSession() {
+        return true;
+      },
+      async listTabs() {
+        return [{ id: '@9', title: 'shell', active: true }];
+      },
+    }),
+  );
+  const s = seed(mgr, [{ id: '@9', title: 'shell' }]);
+  s.agentTabId = undefined;
+  s.state = 'working';
+
+  await mgr.reconcile();
+
+  assert.equal(s.state, 'working', 'nothing to check against, so nothing is claimed');
 });

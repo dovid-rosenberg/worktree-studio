@@ -251,6 +251,16 @@ export interface SessionTab {
    */
   id: string;
   title: string;
+  /**
+   * Whether the multiplexer currently has this window selected.
+   *
+   * tmux owns this — `new-window` selects what it creates, and so does anything else that
+   * touches the session. The client used to keep its OWN idea of the selected tab and
+   * nothing reconciled the two, so a tab created by anything other than a click (the ＋
+   * button, a run configuration, tmux itself) left the strip highlighting the previous
+   * tab while the terminal showed the new one.
+   */
+  active?: boolean;
 }
 
 /**
@@ -284,6 +294,18 @@ export interface Session {
   state: SessionState;
   activity: string;
   tabs: SessionTab[];
+  /**
+   * The multiplexer window the AGENT runs in.
+   *
+   * Recorded because "is this session alive?" and "is the agent alive?" stopped being the
+   * same question once a session could hold other windows. A run configuration opens a
+   * tab in the session, so claude can exit while the tmux session lives on — and the
+   * session then sat at whatever state its last hook reported, forever.
+   *
+   * Absent on sessions created before this existed; reconcile() falls back to the
+   * session-level check for those.
+   */
+  agentTabId?: string | null;
   /** Single-line seed, delivered as claude's launch arg. */
   seed: string | null;
   active: boolean;
