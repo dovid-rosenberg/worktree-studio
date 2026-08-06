@@ -24,6 +24,24 @@ vi.mock('$lib/ops.svelte.js', () => ops);
 
 const { default: TabStrip } = await import('./TabStrip.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');
+const { world } = await import('$lib/stores/world.svelte.js');
+
+/** Put runs on the session frame, which is where the Runs badge reads them from. */
+const giveRuns = (runs: unknown[]) => {
+  world.sessionHalf = { sessions: [], servers: {}, runs } as never;
+};
+const run = (over: Record<string, unknown> = {}) => ({
+  id: 'r1',
+  name: 'test:unit',
+  repo: 'api',
+  worktreePath: '/wt',
+  cmd: 'npm run test:unit',
+  status: 'passed',
+  startedAt: 1,
+  endedAt: 2,
+  log: '/l',
+  ...over,
+});
 
 const session = (over: Record<string, unknown> = {}): Session =>
   ({
@@ -114,5 +132,46 @@ describe('TabStrip', () => {
   it('has no Insights tab — Insights is one destination, not a per-session panel', () => {
     render(TabStrip, { session: session() });
     expect(screen.queryByRole('tab', { name: /Insights/ })).not.toBeInTheDocument();
+  });
+
+  /*
+   * The Runs badge answers two different questions, and only one of them is a count.
+   *
+   * While something runs, "how many" is what you want. Once it ends, the count vanishes —
+   * which tells you a suite finished but not whether it PASSED, the only thing you were
+   * waiting for. So the badge outlives the run and carries the outcome.
+   */
+  it('counts runs in flight', () => {
+    giveRuns([run({ status: 'running', endedAt: undefined })]);
+    render(TabStrip, { session: session() });
+    const tab = screen.getByRole('tab', { name: /Runs/ });
+    expect(tab.textContent).toContain('1');
+  });
+
+  it('keeps a mark after the last run FAILED — "it finished" is not the answer', () => {
+    giveRuns([run({ status: 'failed', exitCode: 1 })]);
+    render(TabStrip, { session: session() });
+    expect(screen.getByRole('tab', { name: /Runs/ })).toHaveAttribute('title', 'The last run failed');
+  });
+
+  it('says nothing when the last run passed — a badge on every tab forever is noise', () => {
+    giveRuns([run({ status: 'passed' })]);
+    render(TabStrip, { session: session() });
+    const tab = screen.getByRole('tab', { name: /Runs/ });
+    expect(tab.querySelector('.cbadge')).toBeNull();
+  });
+
+  it('ignores runs belonging to another worktree', () => {
+    giveRuns([run({ status: 'failed', worktreePath: '/somewhere-else' })]);
+    render(TabStrip, { session: session() });
+    expect(screen.getByRole('tab', { name: /Runs/ }).querySelector('.cbadge')).toBeNull();
+  });
+
+  it('a live run outranks an older failure — the count is the more urgent fact', () => {
+    giveRuns([run({ id: 'r2', status: 'running', endedAt: undefined }), run({ status: 'failed' })]);
+    render(TabStrip, { session: session() });
+    const badge = screen.getByRole('tab', { name: /Runs/ }).querySelector('.cbadge');
+    expect(badge?.className).toContain('live');
+    expect(badge?.textContent).toBe('1');
   });
 });

@@ -14,6 +14,7 @@
    *              session to live in.
    */
   import { api } from '$lib/api.js';
+  import { ui } from '$lib/stores/ui.svelte.js';
   import { toast } from '$lib/stores/toasts.svelte.js';
 
   /** One repo of the feature: which repo, and the worktree to read its configs from. */
@@ -78,8 +79,19 @@
       const r = await api('POST', '/api/v1/run-configs/run', {
         repo: g.repo, worktreePath: g.path, name: c.name, sessionId,
       });
-      if (r.ok) toast(c.kind === 'server' ? `Started “${c.name}”` : `Running “${c.name}” in a tab`);
-      else toast(r.error || `Could not run “${c.name}”`, true);
+      if (!r.ok) {
+        toast(r.error || `Could not run “${c.name}”`, true);
+      } else if (c.kind === 'server') {
+        // A server's outcome is its ports and its log, neither of which is in Runs.
+        toast(`Started “${c.name}”`);
+      } else {
+        /*
+         * Go to where the output is. You clicked run to watch something happen, and
+         * leaving you on the terminal means the one thing you asked for is the one thing
+         * you cannot see — the panel is where the status, the duration and the output are.
+         */
+        ui.setDockView('runs');
+      }
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e), true);
     } finally {
