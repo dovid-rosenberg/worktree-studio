@@ -11,6 +11,10 @@
    * dot per member repo, a merged badge, a slot badge and a green left edge — about six
    * glyphs a card, so seven cards meant scanning forty to find the one waiting agent.
    *
+   * The merged mark moved rather than went: it sat in the card's CORNER, driven by
+   * `some(merged)`, so on a four-repo feature it could mean one of four and a half-landed
+   * feature read as done. It now sits next to the branch it is about.
+   *
    * Now: the dot is agent state, the green left edge is "dev servers up", and everything
    * else appears only when it is NOT the default. `servers · stopped` and `agent · idle`
    * were the two most common labels on screen and both said nothing was happening —
@@ -28,7 +32,18 @@
   const ms = $derived(liveMembers(feature));
   const anyRunning = $derived(ms.some((m) => m.running));
   const sess = $derived(feature.session); // one session per feature
-  const anyMerged = $derived(ms.some((m) => m.merged));
+
+  /*
+   * What you called it wins over what the directory is called.
+   *
+   * `feature.name` is the WORKTREE name — the identity that groups repos, which cannot
+   * change without moving directories. Renaming a session sets `session.title`, and this
+   * card showed only `feature.name`, so a rename saved to disk and changed nothing here.
+   * A title that still equals the worktree name is the default and adds nothing, so the
+   * second line appears only once they have actually diverged.
+   */
+  const label = $derived(sess?.title?.trim() || feature.name);
+  const renamed = $derived(label !== feature.name);
   /** Members whose start command cannot succeed — no node_modules in the worktree. */
   const noDeps = $derived(ms.filter((m) => m.depsMissing).length);
   const noStart = $derived(ms.filter((m) => m.noStartCmd).length);
@@ -51,13 +66,12 @@
     class="hit"
     onclick={() => ui.selectFeature(feature)}
     aria-pressed={selected}
-    aria-label="Select feature {feature.name}"
+    aria-label="Select feature {label}"
   >
     <div class="l1">
       <span class="dot {sess ? sess.state : (anyRunning ? 'done' : 'idle')}"></span>
-      <span class="fname">{feature.name}</span>
+      <span class="fname">{label}</span>
       {#if !feature.auto}<span class="src" title="Grouped by config.groups, not by name">manual</span>{/if}
-      {#if anyMerged}<span class="badge merged" title="Branch merged into its base">✓</span>{/if}
       {#if feature.slot != null}
         <span class="badge slot" title="Concurrency slot — its ports are offset by slot·100">{feature.slot}</span>
       {/if}
@@ -65,7 +79,7 @@
 
     <!-- Only what is not the default. An idle agent and stopped servers say nothing;
          their absence says it without spending a row of attention on it. -->
-    {#if notable || noDeps || ms.length > 1 || !sess}
+    {#if notable || noDeps || renamed || ms.length > 1 || !sess}
       <div class="l2">
         {#if sess && notable}
           <span class="pill agent {sess.state}" title="The Claude session driving this feature">{sess.state}</span>
@@ -77,6 +91,7 @@
         {#if noStart}
           <span class="pill nostart" title="{noStart} of {ms.length} worktree(s) have no start command in config.start — add one to run their dev server">no start cmd</span>
         {/if}
+        {#if renamed}<span class="wtname" title="The worktree name — what groups these repos">{feature.name}</span>{/if}
         {#if ms.length > 1}<span class="nrepos">{ms.length} repos</span>{/if}
       </div>
     {/if}
@@ -85,7 +100,11 @@
       {#each ms as m (m.path)}
         <span class="mchip">
           <span class="r">{m.repo}</span>
-          <span class="br">{m.branch || m.wtname}</span>
+          <!-- Left of the branch it is ABOUT. It used to be one ✓ in the card's corner,
+               set by `some(merged)` — so on a four-repo feature it could mean one of four,
+               and a half-landed feature read as done. Per branch, it cannot. -->
+          {#if m.merged}<span class="mrg" title="{m.branch || m.wtname} is merged into its base">✓</span>{/if}
+          <span class="br" class:done={m.merged}>{m.branch || m.wtname}</span>
           {#if (m.ports || []).length}
             <span class="p">{m.ports.map((p: number) => ':' + p).join(' ')}</span>
           {/if}
@@ -130,11 +149,16 @@
   .mchip .r { color:var(--ink); flex:none; }
   /* The branch is the only elastic part: repo and ports are short and identifying, so
      they hold their width and the branch takes the truncation. */
+  /* Merged: the branch itself goes green, so the row reads as done at a glance rather
+     than needing you to decode a mark. */
+  .wtname { font-family:var(--mono); font-size:10.5px; color:var(--faint); overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap; max-width:60%; }
+  .mchip .mrg { color:var(--done); flex:none; font-size:11px; }
   .mchip .br { color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto; min-width:0; }
+  .mchip .br.done { color:var(--done); }
   .mchip .p { color:var(--done); flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
-  .badge.merged { color:var(--done); background:var(--done-bg); }
   .badge.slot { color:var(--working); background:var(--working-bg); }
   .src { font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
          border:1px solid var(--border); border-radius:5px; padding:1px 5px; color:var(--muted); flex:none; }

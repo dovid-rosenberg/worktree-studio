@@ -357,6 +357,15 @@ export interface EmbeddedSession {
   state: SessionState;
   activity: string;
   muxName: string;
+  /**
+   * What the user CALLED it, which is not `feature.name`.
+   *
+   * A feature is named for its worktree directory — that is its identity across repos
+   * and it cannot change without moving directories. A rename sets `session.title`, and
+   * this projection used to drop it, so `POST /sessions/:id/rename` succeeded, persisted,
+   * and changed nothing on the surface the user was looking at.
+   */
+  title: string;
 }
 
 // ---- topology ---------------------------------------------------------------

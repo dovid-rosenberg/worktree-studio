@@ -172,7 +172,10 @@ test('a worktree carries a trimmed view of its session; main checkouts never do'
       wts.find((w) => w.wtname === 'feat-a'),
       'the feat-a row',
     ).session,
-    { id: 's_1', state: 'waiting', activity: 'waiting for you', muxName: 'wts-a' },
+    { id: 's_1', state: 'waiting', activity: 'waiting for you', muxName: 'wts-a', title: 'a session' },
+    // `title` is trimmed IN, not out. A feature is named for its worktree directory, so
+    // without this the rail had nothing to show after a rename and one looked like a
+    // silent no-op — the title had persisted, it just never reached the surface.
   );
   assert.equal(
     present(
