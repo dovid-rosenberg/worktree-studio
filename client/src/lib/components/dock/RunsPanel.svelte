@@ -91,6 +91,16 @@
     catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
   }
 
+  async function rerun(r: Run) {
+    try {
+      const res = await api('POST', `/api/v1/runs/${r.id}/rerun`, {});
+      // Follow the new one: you pressed rerun to watch it, not to keep reading the old
+      // output. The list is newest-first, so it is already at the top.
+      if (res.ok && res.run?.id) selectedId = res.run.id;
+      else if (!res.ok) toast(res.error || 'Could not rerun', true);
+    } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
+  }
+
   async function forget(r: Run) {
     try {
       const res = await api('DELETE', `/api/v1/runs/${r.id}`);
@@ -125,6 +135,14 @@
           {#if r.status === 'running'}
             <button class="btn xs danger" title="Stop this run" onclick={() => stop(r)}>Stop</button>
           {:else}
+            <!-- Runs the RECORDED command again, not whatever the config says today —
+                 see Runner.rerun. ▷ Run is the one that re-reads the file. -->
+            <button
+              class="btn xs ghost"
+              title={`Run this again — ${r.cmd}`}
+              aria-label={`Rerun ${r.name}`}
+              onclick={() => rerun(r)}
+            >↻</button>
             <button class="btn xs ghost" title="Remove from history" aria-label="Remove run" onclick={() => forget(r)}>✕</button>
           {/if}
         </div>

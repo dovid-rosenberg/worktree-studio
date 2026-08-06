@@ -257,6 +257,8 @@ export interface Run {
   endedAt?: number;
   exitCode?: number | null;
   log: string;
+  /** The env the configuration declared, kept so a rerun is the same run. */
+  env?: Record<string, string>;
   pid?: number;
 }
 

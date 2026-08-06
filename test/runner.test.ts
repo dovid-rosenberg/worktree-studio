@@ -170,3 +170,49 @@ test('a finished run can be forgotten; a running one refuses', async () => {
   assert.equal(fs.existsSync(log), false, 'its log goes with it');
   cleanup();
 });
+
+test('rerun repeats the recorded command, ENV included', async () => {
+  /*
+   * The env is the part that would go missing quietly. A mocha config carries
+   * NODE_ENV=test; a rerun that dropped it would run the suite against the wrong
+   * environment and pass or fail for a reason unrelated to the code.
+   */
+  const { r, dir, cleanup } = runner();
+  const first = r.start({
+    name: 'unit',
+    repo: 'api',
+    worktreePath: dir,
+    cmd: 'echo "env=$WTS_MODE"',
+    env: { WTS_MODE: 'test' },
+  });
+  await settled(r, first.id);
+
+  const again = r.rerun(first.id);
+  assert.equal(again.ok, true);
+  await settled(r, again.run!.id);
+
+  assert.notEqual(again.run!.id, first.id, 'a rerun is a new run, not a mutation of the old one');
+  assert.equal(again.run!.name, 'unit');
+  assert.equal(again.run!.cmd, first.cmd);
+  assert.match(r.logs(again.run!.id).text, /env=test/, 'the env came with it');
+  cleanup();
+});
+
+test('rerun works on a run whose configuration no longer exists', async () => {
+  // The reason it re-executes the RECORDED command rather than re-resolving by name: a
+  // history row should keep working after the config is renamed or deleted.
+  const { r, dir, cleanup } = runner();
+  const first = r.start({ name: 'gone-from-the-editor', repo: 'api', worktreePath: dir, cmd: 'true' });
+  await settled(r, first.id);
+
+  const again = r.rerun(first.id);
+  await settled(r, again.run!.id);
+  assert.equal(r.get(again.run!.id)?.status, 'passed');
+  cleanup();
+});
+
+test('rerunning something unknown is refused, not guessed at', () => {
+  const { r, cleanup } = runner();
+  assert.equal(r.rerun('r_nope').ok, false);
+  cleanup();
+});

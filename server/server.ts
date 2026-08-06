@@ -767,6 +767,7 @@ async function main() {
   });
 
   api.post('/runs/:id/stop', (req, res) => res.json(runner.stop(req.params.id)));
+  api.post('/runs/:id/rerun', (req, res) => res.json(runner.rerun(req.params.id)));
   api.delete('/runs/:id', (req, res) => res.json(runner.remove(req.params.id)));
 
   api.post('/run-configs/run', async (req, res) => {

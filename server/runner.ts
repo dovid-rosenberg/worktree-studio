@@ -44,6 +44,14 @@ export interface Run {
   /** Null while running, and for a run killed before it could report one. */
   exitCode?: number | null;
   log: string;
+  /**
+   * The env the configuration declared, kept so a RERUN is the same run.
+   *
+   * Without it a rerun silently drops `NODE_ENV=test` from a mocha config and the suite
+   * runs against the wrong environment — passing or failing for a reason that has nothing
+   * to do with the code.
+   */
+  env?: Record<string, string>;
   /** Absent after a daemon restart — a pid from a previous process is not ours to signal. */
   pid?: number;
 }
@@ -122,6 +130,7 @@ export class Runner extends EventEmitter {
       status: 'running',
       startedAt: Date.now(),
       log,
+      env: opts.env && Object.keys(opts.env).length ? opts.env : undefined,
     };
 
     const fd = fs.openSync(log, 'a');
@@ -173,6 +182,28 @@ export class Runner extends EventEmitter {
       }
     }
     this.#changed();
+  }
+
+  /**
+   * Run the same thing again.
+   *
+   * Re-executes the RECORDED command rather than re-resolving the configuration by name.
+   * A history row says "run that again", and that is what it does: it cannot fail because
+   * the configuration was renamed or deleted since, and it cannot quietly run something
+   * different because the file changed. Use ▷ Run for whatever the config says today —
+   * that menu re-reads the file every time it opens.
+   */
+  rerun(id: string): { ok: boolean; error?: string; run?: Run } {
+    const prev = this.get(id);
+    if (!prev) return { ok: false, error: 'no such run' };
+    const run = this.start({
+      name: prev.name,
+      repo: prev.repo,
+      worktreePath: prev.worktreePath,
+      cmd: prev.cmd,
+      env: prev.env,
+    });
+    return { ok: true, run };
   }
 
   /** Stop a running run, taking its whole process group with it. */
