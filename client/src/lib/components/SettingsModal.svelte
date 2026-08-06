@@ -28,6 +28,14 @@
    * order. Every other list in this modal is rows; this one was the odd one out.
    */
   let rootRows: {key:number, path:string}[] = $state([]);
+  /**
+   * Hand-written run configurations, per repo.
+   *
+   * The MANUAL half. Studio discovers your editor's configs live from each worktree, so
+   * these are only for what no editor config expresses — and they were hand-edit-only,
+   * needing a JSON edit and a daemon restart.
+   */
+  let runRows: {key:number, repo:string, name:string, cmd:string, kind:string}[] = $state([]);
   /** Which editor "Open in editor" uses. The server has always accepted it; nothing sent it. */
   let defaultEditor = $state('');
   let tools = $state({ gh: false, glab: false });
@@ -52,6 +60,11 @@
         if (!alive) return;
         const src = d.sources || {};
         rootRows = (d.baseDirs || []).map((path: string) => ({ key: ++rowKey, path }));
+        runRows = Object.entries(d.runConfigs || {}).flatMap(([repo, list]) =>
+          ((list || []) as { name?: string; cmd?: string; kind?: string }[]).map((c) => ({
+            key: ++rowKey, repo, name: c.name || '', cmd: c.cmd || '', kind: c.kind === 'server' ? 'server' : 'task',
+          })),
+        );
         defaultEditor = d.defaultEditor || '';
         tools = d.tools || { gh: false, glab: false };
         githubAuthed = !!d.githubAuthed;
@@ -116,6 +129,16 @@
           asana: { enabled: as.enabled, token: as.token.trim(), workspace: as.workspace.trim() },
         },
         baseDirs: rootRows.map((r) => r.path.trim()).filter(Boolean),
+        // Grouped back into { repo: [config] }, which is the shape on disk. A row missing
+        // the fields that make it runnable is dropped, exactly as the server would.
+        runConfigs: runRows.reduce<Record<string, { name: string; cmd: string; kind: string }[]>>((acc, r) => {
+          const repo = r.repo.trim();
+          const name = r.name.trim();
+          const cmd = r.cmd.trim();
+          if (!repo || !name || !cmd) return acc;
+          (acc[repo] ||= []).push({ name, cmd, kind: r.kind });
+          return acc;
+        }, {}),
         // Only send a name that still exists, or the server would pin "Open in editor"
         // to an editor the user just deleted.
         defaultEditor: editors[defaultEditor] ? defaultEditor : Object.keys(editors)[0] || '',
@@ -260,6 +283,34 @@
       </div>
 
       <div class="setsec">
+        <span class="lbl">Run configurations <span class="lbl-note">— hand-written; your editor's own are found automatically</span></span>
+        <p class="secnote">
+          <b>▷ Run</b> reads <code>.idea/runConfigurations</code>, <code>.vscode</code> and
+          <code>.zed</code> from each worktree, so anything your editor already knows needs
+          no entry here. Add one only for a command no editor config expresses.
+          <b>server</b> is tracked like a dev server; <b>task</b> gets a run with output and
+          an exit code.
+        </p>
+        {#each runRows as row, i (row.key)}
+          <div
+            class="srvcfg-row cols4"
+            use:reorderable={{ index: i, onmove: (f, tIdx) => (runRows = move(runRows, f, tIdx)) }}
+          >
+            <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
+            <input list="setRepoList" bind:value={row.repo} placeholder="repo…" aria-label="Repo" />
+            <input bind:value={row.name} placeholder="name…" aria-label="Run configuration name" />
+            <input bind:value={row.cmd} placeholder="command…" aria-label="Command" />
+            <select class="mini-select" bind:value={row.kind} aria-label="Kind">
+              <option value="task">task</option>
+              <option value="server">server</option>
+            </select>
+            <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (runRows = runRows.filter((r) => r.key !== row.key))}>✕</button>
+          </div>
+        {/each}
+        <button class="btn ghost xs add" onclick={() => (runRows = [...runRows, { key: ++rowKey, repo: '', name: '', cmd: '', kind: 'task' }])}>＋ add run configuration</button>
+      </div>
+
+      <div class="setsec">
         <span class="lbl">Feature groups <span class="lbl-note">— only for worktrees whose names do NOT match</span></span>
         <!-- Said out loud, because the word "group" does not carry it: a feature is
              normally AUTOMATIC — worktrees in different repos that share a name are one
@@ -314,6 +365,7 @@
   .srvcfg-row.cols3 { grid-template-columns:18px 120px 1fr 30px; }
   /* Repo roots: one field, then move-up / move-down / remove. */
   .srvcfg-row.cols2 { grid-template-columns:18px 1fr 28px 28px 30px; }
+  .srvcfg-row.cols4 { grid-template-columns:18px 110px 130px 1fr 84px 30px; }
 
   .grip { cursor:grab; color:var(--faint); font-size:14px; line-height:1; text-align:center; user-select:none; }
   .grip:active { cursor:grabbing; }

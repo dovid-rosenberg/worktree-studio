@@ -20,6 +20,7 @@ import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
 import { attachableWorktrees } from './features.ts';
 import * as runConfigs from './run-configs.ts';
+import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
 import { run, has, shq, slug, expandTilde } from './util.ts';
@@ -29,7 +30,7 @@ import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import type { Request } from 'express';
 import type { ScannedRepo } from './git.ts';
-import type { EditorConfig, GroupConfig, Session, SessionRepo, StartConfig } from './types.ts';
+import type { EditorConfig, GroupConfig, RunConfig, Session, SessionRepo, StartConfig } from './types.ts';
 
 /**
  * One value off a query string. Express hands back a string, an array (`?a=1&a=2`)
@@ -61,6 +62,7 @@ const promoted = (r: SessionRepo): r is PromotedRepo => !!r.worktreePath;
 /** The POST /settings body. Every field is `unknown` until it has been checked. */
 interface SettingsBody {
   sources?: unknown;
+  runConfigs?: unknown;
   baseDirs?: unknown;
   notify?: unknown;
   start?: unknown;
@@ -86,6 +88,9 @@ async function main() {
   const identity = createIdentity(cfg);
   const manager = new SessionManager(cfg, mux || tmux, identity);
   const servers = new Servers(cfg, identity);
+  // Finite commands (tests, builds) — tracked with a status, a duration and an exit code
+  // rather than left in a terminal pane. See server/runner.ts for why it is not Servers.
+  const runner = new Runner(cfg._stateDir!);
 
   // ---- repo scan cache ----
   let repos: ScannedRepo[] = [];
@@ -157,6 +162,7 @@ async function main() {
     identity,
     repos: () => repos,
     running: () => runningCache,
+    runs: () => runner.runs,
   });
 
   // ---- SSE live state ----
@@ -178,6 +184,9 @@ async function main() {
   });
 
   const bus = createBroadcast({ topology, sessionState, ci: ciFeed.snapshot });
+  // A run starting or finishing is a real state change and a rare one — unlike the hook
+  // stream, this cannot flood the fan-out.
+  runner.on('change', () => bus.schedule({}));
   const scheduleBroadcast = () => bus.schedule();
   const broadcastTopology = () => bus.schedule({ topology: true });
 
@@ -273,6 +282,8 @@ async function main() {
       editors: cfg.editors || {},
       defaultEditor: cfg.defaultEditor || '',
       groups: cfg.groups || [],
+      // The MANUAL run configurations only; an editor's own are discovered per worktree.
+      runConfigs: cfg.runConfigs || {},
       enabled: sources.enabled(cfg),
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
@@ -283,7 +294,16 @@ async function main() {
     // string, an object or an array until it has been checked — the same rule
     // server/orchestrator.ts's GroupBody follows.
     const body: SettingsBody = req.body || {};
-    const { sources: srcs, baseDirs, notify, start, editors, defaultEditor, groups } = body;
+    const {
+      sources: srcs,
+      baseDirs,
+      notify,
+      start,
+      editors,
+      defaultEditor,
+      groups,
+      runConfigs: runCfgs,
+    } = body;
     if (isRecord(srcs)) {
       cfg.sources = cfg.sources || {};
       for (const k of Object.keys(srcs)) {
@@ -314,6 +334,32 @@ async function main() {
       }
       cfg.start = clean;
       rescanNeeded = true;
+    }
+    /*
+     * Hand-written run configurations, `{ "<repo>": [{ name, cmd, kind }] }` — full
+     * replace, blank rows dropped, exactly as `start` and `editors` are handled.
+     *
+     * These are the MANUAL half only. Whatever an editor declares in a worktree is
+     * discovered live (server/run-configs.ts) and is not stored here, so saving this
+     * cannot delete a config that came from a file.
+     */
+    if (isRecord(runCfgs)) {
+      const clean: Record<string, RunConfig[]> = {};
+      for (const [repo, list] of Object.entries(runCfgs)) {
+        const name = String(repo).trim();
+        if (!name || !Array.isArray(list)) continue;
+        const rows = list
+          .filter(isRecord)
+          .map((c) => ({
+            name: String(c.name || '').trim(),
+            cmd: String(c.cmd || '').trim(),
+            kind: c.kind === 'server' ? 'server' : 'task',
+            source: 'manual',
+          }))
+          .filter((c) => c.name && c.cmd);
+        if (rows.length) clean[name] = rows;
+      }
+      cfg.runConfigs = clean;
     }
     // Editors { "<name>": { open, openGroup? } } — full replace, drop blank rows.
     if (isRecord(editors)) {
@@ -352,6 +398,7 @@ async function main() {
       ok: true,
       sources: cfg.sources,
       baseDirs: cfg.baseDirs,
+      runConfigs: cfg.runConfigs,
       notify: cfg.notify,
       start: cfg.start,
       editors: cfg.editors,
@@ -709,6 +756,19 @@ async function main() {
     res.json({ configs: [...found, ...manual] });
   });
 
+  api.get('/runs', (req, res) => {
+    const worktreePath = qs(req.query.worktreePath);
+    res.json({ runs: worktreePath ? runner.forWorktree(worktreePath) : runner.runs });
+  });
+
+  api.get('/runs/:id/log', (req, res) => {
+    const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
+    res.json(runner.logs(req.params.id, { offset }));
+  });
+
+  api.post('/runs/:id/stop', (req, res) => res.json(runner.stop(req.params.id)));
+  api.delete('/runs/:id', (req, res) => res.json(runner.remove(req.params.id)));
+
   api.post('/run-configs/run', async (req, res) => {
     const { repo, worktreePath, name, sessionId } = req.body || {};
     if (!worktreePath || !name) return res.status(400).json({ error: 'worktreePath and name are required' });
@@ -741,25 +801,22 @@ async function main() {
       return res.json({ ...out, kind });
     }
 
-    // Finite, so it runs in a terminal tab where the output is watched and stays in the
-    // session's history. That needs a session: without one there is no tmux session to
-    // add a window to.
-    const s = sessionId ? manager.get(String(sessionId)) : manager.sessionForWorktree(String(worktreePath));
-    if (!s) {
-      return res.status(409).json({
-        ok: false,
-        error: 'a task runs in a terminal tab, and this feature has no session yet — start one first',
-      });
-    }
-    const envPrefix = Object.entries(pick.env || {})
-      .map(([k, v]) => `${k}=${shq(String(v))}`)
-      .join(' ');
-    const r = await manager.addTab(s.id, {
-      title: String(name),
-      cmd: `cd ${shq(String(worktreePath))} && ${envPrefix ? `${envPrefix} ` : ''}${pick.cmd}`,
+    /*
+     * Finite, so it becomes a RUN: status, duration, exit code, output, history.
+     *
+     * It used to open a tmux tab. That works, but it makes you read raw ANSI in a pane
+     * competing with the agent's tabs, and answers none of the questions you have about a
+     * test run. It also needed a session to exist, which a feature may not have — a run
+     * needs only a worktree.
+     */
+    const run = runner.start({
+      name: String(name),
+      repo: String(repo),
+      worktreePath: String(worktreePath),
+      cmd: pick.cmd,
+      env: pick.env,
     });
-    scheduleBroadcast();
-    return res.json({ ok: !!r.ok, kind, sessionId: s.id, tabId: r.id, error: r.error });
+    return res.json({ ok: true, kind, runId: run.id });
   });
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----

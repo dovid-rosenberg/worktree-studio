@@ -51,10 +51,10 @@ describe('TabStrip', () => {
     const lists = container.querySelectorAll('[role="tablist"]');
     expect(lists).toHaveLength(2);
     expect(within(lists[0] as HTMLElement).getAllByRole('tab')).toHaveLength(3);
-    // Changes / Logs — views of the session, owning no process. Insights used to be a
-    // third here, scoped to the session, while a fleet-wide view of the same name lived
-    // behind ⌘\. They are one destination now, reached from the top bar.
-    expect(within(lists[1] as HTMLElement).getAllByRole('tab')).toHaveLength(2);
+    // Changes / Logs / Runs — views of the session, owning no process. (Insights used to
+    // be here too, scoped to the session, while a fleet-wide view of the same name lived
+    // behind ⌘\; they are one destination now, reached from the top bar.)
+    expect(within(lists[1] as HTMLElement).getAllByRole('tab')).toHaveLength(3);
   });
 
   it('selects by window id, not by position', () => {

@@ -1,0 +1,249 @@
+/*
+ * Finite commands — tests, builds, lints — with their output, exit code and history.
+ *
+ * A task used to open a tmux tab. That works, but it makes you read raw ANSI in a pane
+ * competing with your agent's tabs, and it answers none of the questions you actually
+ * have about a test run: did it pass, how long did it take, what did the last one do.
+ * tmux is the right substrate for a CONVERSATION; it is the wrong surface for a job.
+ *
+ * So a run is a tracked thing: it has a status, a duration, an exit code, a log, and it
+ * outlives itself as history.
+ *
+ * DELIBERATELY NOT server/servers.ts. A dev server and a test run look alike for exactly
+ * one moment — the spawn — and differ in every way after it. A server is a singleton per
+ * worktree that should stay up, whose absence is a problem and whose exit is a crash; a
+ * run is one of many, is expected to end, and its exit code is the whole point. Sharing
+ * the module would mean every field meaning two things.
+ */
+import { type ChildProcess, spawn } from 'child_process';
+import { EventEmitter } from 'events';
+import fs from 'fs';
+import path from 'path';
+import { makeId, readJsonState, slug, writeJson } from './util.ts';
+
+const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+
+/** How many finished runs to keep. History is for "what did the last one say", not an archive. */
+const KEEP_RUNS = 60;
+
+/** A single read of a run's log never pulls more than this into memory. */
+const TAIL_MAX_BYTES = 512 * 1024;
+
+export type RunStatus = 'running' | 'passed' | 'failed' | 'stopped';
+
+export interface Run {
+  id: string;
+  /** The run configuration's name. */
+  name: string;
+  repo: string;
+  worktreePath: string;
+  cmd: string;
+  status: RunStatus;
+  startedAt: number;
+  endedAt?: number;
+  /** Null while running, and for a run killed before it could report one. */
+  exitCode?: number | null;
+  log: string;
+  /** Absent after a daemon restart — a pid from a previous process is not ours to signal. */
+  pid?: number;
+}
+
+interface Saved {
+  runs?: Run[];
+}
+
+/** A run as it is read back from disk: it may predate any field added since. */
+const isFinished = (r: Run): boolean => r.status !== 'running';
+
+export class Runner extends EventEmitter {
+  logDir: string;
+  file: string;
+  runs: Run[];
+  /** Live children, by run id. Never persisted: a child cannot outlive the process that spawned it. */
+  #children = new Map<string, ChildProcess>();
+
+  constructor(stateDir: string) {
+    super();
+    this.logDir = path.join(stateDir, 'runs');
+    this.file = path.join(stateDir, 'runs.json');
+    fs.mkdirSync(this.logDir, { recursive: true });
+    const saved = readJsonState<Saved>(this.file, {});
+    /*
+     * A run recorded as `running` when the daemon died did not survive it — the child was
+     * detached from a process that is gone, and nothing is left to report its exit. It is
+     * marked interrupted at load rather than left claiming to be in progress forever.
+     */
+    this.runs = (saved.runs || []).map((r) =>
+      r.status === 'running'
+        ? { ...r, status: 'stopped' as const, endedAt: r.endedAt ?? Date.now(), pid: undefined }
+        : r,
+    );
+  }
+
+  #save(): void {
+    writeJson(this.file, { runs: this.runs.slice(0, KEEP_RUNS) });
+  }
+
+  #changed(): void {
+    this.#save();
+    this.emit('change');
+  }
+
+  /** Every run for a worktree, newest first. */
+  forWorktree(worktreePath: string): Run[] {
+    return this.runs.filter((r) => r.worktreePath === worktreePath);
+  }
+
+  get(id: string): Run | undefined {
+    return this.runs.find((r) => r.id === id);
+  }
+
+  /**
+   * Start a command and track it to completion.
+   *
+   * `detached` so it gets its own process group: a test runner spawns children, and
+   * stopping the run has to take the whole tree rather than orphan it.
+   */
+  start(opts: {
+    name: string;
+    repo: string;
+    worktreePath: string;
+    cmd: string;
+    env?: Record<string, string>;
+  }): Run {
+    const id = makeId('r_');
+    const log = path.join(this.logDir, `${slug(`${opts.repo}-${opts.name}`, 40)}-${id}.log`);
+    const run: Run = {
+      id,
+      name: opts.name,
+      repo: opts.repo,
+      worktreePath: opts.worktreePath,
+      cmd: opts.cmd,
+      status: 'running',
+      startedAt: Date.now(),
+      log,
+    };
+
+    const fd = fs.openSync(log, 'a');
+    let child: ChildProcess;
+    try {
+      fs.writeSync(fd, `===== ${new Date().toISOString()} :: ${opts.cmd} @ ${opts.worktreePath} =====\n`);
+      child = spawn('bash', ['-lc', opts.cmd], {
+        cwd: opts.worktreePath,
+        detached: true,
+        stdio: ['ignore', fd, fd],
+        env: { ...ENV, ...(opts.env || {}) },
+      });
+    } finally {
+      // spawn() dups this into the child synchronously, so the parent's copy is dead
+      // weight the moment it returns — and the daemon outlives every run it starts.
+      fs.closeSync(fd);
+    }
+
+    run.pid = child.pid;
+    this.#children.set(id, child);
+    this.runs.unshift(run);
+    // Keep the list bounded here as well as on save, so a long-lived daemon does not grow
+    // an unbounded array in memory between writes.
+    if (this.runs.length > KEEP_RUNS) this.runs.length = KEEP_RUNS;
+
+    child.once('error', (e) => this.#finish(id, null, `failed to start: ${e.message}`));
+    child.once('exit', (code, signal) => {
+      // A signalled exit is a stop, not a failure — `code` is null in that case.
+      this.#finish(id, code, signal ? `signalled: ${signal}` : undefined, !!signal);
+    });
+
+    this.#changed();
+    return run;
+  }
+
+  #finish(id: string, code: number | null, note?: string, signalled = false): void {
+    const run = this.get(id);
+    if (!run || isFinished(run)) return;
+    this.#children.delete(id);
+    run.endedAt = Date.now();
+    run.exitCode = code;
+    run.pid = undefined;
+    run.status = signalled ? 'stopped' : code === 0 ? 'passed' : 'failed';
+    if (note) {
+      try {
+        fs.appendFileSync(run.log, `\n===== ${note} =====\n`);
+      } catch {
+        /* the outcome matters more than the note */
+      }
+    }
+    this.#changed();
+  }
+
+  /** Stop a running run, taking its whole process group with it. */
+  stop(id: string): { ok: boolean; error?: string } {
+    const run = this.get(id);
+    if (!run) return { ok: false, error: 'no such run' };
+    if (isFinished(run)) return { ok: true };
+    const child = this.#children.get(id);
+    const pid = child?.pid ?? run.pid;
+    if (!pid) {
+      // Nothing left to signal — from before a restart. Record the truth rather than
+      // leaving it claiming to run.
+      this.#finish(id, null, 'stopped', true);
+      return { ok: true };
+    }
+    // The GROUP: a test runner's children would otherwise outlive it.
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        /* already gone; the exit handler will finish it */
+      }
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Incremental log tail, guarded to this runner's own log files.
+   *
+   * Same contract as Servers.logs: omit `offset` for the tail, pass one back for only
+   * what arrived since. A client that has been away cannot make us allocate the whole gap.
+   */
+  logs(id: string, opts: { offset?: number } = {}): { offset: number; text: string; size: number } {
+    const run = this.get(id);
+    const empty = { offset: opts.offset ?? 0, text: '', size: 0 };
+    if (!run) return empty;
+    let size: number;
+    try {
+      size = fs.statSync(run.log).size;
+    } catch {
+      return empty;
+    }
+    const from =
+      typeof opts.offset === 'number' && Number.isFinite(opts.offset)
+        ? Math.max(Math.min(opts.offset, size), size - TAIL_MAX_BYTES)
+        : Math.max(0, size - TAIL_MAX_BYTES);
+    if (from >= size) return { offset: size, text: '', size };
+    const fd = fs.openSync(run.log, 'r');
+    try {
+      const buf = Buffer.alloc(size - from);
+      const n = fs.readSync(fd, buf, 0, buf.length, from);
+      return { offset: size, text: buf.toString('utf8', 0, n), size };
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  /** Forget a finished run and its log. A running one is left alone. */
+  remove(id: string): { ok: boolean; error?: string } {
+    const run = this.get(id);
+    if (!run) return { ok: false, error: 'no such run' };
+    if (!isFinished(run)) return { ok: false, error: 'still running — stop it first' };
+    this.runs = this.runs.filter((r) => r.id !== id);
+    try {
+      fs.rmSync(run.log, { force: true });
+    } catch {
+      /* the record going is what matters */
+    }
+    this.#changed();
+    return { ok: true };
+  }
+}

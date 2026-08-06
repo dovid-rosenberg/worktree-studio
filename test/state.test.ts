@@ -107,6 +107,7 @@ function build(over: BuildOver = {}) {
     mux: over.mux === undefined ? { name: 'tmux' } : over.mux,
     repos: () => repos,
     running: () => running,
+    runs: () => [],
   });
   return {
     state,
@@ -126,8 +127,8 @@ test('buildState is exactly topology + sessionState, in that key order', async (
   assert.deepEqual(Object.keys(st), [...Object.keys(state.topology()), ...Object.keys(state.sessionState())]);
   assert.deepEqual(
     Object.keys(state.sessionState()),
-    ['sessions', 'servers'],
-    'the session-state half is the separable slice a later SSE split streams as deltas',
+    ['sessions', 'servers', 'runs'],
+    'the session-state half is the separable slice the SSE split streams on its own',
   );
 });
 
@@ -447,6 +448,7 @@ test('prunePaths invalidates a worktree that was removed and recreated pointing 
     mux: { name: 'tmux' },
     repos: () => repos,
     running: () => new Map(),
+    runs: () => [],
   };
   const pruned = createState(deps);
   const never = createState(deps); // same inputs, but nothing ever tells it to invalidate
