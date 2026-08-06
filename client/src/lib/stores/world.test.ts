@@ -71,6 +71,9 @@ describe('stitchSessions', () => {
       state: 'waiting',
       activity: 'needs you',
       muxName: 'wts-one-s1',
+      // The title rides along too, and is refreshed like the rest: a rename lands in the
+      // session half, and the rail reads its label off this projection.
+      title: 'one',
     });
   });
 

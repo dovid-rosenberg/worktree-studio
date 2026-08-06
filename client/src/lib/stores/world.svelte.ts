@@ -19,7 +19,7 @@
  * THE TRAP, and why this module is shaped the way it is.
  *
  * The topology half embeds a trimmed copy of the driving session — {id,state,activity,
- * muxName} — into every worktree row AND into every feature/group, while the
+ * muxName,title} — into every worktree row AND into every feature/group, while the
  * authoritative list lives in `sessions`, which belongs to the *other* half. Those
  * embedded copies are frozen at the moment the topology was built.
  *
@@ -117,7 +117,7 @@ export function stitchSessions(next: WorldView): WorldView {
   const fresh = (embedded: EmbeddedSession | null | undefined): EmbeddedSession | null => {
     if (!embedded) return null;
     const s = byId.get(embedded.id);
-    return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName } : null;
+    return s ? { id: s.id, state: s.state, activity: s.activity, muxName: s.muxName, title: s.title } : null;
   };
   // A feature's members are serialized separately from repos[].worktrees, so on this
   // side they are distinct objects and need the same projection.

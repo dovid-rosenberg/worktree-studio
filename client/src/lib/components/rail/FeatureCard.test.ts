@@ -46,6 +46,51 @@ describe('FeatureCard', () => {
     expect(screen.getByText('2 repos')).toBeInTheDocument();
   });
 
+  it('shows the name the user GAVE it, not just the worktree directory', () => {
+    /*
+     * The bug: renaming a session persisted `title` and the rail went on showing
+     * `feature.name`, so the rename looked like it had silently failed.
+     */
+    render(FeatureCard, {
+      feature: feature({
+        name: 'in-the-merchant-fe-a-blocked',
+        session: { id: 's1', state: 'idle', activity: '', muxName: 'm', title: 'Unblock API endpoint' },
+      }),
+    });
+    expect(screen.getByText('Unblock API endpoint')).toBeInTheDocument();
+    // The worktree name is what groups the repos, so it stays reachable.
+    expect(screen.getByText('in-the-merchant-fe-a-blocked')).toBeInTheDocument();
+  });
+
+  it('does not repeat the name when the title is still the default', () => {
+    const { container } = render(FeatureCard, {
+      feature: feature({
+        name: 'token-race-fix',
+        session: { id: 's1', state: 'idle', activity: '', muxName: 'm', title: 'token-race-fix' },
+      }),
+    });
+    expect(container.querySelectorAll('.wtname').length).toBe(0);
+  });
+
+  it('marks the merged branch, and ONLY the merged one', () => {
+    /*
+     * The regression this replaces: one ✓ in the card's corner driven by `some(merged)`,
+     * so a four-repo feature with one branch landed looked entirely done.
+     */
+    const { container } = render(FeatureCard, {
+      feature: feature({
+        members: [
+          member('accept-blue', { branch: 'feature/landed', merged: true }),
+          member('merchant-v3', { branch: 'feature/open', merged: false }),
+        ],
+      }),
+    });
+    const marks = container.querySelectorAll('.mchip .mrg');
+    expect(marks.length).toBe(1);
+    expect(marks[0].getAttribute('title')).toContain('feature/landed');
+    expect(container.querySelectorAll('.mchip .br.done').length).toBe(1);
+  });
+
   it('says nothing about an idle agent — absence is the signal', () => {
     const { container } = render(FeatureCard, {
       feature: feature({ session: { id: 's1', state: 'idle', activity: '', muxName: 'm' } }),

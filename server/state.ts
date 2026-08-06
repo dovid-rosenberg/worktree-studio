@@ -192,7 +192,13 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
           // Spreading means the next field decorate() learns arrives on its own.
           ...dec,
           session: sess
-            ? { id: sess.id, state: sess.state, activity: sess.activity, muxName: sess.muxName }
+            ? {
+                id: sess.id,
+                state: sess.state,
+                activity: sess.activity,
+                muxName: sess.muxName,
+                title: sess.title,
+              }
             : null,
         };
         wts.push(wt);
