@@ -9,7 +9,7 @@
 // A real module, not a .d.ts, for two reasons: Node 22 strips types natively so a
 // `.ts` file costs nothing to require, and a contract that can carry a runtime
 // guard later (`isSession(x)`) should not be shut out of doing so by its file
-// extension. Nothing here emits anything today.
+// extension. TERM_CLOSE_DEAD at the bottom is the first thing here to emit.
 //
 // Erasable syntax only — no enum, no namespace, no parameter properties, no
 // decorators. Node's stripper rejects all four, and this file is on the require
@@ -87,11 +87,23 @@ export interface EditorConfig {
 }
 
 /** An imported editor run/test config. */
+/**
+ * A run configuration — a named command the user can launch in a worktree.
+ *
+ * Two origins, one shape: DISCOVERED from an editor's config files in the worktree
+ * (server/run-configs.ts), or declared by hand in `config.runConfigs[repo]`. `kind`
+ * decides how it runs — `server` is tracked like a dev server, anything else runs in a
+ * terminal tab.
+ */
 export interface RunConfig {
   name: string;
   cmd: string;
   kind?: string;
   source?: string;
+  /** Env the config declares; merged over the launch environment. */
+  env?: Record<string, string>;
+  /** The file it came from, for the tooltip. Absent for hand-written entries. */
+  file?: string;
 }
 
 /**
@@ -503,6 +515,21 @@ export interface SseEvents {
 }
 
 export type SseEventName = keyof SseEvents;
+
+// ---- the terminal socket (server/term.ts ↔ Terminal.svelte) -----------------
+
+/**
+ * The close code `/ws/term` uses for "this session's multiplexer session no longer
+ * exists" — the first runtime value in this file, and here rather than in server/term.ts
+ * because both ends of the socket need it and the client cannot import a module that
+ * pulls in node-pty.
+ *
+ * It has to be a CODE and not just a message, because the client's only question on
+ * close is retry-or-not, and every other close it can see (daemon restart, network
+ * blip, laptop lid) is one where retrying is right. 4004 is in the 4000–4999 range
+ * the WebSocket spec reserves for the application.
+ */
+export const TERM_CLOSE_DEAD = 4004;
 
 // ---- the diff model (server/diff.ts) ----------------------------------------
 

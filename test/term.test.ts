@@ -8,20 +8,24 @@ import assert from 'node:assert';
 import { EventEmitter } from 'events';
 import { createTerminalHandler } from '../server/term.ts';
 import type { TerminalPty, TerminalSession, TerminalSpawn } from '../server/term.ts';
+import { TERM_CLOSE_DEAD } from '../server/types.ts';
 import { present } from './helpers.ts';
 
 // Just enough of a `ws`: close() emits 'close', exactly as the real one does when
-// the browser goes away.
+// the browser goes away. `code` is recorded because the dead-session path is only
+// distinguishable from an ordinary drop by the code it closes with.
 class FakeSocket extends EventEmitter {
   sent: string[] = [];
   closed = false;
+  code: number | undefined;
   send(d: string) {
     if (this.closed) throw new Error('socket is closed');
     this.sent.push(d);
   }
-  close() {
+  close(code?: number) {
     if (this.closed) return;
     this.closed = true;
+    this.code = code;
     this.emit('close');
   }
 }
@@ -66,11 +70,18 @@ function fakeTerm(args: Parameters<TerminalSpawn>): FakeTerm {
 // finish; `terms` records every pty that was actually spawned.
 const SESSION: TerminalSession = { muxName: 'wts-x', worktreePath: '/wt', repoPath: '/repo' };
 
-function harness({ session = SESSION }: { session?: TerminalSession } = {}) {
+function harness({
+  session = SESSION,
+  hasSession = async () => true,
+}: {
+  session?: TerminalSession;
+  hasSession?: (name: string) => Promise<boolean>;
+} = {}) {
   const terms: FakeTerm[] = [];
   const manager = {
     get: (id: string) => (id === 's1' ? session : null),
     mux: {
+      hasSession,
       attachSpawn: (name: string) => ({ file: 'tmux', args: ['attach-session', '-t', name], env: {} }),
     },
   };
@@ -118,4 +129,57 @@ test('an unknown session closes the socket without spawning anything', async () 
   await handler(ws, req('session=nope'));
   assert.equal(terms.length, 0);
   assert.equal(ws.closed, true);
+});
+
+/*
+ * A session record outlives its tmux session — `reconcile()` marks it stopped, the
+ * record stays so it can be resumed. Attaching to that name runs `tmux attach-session`
+ * against nothing: tmux prints "can't find session: <name>" and exits, the pty's onExit
+ * closes the socket, and the client reads an ordinary drop and reconnects. Forever.
+ *
+ * So the liveness question is asked HERE, before a pty exists to answer it by dying.
+ */
+test('a session whose mux session is gone says so instead of attaching to nothing', async () => {
+  const { handler, terms } = harness({ hasSession: async () => false });
+  const ws = new FakeSocket();
+  await handler(ws, req('session=s1'));
+  assert.equal(terms.length, 0, 'no pty is spawned for a session that cannot be attached');
+  assert.equal(ws.closed, true);
+  assert.equal(ws.code, TERM_CLOSE_DEAD, 'the code is what tells the client not to retry');
+  assert.match(ws.sent.join(''), /Resume/, 'and the pane says what to do about it');
+});
+
+// Mirrors reconcile()'s rule: a query that ERRORS is not evidence the session is gone,
+// and a transient tmux hiccup must not turn a live pane into "session ended".
+test('a liveness check that throws attaches anyway', async () => {
+  const { handler, terms } = harness({
+    hasSession: async () => {
+      throw new Error('tmux socket busy');
+    },
+  });
+  const ws = new FakeSocket();
+  await handler(ws, req('session=s1'));
+  assert.equal(terms.length, 1);
+  assert.equal(ws.closed, false);
+});
+
+/*
+ * The liveness check is an await between the close listener and the spawn — which is
+ * exactly the shape of the orphaned-pty bug the split pane used to have. A socket that
+ * closes inside that window finds `term` still null, so the spawn below it has to be
+ * the thing that doesn't happen; otherwise the pty (and its attached tmux client) lives
+ * on for the daemon's life with nobody holding a reference to kill it.
+ */
+test('a socket that closes during the liveness check spawns nothing', async () => {
+  let release: (alive: boolean) => void = () => {};
+  const pending = new Promise<boolean>((r) => {
+    release = r;
+  });
+  const { handler, terms } = harness({ hasSession: () => pending });
+  const ws = new FakeSocket();
+  const done = handler(ws, req('session=s1'));
+  ws.close(); // browser goes away mid-check
+  release(true); // ...and only then does tmux answer
+  await done;
+  assert.equal(terms.length, 0, 'the abandoned socket never gets a pty');
 });

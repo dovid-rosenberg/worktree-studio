@@ -96,6 +96,15 @@ export interface LaunchOpts {
   env: Record<string, string>;
   ports: number[];
   patch?: ConfigPatchPlan;
+  /**
+   * Run THIS command instead of the repo's configured one.
+   *
+   * For a run configuration of `kind: 'server'` — a long-lived process the user picked
+   * from their editor's configs. It gets the same treatment as a dev server (tracked pid,
+   * log file, port poll, reachable by Stop stack) because that is what it is; only the
+   * command differs. Without this the only launchable command per repo is `config.start`.
+   */
+  cmd?: string;
 }
 
 /**
@@ -742,9 +751,12 @@ class Servers {
   // opts.ports: derived (slot-offset) ports to pre-check/poll instead of sc.ports.
   async start(repo: string, worktreePath: string, opts: Partial<LaunchOpts> = {}): Promise<StartResult> {
     const sc = this.startCfg(repo);
-    if (!sc) return { ok: false, error: `no start config for repo '${repo}'` };
+    // `opts.cmd` is a run configuration standing in for the repo's start command, so a
+    // repo with no `config.start` entry can still launch one.
+    if (!sc && !opts.cmd) return { ok: false, error: `no start config for repo '${repo}'` };
+    const cmd = opts.cmd || sc!.cmd;
     const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
-    const ports = opts.ports?.length ? opts.ports : sc.ports;
+    const ports = opts.ports?.length ? opts.ports : (sc?.ports ?? []);
     const lock = this._lock(worktreePath);
     if (!lock) return { ok: false, error: `another launch for '${repo}' at ${worktreePath} is in progress` };
     // From here until the ports are up (or we give up waiting), this feature's slot
@@ -768,8 +780,8 @@ class Servers {
       const startedAt = Date.now();
       let child: ChildProcess;
       try {
-        fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${sc.cmd} @ ${worktreePath} =====\n`);
-        child = spawn('bash', ['-lc', sc.cmd], {
+        fs.writeSync(fd, `\n===== ${new Date().toISOString()} :: ${cmd} @ ${worktreePath} =====\n`);
+        child = spawn('bash', ['-lc', cmd], {
           cwd: worktreePath,
           detached: true,
           stdio: ['ignore', fd, fd],

@@ -108,6 +108,39 @@ If a repo cannot start, the result says so by name rather than reporting the res
 success: `Skipped ab-libraries — no start command configured`, or `dependencies not
 installed`, which the **Install deps** button next to it fixes.
 
+### 4b. Run tests and other configurations
+**▷ Run** in the action bar lists the run configurations your editor already has, read
+live from each worktree of the feature — no import step, and nothing to keep in sync.
+
+Studio reads, per worktree:
+- `.idea/runConfigurations/*.xml` (JetBrains) — npm scripts, mocha runs, Node files
+- `.vscode/tasks.json` and `.vscode/launch.json` — npm/shell tasks, and launches that
+  name a runnable command (a debugger-only entry is skipped, not approximated)
+- `.zed/tasks.json`
+
+They are grouped by repo, since a feature spans several and two repos often both have a
+`test:unit`. Two kinds, and the glyph says which:
+
+| | | Where it runs |
+|---|---|---|
+| ▸ | **server** | Tracked exactly like a dev server — a pid, a log in **Logs**, and **Stop stack** reaches it |
+| ⌗ | **task** | A terminal tab you watch, kept in the session's history. Needs a session, since a tab needs a tmux session to live in |
+
+A config is a *server* if its script looks like one (`start`, `dev`, `serve`, `watch`), if
+VS Code marks it `isBackground`, or — most reliably — if its command matches the repo's
+own `start.<repo>.cmd`. Everything else is a task, which is the safe default: a long-lived
+process in a tab is inconvenient, but a finished one tracked as a server looks like a crash.
+
+An unrecognised configuration type is **skipped, never guessed at** — these produce
+commands that get executed.
+
+`config.runConfigs[<repo>]` still works and is merged in, for anything no editor config
+expresses. Discovered entries win a name clash, since the file on disk is the live truth.
+
+Because `copyAlways` copies `.idea/runConfigurations/*.xml` into every new worktree, your
+JetBrains configs are there from the moment a worktree exists — and `$PROJECT_DIR$`
+resolves to *that* worktree, not the checkout it came from.
+
 ### 5. Review, commit, PR
 Open the **✎ Changes** tab (or `⌘D`):
 - The left column lists the branch’s **commits** (base..HEAD) grouped by repo, newest
