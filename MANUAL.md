@@ -132,6 +132,10 @@ every run for the feature's worktrees, newest first, with a status dot (running 
 failed / stopped), how long it took, and the exit code when it failed. Pick one to read its
 output; the tab badge counts what is running right now.
 
+- **↻** runs it again. It repeats the *recorded* command, not whatever the configuration
+  says today — so a history row keeps working after the config is renamed or deleted, and
+  cannot quietly run something different because the file changed. Use **▷ Run** for the
+  current version; that menu re-reads the files every time it opens.
 - **Stop** kills the whole process group, so a test runner's children go with it.
 - **✕** forgets a finished run and deletes its log. A running one refuses until stopped.
 - The last 60 runs are kept, and they survive a daemon restart — one that was still running
