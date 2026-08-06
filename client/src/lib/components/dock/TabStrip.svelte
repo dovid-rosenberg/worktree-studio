@@ -35,13 +35,30 @@
   );
   const promoted = $derived(!!session.worktreePath);
 
-  /** Runs still going in any worktree this session owns — see RunsPanel. */
-  const activeRuns = $derived.by(() => {
+  /** Every run belonging to a worktree this session owns — see RunsPanel. */
+  const myRuns = $derived.by(() => {
     const paths = new Set(
       [session.worktreePath, ...(session.repos || []).map((r) => r.worktreePath)].filter(Boolean),
     );
-    return (world.view.runs || []).filter((r) => r.status === 'running' && paths.has(r.worktreePath)).length;
+    return (world.view.runs || []).filter((r) => paths.has(r.worktreePath));
   });
+
+  const activeRuns = $derived(myRuns.filter((r) => r.status === 'running').length);
+
+  /*
+   * What the Runs tab says when nothing is running.
+   *
+   * A count that vanishes the moment a run ends tells you a test suite finished but not
+   * whether it PASSED — which is the only thing you wanted to know, and would send you
+   * into the panel to find out. So the badge outlives the run: it carries the newest
+   * finished run's outcome until something else runs.
+   *
+   * Only a failure is worth a mark. A green badge on every tab forever is noise, and
+   * "nothing is shouting" already reads as fine.
+   */
+  const lastFailed = $derived(
+    activeRuns === 0 && myRuns.find((r) => r.status !== 'running')?.status === 'failed',
+  );
 
   /**
    * Which tab the MULTIPLEXER has selected. tmux owns this, and it is what the terminal
@@ -204,12 +221,17 @@
         aria-selected={ui.dockView === 'logs'} onclick={() => (ui.dockView = 'logs')}
       >▤ Logs</button>
 
-      <!-- The badge counts what is running RIGHT NOW, which is the only run count worth a
-           glance; history is one click away. -->
+      <!-- Running → a live count. Nothing running but the last one failed → a mark that
+           stays, because "it finished" is not the answer you were waiting for. -->
       <button
         type="button" class="pill-tab" class:on={ui.dockView === 'runs'} role="tab"
         aria-selected={ui.dockView === 'runs'} onclick={() => (ui.dockView = 'runs')}
-      >▶ Runs{#if activeRuns}<span class="cbadge">{activeRuns}</span>{/if}</button>
+        title={activeRuns
+          ? `${activeRuns} run(s) in progress`
+          : lastFailed
+            ? 'The last run failed'
+            : 'Tests, builds and other one-off commands'}
+      >▶ Runs{#if activeRuns}<span class="cbadge live">{activeRuns}</span>{:else if lastFailed}<span class="cbadge bad">!</span>{/if}</button>
     {/if}
 
     <!-- Available for any session: a transcript exists before a worktree does. -->
@@ -249,6 +271,10 @@
   }
   .pill-tab:hover { color:var(--ink); }
   .pill-tab.on { color:var(--brand); border-color:var(--border); background:var(--panel); }
+  /* A run in flight pulses, like the working dot — it is the same fact. */
+  .cbadge.live { background:var(--working); color:var(--brand-ink); animation:pulse 1.4s ease-in-out infinite; }
+  .cbadge.bad { background:var(--del); color:#fff; }
+  @media (prefers-reduced-motion:reduce) { .cbadge.live { animation:none; } }
 
   .cbadge { font-family:var(--mono); font-size:10.5px; font-weight:700; background:var(--brand); color:var(--brand-ink); border-radius:999px; padding:0 5px; min-width:15px; text-align:center; }
 </style>
