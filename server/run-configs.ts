@@ -117,6 +117,30 @@ function xmlEnvs(block: string): Record<string, string> {
 const q = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
 
 /**
+ * Where a package's executable actually is.
+ *
+ * NOT a guessed filename. This used to hardcode `bin/mocha.js`, which is mocha 9+; the
+ * repo it was built against runs mocha 8, whose bin is `bin/mocha` with no extension. The
+ * command it produced could not be resolved at all — "Cannot find module …/bin/mocha.js" —
+ * while the same configuration ran fine in WebStorm, which does not guess.
+ *
+ * The `.bin` shim is checked first because that is the canonical entry point: npm writes
+ * it, it points at whatever the package declares in its own `bin` field, and it is
+ * therefore correct across versions that move the file around. The explicit names are a
+ * fallback for a tree with no `.bin`.
+ */
+function resolveBin(pkgDir: string, binName: string, exists: (p: string) => boolean): string {
+  // node_modules/<pkg>  →  node_modules/.bin/<name>
+  const shim = path.join(path.dirname(pkgDir), '.bin', binName);
+  if (exists(shim)) return shim;
+  for (const candidate of [`bin/${binName}.js`, `bin/${binName}`, `bin/_${binName}`]) {
+    const full = path.join(pkgDir, candidate);
+    if (exists(full)) return full;
+  }
+  return '';
+}
+
+/**
  * One JetBrains `.idea/runConfigurations/*.xml`.
  *
  * Two types cover every config in practice (and all six of the ones this was built
@@ -127,8 +151,9 @@ export function parseJetBrains(
   xml: string,
   worktreePath: string,
   file: string,
-  startCmd?: string,
+  opts: { startCmd?: string; exists?: (p: string) => boolean } = {},
 ): DiscoveredConfig | null {
+  const { startCmd, exists = (p: string) => fs.existsSync(p) } = opts;
   const cfg = xml.match(/<configuration\b[^>]*>[\s\S]*?<\/configuration>/);
   if (!cfg) return null;
   const block = cfg[0];
@@ -148,14 +173,24 @@ export function parseJetBrains(
   }
 
   if (type === 'mocha-javascript-test-runner') {
-    const pkg = resolvePlaceholders(xmlValue(block, 'mocha-package') || 'node_modules/mocha', worktreePath);
+    const pkg = resolvePlaceholders(
+      xmlValue(block, 'mocha-package') || path.join(worktreePath, 'node_modules', 'mocha'),
+      worktreePath,
+    );
+    const bin = resolveBin(pkg, 'mocha', exists);
     const extra = xmlValue(block, 'extra-mocha-options');
     const pattern = xmlValue(block, 'test-pattern');
-    const parts = [path.join(pkg, 'bin', 'mocha.js')].map(q);
+    /*
+     * `npx --no-install` when nothing resolved: it looks in node_modules/.bin from the
+     * cwd upwards, which is where a worktree without its own install finds the parent
+     * checkout's copy — and `--no-install` means a genuinely missing mocha fails loudly
+     * instead of silently downloading one.
+     */
+    const parts = bin ? [`node ${q(bin)}`] : ['npx --no-install mocha'];
     if (extra) parts.push(extra); // already a command-line fragment, verbatim
     if (pattern) parts.push(q(pattern));
     // A test run is finite by definition.
-    return { ...base, cmd: `node ${parts.join(' ')}`, kind: 'task' };
+    return { ...base, cmd: parts.join(' '), kind: 'task' };
   }
 
   if (type === 'NodeJSConfigurationType') {
@@ -309,7 +344,7 @@ export async function discover(
     const full = path.join(ideaDir, f);
     const xml = read(full);
     if (!xml) continue;
-    const parsed = parseJetBrains(xml, worktreePath, full, opts.startCmd);
+    const parsed = parseJetBrains(xml, worktreePath, full, { startCmd: opts.startCmd });
     if (parsed) out.push(parsed);
   }
 

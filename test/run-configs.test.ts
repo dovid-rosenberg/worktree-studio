@@ -56,21 +56,26 @@ test("a config matching the repo's configured start command is a server whatever
       <path-to-js-file value="$PROJECT_DIR$/app.js" />
     </configuration>`);
   assert.equal(parseJetBrains(xml, wt, 'f.xml')?.kind, 'task', 'without the hint, the name says nothing');
-  assert.equal(parseJetBrains(xml, wt, 'f.xml', 'node app.js')?.kind, 'server', 'with it, it is the server');
+  assert.equal(
+    parseJetBrains(xml, wt, 'f.xml', { startCmd: 'node app.js' })?.kind,
+    'server',
+    'with it, it is the server',
+  );
 });
 
-test('a mocha config becomes a runnable command, with its envs', () => {
-  const c = parseJetBrains(
-    jb(`<configuration name="Integration tests" type="mocha-javascript-test-runner">
+const mochaXml = jb(`<configuration name="Integration tests" type="mocha-javascript-test-runner">
       <mocha-package>$PROJECT_DIR$/node_modules/mocha</mocha-package>
       <envs><env name="NODE_ENV" value="test" /></envs>
       <extra-mocha-options>--config test/.mocharc.js</extra-mocha-options>
       <test-pattern>test/**/*.spec.js</test-pattern>
-    </configuration>`),
-    wt,
-    'f.xml',
-  );
-  assert.match(c?.cmd || '', /node '.*node_modules\/mocha\/bin\/mocha\.js'/);
+    </configuration>`);
+
+test('a mocha config becomes a runnable command, with its envs', () => {
+  // The `.bin` shim exists, which is the normal case for any installed tree.
+  const c = parseJetBrains(mochaXml, wt, 'f.xml', {
+    exists: (p) => p.endsWith(`${path.sep}.bin${path.sep}mocha`),
+  });
+  assert.match(c?.cmd || '', /node '.*node_modules\/\.bin\/mocha'/);
   assert.match(c?.cmd || '', /--config test\/\.mocharc\.js/);
   assert.match(
     c?.cmd || '',
@@ -79,6 +84,37 @@ test('a mocha config becomes a runnable command, with its envs', () => {
   );
   assert.deepEqual(c?.env, { NODE_ENV: 'test' });
   assert.equal(c?.kind, 'task');
+});
+
+/*
+ * The binary's filename is NOT guessable, and guessing it is what broke this.
+ *
+ * It used to hardcode `bin/mocha.js`, which is mocha 9+. The repo it was built against
+ * runs mocha 8, whose bin is `bin/mocha` — so the command could not resolve at all
+ * ("Cannot find module …/bin/mocha.js") while the same configuration ran fine in
+ * WebStorm, which does not guess.
+ */
+test('the mocha binary is RESOLVED, across the versions that name it differently', () => {
+  const only = (suffix: string) => (p: string) => p.endsWith(suffix);
+
+  // mocha 8: bin/mocha, no extension.
+  assert.match(
+    parseJetBrains(mochaXml, wt, 'f.xml', { exists: only(`mocha${path.sep}bin${path.sep}mocha`) })?.cmd || '',
+    /bin\/mocha'/,
+  );
+  // mocha 9+: bin/mocha.js.
+  assert.match(
+    parseJetBrains(mochaXml, wt, 'f.xml', { exists: only('bin/mocha.js') })?.cmd || '',
+    /bin\/mocha\.js'/,
+  );
+});
+
+test('with nothing resolvable it defers to npx rather than inventing a path', () => {
+  // A worktree with no install of its own: npx looks up the tree from the cwd, and
+  // --no-install makes a genuinely missing mocha fail loudly instead of downloading one.
+  const c = parseJetBrains(mochaXml, wt, 'f.xml', { exists: () => false });
+  assert.match(c?.cmd || '', /^npx --no-install mocha /);
+  assert.doesNotMatch(c?.cmd || '', /bin\/mocha/, 'no guessed path is emitted');
 });
 
 test('an UNRECOGNISED type is skipped, never approximated', () => {
