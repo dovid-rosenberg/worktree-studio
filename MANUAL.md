@@ -124,7 +124,20 @@ They are grouped by repo, since a feature spans several and two repos often both
 | | | Where it runs |
 |---|---|---|
 | ▸ | **server** | Tracked exactly like a dev server — a pid, a log in **Logs**, and **Stop stack** reaches it |
-| ⌗ | **task** | A terminal tab you watch, kept in the session's history. Needs a session, since a tab needs a tmux session to live in |
+| ⌗ | **task** | A **run**: status, duration, exit code and output, in the **▶ Runs** panel |
+
+#### The Runs panel
+A task is a job, not a conversation, so it does not get a terminal pane. **▶ Runs** lists
+every run for the feature's worktrees, newest first, with a status dot (running / passed /
+failed / stopped), how long it took, and the exit code when it failed. Pick one to read its
+output; the tab badge counts what is running right now.
+
+- **Stop** kills the whole process group, so a test runner's children go with it.
+- **✕** forgets a finished run and deletes its log. A running one refuses until stopped.
+- The last 60 runs are kept, and they survive a daemon restart — one that was still running
+  when the daemon died is marked *stopped* rather than left claiming to be in progress.
+- Output is pulled as a byte-offset tail while the run is going, and stops polling the
+  moment it ends: a finished log cannot change.
 
 A config is a *server* if its script looks like one (`start`, `dev`, `serve`, `watch`), if
 VS Code marks it `isBackground`, or — most reliably — if its command matches the repo's

@@ -242,6 +242,24 @@ export interface SessionRepo {
   primary?: boolean;
 }
 
+/**
+ * One finite command run. Mirrors server/runner.ts's `Run`; declared here because it is
+ * on the wire and the client reads it from this file.
+ */
+export interface Run {
+  id: string;
+  name: string;
+  repo: string;
+  worktreePath: string;
+  cmd: string;
+  status: 'running' | 'passed' | 'failed' | 'stopped';
+  startedAt: number;
+  endedAt?: number;
+  exitCode?: number | null;
+  log: string;
+  pid?: number;
+}
+
 /** A multiplexer window. */
 export interface SessionTab {
   /**
@@ -482,6 +500,14 @@ export type SessionServers = Record<string, { repos: SessionServerRepo[] }>;
 export interface SessionStatePayload {
   sessions: Session[];
   servers: SessionServers;
+  /**
+   * Finite command runs — tests, builds — newest first, across every worktree.
+   *
+   * Carried on the session half so the Runs panel updates without polling. Safe on this
+   * frame despite its rate: the list is bounded (server/runner.ts keeps the last 60) and
+   * only a run STARTING or FINISHING changes it, which is nothing like the hook stream.
+   */
+  runs: Run[];
 }
 
 // ---- CI ---------------------------------------------------------------------

@@ -20,6 +20,7 @@
    * all of them before reaching the terminal.
    */
   import { ui } from '$lib/stores/ui.svelte.js';
+  import { world } from '$lib/stores/world.svelte.js';
   import { addTab, closeTab, renameTab, selectTab } from '$lib/ops.svelte.js';
   import type { Session, SessionTab } from '../../../../../server/types';
 
@@ -33,6 +34,14 @@
     session.tabs && session.tabs.length ? session.tabs : [{ id: '0', title: 'claude' }],
   );
   const promoted = $derived(!!session.worktreePath);
+
+  /** Runs still going in any worktree this session owns — see RunsPanel. */
+  const activeRuns = $derived.by(() => {
+    const paths = new Set(
+      [session.worktreePath, ...(session.repos || []).map((r) => r.worktreePath)].filter(Boolean),
+    );
+    return (world.view.runs || []).filter((r) => r.status === 'running' && paths.has(r.worktreePath)).length;
+  });
 
   /**
    * Which tab the MULTIPLEXER has selected. tmux owns this, and it is what the terminal
@@ -194,6 +203,13 @@
         type="button" class="pill-tab" class:on={ui.dockView === 'logs'} role="tab"
         aria-selected={ui.dockView === 'logs'} onclick={() => (ui.dockView = 'logs')}
       >▤ Logs</button>
+
+      <!-- The badge counts what is running RIGHT NOW, which is the only run count worth a
+           glance; history is one click away. -->
+      <button
+        type="button" class="pill-tab" class:on={ui.dockView === 'runs'} role="tab"
+        aria-selected={ui.dockView === 'runs'} onclick={() => (ui.dockView = 'runs')}
+      >▶ Runs{#if activeRuns}<span class="cbadge">{activeRuns}</span>{/if}</button>
     {/if}
 
     <!-- Available for any session: a transcript exists before a worktree does. -->

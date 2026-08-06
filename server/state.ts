@@ -23,6 +23,7 @@ import type {
   FeatureMember,
   PartialDeep,
   ResolvedFeature,
+  Run,
   Session,
   SessionServers,
   SessionStatePayload,
@@ -119,6 +120,8 @@ export interface StateDeps {
   repos: () => StateRepo[];
   /** The lsof discovery map, re-read per call. */
   running: () => Map<string, RunningServer>;
+  /** Finite command runs, newest first — see server/runner.ts. */
+  runs: () => Run[];
   /**
    * Defaults to `servers.identity` — the two must agree, so sharing one resolver
    * is the point.
@@ -138,7 +141,7 @@ export interface State {
 // `repos` and `running` are getters, not values: the repo scan cache and the lsof
 // discovery map are replaced wholesale on every refresh, so a captured reference
 // would go stale the first time either one is rescanned.
-function createState({ cfg, manager, servers, mux, repos, running, identity }: StateDeps): State {
+function createState({ cfg, manager, servers, mux, repos, running, runs, identity }: StateDeps): State {
   // The feature-identity resolver is shared with servers.ts on purpose: the
   // grouping below and the concurrency slot key must be the same answer.
   const ident = identity || servers.identity;
@@ -260,7 +263,7 @@ function createState({ cfg, manager, servers, mux, repos, running, identity }: S
         };
       }
     }
-    return { sessions, servers: serversById };
+    return { sessions, servers: serversById, runs: runs() };
   }
 
   // Superset of worktree-dash's contract. Async because every caller awaits it and

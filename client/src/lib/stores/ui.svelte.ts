@@ -82,7 +82,7 @@ const RAIL_DEFAULT = 320;
  * made sense when Overview was the second entry. Overview is gone; a one-element array is
  * machinery around a single comparison.
  */
-export type DockView = 'term' | 'changes' | 'logs' | 'usage';
+export type DockView = 'term' | 'changes' | 'logs' | 'runs' | 'usage';
 
 function savedDock(): DockView {
   // Only Insights is worth restoring: the panel views belong to a session and reset with

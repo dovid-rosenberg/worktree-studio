@@ -13,6 +13,7 @@
   import DockHead from '$lib/components/dock/DockHead.svelte';
   import TabStrip from '$lib/components/dock/TabStrip.svelte';
   import LogsPanel from '$lib/components/dock/LogsPanel.svelte';
+  import RunsPanel from '$lib/components/dock/RunsPanel.svelte';
   import ReviewMount from '$lib/components/dock/ReviewMount.svelte';
   import FeaturePane from '$lib/components/dock/FeaturePane.svelte';
   import FleetInsights from '$lib/components/insights/FleetInsights.svelte';
@@ -115,6 +116,8 @@
       <ReviewMount {session} />
     {:else if ui.dockView === 'logs'}
       <LogsPanel {session} />
+    {:else if ui.dockView === 'runs'}
+      <RunsPanel {session} />
     {/if}
 
   {/if}
