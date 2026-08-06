@@ -174,4 +174,57 @@ describe('TabStrip', () => {
     expect(badge?.className).toContain('live');
     expect(badge?.textContent).toBe('1');
   });
+
+  /*
+   * The status dot used to sit on EVERY tab, showing the session's real state on the
+   * selected one and a hardcoded `idle` on all the others. So an agent that was working
+   * looked idle from any tab but its own — backwards, because the tab you are NOT looking
+   * at is exactly where you need to be told the agent wants you.
+   */
+  it('shows the agent state on the agent tab even when another tab is selected', () => {
+    const s = session({
+      state: 'waiting',
+      agentTabId: '@1',
+      tabs: [
+        { id: '@1', title: 'claude' },
+        { id: '@7', title: 'test:unit' },
+      ],
+    });
+    ui.activeTabId = '@7'; // reading a test run, not the agent
+    render(TabStrip, { session: s });
+
+    const agentTab = document.querySelector('[data-tab="@1"]');
+    const otherTab = document.querySelector('[data-tab="@7"]');
+    expect(agentTab?.querySelector('.dot')?.className).toContain('waiting');
+    expect(agentTab?.getAttribute('aria-selected')).toBe('false');
+    expect(otherTab?.querySelector('.dot')).toBeNull();
+  });
+
+  it('never claims idle for a session that is working', () => {
+    const s = session({
+      state: 'working',
+      agentTabId: '@1',
+      tabs: [
+        { id: '@1', title: 'claude' },
+        { id: '@7', title: 'shell' },
+      ],
+    });
+    ui.activeTabId = '@7';
+    render(TabStrip, { session: s });
+    expect(document.querySelectorAll('.dot.idle')).toHaveLength(0);
+  });
+
+  it('falls back to the claude tab for a session recorded before agentTabId existed', () => {
+    const s = session({
+      state: 'working',
+      agentTabId: undefined,
+      tabs: [
+        { id: '@7', title: 'shell' },
+        { id: '@1', title: 'claude' },
+      ],
+    });
+    render(TabStrip, { session: s });
+    expect(document.querySelector('[data-tab="@1"]')?.querySelector('.dot')?.className).toContain('working');
+    expect(document.querySelector('[data-tab="@7"]')?.querySelector('.dot')).toBeNull();
+  });
 });

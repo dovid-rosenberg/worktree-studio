@@ -35,6 +35,24 @@
   );
   const promoted = $derived(!!session.worktreePath);
 
+  /*
+   * The tab the AGENT runs in — where the status dot belongs.
+   *
+   * The dot used to be on EVERY tab, showing the session's state on the selected one and
+   * a hardcoded `idle` on all the others. So a session that was working looked idle from
+   * any tab but its own, which is backwards: the tab you are not looking at is exactly
+   * where you need to be told the agent wants you. It also stated one fact N times, and
+   * disagreed with itself N-1 of them.
+   *
+   * The state is ONE fact about the agent, so it goes on the agent's tab. The server
+   * records which that is (Session.agentTabId); the fallbacks cover sessions created
+   * before it did — a tab still titled `claude`, else the first, which is where a session
+   * is launched.
+   */
+  const agentTabId = $derived(
+    session.agentTabId || tabs.find((t) => t.title === 'claude')?.id || tabs[0]?.id || '',
+  );
+
   /** Every run belonging to a worktree this session owns — see RunsPanel. */
   const myRuns = $derived.by(() => {
     const paths = new Set(
@@ -181,7 +199,11 @@
           onauxclick={(e) => onAuxClick(e, t)}
           onkeydown={(e) => onTabKeydown(e, t)}
         >
-          <span class="dot {on ? session.state : 'idle'}" title={on ? session.state : 'idle'}></span>
+          <!-- The state belongs to the AGENT, so it is drawn on the agent's tab and
+               nowhere else — and it is drawn whether or not that tab is selected. -->
+          {#if t.id === agentTabId}
+            <span class="dot {session.state}" title="The agent is {session.state}"></span>
+          {/if}
           <span class="label">{t.title}</span>
           {#if tabs.length > 1}
             <!-- A real button, so it is reachable and announced; stopPropagation keeps
