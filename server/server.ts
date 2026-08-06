@@ -20,6 +20,7 @@ import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
 import { attachableWorktrees } from './features.ts';
 import * as runConfigs from './run-configs.ts';
+import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart } from './settings.ts';
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
@@ -321,18 +322,7 @@ async function main() {
     }
     // Dev-server launch config { "<repo>": { cmd, ports:[…] } } — full replace, drop blank rows.
     if (isRecord(start)) {
-      const coercePorts = (v: unknown): number[] =>
-        (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\s,]+/))
-          .map((x) => parseInt(String(x), 10))
-          .filter((n) => Number.isInteger(n) && n > 0);
-      const clean: Record<string, StartConfig> = {};
-      for (const [repo, v] of Object.entries(start)) {
-        const name = String(repo).trim();
-        const cmd = isRecord(v) ? String(v.cmd || '').trim() : '';
-        if (!name || !cmd) continue;
-        clean[name] = { cmd, ports: coercePorts(isRecord(v) ? v.ports : undefined) };
-      }
-      cfg.start = clean;
+      cfg.start = coerceStart(start);
       rescanNeeded = true;
     }
     /*
@@ -343,54 +333,12 @@ async function main() {
      * discovered live (server/run-configs.ts) and is not stored here, so saving this
      * cannot delete a config that came from a file.
      */
-    if (isRecord(runCfgs)) {
-      const clean: Record<string, RunConfig[]> = {};
-      for (const [repo, list] of Object.entries(runCfgs)) {
-        const name = String(repo).trim();
-        if (!name || !Array.isArray(list)) continue;
-        const rows = list
-          .filter(isRecord)
-          .map((c) => ({
-            name: String(c.name || '').trim(),
-            cmd: String(c.cmd || '').trim(),
-            kind: c.kind === 'server' ? 'server' : 'task',
-            source: 'manual',
-          }))
-          .filter((c) => c.name && c.cmd);
-        if (rows.length) clean[name] = rows;
-      }
-      cfg.runConfigs = clean;
-    }
+    if (isRecord(runCfgs)) cfg.runConfigs = coerceRunConfigs(runCfgs);
     // Editors { "<name>": { open, openGroup? } } — full replace, drop blank rows.
-    if (isRecord(editors)) {
-      const clean: Record<string, EditorConfig> = {};
-      for (const [nm, v] of Object.entries(editors)) {
-        const name = String(nm).trim();
-        const open = isRecord(v) ? String(v.open || '').trim() : '';
-        if (!name || !open) continue;
-        const row: EditorConfig = { open };
-        const openGroup = isRecord(v) && v.openGroup ? String(v.openGroup).trim() : '';
-        if (openGroup) row.openGroup = openGroup;
-        clean[name] = row;
-      }
-      cfg.editors = clean;
-    }
+    if (isRecord(editors)) cfg.editors = coerceEditors(editors);
     if (typeof defaultEditor === 'string' && defaultEditor.trim()) cfg.defaultEditor = defaultEditor.trim();
     // Manual feature groups [{ name, members:[…] }] — full replace, drop blank rows.
-    if (Array.isArray(groups)) {
-      cfg.groups = groups
-        .map(
-          (g): GroupConfig => ({
-            name: String((isRecord(g) && g.name) || '').trim(),
-            members:
-              isRecord(g) && Array.isArray(g.members)
-                ? g.members.map((m) => String(m).trim()).filter(Boolean)
-                : [],
-          }),
-        )
-        .filter((g) => g.name && g.members.length);
-      rescanNeeded = true;
-    }
+    if (Array.isArray(groups)) cfg.groups = coerceGroups(groups);
     configMod.save(cfg);
     if (rescanNeeded) await rescan();
     else broadcastTopology();

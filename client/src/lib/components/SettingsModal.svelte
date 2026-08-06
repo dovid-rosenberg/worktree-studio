@@ -72,11 +72,17 @@
         as = { enabled: false, token: '', workspace: '', ...(src.asana || {}) };
         nt = { waiting: true, sound: true, idle: false, ...(d.notify || {}) };
         notify.prefs = { ...notify.prefs, ...nt }; // keep the live prefs in step with disk
+        /*
+         * `start` has two shapes on disk: `{ cmd, ports }` and the bare string form,
+         * `"repo": "npm start"`. Reading only the first put an EMPTY command in the row,
+         * and an empty command is dropped on save — so opening this modal and pressing
+         * Save deleted every string-form entry without saying anything.
+         */
         startRows = Object.entries(d.start || {}).map(([repo, v]) => ({
           key: ++rowKey,
           repo,
-          cmd: (v && (v as any).cmd) || '',
-          ports: (((v && (v as any).ports) || [])).join(' '),
+          cmd: typeof v === 'string' ? v : (v as { cmd?: string })?.cmd || '',
+          ports: (typeof v === 'string' ? [] : (v as { ports?: number[] })?.ports || []).join(' '),
         }));
         editorRows = Object.entries(d.editors || {}).map(([name, v]) => ({
           key: ++rowKey,
