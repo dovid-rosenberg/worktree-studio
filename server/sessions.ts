@@ -936,7 +936,12 @@ class SessionManager extends EventEmitter {
     // Only record a tab the multiplexer actually gave us an id for; without one we
     // cannot address it later, and a positional entry is exactly the bug this avoids.
     if (r.ok && r.id) {
-      s.tabs.push({ id: r.id, title: title || 'shell' });
+      // tmux's `new-window` SELECTS what it creates, so the new tab is the active one and
+      // every other is not. Recording that here matters because this branch does not
+      // re-sync from the driver — without it the strip would keep pointing at the tab you
+      // were on while the terminal showed the new one.
+      for (const tab of s.tabs) tab.active = false;
+      s.tabs.push({ id: r.id, title: title || 'shell', active: true });
       this._touch(id);
     } else if (r.ok) await this._syncTabs(s);
     return r;
@@ -1104,7 +1109,10 @@ class SessionManager extends EventEmitter {
       // [claude, api, web] and 'api' would land on the window that is now web — a tab
       // naming a terminal that is not the one it selects.
       const byId = new Map(prev.filter((t) => t.id).map((t) => [t.id, t.title]));
-      s.tabs = live.map((w) => ({ id: w.id, title: byId.get(w.id) || w.title }));
+      s.tabs = live.map((w) => ({ id: w.id, title: byId.get(w.id) || w.title, active: w.active }));
+      // The agent's window is the one the session was launched with, so the first sync —
+      // when it is the only window there is — is when its id becomes knowable.
+      if (!s.agentTabId && live.length === 1) s.agentTabId = live[0].id;
     } catch {
       /* leave tabs as-is if the mux can't be queried */
     }
@@ -1124,7 +1132,31 @@ class SessionManager extends EventEmitter {
       } catch {
         alive = true;
       }
-      if (alive) continue;
+      if (alive) {
+        /*
+         * The tmux session is alive — but that stopped meaning the AGENT is, once a
+         * session could hold other windows. A run configuration opens a tab in it, so
+         * claude can exit while the session lives on in a test tab, and the session then
+         * sat at whatever state its last hook reported, glowing "working" forever.
+         *
+         * Checked by WINDOW ID rather than by what a pane is running: during a Bash tool
+         * call claude's pane reports the tool as its foreground command, so "is claude
+         * the current command" would call a busy agent dead.
+         */
+        if (!s.agentTabId) continue; // pre-dates the field — session-level check is all there is
+        let windows: string[] = [];
+        try {
+          windows = (await this.mux.listTabs(s.muxName)).map((w) => w.id);
+        } catch {
+          continue; // could not ask; say nothing rather than declare it dead
+        }
+        if (!windows.length || windows.includes(s.agentTabId)) continue;
+        s.state = 'stopped';
+        s.active = false;
+        s.activity = 'agent exited';
+        this._touch(s.id);
+        continue;
+      }
       s.state = 'stopped';
       s.active = false;
       s.activity = 'session ended';
@@ -1144,6 +1176,19 @@ class SessionManager extends EventEmitter {
     let n = 0;
     for (const s of this.all()) {
       if (!s.muxName) continue;
+      /*
+       * Backfill the agent's window id for sessions that predate the field.
+       *
+       * A session is launched with exactly one window and Studio titles it `claude`, so
+       * a tab still carrying that title is the agent's. Inferred only in the POSITIVE
+       * direction: the absence of such a tab is NOT taken to mean the agent is gone,
+       * because a renamed tab would then mark a live agent stopped — and Resume on a
+       * live agent is worse than a stale badge.
+       */
+      if (!s.agentTabId) {
+        const claudeTab = (s.tabs || []).find((tab) => tab.title === 'claude');
+        if (claudeTab?.id) s.agentTabId = claudeTab.id;
+      }
       if (s.active === false) continue;
       try {
         if (await this.mux.hasSession(s.muxName)) {

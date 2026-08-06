@@ -35,13 +35,45 @@
   const promoted = $derived(!!session.worktreePath);
 
   /**
+   * Which tab the MULTIPLEXER has selected. tmux owns this, and it is what the terminal
+   * is actually showing.
+   */
+  const muxActive = $derived(tabs.find((t) => t.active)?.id ?? '');
+
+  /**
    * The selected tab, resolved against tabs that actually exist. If the stored id is
-   * gone — closed here, or killed in tmux directly — fall back to the first tab rather
-   * than highlighting nothing while a pane is still on screen.
+   * gone — closed here, or killed in tmux directly — fall back to whatever the
+   * multiplexer says, then to the first tab, rather than highlighting nothing while a
+   * pane is still on screen.
    */
   const activeId = $derived(
-    tabs.some((t) => t.id === ui.activeTabId) ? ui.activeTabId : (tabs[0]?.id ?? ''),
+    tabs.some((t) => t.id === ui.activeTabId)
+      ? ui.activeTabId
+      : (muxActive || tabs[0]?.id || ''),
   );
+
+  /*
+   * FOLLOW THE MULTIPLEXER.
+   *
+   * `ui.activeTabId` is a local intent — set optimistically on click so the highlight
+   * moves before the round-trip. But tmux changes the current window for reasons the
+   * client never initiated: `new-window` selects what it creates, so the ＋ button, a run
+   * configuration, and anything typed into tmux directly all move it. Nothing reconciled
+   * the two, so the strip kept pointing at the tab you were on while the terminal showed
+   * the new one — reported twice, from two different features, because it was never one
+   * feature's bug.
+   *
+   * Mirroring on CHANGE, not on every frame: a click sets `activeTabId` and posts
+   * select-tab, the server answers with the same value, and this sees no change. Only a
+   * selection the client did not make moves it.
+   */
+  let lastMuxActive = $state('');
+  $effect(() => {
+    const next = muxActive;
+    if (!next || next === lastMuxActive) return;
+    lastMuxActive = next;
+    if (ui.activeTabId !== next) ui.activeTabId = next;
+  });
 
   let renaming = $state<string | null>(null);
   let draft = $state('');
