@@ -19,6 +19,7 @@ import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
 import { attachableWorktrees } from './features.ts';
+import * as runConfigs from './run-configs.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
 import { run, has, shq, slug, expandTilde } from './util.ts';
@@ -682,6 +683,83 @@ async function main() {
   api.get('/servers/logs', (req, res) => {
     const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
     res.json(servers.logs(qs(req.query.worktreePath), { offset }));
+  });
+
+  /*
+   * ---- run configurations ----
+   *
+   * DISCOVERED from the worktree on request, not imported and not part of the topology
+   * payload. Two reasons: an imported copy goes stale the moment the editor's config
+   * changes, and the topology half is broadcast on every git rescan — putting a
+   * per-worktree directory scan on that path would cost a handful of stats per worktree
+   * per broadcast for something only opened when a menu is.
+   *
+   * `config.runConfigs[repo]` is merged in as the MANUAL half: anything no editor config
+   * can express. Discovered entries win a name clash, since they are the live truth.
+   */
+  api.get('/run-configs', async (req, res) => {
+    const worktreePath = qs(req.query.worktreePath);
+    const repo = qs(req.query.repo);
+    if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
+    const found = await runConfigs.discover(worktreePath, { startCmd: servers.startCfg(repo)?.cmd });
+    const names = new Set(found.map((c) => c.name));
+    const manual = ((cfg.runConfigs || {})[repo] || [])
+      .filter((c) => c && c.name && c.cmd && !names.has(c.name))
+      .map((c) => ({ ...c, source: 'manual' as const, file: cfg._file }));
+    res.json({ configs: [...found, ...manual] });
+  });
+
+  api.post('/run-configs/run', async (req, res) => {
+    const { repo, worktreePath, name, sessionId } = req.body || {};
+    if (!worktreePath || !name) return res.status(400).json({ error: 'worktreePath and name are required' });
+
+    const found = await runConfigs.discover(String(worktreePath), {
+      startCmd: servers.startCfg(String(repo))?.cmd,
+    });
+    const manual = (cfg.runConfigs || {})[String(repo)] || [];
+    const pick = found.find((c) => c.name === name) || manual.find((c) => c && c.name === name);
+    if (!pick) return res.status(404).json({ error: `no run configuration named '${name}'` });
+
+    const kind = 'kind' in pick && pick.kind === 'server' ? 'server' : 'task';
+
+    if (kind === 'server') {
+      // Long-lived, so it is tracked exactly like a dev server: a pid, a log, and Stop
+      // stack reaches it. Only the command differs.
+      const feature = servers.featureFor(String(worktreePath));
+      const alloc = servers.allocSlotFor(feature);
+      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+      const out = await servers.start(String(repo), String(worktreePath), {
+        ...servers.launchOpts(String(repo), feature),
+        cmd: pick.cmd,
+        // A run config names its own ports nowhere, so there is nothing to pre-check or
+        // poll — discovery finds it once it binds.
+        ports: [],
+        env: { ...(servers.launchOpts(String(repo), feature).env || {}), ...(pick.env || {}) },
+      });
+      await refreshRunning();
+      broadcastTopology();
+      return res.json({ ...out, kind });
+    }
+
+    // Finite, so it runs in a terminal tab where the output is watched and stays in the
+    // session's history. That needs a session: without one there is no tmux session to
+    // add a window to.
+    const s = sessionId ? manager.get(String(sessionId)) : manager.sessionForWorktree(String(worktreePath));
+    if (!s) {
+      return res.status(409).json({
+        ok: false,
+        error: 'a task runs in a terminal tab, and this feature has no session yet — start one first',
+      });
+    }
+    const envPrefix = Object.entries(pick.env || {})
+      .map(([k, v]) => `${k}=${shq(String(v))}`)
+      .join(' ');
+    const r = await manager.addTab(s.id, {
+      title: String(name),
+      cmd: `cd ${shq(String(worktreePath))} && ${envPrefix ? `${envPrefix} ` : ''}${pick.cmd}`,
+    });
+    scheduleBroadcast();
+    return res.json({ ok: !!r.ok, kind, sessionId: s.id, tabId: r.id, error: r.error });
   });
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----

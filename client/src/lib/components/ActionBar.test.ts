@@ -36,6 +36,8 @@ const ops = vi.hoisted(() =>
   ),
 );
 vi.mock('$lib/ops.svelte.js', () => ({ ...ops, pending: new Set() }));
+// The Run menu fetches on open; the bar's own tests are about which verbs it offers.
+vi.mock('$lib/components/RunConfigMenu.svelte', () => ({ default: (() => {}) as never }));
 
 const { default: ActionBar } = await import('./ActionBar.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');

@@ -25,6 +25,7 @@
    * running from a repo's main checkout. The last used to carry its own buttons inside
    * its rail card — the only buttons in the rail — because it could not be selected.
    */
+  import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
   import ServerBar from '$lib/components/dock/ServerBar.svelte';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
@@ -54,6 +55,21 @@
   const installingDeps = $derived(ms.some((m) => m.depsInstalling));
   const webApps = $derived(webAppsFor(ms));
   const isPending = $derived(!!target && pending.has(target.name));
+
+  /*
+   * EVERY worktree the ▷ Run menu reads configs from — one per repo of the feature.
+   *
+   * Not just the session's own: a feature is several repos, so a menu showing one of them
+   * can only reach half the work. On a BE+FE feature you want both sets of tests.
+   *
+   * Falls back to the session's own worktree when there is no resolved feature (a
+   * promoted session whose feature has not landed in the topology yet).
+   */
+  const runTargets = $derived.by(() => {
+    const fromFeature = ms.map((m) => ({ repo: m.repo, path: m.path }));
+    if (fromFeature.length) return fromFeature;
+    return session?.worktreePath ? [{ repo: session.repoName, path: session.worktreePath }] : [];
+  });
 
   /*
    * No identity block here.
@@ -122,6 +138,9 @@
         {#each webApps as web (web.repo)}
           <button class="btn sm" onclick={() => openApp(web.port)}>Open {web.repo} ↗</button>
         {/each}
+        {#if runTargets.length}
+          <RunConfigMenu targets={runTargets} sessionId={session?.id ?? null} />
+        {/if}
       {/if}
 
       {#if session}

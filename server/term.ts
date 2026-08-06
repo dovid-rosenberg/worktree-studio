@@ -6,6 +6,7 @@
 // booting a daemon. `spawn` is injectable for exactly that reason.
 import pty from 'node-pty';
 import type { RawData } from 'ws';
+import { TERM_CLOSE_DEAD } from './types.ts';
 
 /**
  * The browser socket, typed by the four members this handler uses rather than as
@@ -14,7 +15,8 @@ import type { RawData } from 'ws';
  */
 export interface TerminalSocket {
   send(data: string): void;
-  close(): void;
+  /** `code` is the application close code — see TERM_CLOSE_DEAD. */
+  close(code?: number): void;
   on(event: 'close', listener: () => void): unknown;
   on(event: 'message', listener: (data: RawData, isBinary: boolean) => void): unknown;
 }
@@ -53,6 +55,8 @@ export interface AttachSpec {
 }
 
 export interface TerminalMux {
+  /** Is there anything at `name` to attach to? Asked before spawning, never after. */
+  hasSession(name: string): Promise<boolean>;
   attachSpawn(name: string): AttachSpec;
 }
 
@@ -102,11 +106,14 @@ function createTerminalHandler({ manager, spawn = pty.spawn }: TerminalDeps) {
     // because `tmux attach-session` does not exit on its own. The result was an orphaned
     // node-pty plus an attached tmux client, for the daemon's life, per socket.
     //
-    // There used to be a `closed` flag checked here as well, because the split pane
-    // awaited ensureSplit between this line and the spawn. The split is gone and with it
-    // the await, so nothing can interleave and the flag could never be true.
+    // `closed` is back, and for the original reason: the liveness check below is once
+    // again an await between this listener and the spawn. A socket that goes away inside
+    // it reaches a `term` that is still null, so the flag is what the spawn checks —
+    // without it the pty (and the tmux client it attaches) outlives every reference to it.
     let term: TerminalPty | null = null;
+    let closed = false;
     ws.on('close', () => {
+      closed = true;
       if (term) {
         try {
           term.kill();
@@ -115,6 +122,34 @@ function createTerminalHandler({ manager, spawn = pty.spawn }: TerminalDeps) {
         }
       }
     });
+
+    // Ask whether there is anything to attach to BEFORE spawning something to find out.
+    //
+    // A session record outlives its multiplexer session — reconcile() flips it to
+    // stopped and keeps the record so it can be resumed. Attached blind, `tmux
+    // attach-session` against a dead name prints "can't find session: <name>" and exits;
+    // that exit closes the socket, which the client cannot tell from a daemon restart,
+    // so it reconnects into the same dead attach and loops until it exhausts its retries.
+    //
+    // A check that THROWS is not evidence of death — same rule reconcile() uses — so a
+    // transient tmux failure attaches and lets the pty report whatever it finds.
+    let alive = true;
+    try {
+      alive = await manager.mux.hasSession(s.muxName);
+    } catch {
+      alive = true;
+    }
+    if (closed) return;
+    if (!alive) {
+      try {
+        // Dim, like the client's own notices: this is the daemon speaking, not the pane.
+        ws.send('\r\n\x1b[2msession ended — press Resume to restart it\x1b[0m\r\n');
+      } catch {
+        /* */
+      }
+      ws.close(TERM_CLOSE_DEAD);
+      return;
+    }
 
     const spec = manager.mux.attachSpawn(s.muxName);
     // Nothing between here and the assignment may await, or the close listener above

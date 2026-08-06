@@ -18,6 +18,9 @@
   import '@xterm/xterm/css/xterm.css';
   import { termTheme } from '$lib/theme.svelte.js';
   import { TOKEN } from '$lib/api.js';
+  // A VALUE from server/types, not just a type — the close code has to be the same
+  // number on both ends, and types.ts is the file both ends already agree on.
+  import { TERM_CLOSE_DEAD } from '../../../../server/types';
 
   let {
     /** Session id from /api/state. */
@@ -136,10 +139,17 @@
       onstatus?.('open');
     };
 
-    sock.onclose = () => {
+    sock.onclose = (e) => {
       // Reaching here means an unintended drop — closeSocket() nulls this handler first,
       // so intentional teardowns never land in the retry path.
       if (gen !== generation) return;
+      // ...unintended, but not always retryable. TERM_CLOSE_DEAD says the multiplexer
+      // session is gone, which no amount of reconnecting brings back — the server has
+      // already written the line saying so, and retrying would only scroll it away.
+      if (e.code === TERM_CLOSE_DEAD) {
+        onstatus?.('closed');
+        return;
+      }
       if (attempt >= maxRetries) {
         note(t, '[disconnected — reselect to reattach]');
         onstatus?.('closed');
