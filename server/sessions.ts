@@ -31,6 +31,15 @@ export interface MuxLaunchOptions {
 export interface MuxEnsureResult {
   created?: boolean;
   error?: string;
+  /** The agent window's id, when this call created it. */
+  id?: string;
+}
+
+/** `relaunchAgent()`'s answer: where the agent now is, and why it isn't. */
+export interface MuxRelaunchResult {
+  ok: boolean;
+  error?: string;
+  id?: string;
 }
 
 export interface MuxNewTabOptions {
@@ -74,6 +83,8 @@ export interface SessionMux {
   name: string;
   /** Create the multiplexer session if it isn't already there, and launch `cmd` in it. */
   ensure(name: string, opts?: MuxLaunchOptions): Promise<MuxEnsureResult>;
+  /** Start the agent again inside a session that already exists. */
+  relaunchAgent(name: string, opts: MuxLaunchOptions & { tabId?: string | null }): Promise<MuxRelaunchResult>;
   hasSession(name: string): Promise<boolean>;
   kill(name: string): Promise<unknown>;
   rename(oldName: string, newName: string): Promise<boolean>;
@@ -1120,7 +1131,21 @@ class SessionManager extends EventEmitter {
     // where the promote-time /cd never landed.
     let cwd = s.home || s.repoPath;
     if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
+    /*
+     * Resume has to make the AGENT run, which is not the same as making its session
+     * exist. `ensure` is create-if-missing: for a session whose tmux outlived its
+     * claude — the ordinary state after the agent quits, since the launch script ends
+     * in `exec zsh -l` — it correctly reported "already there" and started nothing, so
+     * the button did nothing at all. Whichever path runs, the agent's window id is
+     * recorded from the launch itself; inferring it later cannot survive a relaunch.
+     */
     const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+    if (r.created && r.id) s.agentTabId = r.id;
+    if (!r.created && !r.error) {
+      const again = await this.mux.relaunchAgent(s.muxName, { cwd, cmd, tabId: s.agentTabId });
+      if (again.id) s.agentTabId = again.id;
+      if (!again.ok) r.error = again.error || 'could not restart the agent';
+    }
     /*
      * The launch result decides the state, rather than being reported alongside a state
      * that assumes success. This set `active`/`idle`/'resumed' unconditionally, so a
@@ -1260,6 +1285,9 @@ class SessionManager extends EventEmitter {
         let cwd = s.home || s.repoPath;
         if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
         const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+        // The relaunch gives the agent a NEW window; carrying the old id forward is
+        // what made a restored session report "agent exited" against a live agent.
+        if (r.created) s.agentTabId = r.id ?? null;
         // restore recreates only the primary claude window — drop any stale extra
         // tabs so the tab strip matches the windows that actually exist.
         s.tabs = [{ id: PENDING_TAB, title: 'claude' }];

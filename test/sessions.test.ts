@@ -853,3 +853,114 @@ test('restore() reports a count that a caller can distinguish from failure', asy
     'no sessions is still 0 — the difference has to come from the throw',
   );
 });
+
+/*
+ * Resume on a session whose tmux outlived its agent.
+ *
+ * This is the ordinary end state of an agent: claude exits, the launch script's
+ * `exec zsh -l` keeps the window, and the tmux session is still there. `ensure` is
+ * create-if-missing, so it truthfully answered "already there" and started nothing —
+ * and the button did nothing, over and over, while reporting success.
+ */
+test('activate restarts the agent when the session exists but the agent has exited', async () => {
+  const m = manager();
+  const relaunched: Array<{ tabId?: string | null; cmd?: string }> = [];
+  m.mux = muxStub({
+    async ensure() {
+      return { created: false }; // the session is already there
+    },
+    async relaunchAgent(_n, opts) {
+      relaunched.push({ tabId: opts?.tabId, cmd: opts?.cmd });
+      return { ok: true, id: '@42' };
+    },
+  });
+  m.sessions.set(
+    'r1',
+    session({
+      id: 'r1',
+      muxName: 'mux-r1',
+      repoPath: '/tmp/r',
+      home: '/tmp/r',
+      worktreePath: null,
+      settingsFile: '/tmp/r1.settings.json',
+      repos: [sessionRepo({ repo: 'r', primary: true })],
+      claudeSessionId: 'sid-r',
+      agentTabId: '@2',
+      active: false,
+      state: 'stopped',
+      createdAt: Date.now(),
+    }),
+  );
+
+  expectOk(await m.activate('r1'), 'activate()');
+  assert.equal(relaunched.length, 1, 'the agent is relaunched rather than assumed running');
+  assert.equal(relaunched[0]?.tabId, '@2', 'the old window is offered for reuse');
+  assert.ok(relaunched[0]?.cmd?.includes('-r '), 'and it resumes the conversation');
+  assert.equal(got(m, 'r1').agentTabId, '@42', 'the new window id replaces the stale one');
+  assert.equal(got(m, 'r1').state, 'idle');
+});
+
+/*
+ * The stale-id half. `agentTabId` was learned once and never again, so a session whose
+ * tmux was recreated carried an id no live window had. The liveness check compares the
+ * two, so it declared a healthy agent exited — every few seconds, forever.
+ */
+test('activate records the agent window id the launch reports', async () => {
+  const m = manager();
+  m.mux = muxStub({
+    async ensure() {
+      return { created: true, id: '@9' };
+    },
+  });
+  m.sessions.set(
+    'r2',
+    session({
+      id: 'r2',
+      muxName: 'mux-r2',
+      repoPath: '/tmp/r2',
+      home: '/tmp/r2',
+      worktreePath: null,
+      settingsFile: '/tmp/r2.settings.json',
+      repos: [sessionRepo({ repo: 'r2', primary: true })],
+      agentTabId: '@2', // stale: from the session this one replaces
+      active: false,
+      state: 'stopped',
+      createdAt: Date.now(),
+    }),
+  );
+
+  expectOk(await m.activate('r2'), 'activate()');
+  assert.equal(got(m, 'r2').agentTabId, '@9');
+});
+
+test('a relaunch that fails leaves the session stopped, not idle', async () => {
+  const m = manager();
+  m.mux = muxStub({
+    async ensure() {
+      return { created: false };
+    },
+    async relaunchAgent() {
+      return { ok: false, error: 'no server running' };
+    },
+  });
+  m.sessions.set(
+    'r3',
+    session({
+      id: 'r3',
+      muxName: 'mux-r3',
+      repoPath: '/tmp/r3',
+      home: '/tmp/r3',
+      worktreePath: null,
+      settingsFile: '/tmp/r3.settings.json',
+      repos: [sessionRepo({ repo: 'r3', primary: true })],
+      active: false,
+      state: 'stopped',
+      createdAt: Date.now(),
+    }),
+  );
+
+  const r = await m.activate('r3');
+  assert.equal(r.ok, false, 'the failure is reported');
+  assert.equal(got(m, 'r3').state, 'stopped');
+  assert.match(got(m, 'r3').activity, /no server running/);
+});
