@@ -184,7 +184,7 @@ async function main() {
   // Pushed, not polled. Three objects that each only reach the next one at call
   // time: the forge does the lookups and tells the feed when it opened a PR, the
   // feed owns the snapshot and decides when to look, the bus carries the result.
-  const forge = createForge({ manager, resolveGroup, onChanged: () => ciFeed.poke({ force: true }) });
+  const forge = createForge({ cfg, manager, resolveGroup, onChanged: () => ciFeed.poke({ force: true }) });
   const ciFeed = createCiFeed({
     forge,
     sessions: () => manager.all(),
