@@ -10,6 +10,7 @@
   import Modal from '$lib/components/Modal.svelte';
   import { COLOR_LABELS, FEATURE_COLORS, colorVars } from '$lib/featureColor.js';
   import { dialogs } from '$lib/stores/dialog.svelte.js';
+  import type { DialogLink } from '$lib/stores/dialog.svelte.js';
 
   const entry = $derived(dialogs.current);
   const spec = $derived(entry?.spec ?? null);
@@ -76,6 +77,41 @@
               <label class="dlg-check">
                 <input class="dlgf" type="checkbox" bind:checked={values[i]} /> {f.label || ''}
               </label>
+            {:else if f.type === 'links'}
+              <div class="field">
+                <span class="lbl">{f.label || ''}</span>
+                {#each f.derived || [] as d (d)}
+                  <!-- Shown but not editable: these come from intake and the forge and are
+                       recomputed every poll, so an editable field would be a lie. -->
+                  <div class="derived"><span>{d}</span></div>
+                {/each}
+                {#each values[i] as DialogLink[] as row, r (r)}
+                  <div class="linkrow">
+                    <input class="input lbl-in" placeholder="Label" bind:value={row.label} />
+                    <input class="input" placeholder="https://…" bind:value={row.url} />
+                    <button
+                      class="btn xs ghost"
+                      type="button"
+                      aria-label="Remove link"
+                      title="Remove"
+                      onclick={() => { values[i] = (values[i] as DialogLink[]).filter((_x: DialogLink, k: number) => k !== r); }}
+                    >✕</button>
+                  </div>
+                {/each}
+                <div class="linkrow">
+                  <input
+                    class="input"
+                    placeholder="Paste a URL to add — anything works"
+                    onchange={(e) => {
+                      const el = e.currentTarget;
+                      const url = el.value.trim();
+                      if (!url) return;
+                      values[i] = [...(values[i] as DialogLink[]), { label: '', url }];
+                      el.value = '';
+                    }}
+                  />
+                </div>
+              </div>
             {:else if f.type === 'color'}
               <div class="field">
                 <span class="lbl">{f.label || ''}</span>
@@ -138,6 +174,11 @@
   /* The swatch labels are `.lbl`, not `label`: the rule below styles `.field label` as a
      caption, and every swatch IS a label wrapping its radio. */
   .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); }
+  .linkrow { display:flex; align-items:center; gap:8px; }
+  .linkrow .input { flex:1; min-width:0; }
+  .linkrow .lbl-in { flex:0 0 132px; }
+  .derived { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px;
+             color:var(--faint); padding:6px 9px; border:1px dashed var(--border); border-radius:7px; }
   .swatches { display:flex; flex-wrap:wrap; gap:8px; }
   .sw { position:relative; cursor:pointer; border-radius:8px; padding:3px; border:2px solid transparent; line-height:0; }
   .sw:hover { border-color:var(--border-strong); }

@@ -11,6 +11,7 @@
 // them for the callers that want the whole world at once: GET /state, SwiftBar,
 // Alfred, resolveGroup.
 import { computeFeatures } from './features.ts';
+import { SHIPPED_PROVIDERS } from './links.ts';
 import type { ComputedFeature } from './features.ts';
 import { createRealpathCache } from './util.ts';
 import * as sources from './sources/index.ts';
@@ -225,6 +226,11 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       if (slot !== undefined) out.slot = slot;
       const color = (cfg.featureColors || {})[f.name];
       if (color) out.color = color;
+      // Raw link config only. The MR chips are joined in on the client from the `ci`
+      // frame — see the note on Feature.ticket.
+      const lk = (cfg.featureLinks || {})[f.name];
+      if (lk?.ticket) out.ticket = lk.ticket;
+      if (lk?.pins?.length) out.pins = lk.pins;
       return out;
     };
     return {
@@ -233,6 +239,8 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       runningTotal: flat.filter((w) => w.running).length,
       baseDirs: cfg.baseDirs || [],
       editors: Object.keys(cfg.editors || {}),
+      // User entries FIRST, so one can override a shipped recogniser.
+      linkProviders: [...(cfg.linkProviders || []), ...SHIPPED_PROVIDERS],
       defaultEditor: cfg.defaultEditor || '',
       webRepos: cfg.webRepos || [],
       runConfigs: definedValues(cfg.runConfigs),

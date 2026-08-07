@@ -218,6 +218,21 @@ export interface Config {
    * like — a colour picked in dark mode must not become unreadable in light.
    */
   featureColors: Record<string, string>;
+  /**
+   * featureName → the tracker URL and any links pinned by hand.
+   *
+   * Keyed by feature, like `featureColors` and for the same reason: a ticket outlives the
+   * session that produced it, and `session.sourceUrl` died with the session.
+   */
+  featureLinks: Record<string, { ticket?: string; pins?: Array<{ label?: string; url: string }> }>;
+  /**
+   * Extra URL recognisers, tried BEFORE the shipped ones so a user entry can override.
+   *
+   * This is the whole tracker-flexibility story. Recognising a URL needs no auth and no
+   * API — only a label and a way to shorten it — so a new tracker is a config line rather
+   * than a code change. Jira and Linear are not shipped; they are three lines here.
+   */
+  linkProviders: LinkProvider[];
   sources: {
     github?: { enabled: boolean };
     // `project` is read by the REST fallback in sources/gitlab.ts and gated on by its
@@ -471,6 +486,24 @@ export type FeatureMember = Worktree | MissingMember;
  * Hues chosen to sit clear of those four. `types.ts` imports nothing, so a value here
  * still costs the client nothing but the array.
  */
+/**
+ * A rule for turning a URL into a chip.
+ *
+ * `match` is tested against the WHOLE url, not the hostname: a self-hosted GitLab is
+ * `gitlab1.develop.accept.blue`, which no equality test would catch, and a substring is
+ * what lets one rule cover both gitlab.com and every private instance.
+ */
+export interface LinkProvider {
+  id: string;
+  /** Substring that identifies this provider, e.g. `"asana.com"`. */
+  match: string;
+  label: string;
+  /** A single character shown before the label; '' is fine. */
+  glyph?: string;
+  /** Regex whose FIRST capture group becomes the short name, e.g. `AB-1183`. */
+  idPattern?: string;
+}
+
 export const FEATURE_COLORS = [
   'teal',
   'sky',
@@ -495,12 +528,28 @@ export interface Feature {
   slot?: number;
   /** The user's colour tag (a palette id), present only when one has been set. */
   color?: string;
+  /**
+   * The tracker URL, and links pinned by hand. RAW, not assembled.
+   *
+   * The merge-request chips are NOT here: they come from the `ci` frame, which changes on
+   * its own cadence, and putting them on the topology would mean rebroadcasting the whole
+   * repo shape every time a pipeline ticks. The client joins the two — the same split it
+   * already makes for sessions. See server/links.ts `assemble()`.
+   */
+  ticket?: string;
+  pins?: PinnedLink[];
 }
 
 /**
  * A feature as `resolveGroup()` answers it: members naming a worktree that is not
  * on disk have been dropped, so every remaining member is a real worktree row.
  */
+/** A link the user pinned: a URL and, optionally, what to call it. */
+export interface PinnedLink {
+  label?: string;
+  url: string;
+}
+
 export interface ResolvedFeature extends Omit<Feature, 'members'> {
   members: Worktree[];
 }
@@ -530,6 +579,8 @@ export interface TopologyPayload {
   baseDirs: string[];
   /** Editor NAMES (the keys of config.editors), not the editor configs. */
   editors: string[];
+  /** URL recognisers: the shipped set with config.linkProviders ahead of it. */
+  linkProviders: LinkProvider[];
   defaultEditor: string;
   webRepos: string[];
   runConfigs: Record<string, RunConfig[]>;

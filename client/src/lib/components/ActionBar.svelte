@@ -177,7 +177,9 @@
       {:else if feature}
         <button class="btn sm primary" onclick={() => startFeatureSession(feature)}>Start session</button>
         <button class="btn sm" onclick={() => openGroup(feature.name)}>Open in editor</button>
-        <button class="btn sm" onclick={() => prFeature(feature.name)}>Open PR / MR</button>
+        <!-- "Open PR / MR" said CREATE here and OPEN IN BROWSER on the CI pill — the same four
+             words for two different actions. This one creates. -->
+        <button class="btn sm" onclick={() => prFeature(feature.name)}>Create PR / MR</button>
         <button class="btn sm ghost" title="Colour this feature" aria-label="Edit feature" onclick={() => editFeature(feature)}>✐</button>
         {#if anyRunning}
           <button class="btn sm ghost" onclick={() => closeFeature(feature.name)}>Close feature</button>

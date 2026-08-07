@@ -12,8 +12,14 @@
  * another dialog's handler queues behind it rather than stacking two backdrops.
  */
 
-/** A field's value: text/select carry a string, a checkbox carries a boolean. */
-export type DialogValue = string | boolean;
+/** A pinned link row, as the `links` field carries it. */
+export interface DialogLink {
+  label?: string;
+  url: string;
+}
+
+/** text/select carry a string, a checkbox a boolean, `links` a list of rows. */
+export type DialogValue = string | boolean | DialogLink[];
 
 /**
  * What `open()` settles to: null on cancel/Escape, true when the dialog had no
@@ -27,11 +33,20 @@ export interface DialogField {
    * dialog because picking a colour is never the whole errand — you open the editor to
    * change a name and tag it in one pass, and two dialogs for one edit is two dismissals.
    */
-  type?: 'text' | 'checkbox' | 'select' | 'color';
+  type?: 'text' | 'checkbox' | 'select' | 'color' | 'links';
   label?: string;
   value?: DialogValue;
   placeholder?: string;
   options?: string[];
+  /**
+   * Read-only lines shown above a `links` field's editable rows.
+   *
+   * For links that are DERIVED — the ticket from intake, the merge requests from the
+   * forge. They belong in the same place as the pinned ones because the user thinks of
+   * them as one set, but they are recomputed on every poll, so offering to edit them
+   * would be offering something that cannot be honoured.
+   */
+  derived?: string[];
 }
 
 export interface DialogSpec {

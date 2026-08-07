@@ -41,6 +41,12 @@
  */
 
 import { tokenQuery } from '$lib/api.js';
+// The server's own assembler, imported rather than re-implemented: the ordering, the
+// empty-chip rule and the label derivation must be one answer, not two. `Link` lives
+// there too — it is the shape of an ASSEMBLED link, which is no longer a wire type now
+// that the join happens on this side.
+import { assemble } from '../../../../server/links';
+import type { Link } from '../../../../server/links';
 
 /*
  * The wire contract comes from the SERVER'S OWN types, not a copy.
@@ -212,6 +218,30 @@ class World {
 
   featureColorFor(sessionId: string): string {
     return this.featureFor(sessionId)?.color || '';
+  }
+
+  /**
+   * A feature's links, joined from the two halves that carry them.
+   *
+   * The ticket and the pins ride the TOPOLOGY frame (they are config, and change when you
+   * change them); the merge requests ride the CI frame (they change when a pipeline
+   * ticks). Joining here rather than on the server is what keeps a pipeline tick from
+   * rebroadcasting the whole repo shape — the same reason sessions are stitched rather
+   * than embedded. `assemble()` is the server's own module, so both sides cannot drift.
+   */
+  linksFor(feature: Feature | null): Link[] {
+    if (!feature) return [];
+    const sessionId = feature.session?.id || '';
+    return assemble({
+      ticketUrl: feature.ticket,
+      session: sessionId ? this.session(sessionId) : null,
+      ci: sessionId ? this.view.ci[sessionId] || [] : [],
+      repos: (feature.members || [])
+        .map((m) => (m && 'repo' in m ? m.repo : ''))
+        .filter((r): r is string => !!r),
+      pins: feature.pins,
+      providers: this.view.linkProviders,
+    });
   }
 }
 
