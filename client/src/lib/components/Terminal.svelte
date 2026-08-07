@@ -29,6 +29,17 @@
     tab = null,
     /** False while the pane is hidden — suppresses fitting against a zero-sized box. */
     active = true,
+    /**
+     * Changes whenever the session's agent comes back, which is the one event that
+     * makes a dead socket worth retrying.
+     *
+     * A TERM_CLOSE_DEAD close stops the retry chain on purpose: the multiplexer session
+     * is gone and reconnecting cannot bring it back. But Resume DOES bring it back, and
+     * nothing about the terminal's own inputs changes when it does — same session id,
+     * same tab — so the pane sat on "session ended" until the page was reloaded, which
+     * built a new component and connected as a side effect.
+     */
+    revive = 0,
     /** Take keyboard focus once connected. Only one pane on screen should do this. */
     autofocus = true,
     /** Reconnect attempts after an unintended drop, backing off 1s→2s→4s. */
@@ -300,7 +311,10 @@
     // `file` classify this source as binary, and every -I grep (ripgrep, ugrep,
     // git grep) then skipped the file SILENTLY — a search for anything in here
     // came back empty rather than wrong, which is the worse failure.
-    const target = `${sessionId}\0${tab ?? ''}`;
+    // `revive` is part of the target so a resumed agent reattaches on its own. It also
+    // makes the reset below fire, which is what you want: the pane is showing a dead
+    // session's last screen plus the daemon's "session ended" line.
+    const target = `${sessionId}\0${tab ?? ''}\0${revive}`;
     const t = term;
     if (!t || !sessionId) return;
 

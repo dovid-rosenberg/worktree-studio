@@ -186,16 +186,21 @@ describe('ActionBar', () => {
     expect(ops.stopMainServer).toHaveBeenCalled();
   });
 
+  // Found by NAME, not by glyph: these two are icon-only now, and the accessible name
+  // is the whole reason that is allowed. A test that matched the character would pass
+  // just as happily with no label on it at all.
   it('offers Resume for a deactivated session and Deactivate for a live one', () => {
     give([], [session({ active: false })]);
     ui.select('s1');
     const { unmount } = render(ActionBar);
-    expect(screen.getByText(/Resume/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Resume session')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Deactivate session')).not.toBeInTheDocument();
     unmount();
 
     give([], [session({ active: true })]);
     render(ActionBar);
-    expect(screen.getByText('Deactivate')).toBeInTheDocument();
+    expect(screen.getByLabelText('Deactivate session')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Resume session')).not.toBeInTheDocument();
   });
 
   it('gives a sessionless feature its own verbs, starting with the one that matters', () => {
@@ -207,7 +212,7 @@ describe('ActionBar', () => {
     // four words for two different actions is a trap you fall into once a week.
     expect(screen.getByText('Create PR / MR')).toBeInTheDocument();
     // Session-only verbs must not appear for something with no session.
-    expect(screen.queryByText('Deactivate')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Deactivate session')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Delete session')).not.toBeInTheDocument();
   });
 

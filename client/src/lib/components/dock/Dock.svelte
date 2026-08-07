@@ -135,7 +135,9 @@
 
     <!-- Hidden, never unmounted: see the note at the top of this file. -->
     <div class="term-area" hidden={!isTerm}>
-      <Terminal {sessionId} active={isTerm} />
+      <!-- `revive` flips when the agent comes back, which is what tells a pane whose
+           socket closed on a dead multiplexer session to attach again. -->
+      <Terminal {sessionId} active={isTerm} revive={session.active === false ? 0 : 1} />
     </div>
 
     {#if ui.dockView === 'changes'}
