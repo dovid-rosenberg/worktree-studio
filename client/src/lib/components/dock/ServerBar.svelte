@@ -52,11 +52,11 @@
 </script>
 
 <div class="readout">
-  {#if !promoted}
-    <span>Promote to a worktree to run dev servers.</span>
-  {:else if !configured}
-    <span>No dev-server config for this feature’s repos (set <code>start.&lt;repo&gt;</code> in config).</span>
-  {:else}
+  <!-- Both of the old empty states are gone. "Promote to a worktree to run dev servers"
+       sat permanently a few pixels left of the Promote button that says the same thing,
+       and the missing-config one is already a `no start cmd` pill on the rail card. A bar
+       that is always saying something is a bar you stop reading. -->
+  {#if promoted && configured}
     <span>workspace</span>
     {#each reps as r (r.worktreePath)}
       {#if r.running && r.ports.length}

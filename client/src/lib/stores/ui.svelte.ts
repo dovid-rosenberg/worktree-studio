@@ -65,6 +65,19 @@ export type Selection =
   | { kind: 'mainserver'; path: string }
   | null;
 
+/**
+ * A stable key for a selection — the same scheme the rail keys its rows with.
+ *
+ * `null` maps to '', which is a key nothing is ever stored under, so "nothing was
+ * selected" cannot accidentally share a slot with something that was.
+ */
+function selectionKey(s: Selection): string {
+  if (!s) return '';
+  if (s.kind === 'session') return `s:${s.id}`;
+  if (s.kind === 'feature') return `f:${s.name}`;
+  return `w:${s.path}`;
+}
+
 const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
 
@@ -147,6 +160,17 @@ class UI {
    * READ-ONLY projections, so the components that only ask "is this me?" are unchanged.
    */
   selection = $state<Selection>(null);
+  /** What was selected before Insights hid it, so the toggle can put it back. */
+  #beforeInsights: Selection = null;
+  /**
+   * Where each selection was last left: which dock tab, which terminal tab.
+   *
+   * Plain fields, not `$state` — nothing renders from this map directly; it is only ever
+   * read to seed `dockView`/`activeTabId`, which are reactive themselves. Making it
+   * reactive would buy a proxy over a map that grows one entry per thing you have looked
+   * at and is read exactly once per switch.
+   */
+  #dockMemory = new Map<string, { view: DockView; tab: string }>();
   /** Rail repo filter — '' means all repos. */
   repoFilter = $state('');
   /** Which dock panel is showing. 'term' keeps the live terminal mounted. */
@@ -295,9 +319,21 @@ class UI {
           }),
         ),
       ];
-      // Active first, then alphabetical — the comparator the rail has always used, now
-      // applied across every kind of row rather than within each section.
-      return rows.sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+      /*
+       * Waiting first, then active, then alphabetical.
+       *
+       * `active` alone left a waiting agent sitting alphabetically among a dozen equally
+       * active idle ones — so the single state worth interrupting you for was no easier
+       * to find than anything else. Waiting now reliably occupies row one, which is also
+       * what makes the ⌥ digit on the card worth reading.
+       */
+      const waiting = (r: RailRow) => (r.kind === 'session' ? r.session.state === 'waiting' : false);
+      return rows.sort(
+        (a, b) =>
+          Number(waiting(b)) - Number(waiting(a)) ||
+          Number(b.active) - Number(a.active) ||
+          a.name.localeCompare(b.name),
+      );
     })(),
   );
 
@@ -312,6 +348,13 @@ class UI {
    * card on screen. A shortcut that selects something other than what you counted is
    * worse than no shortcut. It is built from the same sections the rail renders, with
    * the servers-running repeat de-duplicated so a feature never occupies two numbers.
+   *
+   * That still leaves the number MOVING: `active` is the sort key and it flips whenever a
+   * dev server starts or a session is deactivated, so starting one stack renumbers the
+   * others and ⌥3 becomes a lottery. The cure is not a stabler sort — that would break
+   * the invariant this comment defends — it is `railDigits` below, which puts the number
+   * on the card so you read it instead of counting. Then a reordering rail is honest
+   * rather than misleading, because the label moves with the row.
    */
   railOrder = $derived<RailEntry[]>(
     this.railRows
@@ -321,6 +364,21 @@ class UI {
         id: r.kind === 'session' ? r.session!.id : (r.feature?.session?.id ?? null),
         name: r.name,
       })),
+  );
+
+  /**
+   * Row key → the ⌥ digit that selects it, for the first nine selectable rows.
+   *
+   * Built from the SAME filter as railOrder, so the label and the binding cannot say
+   * different things — deriving them separately is how ⌘1 came to hit the fourth card.
+   */
+  railDigits = $derived(
+    new Map<string, number>(
+      this.railRows
+        .filter((r) => r.kind !== 'mainserver')
+        .slice(0, 9)
+        .map((r, i): [string, number] => [r.key, i + 1]),
+    ),
   );
 
   /** Repo names offered by the filter: every member repo, plus unpromoted sessions' repos. */
@@ -370,6 +428,14 @@ class UI {
    */
   openInsights(sessionId: string | null = null): void {
     this.insightsFocus = sessionId;
+    /*
+     * HIDDEN, not discarded. Clearing is still right while Insights is up — the reason
+     * above holds — but this used to be the end of the selection: ⌘\ to glance at usage
+     * and ⌘\ back put you on "No session selected", so a two-keystroke look cost you
+     * your place in a twelve-row rail. For a toggle-shaped shortcut that is the single
+     * most expensive lost-place event in the app.
+     */
+    if (this.selection) this.#beforeInsights = this.selection;
     this.selection = null;
     this.setDockView('usage');
   }
@@ -377,6 +443,9 @@ class UI {
   toggleUsage(): void {
     if (this.dockView === 'usage') {
       this.setDockView('term');
+      // Put back what opening Insights hid, so the toggle is genuinely a toggle.
+      if (!this.selection && this.#beforeInsights) this.selection = this.#beforeInsights;
+      this.#beforeInsights = null;
       return;
     }
     // Seed the drill-down with whatever is open, so opening Insights while looking at a
@@ -393,11 +462,25 @@ class UI {
     }
   }
 
-  /** Replace the selection and reset the per-selection dock state, as rebuildDock() did. */
+  /**
+   * Replace the selection, restoring whatever dock state that thing was last left in.
+   *
+   * This used to reset to the terminal on every pick. So: read a diff on feature A, look
+   * at B for a second, come back — you are on the terminal, on whatever tab tmux happens
+   * to have selected, and you re-navigate. Times a dozen features, that is most of what
+   * "switching is expensive" actually consists of.
+   *
+   * Keyed the same way the rail keys its rows, and deliberately NOT persisted: it
+   * describes where you were a moment ago, and restoring it across a reload would mean
+   * opening the app into a stale view of a session you have not looked at in a week.
+   */
   #pick(next: Selection): void {
+    const from = selectionKey(this.selection);
+    if (from) this.#dockMemory.set(from, { view: this.dockView, tab: this.activeTabId });
     this.selection = next;
-    this.dockView = 'term';
-    this.activeTabId = '';
+    const back = this.#dockMemory.get(selectionKey(next));
+    this.dockView = back?.view ?? 'term';
+    this.activeTabId = back?.tab ?? '';
   }
 
   select(id: string): void {
@@ -426,6 +509,23 @@ class UI {
   /** Nothing selected. */
   clearSelection(): void {
     this.selection = null;
+  }
+
+  /**
+   * Select the next session that is waiting on you, cycling past the one you are on.
+   *
+   * The waiting count used to be a badge on the Insights button, so the one state worth
+   * interrupting someone for routed them AWAY from the thing that wanted them — and,
+   * before the fix in openInsights, cost them their selection on the way. A count is a
+   * question ("who needs me?"); this is the answer.
+   */
+  goToNextWaiting(): boolean {
+    const waiting = this.railRows.filter((r) => r.kind === 'session' && r.session.state === 'waiting');
+    if (!waiting.length) return false;
+    const here = waiting.findIndex((r) => r.key === selectionKey(this.selection));
+    const next = waiting[(here + 1) % waiting.length];
+    if (next.kind === 'session') this.goToSession(next.session.id);
+    return true;
   }
 
   goToSession(id: string): void {

@@ -19,6 +19,9 @@
 
   let { session }: { session: Session } = $props();
 
+  /** The ⌥ digit that selects this row — see ui.railDigits for why it is shown. */
+  const digit = $derived(ui.railDigits.get(`s:${session.id}`));
+
   const stopped = $derived(session.state === 'stopped');
   const srv = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
   const running = $derived(srv.filter((r) => r.running));
@@ -39,6 +42,7 @@
     <div class="top">
       <span class="dot {session.state}"></span>
       <span class="title">{session.title}</span>
+      {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
       {#if running.length}
         <span class="pill run" title="Dev servers running{ports.length ? ` — :${ports.join(' :')}` : ''}">
           <span class="pi">⇅</span>running
@@ -79,6 +83,8 @@
          padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
 
   .top { display:flex; align-items:center; gap:8px; min-width:0; }
+  .digit { font-family:var(--mono); font-size:10px; color:var(--faint); flex:none;
+           border:1px solid var(--border); border-radius:5px; padding:1px 4px; opacity:.75; }
   .title { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .meta { display:flex; align-items:center; gap:7px; margin-top:6px; font-family:var(--mono); font-size:11.5px;
           color:var(--muted); flex-wrap:wrap; }

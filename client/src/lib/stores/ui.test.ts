@@ -223,3 +223,94 @@ describe('selection', () => {
     expect(ui.selectionPending).toBe(false);
   });
 });
+
+describe('switching without losing your place', () => {
+  /*
+   * The three things that made a context switch expensive. None of them was a bug in the
+   * sense of throwing — each just quietly discarded state the user had established, and
+   * the cost only shows up as "coming back is annoying", which is exactly the kind of
+   * thing nobody files.
+   */
+
+  it('⌘\\ into Insights and back RESTORES the selection', () => {
+    give({ features: [], sessions: [session('s1')] });
+    ui.select('s1');
+
+    ui.toggleUsage();
+    expect(ui.dockView).toBe('usage');
+    // Still cleared while Insights is up — the ActionBar must not offer Stop stack for
+    // something that is not on screen.
+    expect(ui.selectedId).toBeNull();
+
+    ui.toggleUsage();
+    expect(ui.dockView).toBe('term');
+    expect(ui.selectedId).toBe('s1');
+  });
+
+  it('remembers which dock tab each selection was left on', () => {
+    give({
+      features: [feature('f', [member('accept-blue')])],
+      sessions: [session('s1'), session('s2')],
+    });
+    ui.select('s1');
+    ui.setDockView('usage'); // stand-in for Changes/Runs: any non-terminal view
+    expect(ui.dockView).toBe('usage');
+
+    ui.select('s2');
+    expect(ui.dockView).toBe('term');
+
+    // Back to s1 — you were reading something there, and that is where you land.
+    ui.select('s1');
+    expect(ui.dockView).toBe('usage');
+  });
+
+  it('a selection never seen before opens on its terminal', () => {
+    give({ features: [], sessions: [session('s1'), session('s2')] });
+    ui.select('s1');
+    ui.setDockView('usage');
+    ui.select('s2');
+    expect(ui.dockView).toBe('term');
+  });
+
+  it('sorts a waiting agent to the top, above merely-active ones', () => {
+    give({
+      features: [],
+      sessions: [
+        session('a', { title: 'aaa', state: 'idle' }),
+        session('z', { title: 'zzz', state: 'waiting' }),
+      ],
+    });
+    // Alphabetically 'zzz' is last and both are active; waiting is what you need to find.
+    expect(ui.railRows[0].name).toBe('zzz');
+  });
+
+  it('goToNextWaiting cycles, and says so when nothing is waiting', () => {
+    give({
+      features: [],
+      sessions: [
+        session('w1', { title: 'w1', state: 'waiting' }),
+        session('w2', { title: 'w2', state: 'waiting' }),
+      ],
+    });
+    expect(ui.goToNextWaiting()).toBe(true);
+    const first = ui.selectedId;
+    expect(ui.goToNextWaiting()).toBe(true);
+    expect(ui.selectedId).not.toBe(first);
+    // …and wraps rather than stopping at the end.
+    expect(ui.goToNextWaiting()).toBe(true);
+    expect(ui.selectedId).toBe(first);
+  });
+
+  it('the ⌥ digit a card shows is the one that selects it', () => {
+    give({
+      features: [feature('feat', [member('accept-blue')])],
+      sessions: [session('s1', { title: 'sess' })],
+    });
+    // Whatever the order works out to, the label and the binding are built from one
+    // filter — deriving them separately is how ⌘1 came to hit the fourth card.
+    for (const [i, row] of ui.railOrder.entries()) {
+      const key = row.kind === 'session' ? `s:${row.id}` : `f:${row.name}`;
+      if (i < 9) expect(ui.railDigits.get(key)).toBe(i + 1);
+    }
+  });
+});

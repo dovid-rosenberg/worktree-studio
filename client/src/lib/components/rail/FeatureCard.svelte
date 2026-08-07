@@ -43,6 +43,7 @@
    * A title that still equals the worktree name is the default and adds nothing, so the
    * second line appears only once they have actually diverged.
    */
+  const digit = $derived(ui.railDigits.get(`f:${feature.name}`));
   const label = $derived(sess?.title?.trim() || feature.name);
   const renamed = $derived(label !== feature.name);
   /** Members whose start command cannot succeed — no node_modules in the worktree. */
@@ -72,6 +73,11 @@
     <div class="l1">
       <span class="dot {sess ? sess.state : (anyRunning ? 'done' : 'idle')}"></span>
       <span class="fname">{label}</span>
+      <!-- The ⌥ digit that selects this row. On the card rather than in your memory: the
+           rail sorts active-first, so starting a dev server renumbers everything below
+           it and a remembered number picks the wrong feature. A number you READ is
+           correct however the list moves. -->
+      {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
       {#if !feature.auto}<span class="src" title="Grouped by config.groups, not by name">manual</span>{/if}
       {#if feature.slot != null}
         <span class="badge slot" title="Concurrency slot — its ports are offset by slot·100">{feature.slot}</span>
@@ -139,6 +145,8 @@
          padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
 
   .l1 { display:flex; align-items:center; gap:7px; min-width:0; }
+  .digit { font-family:var(--mono); font-size:10px; color:var(--faint); flex:none;
+           border:1px solid var(--border); border-radius:5px; padding:1px 4px; opacity:.75; }
   .fname { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .l2 { display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; min-width:0; }
   .l3 { display:flex; flex-direction:column; gap:3px; margin-top:6px; min-width:0; }

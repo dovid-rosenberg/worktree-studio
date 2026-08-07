@@ -31,15 +31,25 @@
 
   <span class="spacer"></span>
 
-  <!-- data-n drives the ::after badge; 0 hides it (see the .attn rules). The waiting
-       count rides on Insights because it is the only app-level view, so it is where an
-       attention badge can live without inventing a home for it. -->
+  <!-- Its own button, appearing only when something IS waiting.
+       This used to be a badge on Insights, so the one state worth interrupting you for
+       took you to the usage breakdown — away from the session asking for you, and (before
+       openInsights learned to put it back) at the cost of your selection. A count is the
+       question; this button is the answer, so pressing it goes to the next waiting agent. -->
+  {#if notify.waitingCount}
+    <button
+      class="btn ghost ovbtn attn"
+      data-n={notify.waitingCount}
+      title="{notify.waitingCount} session(s) waiting for you — go to the next"
+      onclick={() => ui.goToNextWaiting()}
+    >◉ Waiting</button>
+  {/if}
+
   <button
-    class="btn ghost ovbtn attn"
+    class="btn ghost ovbtn"
     class:on={ui.dockView === 'usage'}
     aria-pressed={ui.dockView === 'usage'}
-    data-n={notify.waitingCount}
-    title={notify.waitingCount ? `${notify.waitingCount} session(s) waiting for you` : 'Insights (⌘\\)'}
+    title="Insights (⌘\\)"
     onclick={() => ui.toggleUsage()}
   >◔ Insights</button>
 
