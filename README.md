@@ -64,6 +64,12 @@ npm install          # node-pty + spawn-helper perms, BUILDS THE FRONTEND
 npm start            # → http://127.0.0.1:7788
 ```
 
+To have it running whenever your Mac is, install the launchd agent instead —
+`./install.sh --autostart` starts the server at login, restarts it if it dies, and
+links the SwiftBar menubar plugin. `./uninstall.sh` reverses both. Alfred users:
+double-click `alfred/Worktree Studio.alfredworkflow`, then type `wt`. See
+[MANUAL.md](MANUAL.md#start-it-at-login-macos).
+
 The UI is the SvelteKit app in `client/`, built to static files that the daemon serves
 itself — there is no second server and no second port. `npm install` builds it (that is
 the one moment the network is already assumed); `npm start` only starts the daemon, so it

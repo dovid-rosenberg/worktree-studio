@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.worktree-studio</string>
+	<key>ProgramArguments</key>
+	<array>
+		<!-- An absolute node path, because launchd does not read your shell profile
+		     and an nvm-managed node is not on any PATH it would build. Re-run
+		     `./install.sh --autostart` after switching node versions. -->
+		<string>{{NODE}}</string>
+		<string>{{SERVER}}</string>
+	</array>
+	<!-- The repo, so relative reads inside the server resolve the way `npm start`
+	     leaves them. The server already excludes its own port from discovery, so
+	     a checkout that lives under a scanned baseDir is not mistaken for a dev
+	     server of itself. -->
+	<key>WorkingDirectory</key>
+	<string>{{REPO}}</string>
+	<!-- The whole reason this file is generated rather than committed as-is:
+	     launchd hands a process /usr/bin:/bin:/usr/sbin:/sbin and nothing more.
+	     server.ts exits immediately when it cannot find tmux, and the git/gh/glab
+	     calls further in would fail the same way. -->
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>{{PATH}}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>{{LOG}}</string>
+	<key>StandardErrorPath</key>
+	<string>{{LOG}}</string>
+</dict>
+</plist>

@@ -13,19 +13,20 @@ dashboard with a single page at **http://127.0.0.1:7788**.
 ## Table of contents
 
 1. [Concepts & glossary](#concepts--glossary)
-2. [Install & run](#install--run)
-3. [The feature lifecycle](#the-feature-lifecycle) — the spine of the tool
-4. [Feature reference](#feature-reference)
-5. [The layout](#the-layout)
-6. [Keyboard shortcuts](#keyboard-shortcuts)
-7. [Running features concurrently (slots)](#running-features-concurrently-slots)
-8. [Configuration reference](#configuration-reference)
-9. [Command-line interface](#command-line-interface)
-10. [HTTP & WebSocket API](#http--websocket-api)
-11. [Files & state on disk](#files--state-on-disk)
-12. [Claude Code integration](#claude-code-integration)
-13. [Troubleshooting](#troubleshooting)
-14. [Architecture](#architecture)
+2. [Install & run](#install--run) — including [start at login](#start-it-at-login-macos)
+3. [Menubar and Alfred](#menubar-and-alfred)
+4. [The feature lifecycle](#the-feature-lifecycle) — the spine of the tool
+5. [Feature reference](#feature-reference)
+6. [The layout](#the-layout)
+7. [Keyboard shortcuts](#keyboard-shortcuts)
+8. [Running features concurrently (slots)](#running-features-concurrently-slots)
+9. [Configuration reference](#configuration-reference)
+10. [Command-line interface](#command-line-interface)
+11. [HTTP & WebSocket API](#http--websocket-api)
+12. [Files & state on disk](#files--state-on-disk)
+13. [Claude Code integration](#claude-code-integration)
+14. [Troubleshooting](#troubleshooting)
+15. [Architecture](#architecture)
 
 ---
 
@@ -61,6 +62,98 @@ Or via the CLI (same thing): `wt-studio`. Run tests with `npm test`.
 
 On first run Studio writes a default config to `~/.config/worktree-studio/config.json`
 and scans `baseDirs` (default `~/code`) for git repos.
+
+### Start it at login (macOS)
+
+```bash
+./install.sh --autostart
+```
+
+That installs a launchd **agent** — `~/Library/LaunchAgents/com.worktree-studio.plist`
+— which starts the server at every login and restarts it if it dies (`RunAtLoad` +
+`KeepAlive`). It runs as you, in your GUI session, which is what tmux, your git
+credentials and your editor all assume.
+
+| | |
+| --- | --- |
+| Log | `~/.local/state/worktree-studio/studio.log` |
+| Restart | `launchctl kickstart -k gui/$UID/com.worktree-studio` |
+| Stop for now | `launchctl bootout gui/$UID/com.worktree-studio` |
+| Remove | `./uninstall.sh` |
+
+Two things the generated plist has to spell out, because launchd will not work them
+out for you:
+
+- **PATH.** launchd hands a process `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else.
+  Studio exits immediately when it cannot find `tmux`, and `git`/`gh`/`glab` would
+  fail the same way, so the agent carries an explicit PATH with Homebrew on it.
+- **The node binary, absolutely.** An nvm-managed node is on no PATH launchd would
+  build, so the plist names the exact binary. **Re-run `./install.sh --autostart`
+  after changing node versions**, or the agent keeps launching a node that may no
+  longer exist.
+
+The generated file is derived from `launchd/com.worktree-studio.plist.template`, and
+it points at whatever checkout you ran `install.sh` from — re-run it from the new
+place if you move the repo.
+
+---
+
+## Menubar and Alfred
+
+Both surfaces are thin clients over the same [HTTP API](docs/api.md): they read
+`GET /state` and POST the same routes the web UI does. Both find the port in your
+config and the token in `~/.local/state/worktree-studio/token`, so neither needs
+configuration of its own. Both need `jq`.
+
+### SwiftBar (menubar)
+
+`install.sh` symlinks `swiftbar/worktrees.10s.sh` into SwiftBar's plugin folder. The
+title carries one number, picked by urgency — agents **waiting on you** (🟡), else
+agents working (⚙), else dev servers up (▶). Open it for:
+
+- **Sessions**, waiting first, each with its activity, the repos it spans, and a link
+  to its ticket when it came from one.
+- **Features**, each with its members' branches, ports, merge marks and concurrency
+  slot, plus start / stop / restart / open-in-editor for the whole stack.
+
+Failures surface as a macOS notification, because a menubar click has no console.
+
+**The daemon's own health** is the last item, and it answers a question the API
+cannot: the API answering means the daemon is up, but not *how* it is up or what is
+wrong when it isn't. The plugin asks launchd directly and reports one of:
+
+| | |
+| --- | --- |
+| 🟢 running at login · pid N | healthy, under the agent. Restart or stop it from here. |
+| 🟡 started by hand | works, but dies with its terminal — offers to install the agent |
+| 🟡 answering, but the agent is not running | a second copy is serving the port |
+| 🟠 starting, or wedged | launchd has a live pid, the API is silent. Never offers a Start — launchd already did. |
+| 🔴 keeps crashing | agent present, nonzero last exit, climbing launch count. Sends you to the log, because a restart would only repeat it. |
+
+The distinction matters because of `KeepAlive`: a crashing daemon is relaunched
+within seconds, so "not running" with a Start button would be both fleeting and
+useless — it would ask you to press what launchd is already pressing.
+
+### Alfred
+
+Double-click **`alfred/Worktree Studio.alfredworkflow`** to import it. The keyword is
+`wt`. (Editing `alfred/src/*.sh` does nothing until you re-run `alfred/build.sh` and
+re-import — Alfred copies a workflow into its own preferences on import, so the
+bundle is a snapshot.)
+
+Type `wt` to get your active sessions first, then every worktree, and:
+
+| Key | On a session | On a worktree |
+| --- | --- | --- |
+| `⏎` | open its worktree in your editor | open it in your editor |
+| `⌘` | reveal in Finder | reveal in Finder |
+| `⌃` | start the whole feature's stack | start this repo's dev server |
+| `⌥` | open its ticket ↗, or stop the stack when there is no ticket | stop this repo's dev server |
+| `⇧` | open the cockpit | open the cockpit |
+
+A modifier whose action cannot apply — no worktree yet, no `start` command
+configured, nothing running to stop — is shown greyed out with the reason, rather
+than accepting the keystroke and doing nothing.
 
 ---
 
@@ -477,6 +570,8 @@ one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred a
   session close).
 - `logs/<repo>__<feature>.log` — per-worktree dev-server logs.
 - `locks/` — per-worktree operation locks.
+- `token` — the API token (mode `0600`); every client reads it from here.
+- `studio.log` — the server's own stdout/stderr, when it runs under the launchd agent.
 
 **Worktrees** — `<repo>/.worktrees/<name>` (gitignored), created by Studio.
 

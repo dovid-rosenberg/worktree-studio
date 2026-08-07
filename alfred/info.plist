@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>bundleid</key>
+	<string>com.worktree-studio.alfred</string>
+	<key>name</key>
+	<string>Worktree Studio</string>
+	<key>description</key>
+	<string>Jump to a session, worktree or dev server without leaving the keyboard.</string>
+	<key>createdby</key>
+	<string>Worktree Studio</string>
+	<key>webaddress</key>
+	<string>https://github.com/dovid-rosenberg/worktree-studio</string>
+	<key>readme</key>
+	<string>Type `wt` to list your active Claude sessions first, then every worktree.
+
+  ⏎  open in your editor
+  ⌘  reveal in Finder
+  ⌃  start the dev server (a session starts its whole feature stack)
+  ⌥  stop it — or, on a session that came from a ticket, open the ticket
+  ⇧  open the Worktree Studio cockpit
+
+Needs Worktree Studio running on 127.0.0.1:7788 (or whatever web.port in
+~/.config/worktree-studio/config.json says), plus jq. Nothing to configure:
+the workflow reads the same config file and API token the app itself uses.</string>
+	<key>disabled</key>
+	<false/>
+	<key>version</key>
+	<string>1.0</string>
+	<key>variables</key>
+	<dict/>
+	<key>variablesdontexport</key>
+	<array/>
+	<key>connections</key>
+	<dict>
+		<key>F1LTER00-0000-4000-8000-000000000001</key>
+		<array>
+			<!-- One destination, five entries: Alfred routes a modified return along
+			     the connection whose bitmask matches, so every modifier the Script
+			     Filter's `mods` block defines needs its own line here or the press
+			     falls through and does the unmodified thing instead. -->
+			<dict>
+				<key>destinationuid</key>
+				<string>ACT10N00-0000-4000-8000-000000000002</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>ACT10N00-0000-4000-8000-000000000002</string>
+				<key>modifiers</key>
+				<integer>1048576</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>ACT10N00-0000-4000-8000-000000000002</string>
+				<key>modifiers</key>
+				<integer>524288</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>ACT10N00-0000-4000-8000-000000000002</string>
+				<key>modifiers</key>
+				<integer>262144</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+			<dict>
+				<key>destinationuid</key>
+				<string>ACT10N00-0000-4000-8000-000000000002</string>
+				<key>modifiers</key>
+				<integer>131072</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+	</dict>
+	<key>objects</key>
+	<array>
+		<dict>
+			<key>config</key>
+			<dict>
+				<!-- Alfred does the filtering: the script answers with everything and
+				     Alfred fuzzy-matches the `match` field. Re-running a curl on every
+				     keystroke would be slower and match worse. -->
+				<key>alfredfiltersresults</key>
+				<true/>
+				<key>alfredfiltersresultsmatchmode</key>
+				<integer>0</integer>
+				<key>argumenttreatemptyqueryasnil</key>
+				<true/>
+				<key>argumenttrimmode</key>
+				<integer>0</integer>
+				<key>argumenttype</key>
+				<integer>1</integer>
+				<key>escaping</key>
+				<integer>102</integer>
+				<key>keyword</key>
+				<string>wt</string>
+				<key>queuedelaycustom</key>
+				<integer>1</integer>
+				<key>queuedelayimmediatelyinitially</key>
+				<true/>
+				<key>queuedelaymode</key>
+				<integer>0</integer>
+				<key>queuemode</key>
+				<integer>1</integer>
+				<key>runningsubtext</key>
+				<string>asking the studio…</string>
+				<key>script</key>
+				<string>./filter.sh</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>subtext</key>
+				<string>Sessions and worktrees from Worktree Studio</string>
+				<key>title</key>
+				<string>Worktree Studio</string>
+				<key>type</key>
+				<integer>5</integer>
+				<key>withspace</key>
+				<true/>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.input.scriptfilter</string>
+			<key>uid</key>
+			<string>F1LTER00-0000-4000-8000-000000000001</string>
+			<key>version</key>
+			<integer>3</integer>
+		</dict>
+		<dict>
+			<key>config</key>
+			<dict>
+				<key>concurrently</key>
+				<false/>
+				<key>escaping</key>
+				<integer>0</integer>
+				<key>script</key>
+				<string>./action.sh</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>type</key>
+				<integer>5</integer>
+			</dict>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>uid</key>
+			<string>ACT10N00-0000-4000-8000-000000000002</string>
+			<key>version</key>
+			<integer>2</integer>
+		</dict>
+	</array>
+	<key>uidata</key>
+	<dict>
+		<key>F1LTER00-0000-4000-8000-000000000001</key>
+		<dict>
+			<key>xpos</key>
+			<integer>60</integer>
+			<key>ypos</key>
+			<integer>60</integer>
+		</dict>
+		<key>ACT10N00-0000-4000-8000-000000000002</key>
+		<dict>
+			<key>xpos</key>
+			<integer>350</integer>
+			<key>ypos</key>
+			<integer>60</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

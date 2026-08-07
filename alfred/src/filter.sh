@@ -1,35 +1,104 @@
 #!/usr/bin/env bash
-# Alfred Script Filter — lists worktrees from Worktree Studio's API.
-# Enter=open editor · ⌘=stop server · ⌃=start server · ⌥=Finder · ⇧=pop out session
+# Alfred Script Filter — sessions and worktrees from Worktree Studio's API.
+#
+#   ⏎ open in editor   ⌘ Finder   ⌃ start servers   ⌥ stop servers   ⇧ cockpit
+#   (on a session with a ticket, ⌥ opens the ticket instead — see below)
+#
+# Alfred runs this on every keystroke, so it does one 2-second-capped request and
+# no work of its own: Alfred does the filtering (`alfredfiltersresults`), which is
+# both faster and better at fuzzy matching than anything done here.
+#
+# This script is SELF-CONTAINED on purpose. Alfred copies a workflow into its own
+# preferences folder on import, so a bundled script can never resolve a path back
+# to this checkout — anything it needs, it has to carry.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+
 CFG="${WT_STUDIO_CONFIG:-$HOME/.config/worktree-studio/config.json}"
 PORT="$(jq -r '.web.port // 7788' "$CFG" 2>/dev/null || echo 7788)"
+BASE="http://127.0.0.1:$PORT"
 # The API needs the boot token — mode 0600 in the state dir, readable only by us.
 STATE_DIR="${WT_STUDIO_STATE:-$HOME/.local/state/worktree-studio}"
 TOKEN="$(cat "$STATE_DIR/token" 2>/dev/null | tr -d '[:space:]')"
-STATE="$(curl -s -m 2 -H "x-wts-token: $TOKEN" "http://127.0.0.1:$PORT/api/state" 2>/dev/null)"
+STATE="$(curl -s -m 2 -H "x-wts-token: $TOKEN" "$BASE/api/state" 2>/dev/null)"
 
 # A refusal is a response, so "empty" no longer means "down" — say which it was.
 if ! echo "$STATE" | jq -e 'has("repos")' >/dev/null 2>&1; then
   if [ -n "$STATE" ]; then
-    echo "$STATE" | jq -c '{items:[{title:"Worktree Studio refused this request",subtitle:((.error // "unexpected response")+" — check the token in '"$STATE_DIR"'"),valid:false}]}'
+    echo "$STATE" | jq -c --arg dir "$STATE_DIR" \
+      '{items:[{title:"Worktree Studio refused this request",
+                subtitle:((.error // "unexpected response")+" — check the token in "+$dir),
+                valid:false}]}'
   else
-    echo '{"items":[{"title":"Worktree Studio not running","subtitle":"Start it with: npm start","valid":false}]}'
+    echo '{"items":[{"title":"Worktree Studio is not running","subtitle":"Start it: ./install.sh --autostart, or npm start","valid":false}]}'
   fi
   exit 0
 fi
 
-echo "$STATE" | jq -c '
-  [ .repos[]? as $r | $r.worktrees[]?
-    | { uid: .path,
-        title: "\(.repo) › \(.wtname)",
-        subtitle: ( .branch
-          + (if .running then "  ●" + ((.ports//[])|map(":"+(tostring))|join(" ")|(if .=="" then " running" else " "+. end)) else "  ○ stopped" end)
-          + (if .session then "  · agent " + .session.state else "" end) ),
-        arg: .path,
-        variables: { path: .path, repo: .repo, worktreePath: .path,
-                     sessionId: (.session.id // ""), running: (.running|tostring),
-                     canStart: (.canStart|tostring) },
-        match: "\(.repo) \(.wtname) \(.branch)" } ]
-  | sort_by(.variables.running=="true"|not)
-  | { items: . }'
+# Sessions first, then worktrees. A session is a thing you are *doing*; a worktree
+# is where it lives. Both carry the same variables, so one action script serves
+# both — a session that has not been promoted yet simply has no path, and its
+# path-shaped modifiers are marked invalid rather than silently doing nothing.
+echo "$STATE" | jq -c --arg base "$BASE" '
+  def dot(s): if s=="working" then "⚙" elif s=="waiting" then "🟡"
+              elif s=="stopped" then "⏹" else "○" end;
+  def rank(s): if s=="waiting" then 0 elif s=="working" then 1
+               elif s=="idle" then 2 else 3 end;
+
+  ( [ .sessions[]? | select(.active) ]
+    | sort_by(rank(.state), -(.lastEventAt // .createdAt))
+    | map(
+        (.worktreePath // "") as $p
+      | { uid: .id,
+          title: "\(dot(.state)) \(.title)",
+          # `activity` is the human-readable form of `state` ("running Bash",
+          # "turn done"), so printing both gives you "idle · session started".
+          # Prefer activity, fall back to state.
+          subtitle: ( "session · \(.activity // .state)"
+            + (if .branch then " · \(.repoName) \(.branch)" else " · \(.repoName) (not promoted)" end) ),
+          arg: $p,
+          valid: ($p != ""),
+          variables: { wtaction: "open", path: $p, repo: .repoName, worktreePath: $p,
+                       sessionId: .id, url: (.sourceUrl // "") },
+          mods: {
+            cmd:   { subtitle: (if $p=="" then "no worktree yet" else "Reveal in Finder" end),
+                     valid: ($p != ""), variables: { wtaction: "finder", path: $p } },
+            ctrl:  { subtitle: (if $p=="" then "no worktree yet" else "Start the feature stack" end),
+                     valid: ($p != ""), variables: { wtaction: "group-start", group: .feature } },
+            alt:   ( if .sourceUrl
+                     then { subtitle: "Open \(.source) \(.sourceId // "ticket") ↗",
+                            valid: true, variables: { wtaction: "url", url: .sourceUrl } }
+                     else { subtitle: (if $p=="" then "no worktree yet" else "Stop the feature stack" end),
+                            valid: ($p != ""), variables: { wtaction: "group-stop", group: .feature } } end ),
+            shift: { subtitle: "Open the cockpit", valid: true,
+                     variables: { wtaction: "url", url: $base } } },
+          match: "\(.title) \(.repoName) \(.branch // "") \(.feature) \(.sourceId // "")" } ) ) as $sessions
+
+  | ( [ .repos[]? as $r | $r.worktrees[]? | select(.isMain | not) ]
+      # Running first, then alphabetical — sorted while the fields still exist,
+      # rather than by pattern-matching the rendered subtitle afterwards.
+      | sort_by([(.running | not), (.repo | ascii_downcase), (.wtname | ascii_downcase)])
+      | map(
+          { uid: .path,
+            title: "\(if .running then "🟢" else "⚪" end) \(.repo) › \(.wtname)",
+            subtitle: ( (.branch // "detached")
+              + (if .running
+                 then "  ●" + ((.ports // []) | map(":" + tostring) | join(" ") | (if .=="" then " running" else " " + . end))
+                 else "  ○ stopped" end)
+              + (if .session then "  · agent \(.session.state)" else "" end)
+              + (if .merged then "  · merged" else "" end) ),
+            arg: .path,
+            variables: { wtaction: "open", path: .path, repo: .repo, worktreePath: .path,
+                         sessionId: (.session.id // ""), url: "" },
+            mods: {
+              cmd:   { subtitle: "Reveal in Finder", variables: { wtaction: "finder", path: .path } },
+              ctrl:  { subtitle: (if .canStart then "Start the dev server" else "no start command configured for \(.repo)" end),
+                       valid: .canStart,
+                       variables: { wtaction: "start", repo: .repo, worktreePath: .path } },
+              alt:   { subtitle: (if .running then "Stop the dev server" else "not running" end),
+                       valid: .running,
+                       variables: { wtaction: "stop", repo: .repo, worktreePath: .path } },
+              shift: { subtitle: "Open the cockpit", valid: true,
+                       variables: { wtaction: "url", url: $base } } },
+            match: "\(.repo) \(.wtname) \(.branch // "")" } ) ) as $worktrees
+
+  | { items: ($sessions + $worktrees) }'
