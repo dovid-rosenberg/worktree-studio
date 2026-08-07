@@ -37,6 +37,34 @@ const ENV: NodeJS.ProcessEnv = {
   PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
 };
 
+/**
+ * The CLI environment, with a configured token handed to the CLI that wants it.
+ *
+ * `glab auth login` against a SELF-HOSTED instance now defaults to an OAuth device
+ * flow, which needs an application registered on that instance — so the login simply
+ * refuses with "Set 'client_id' first" and every MR lookup fails with a message about
+ * remotes pointing at no known GitLab host. Nothing in Studio is wrong; there is just
+ * no way in.
+ *
+ * glab reads `GITLAB_TOKEN` in preference to its own stored credentials, and Studio
+ * already keeps a token at `sources.gitlab.token` for the intake adapter's REST
+ * fallback. Passing that same value through means one credential authenticates both
+ * halves, a self-hosted instance needs no OAuth application, and `glab auth login` is
+ * not required at all. An existing glab login still wins if no token is configured,
+ * because then this adds nothing.
+ */
+function cliEnv(cfg?: ForgeConfig): NodeJS.ProcessEnv {
+  const gl = cfg?.sources?.gitlab;
+  if (!gl?.token) return ENV;
+  return {
+    ...ENV,
+    GITLAB_TOKEN: gl.token,
+    // glab needs to know which host that token belongs to; without it a self-hosted
+    // remote is still "no known GitLab host" however valid the token is.
+    ...(gl.host ? { GITLAB_HOST: gl.host.replace(/^https?:\/\//, '').replace(/\/$/, '') } : {}),
+  };
+}
+
 // gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
 // on the client any more (server/ci.ts pushes instead), but the cache still bounds
 // what a burst of triggers plus an on-demand GET /sessions/:id/ci can cost, and it
@@ -276,7 +304,14 @@ interface SessionLookup {
 /** `resolveGroup` (server/state.ts), typed by what POST /group/pr reads of it. */
 type ResolveGroup = (name: string) => Promise<{ group?: { members: PrMember[] } | null }>;
 
+/** The one slice of config forge reads: where GitLab is and how to authenticate to it. */
+interface ForgeConfig {
+  sources?: { gitlab?: { host?: string; token?: string } };
+}
+
 interface ForgeDeps {
+  /** Read for `sources.gitlab.token` — see cliEnv(). */
+  cfg?: ForgeConfig;
   /** the SessionManager, typed by the one method the routes below call */
   manager?: SessionLookup;
   resolveGroup?: ResolveGroup;
@@ -301,11 +336,14 @@ interface CreateFailure {
 function createForge({
   manager,
   resolveGroup,
+  cfg,
   providers = PROVIDERS,
   isInstalled = (p) => has(p.cli),
   pushBranch = pushBranchToOrigin,
   onChanged = () => {},
 }: ForgeDeps = {}) {
+  // Resolved once: the token cannot change without a restart, since config is read at boot.
+  const forgeEnv = cliEnv(cfg);
   const installed = providers.filter(isInstalled);
   const installedSet = new Set(installed); // membership test for failure attribution
   const ciCache = new Map<string, { at: number; data: CiRepo }>();
@@ -319,7 +357,7 @@ function createForge({
 
   // Look up a single repo's PR/MR + checks (GitHub first, then GitLab). Never
   // throws — returns { repo, hasPR:false } on any miss/failure. Cached per key.
-  async function ciForRepo(entry: CiEntry, env: NodeJS.ProcessEnv = ENV): Promise<CiRepo> {
+  async function ciForRepo(entry: CiEntry, env: NodeJS.ProcessEnv = forgeEnv): Promise<CiRepo> {
     const { repo, worktreePath, branch } = entry;
     if (!worktreePath || !branch) return { repo, hasPR: false };
     const key = `${worktreePath}\n${branch}`;
@@ -364,7 +402,7 @@ function createForge({
   }
 
   // Push the branch, then open a PR/MR with the first provider that accepts it.
-  async function openPullRequest(member: PrMember, env?: NodeJS.ProcessEnv): Promise<PrResult> {
+  async function openPullRequest(member: PrMember, env: NodeJS.ProcessEnv = forgeEnv): Promise<PrResult> {
     // A detached worktree has no branch to push or open a PR from. Without this the
     // null rode into `git push -u origin <branch>`, and execFile rejects a non-string
     // argv entry with a TypeError — a 500 out of the route, and (because /group/pr
@@ -410,7 +448,7 @@ function createForge({
       const repos = await Promise.all(
         entries.map(async (entry) => {
           try {
-            return await ciForRepo(entry, ENV);
+            return await ciForRepo(entry, forgeEnv);
           } catch {
             return { repo: entry.repo, hasPR: false };
           }
@@ -427,7 +465,7 @@ function createForge({
       const { group: g } = await resolve(String(req.body?.group ?? ''));
       if (!g) return res.status(404).json({ error: 'no such feature' });
       const results: PrResult[] = [];
-      for (const m of g.members) results.push(await openPullRequest(m, ENV));
+      for (const m of g.members) results.push(await openPullRequest(m, forgeEnv));
       // A branch that had no PR a second ago now has one, and its cached "hasPR:
       // false" says otherwise. Drop it and tell the push side to re-look, so the
       // pill appears without waiting out the TTL.
