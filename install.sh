@@ -45,11 +45,15 @@ if [ "$AUTOSTART" = 1 ]; then
   # launchd's PATH is /usr/bin:/bin:/usr/sbin:/sbin. Carry the directories the
   # server actually needs: node's own (nvm), then Homebrew for tmux/git/gh/glab.
   AGENT_PATH="$(dirname "$NODE"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  # Your locale, captured at install time — launchd provides none, and the fallback is
+  # a US-ASCII charmap that makes every prompt glyph three characters wide.
+  AGENT_LANG="${LANG:-en_US.UTF-8}"
   mkdir -p "$STATE_DIR" "$HOME/Library/LaunchAgents"
   sed -e "s|{{NODE}}|$NODE|g" \
       -e "s|{{SERVER}}|$REPO/server/server.ts|g" \
       -e "s|{{REPO}}|$REPO|g" \
       -e "s|{{PATH}}|$AGENT_PATH|g" \
+      -e "s|{{LANG}}|$AGENT_LANG|g" \
       -e "s|{{LOG}}|$LOG|g" \
       launchd/com.worktree-studio.plist.template > "$PLIST"
 

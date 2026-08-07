@@ -183,3 +183,37 @@ test('a socket that closes during the liveness check spawns nothing', async () =
   await done;
   assert.equal(terms.length, 0, 'the abandoned socket never gets a pty');
 });
+
+/*
+ * A daemon started by launchd has no LANG: launchd sets none, and there is no terminal
+ * to inherit one from. The pty then runs under a US-ASCII charmap where a powerline
+ * glyph counts as three characters, so a prompt built from them is measured at three
+ * times its width and wraps in the middle of itself. It reads as a broken terminal
+ * rather than as a missing environment variable, which is why it is pinned here.
+ */
+test('a pty gets a UTF-8 locale even when the daemon has none', async () => {
+  const { handler, terms } = harness();
+  await handler(new FakeSocket(), req('session=s1'));
+  assert.match(present(spawned(terms).args[2].env.LANG, 'a default locale'), /UTF-8$/);
+});
+
+test('a locale the environment already has is left alone — the default is not an override', async () => {
+  const terms: FakeTerm[] = [];
+  const manager = {
+    get: () => SESSION,
+    mux: {
+      hasSession: async () => true,
+      attachSpawn: () => ({ file: 'tmux', args: [], env: { LANG: 'fr_FR.UTF-8' } }),
+    },
+  };
+  const handler = createTerminalHandler({
+    manager,
+    spawn: ((...a) => {
+      const t = fakeTerm(a);
+      terms.push(t);
+      return t;
+    }) as TerminalSpawn,
+  });
+  await handler(new FakeSocket(), req('session=s1'));
+  assert.equal(spawned(terms).args[2].env.LANG, 'fr_FR.UTF-8');
+});
