@@ -128,6 +128,20 @@ export interface RepoConcurrency {
   portEnv?: Record<string, number>;
   /** ENV_VARs set to the slot INDEX, not a port (e.g. a Redis DB number). */
   slotEnv?: string[];
+  /**
+   * A command-line flag carrying this slot's port, appended to the start command.
+   *
+   * `portEnv` only moves a server that READS the variable, and most frontend dev servers
+   * do not — vite, next and ng all take `--port` and otherwise bind whatever is in their
+   * own config. So concurrency shifted the backend and left every feature's frontend
+   * fighting over one port: the marquee capability worked for half a stack.
+   *
+   * `{port}` is replaced with the first port this repo's slot derives, e.g.
+   * `"-- --port {port}"` for an npm script, `"--port {port}"` for a bare binary. Fixing
+   * it here rather than in each repo is the point — nothing has to be changed in the
+   * frontend to run two of it.
+   */
+  portFlag?: string;
   configPatch?: ConfigPatch;
 }
 

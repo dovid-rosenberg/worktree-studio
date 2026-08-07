@@ -214,6 +214,7 @@ Per-repo wiring:
 |---|---|
 | `portEnv` | `{ ENV_VAR: basePort }` — the var is set to `basePort + slot*offsetStep`, and that port is what Studio pre-checks and polls |
 | `slotEnv` | `[ENV_VAR]` — set to the slot *index*, not a port (e.g. a Redis DB number) |
+| `portFlag` | A flag carrying this slot's port, appended to the start command. `{port}` is replaced with the first port `portEnv` derives — e.g. `"-- --port {port}"`. **Use this for any dev server that does not read an env var for its port** (vite, next, ng all take `--port`); without it, concurrency shifts the backend and every feature's frontend still fights over one port |
 | `configPatch` | `{ file, siblingRepo }` — a gitignored config file in this repo's worktree that hardcodes `siblingRepo`'s ports; on launch, every one of that sibling's port families in it is shifted to this feature's slot |
 
 Two footguns Studio warns about (it warns, it never throws):
@@ -246,6 +247,9 @@ config files hardcode the backend's ports.
     },
     "web": {
       "portEnv": { "WTS_FE_PORT": 3030 },
+      // The FE reads neither WTS_FE_PORT nor anything else — vite takes --port. Without
+      // this line slot 1's frontend tries to bind 3030 alongside slot 0's and loses.
+      "portFlag": "-- --port {port}",
       "configPatch": { "file": "src/config.js", "siblingRepo": "api" }
     },
     "admin": {

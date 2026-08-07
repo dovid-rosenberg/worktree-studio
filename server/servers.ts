@@ -95,6 +95,12 @@ export interface ConfigPatchPlan {
 export interface LaunchOpts {
   env: Record<string, string>;
   ports: number[];
+  /**
+   * Already-substituted text to append to the start command — see RepoConcurrency.portFlag.
+   * Resolved in launchOpts() rather than here so start() stays a launcher and does not
+   * need to know what a concurrency slot is.
+   */
+  portArgs?: string;
   patch?: ConfigPatchPlan;
   /**
    * Run THIS command instead of the repo's configured one.
@@ -437,13 +443,17 @@ class Servers {
     const step = conc.offsetStep;
     const slot = this.slots.get(feature) ?? 0;
     const { env, ports } = deriveEnv(rc, slot, step);
+    // The flag half of the same idea: a dev server that cannot read portEnv usually
+    // takes the port on the command line. Empty when unconfigured or when this repo
+    // derives no ports, so an unconcerned repo's command is untouched.
+    const portArgs = rc.portFlag && ports.length ? rc.portFlag.split('{port}').join(String(ports[0])) : '';
     const cp = rc.configPatch;
     if (cp) {
       const sib = this._repoConc(cp.siblingRepo);
       const siblingPortEnv = sib?.portEnv;
-      if (siblingPortEnv) return { env, ports, patch: { file: cp.file, siblingPortEnv, slot } };
+      if (siblingPortEnv) return { env, ports, portArgs, patch: { file: cp.file, siblingPortEnv, slot } };
     }
-    return { env, ports };
+    return { env, ports, portArgs };
   }
 
   // Rewrite a worktree's gitignored FE config to point at this slot's sibling ports.
@@ -769,7 +779,10 @@ class Servers {
     // `opts.cmd` is a run configuration standing in for the repo's start command, so a
     // repo with no `config.start` entry can still launch one.
     if (!sc && !opts.cmd) return { ok: false, error: `no start config for repo '${repo}'` };
-    const cmd = opts.cmd || sc!.cmd;
+    // The port flag rides on the END of the command, where a shell puts arguments —
+    // `npm start` becomes `npm start -- --port 5273`. Appended here rather than baked
+    // into config.start so the same entry works with concurrency off.
+    const cmd = `${opts.cmd || sc!.cmd}${opts.portArgs ? ` ${opts.portArgs}` : ''}`;
     const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
     const ports = opts.ports?.length ? opts.ports : (sc?.ports ?? []);
     const lock = this._lock(worktreePath);
