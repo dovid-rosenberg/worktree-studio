@@ -16,6 +16,15 @@
 export interface DialogLink {
   label?: string;
   url: string;
+  /**
+   * Identity for `{#each}`, assigned when the dialog seeds its rows.
+   *
+   * Rows are DRAGGABLE, so keying on the index would recycle the wrong inputs the moment
+   * two rows swap: Svelte would keep the DOM in place and rewrite the values, which puts
+   * the caret and any selection on the row you did not touch. Stripped on save — it is a
+   * rendering concern and has no business on disk.
+   */
+  key?: number;
 }
 
 /** text/select carry a string, a checkbox a boolean, `links` a list of rows. */

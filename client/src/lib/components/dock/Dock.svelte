@@ -11,6 +11,7 @@
    */
   import { colorVars } from '$lib/featureColor.js';
   import Terminal from '$lib/components/Terminal.svelte';
+  import ActionBar from '$lib/components/ActionBar.svelte';
   import DockHead from '$lib/components/dock/DockHead.svelte';
   import TabStrip from '$lib/components/dock/TabStrip.svelte';
   import LogsPanel from '$lib/components/dock/LogsPanel.svelte';
@@ -25,6 +26,8 @@
 
   const session = $derived(ui.selected);
   const feature = $derived(ui.selectedFeature);
+  /** A dev server in a repo's MAIN checkout — the third kind of rail row. */
+  const mainServer = $derived(ui.selectedMainServer);
   const isTerm = $derived(ui.dockView === 'term');
   /*
    * Insights is the one dock view that renders with nothing selected: it is about the
@@ -81,6 +84,13 @@
   {#if isUsage}
     <FleetInsights />
   {:else if feature}
+    <!-- A feature has no DockHead, so the bar is rendered here. ActionBar has exactly one
+         home per selection kind: DockHead's row for a session, this for a feature. -->
+    <div class="dockbar">
+      <span class="who">{feature.name}</span>
+      <span class="grow"></span>
+      <ActionBar />
+    </div>
     <FeaturePane {feature} />
   {:else if ui.selectionPending}
     <!-- Selected, but the frame carrying it has not landed. Saying "no session" here
@@ -89,6 +99,21 @@
       <div class="empty-glyph">⎇</div>
       <h2>Starting the session…</h2>
       <p>Waiting for the daemon to report it. This is usually instant.</p>
+    </div>
+  {:else if mainServer}
+    <div class="dockbar">
+      <span class="who">{mainServer.repo}</span>
+      <span class="wtname">main checkout</span>
+      <span class="grow"></span>
+      <ActionBar />
+    </div>
+    <div class="empty">
+      <div class="empty-glyph">⇅</div>
+      <h2>{mainServer.repo}</h2>
+      <p>
+        A dev server running from this repo&rsquo;s main checkout, outside any worktree.
+        {#if mainServer.ports.length}Listening on {mainServer.ports.map((p) => `:${p}`).join(' ')}.{/if}
+      </p>
     </div>
   {:else if !session}
     <div class="empty">
@@ -126,6 +151,13 @@
 
 <style>
   .dock { display:flex; flex-direction:column; min-height:0; min-width:0; }
+  /* The same bar DockHead draws, for the selections that have no DockHead. */
+  .dockbar { display:flex; align-items:center; gap:10px; padding:12px 16px; flex:none; flex-wrap:wrap;
+             border-bottom:1px solid var(--border); background:var(--fc-wash, var(--panel));
+             box-shadow:inset 4px 0 0 var(--fc, transparent); }
+  .dockbar .who { font-weight:650; font-size:16px; }
+  .dockbar .wtname { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
+  .dockbar .grow { flex:1; }
   .empty { margin:auto; text-align:center; max-width:440px; padding:40px; color:var(--muted); }
   .empty-glyph { font-size:40px; color:var(--border-strong); }
   .empty h2 { margin:12px 0 6px; color:var(--ink); font-size:20px; }

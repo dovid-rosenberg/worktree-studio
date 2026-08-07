@@ -261,7 +261,7 @@ export async function editSession(s: Session) {
   const fields: DialogField[] = [{ type: 'text', label: 'Name', value: s.title }];
   if (feature) {
     fields.push({ type: 'color', label: 'Colour', value: feature.color || '' });
-    fields.push(linksField(feature));
+    fields.push(...linksFields(feature));
   }
 
   const out = await uiDialog({ title: 'Edit session', fields, okLabel: 'Save' });
@@ -273,7 +273,7 @@ export async function editSession(s: Session) {
     if (feature) {
       const color = String(out[1] ?? '');
       if (color !== (feature.color || '')) await setFeatureColor(feature.name, color);
-      await saveLinks(feature, out[2] as PinnedLink[]);
+      await saveLinks(feature, String(out[2] ?? ''), out[3] as PinnedLink[]);
     }
     toast('Saved');
   } catch (e) {
@@ -289,33 +289,39 @@ export async function editSession(s: Session) {
  * be honoured. The ticket is the exception: it is stored on the feature, so it appears as
  * a real row you can change or clear.
  */
-function linksField(feature: Feature): DialogField {
+function linksFields(feature: Feature): DialogField[] {
   const derived = world
     .linksFor(feature)
     .filter((l) => l.kind === 'pr' && !l.empty)
     .map((l) => `${l.glyph} ${l.label}${l.sub ? ` · ${l.sub}` : ''}`);
-  const rows: PinnedLink[] = [];
-  // The ticket rides in the same list as the pins, labelled, because that is how you
-  // think of it — one set of links. It is split back out on save.
-  if (feature.ticket) rows.push({ label: TICKET_LABEL, url: feature.ticket });
-  for (const pinned of feature.pins || []) rows.push({ ...pinned });
-  return {
-    type: 'links',
-    label: 'Links',
-    value: rows,
-    derived: derived.length ? derived : ['⑂ no merge requests yet'],
-  };
+  return [
+    // Its OWN field, not a row in the list below.
+    //
+    // It rode in the list under a reserved label of `Ticket`, which was fragile in two
+    // ways that only showed up once the rows became draggable: a pin the user happened to
+    // label "Ticket" would be silently promoted to the tracker link, and dragging the
+    // ticket row anywhere did nothing, because assemble() always renders it first. There
+    // is exactly one ticket and its position is fixed, so it is not a list.
+    { type: 'text', label: 'Ticket', value: feature.ticket || '', placeholder: 'https://app.asana.com/…' },
+    {
+      type: 'links',
+      label: 'Links',
+      value: (feature.pins || []).map((pinned) => ({ ...pinned })),
+      derived: derived.length ? derived : ['⑂ no merge requests yet'],
+    },
+  ];
 }
 
-/** The reserved label that marks which row is the tracker ticket. */
-const TICKET_LABEL = 'Ticket';
-
-async function saveLinks(feature: Feature, rows: PinnedLink[] | undefined) {
+async function saveLinks(feature: Feature, ticketValue: string, rows: PinnedLink[] | undefined) {
   if (!Array.isArray(rows)) return;
-  const clean = rows.filter((r) => r && String(r.url || '').trim());
-  const ticketRow = clean.find((r) => String(r.label || '').trim() === TICKET_LABEL);
-  const pins = clean.filter((r) => r !== ticketRow);
-  const ticket = ticketRow ? String(ticketRow.url).trim() : '';
+  // `key` is a rendering concern from the dialog's row identity — it has no business
+  // on disk, and the route drops it anyway; being explicit keeps the compare honest.
+  // A blank label is kept as '' rather than omitted: the route drops it on the way to
+  // disk, and one shape here keeps the unchanged-compare below a plain string equality.
+  const pins = rows
+    .filter((r) => r && String(r.url || '').trim())
+    .map((r) => ({ label: String(r.label || '').trim(), url: String(r.url).trim() }));
+  const ticket = String(ticketValue || '').trim();
   // Unchanged means no request: a save that only touched the name must not rewrite the
   // link map, and clearing the ticket has to be distinguishable from never setting one.
   const same =
@@ -331,13 +337,13 @@ async function saveLinks(feature: Feature, rows: PinnedLink[] | undefined) {
 export async function editFeature(feature: Feature) {
   const out = await uiDialog({
     title: `Edit ${feature.name}`,
-    fields: [{ type: 'color', label: 'Colour', value: feature.color || '' }, linksField(feature)],
+    fields: [{ type: 'color', label: 'Colour', value: feature.color || '' }, ...linksFields(feature)],
     okLabel: 'Save',
   });
   if (!Array.isArray(out)) return;
   try {
     await setFeatureColor(feature.name, String(out[0] ?? ''));
-    await saveLinks(feature, out[1] as PinnedLink[]);
+    await saveLinks(feature, String(out[1] ?? ''), out[2] as PinnedLink[]);
     toast('Saved');
   } catch (e) {
     toast(errMessage(e), true);

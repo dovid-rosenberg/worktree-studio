@@ -11,6 +11,7 @@
   import { COLOR_LABELS, FEATURE_COLORS, colorVars } from '$lib/featureColor.js';
   import { dialogs } from '$lib/stores/dialog.svelte.js';
   import type { DialogLink } from '$lib/stores/dialog.svelte.js';
+  import { moveItem, reorderable } from '$lib/actions/reorderable.js';
 
   const entry = $derived(dialogs.current);
   const spec = $derived(entry?.spec ?? null);
@@ -18,6 +19,13 @@
 
   /** Field values, re-seeded whenever a different dialog reaches the head of the queue. */
   let values = $state<any[]>([]);
+  /** Monotonic row identity for the `links` field — see DialogLink.key. */
+  let linkKey = 0;
+
+  /** Keyboard equivalent of a drag, as SettingsModal does it: dragging serves a mouse only. */
+  function nudge(i: number, rows: DialogLink[], by: number): DialogLink[] {
+    return moveItem(rows, i, Math.max(0, Math.min(rows.length - 1, i + by)));
+  }
   let root = $state<HTMLElement|null>(null);
 
   $effect(() => {
@@ -85,20 +93,46 @@
                        recomputed every poll, so an editable field would be a lie. -->
                   <div class="derived"><span>{d}</span></div>
                 {/each}
-                {#each values[i] as DialogLink[] as row, r (r)}
-                  <div class="linkrow">
+                <!-- Order is what the dock header renders, so this list IS the display
+                     order — not a preference about it. Same affordances as the settings
+                     modal's five lists: a grip to drag, ↑/↓ for anyone not using a mouse. -->
+                {#each values[i] as DialogLink[] as row, r (row.key)}
+                  <div
+                    class="linkrow"
+                    use:reorderable={{
+                      index: r,
+                      onmove: (from, to) => { values[i] = moveItem(values[i] as DialogLink[], from, to); },
+                    }}
+                  >
+                    <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
                     <input class="input lbl-in" placeholder="Label" bind:value={row.label} />
                     <input class="input" placeholder="https://…" bind:value={row.url} />
                     <button
                       class="btn xs ghost"
                       type="button"
+                      title="Move up"
+                      aria-label="Move link up"
+                      disabled={r === 0}
+                      onclick={() => { values[i] = nudge(r, values[i] as DialogLink[], -1); }}
+                    >↑</button>
+                    <button
+                      class="btn xs ghost"
+                      type="button"
+                      title="Move down"
+                      aria-label="Move link down"
+                      disabled={r === (values[i] as DialogLink[]).length - 1}
+                      onclick={() => { values[i] = nudge(r, values[i] as DialogLink[], 1); }}
+                    >↓</button>
+                    <button
+                      class="btn xs ghost"
+                      type="button"
                       aria-label="Remove link"
                       title="Remove"
-                      onclick={() => { values[i] = (values[i] as DialogLink[]).filter((_x: DialogLink, k: number) => k !== r); }}
+                      onclick={() => { values[i] = (values[i] as DialogLink[]).filter((x: DialogLink) => x.key !== row.key); }}
                     >✕</button>
                   </div>
                 {/each}
-                <div class="linkrow">
+                <div class="linkrow addrow">
                   <input
                     class="input"
                     placeholder="Paste a URL to add — anything works"
@@ -106,7 +140,7 @@
                       const el = e.currentTarget;
                       const url = el.value.trim();
                       if (!url) return;
-                      values[i] = [...(values[i] as DialogLink[]), { label: '', url }];
+                      values[i] = [...(values[i] as DialogLink[]), { label: '', url, key: ++linkKey }];
                       el.value = '';
                     }}
                   />
@@ -174,9 +208,16 @@
   /* The swatch labels are `.lbl`, not `label`: the rule below styles `.field label` as a
      caption, and every swatch IS a label wrapping its radio. */
   .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); }
-  .linkrow { display:flex; align-items:center; gap:8px; }
-  .linkrow .input { flex:1; min-width:0; }
-  .linkrow .lbl-in { flex:0 0 132px; }
+  /* A grip column first, so the rows line up with the settings modal's lists. */
+  .linkrow { display:grid; grid-template-columns:18px 120px 1fr 26px 26px 28px; gap:8px; align-items:center; }
+  /* The add row has no grip and nothing to move: one field across the whole width. */
+  .linkrow.addrow { grid-template-columns:1fr; }
+  .linkrow .input { min-width:0; }
+  .grip { cursor:grab; color:var(--faint); font-size:14px; line-height:1; text-align:center; user-select:none; }
+  .grip:active { cursor:grabbing; }
+  /* Set by the reorderable action while a drag is in flight. */
+  .linkrow:global(.dragging) { opacity:.45; }
+  .linkrow:global(.dragover) { box-shadow:inset 0 2px 0 var(--brand); }
   .derived { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px;
              color:var(--faint); padding:6px 9px; border:1px dashed var(--border); border-radius:7px; }
   .swatches { display:flex; flex-wrap:wrap; gap:8px; }
