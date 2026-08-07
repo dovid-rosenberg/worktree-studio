@@ -24,7 +24,7 @@ import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart } from './se
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
-import { run, has, shq, slug, expandTilde } from './util.ts';
+import { run, has, openEditor, shq, slug, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
 import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
@@ -33,6 +33,7 @@ import type { Request } from 'express';
 import type { ScannedRepo } from './git.ts';
 import { FEATURE_COLORS } from './types.ts';
 import type { EditorConfig, GroupConfig, RunConfig, Session, SessionRepo, StartConfig } from './types.ts';
+import * as startReport from './start-report.ts';
 
 /**
  * One value off a query string. Express hands back a string, an array (`?a=1&a=2`)
@@ -102,8 +103,14 @@ async function main() {
   const rescan = createRescan(async () => {
     try {
       repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth);
-    } catch (_e) {
-      /* */
+    } catch (e) {
+      /*
+       * The previous scan stands rather than the list going empty — but SAY SO. This
+       * swallowed silently, so POST /settings with a mistyped baseDir echoed the new
+       * dirs back with ok:true while the topology kept serving the old repos, and
+       * nothing anywhere connected the two.
+       */
+      console.error(`[wt-studio] repo scan failed, keeping the previous ${repos.length} repo(s):`, e);
     }
     // The scan is the only thing that knows each worktree's branch, and the
     // branch/manifest identity strategies need it to answer from a path alone.
@@ -493,14 +500,32 @@ async function main() {
   api.post('/sessions/:id/servers/start', async (req, res) => {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
-    const toStart = (s.repos || []).filter(promoted).filter((x) => servers.startCfg(x.repo));
+    /*
+     * The same judgement /group/start makes, from the same module.
+     *
+     * This route was the third, unfixed copy of it, and it carried every defect the
+     * group route was hardened against: it filtered on `startCfg` (a start command
+     * EXISTS) rather than `canStart` (starting will WORK), so it launched into a
+     * worktree with no node_modules and the command died on the spot; it never named
+     * the repos it declined to launch; it answered `some(r.ok)`, so one repo of three
+     * was a success; and it never looked at `listening`, so a process that spawned and
+     * bound nothing counted as up. Pressing this button reproduced, exactly, the
+     * "the BE does not seem to be running" report that /group/start was fixed for.
+     */
+    const owned = (s.repos || []).filter(promoted).map((r) => ({
+      repo: r.repo,
+      path: r.worktreePath,
+      ...servers.decorate({ repo: r.repo, path: r.worktreePath }, runningCache),
+    }));
+    const skipped = startReport.toSkip(owned);
+    const launch = startReport.toStart(owned);
     // Slot keys come from the per-worktree feature identity (server/identity.ts) inside
     // startAll — the one canonical key used everywhere.
-    const out = await servers.startAll(toStart);
+    const out = await servers.startAll(launch.map((m) => ({ repo: m.repo, worktreePath: m.path })));
     if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
     await refreshRunning();
     broadcastTopology();
-    res.json({ ok: out.results.some((r) => r.ok), results: out.results });
+    res.json({ ...startReport.report(out.results, skipped), results: out.results });
   });
   api.post('/sessions/:id/servers/stop', async (req, res) => {
     const s = manager.get(req.params.id);
@@ -850,11 +875,13 @@ async function main() {
     if (!list.length) return res.status(400).json({ error: 'path or paths is required' });
     // split/join, not replace(): `$&`/`` $` ``/`$'`/`$$` in a REPLACEMENT string expand
     // after shq() quoted the path, so such a path would open the wrong file.
-    if (list.length > 1 && ed.openGroup) {
-      await run('bash', ['-lc', ed.openGroup.split('{paths}').join(list.map(shq).join(' '))]);
-    } else {
-      for (const one of list) await run('bash', ['-lc', ed.open.split('{path}').join(shq(one))]);
-    }
+    const cmds =
+      list.length > 1 && ed.openGroup
+        ? [ed.openGroup.split('{paths}').join(list.map(shq).join(' '))]
+        : list.map((one) => ed.open.split('{path}').join(shq(one)));
+    // The exit code, not a hardcoded ok — see openEditor().
+    const opened = await openEditor(cmds);
+    if (!opened.ok) return res.status(500).json({ ok: false, error: `editor failed: ${opened.error}` });
     res.json({ ok: true, opened: list.length });
   });
 
@@ -888,8 +915,24 @@ async function main() {
         payload = { raw: payload };
       }
     }
-    if (id) manager.applyHook(id, req.params.event, payload || {});
-    res.json({ ok: true });
+    /*
+     * A dropped hook says so. This answered ok:true for an empty or unknown `wts`, which
+     * is indistinguishable from an applied one — the exact failure mode the array
+     * coercion just above was added to fix, left in place one line further down. The
+     * session's state simply stops updating and nothing anywhere says why.
+     *
+     * Still a 200: the hook runs inside the user's claude process and a non-2xx there is
+     * noise in their terminal for a condition they cannot act on mid-session. `applied`
+     * is for the log and for anyone debugging a card that has gone quiet.
+     */
+    if (!known) {
+      console.warn(
+        `[wt-studio] hook ${req.params.event} dropped: ${id ? `unknown session ${id}` : 'no session id'}`,
+      );
+      return res.json({ ok: true, applied: false, reason: id ? 'unknown session' : 'no session id' });
+    }
+    manager.applyHook(id, req.params.event, payload || {});
+    res.json({ ok: true, applied: true });
   });
 
   // Client-side routes (/review, /search, /usage) reach the daemon on a deep link or a

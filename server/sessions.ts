@@ -908,12 +908,31 @@ class SessionManager extends EventEmitter {
     // so resume is seamless from here on (gated on claude being ready)
     await this._anchorInWorktree(s);
     this._touch(id);
-    // fan out to any repos chosen up front, serialized (each addRepo is itself gated)
+    /*
+     * Fan out to any repos chosen up front, serialized (each addRepo is itself gated).
+     *
+     * The result was DISCARDED, inside a `try/catch {}` that could never fire: addRepo
+     * does not throw on failure, it RETURNS `{ ok: false, error }`. So a promote that
+     * created one worktree out of three answered `{ ok: true }`, the toast said
+     * "promoted", and the agent silently had no access to the other two repos — with
+     * nothing anywhere naming them, because `pendingRepos` was cleared regardless.
+     *
+     * Now a failure is carried out of here. `pendingRepos` is still cleared for the ones
+     * that succeeded: a repo that is already attached must not be retried on the next
+     * promote, and one that failed for a fixable reason is added again from ＋ repo.
+     */
+    const repoFailures: Array<{ repo: string; error: string }> = [];
     for (const pr of s.pendingRepos || []) {
       try {
-        await this.addRepo(id, pr);
-      } catch {
-        /* */
+        const r = await this.addRepo(id, pr);
+        // `error` is present on some arms of addRepo's union and not others, so it is
+        // read defensively — the point is to notice `ok: false` at all.
+        if (r && r.ok === false) {
+          const why = 'error' in r && r.error ? String(r.error) : 'could not add repo';
+          repoFailures.push({ repo: pr.repo, error: why });
+        }
+      } catch (e) {
+        repoFailures.push({ repo: pr.repo, error: e instanceof Error ? e.message : String(e) });
       }
     }
     s.pendingRepos = [];
@@ -925,6 +944,8 @@ class SessionManager extends EventEmitter {
       worktree: res,
       ...(brought ? { brought } : {}),
       ...(bringCommits && ahead.commits.length ? { broughtCommits: ahead.commits.length } : {}),
+      // Absent when everything came along, so the quiet path stays quiet.
+      ...(repoFailures.length ? { repoFailures } : {}),
     };
   }
 
@@ -962,6 +983,16 @@ class SessionManager extends EventEmitter {
     const tab = this.#tabAt(s, ref);
     if (!tab) return { ok: false, error: 'no such tab' };
     const ok = await this.mux.selectTab(s.muxName, tab.id);
+    /*
+     * Record which tab is active, exactly as addTab() does and for the same reason: this
+     * branch does not re-sync from the driver, so without it the broadcast tab strip goes
+     * on highlighting the tab you left until the next _syncTabs happens to run. addTab
+     * has always done this; selectTab, which is the other half of the same idea, did not.
+     */
+    if (ok) {
+      for (const other of s.tabs) other.active = other.id === tab.id;
+      this._touch(id);
+    }
     return { ok };
   }
 
@@ -1090,9 +1121,22 @@ class SessionManager extends EventEmitter {
     let cwd = s.home || s.repoPath;
     if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
     const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+    /*
+     * The launch result decides the state, rather than being reported alongside a state
+     * that assumes success. This set `active`/`idle`/'resumed' unconditionally, so a
+     * failed relaunch broadcast a live, idle session while the HTTP response said it had
+     * failed — the card and the toast said opposite things, and the card won, because it
+     * is what you look at. `create()` and `_doAdopt()` have always recorded the failure;
+     * this was the third copy of that rule and the only one that did not.
+     */
     s.active = true;
-    s.state = 'idle';
-    s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
+    if (r.error) {
+      s.state = 'stopped';
+      s.activity = `failed to start: ${r.error}`;
+    } else {
+      s.state = 'idle';
+      s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
+    }
     this._touch(id);
     if (!r.error) this._anchorInWorktree(s).catch(() => {});
     return { ok: !r.error, error: r.error };
@@ -1215,10 +1259,28 @@ class SessionManager extends EventEmitter {
         // Promoted sessions already have home = worktree (moved at promote time).
         let cwd = s.home || s.repoPath;
         if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
-        await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+        const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
         // restore recreates only the primary claude window — drop any stale extra
         // tabs so the tab strip matches the windows that actually exist.
         s.tabs = [{ id: PENDING_TAB, title: 'claude' }];
+        /*
+         * A launch that failed is not a restored session.
+         *
+         * The result was discarded here — the third and last copy of the rule
+         * `create()` and `_doAdopt()` both implement — so a boot with a broken tmux
+         * (socket dir gone, launch script unwritable) printed "restored 8 session(s)",
+         * every card showed a live idle agent, and the first sign of trouble was an
+         * empty terminal minutes later. The catch below already reports a THROWN
+         * failure loudly; ensure() reports this kind by returning it.
+         */
+        if (r.error) {
+          s.state = 'stopped';
+          s.activity = `failed to start: ${r.error}`;
+          console.error(
+            `[wt-studio] could not restore session ${s.id} (${s.title || 'untitled'}): ${r.error}`,
+          );
+          continue;
+        }
         s.state = 'idle';
         s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
         // self-heal a promote whose /cd never landed (normally a no-op here).

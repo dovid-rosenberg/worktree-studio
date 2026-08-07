@@ -731,6 +731,21 @@ class Servers {
       // stale lock (>60s) → reclaim
       try {
         if (Date.now() - fs.statSync(lock).mtimeMs > 60000) {
+          /*
+           * CLAIM it, don't just return it.
+           *
+           * This returned the path having changed nothing, so the lock stayed stale and
+           * a second launch arriving in the same 60s window reclaimed it too — both
+           * proceeded, and whichever finished first removed the directory out from under
+           * the other, whose _unlock then failed silently. Stamping the mtime narrows
+           * that window from a minute to the gap between the stat and the utimes.
+           *
+           * Not airtight — two racers can still both pass the stat. Making it so needs
+           * an atomic claim (rename onto the path), which is a bigger change than this
+           * lock deserves: it serialises launches of ONE worktree, and the cost of
+           * losing is a duplicate dev server, not corruption.
+           */
+          fs.utimesSync(lock, new Date(), new Date());
           return lock;
         }
       } catch {
