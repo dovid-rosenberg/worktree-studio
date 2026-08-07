@@ -25,6 +25,18 @@ export interface TmuxLaunchOptions {
 export interface TmuxEnsureResult {
   created: boolean;
   error?: string;
+  /** The agent window's stable id, when this call created it. */
+  id?: string;
+}
+
+/** What `relaunchAgent` did, and where the agent now lives. */
+export interface TmuxRelaunchResult {
+  ok: boolean;
+  error?: string;
+  /** The agent window's stable id — reused or freshly opened. */
+  id?: string;
+  /** False when the old window could not be reused and a new one was opened. */
+  reused?: boolean;
 }
 
 export interface TmuxNewTabOptions {
@@ -59,6 +71,7 @@ export interface TmuxDriver {
   available(): Promise<boolean>;
   hasSession(name: string): Promise<boolean>;
   ensure(name: string, opts?: TmuxLaunchOptions): Promise<TmuxEnsureResult>;
+  relaunchAgent(name: string, opts: TmuxLaunchOptions & { tabId?: string | null }): Promise<TmuxRelaunchResult>;
   attachSpawn(name: string): AttachSpec;
   newTab(name: string, opts?: TmuxNewTabOptions): Promise<TmuxNewTabResult>;
   listTabs(name: string): Promise<TmuxTab[]>;
@@ -201,9 +214,16 @@ const tmux: TmuxDriver = {
     // is too late: window 0 already spawned without the vars.
     const envArgs: string[] = [];
     if (env) for (const [k, v] of Object.entries(env)) envArgs.push('-e', `${k}=${String(v)}`);
+    // `-P -F #{window_id}` so the caller learns the agent window's STABLE id here, at
+    // the one moment it is unambiguous. Learning it later — "the only window there is"
+    // — works exactly once: recreate the session and the id changes while the stored
+    // one does not, and every check against it then reports an agent that has exited.
     const r = await T([
       'new-session',
       '-d',
+      '-P',
+      '-F',
+      '#{window_id}',
       '-s',
       name,
       '-n',
@@ -219,7 +239,44 @@ const tmux: TmuxDriver = {
     if (r.code !== 0) return { created: false, error: r.stderr.trim() };
     await T(['set-option', '-t', name, 'remain-on-exit', 'off']);
     await T(['send-keys', '-t', `${name}:0`, '--', launchKeys(`${name}-0`, cmd), 'Enter']);
-    return { created: true };
+    return { created: true, id: r.stdout.trim() || undefined };
+  },
+
+  /*
+   * Start the agent again inside a session that already exists.
+   *
+   * `ensure` is create-if-missing, so it has nothing to say about a session whose
+   * tmux is alive but whose claude has exited — which is what a session looks like
+   * after the agent quits and the launch script's `exec zsh -l` takes the pane. Resume
+   * went through ensure alone, saw "session exists", and relaunched nothing.
+   *
+   * The old window is reused only when its pane is sitting at a plain shell. Anything
+   * else gets a new window instead of keystrokes: during a Bash tool call a LIVE
+   * agent's pane reports the tool as its command, and typing a launch line into a
+   * running claude would be worse than an extra tab.
+   */
+  async relaunchAgent(name, { cwd, cmd, tabId } = {}) {
+    const tabs = await this.listTabs(name);
+    if (!tabs.length) return { ok: false, error: 'session has no windows' };
+    const target = tabs.find((t) => t.id === tabId) || tabs.find((t) => t.title === 'claude');
+    if (target) {
+      const running = (await this.paneCommand(name, target.id)).trim();
+      if (/^(-?(z|ba|k|c|tc|da)?sh|login)$/.test(running)) {
+        const sent = await T([
+          'send-keys',
+          '-t',
+          `${name}:${target.id}`,
+          '--',
+          launchKeys(`${name}-${target.id}`, cmd),
+          'Enter',
+        ]);
+        if (sent.code !== 0) return { ok: false, error: sent.stderr.trim() };
+        return { ok: true, id: target.id, reused: true };
+      }
+    }
+    const opened = await this.newTab(name, { title: 'claude', cwd, cmd });
+    if (!opened.ok) return { ok: false, error: opened.error };
+    return { ok: true, id: opened.id, reused: false };
   },
 
   // For node-pty: attach an interactive client to the session.

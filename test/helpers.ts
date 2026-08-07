@@ -122,6 +122,9 @@ export function muxStub(over: Partial<SessionMux> = {}): SessionMux {
     async ensure() {
       return {};
     },
+    async relaunchAgent() {
+      return { ok: true };
+    },
     async hasSession() {
       return false;
     },
