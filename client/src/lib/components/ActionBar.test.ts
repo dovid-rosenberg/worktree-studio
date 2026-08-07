@@ -203,7 +203,9 @@ describe('ActionBar', () => {
     ui.selectFeature({ name: 'token-race-fix' } as never);
     render(ActionBar);
     expect(screen.getByText('Start session')).toBeInTheDocument();
-    expect(screen.getByText('Open PR / MR')).toBeInTheDocument();
+    // CREATE, not "Open" — the pill in the dock opens one in a browser, and the same
+    // four words for two different actions is a trap you fall into once a week.
+    expect(screen.getByText('Create PR / MR')).toBeInTheDocument();
     // Session-only verbs must not appear for something with no session.
     expect(screen.queryByText('Deactivate')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Delete session')).not.toBeInTheDocument();

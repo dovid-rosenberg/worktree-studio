@@ -13,7 +13,7 @@
 
 import { api } from '$lib/api.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
-import type { Feature, Session } from '../../../server/types';
+import type { Feature, PinnedLink, Session } from '../../../server/types';
 import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
@@ -259,32 +259,85 @@ export async function closeSession(s: Session) {
 export async function editSession(s: Session) {
   const feature = world.featureFor(s.id);
   const fields: DialogField[] = [{ type: 'text', label: 'Name', value: s.title }];
-  if (feature) fields.push({ type: 'color', label: 'Colour', value: feature.color || '' });
+  if (feature) {
+    fields.push({ type: 'color', label: 'Colour', value: feature.color || '' });
+    fields.push(linksField(feature));
+  }
 
   const out = await uiDialog({ title: 'Edit session', fields, okLabel: 'Save' });
   if (!Array.isArray(out)) return;
 
   const title = String(out[0] ?? '').trim();
-  const color = feature ? String(out[1] ?? '') : '';
   try {
     if (title && title !== s.title) await api('POST', `/api/v1/sessions/${s.id}/rename`, { title });
-    if (feature && color !== (feature.color || '')) await setFeatureColor(feature.name, color);
+    if (feature) {
+      const color = String(out[1] ?? '');
+      if (color !== (feature.color || '')) await setFeatureColor(feature.name, color);
+      await saveLinks(feature, out[2] as PinnedLink[]);
+    }
     toast('Saved');
   } catch (e) {
     toast(errMessage(e), true);
   }
 }
 
+/**
+ * The links section of the editor: what is derived, then what you can edit.
+ *
+ * Derived rows are read-only text — they come from intake and the forge and are
+ * recomputed on every poll, so an editable field would be offering something that cannot
+ * be honoured. The ticket is the exception: it is stored on the feature, so it appears as
+ * a real row you can change or clear.
+ */
+function linksField(feature: Feature): DialogField {
+  const derived = world
+    .linksFor(feature)
+    .filter((l) => l.kind === 'pr' && !l.empty)
+    .map((l) => `${l.glyph} ${l.label}${l.sub ? ` · ${l.sub}` : ''}`);
+  const rows: PinnedLink[] = [];
+  // The ticket rides in the same list as the pins, labelled, because that is how you
+  // think of it — one set of links. It is split back out on save.
+  if (feature.ticket) rows.push({ label: TICKET_LABEL, url: feature.ticket });
+  for (const pinned of feature.pins || []) rows.push({ ...pinned });
+  return {
+    type: 'links',
+    label: 'Links',
+    value: rows,
+    derived: derived.length ? derived : ['⑂ no merge requests yet'],
+  };
+}
+
+/** The reserved label that marks which row is the tracker ticket. */
+const TICKET_LABEL = 'Ticket';
+
+async function saveLinks(feature: Feature, rows: PinnedLink[] | undefined) {
+  if (!Array.isArray(rows)) return;
+  const clean = rows.filter((r) => r && String(r.url || '').trim());
+  const ticketRow = clean.find((r) => String(r.label || '').trim() === TICKET_LABEL);
+  const pins = clean.filter((r) => r !== ticketRow);
+  const ticket = ticketRow ? String(ticketRow.url).trim() : '';
+  // Unchanged means no request: a save that only touched the name must not rewrite the
+  // link map, and clearing the ticket has to be distinguishable from never setting one.
+  const same =
+    ticket === (feature.ticket || '') &&
+    JSON.stringify(pins.map((p) => [p.label || '', p.url])) ===
+      JSON.stringify((feature.pins || []).map((p) => [p.label || '', p.url]));
+  if (same) return;
+  await api('POST', `/api/v1/features/${encodeURIComponent(feature.name)}/links`, { ticket, pins });
+}
+
 /** Colour a feature that has no session — the same tag, reached from the feature itself. */
+/** The same editor for a feature with no session — colour and links, but no name to set. */
 export async function editFeature(feature: Feature) {
   const out = await uiDialog({
-    title: `Colour ${feature.name}`,
-    fields: [{ type: 'color', label: 'Colour', value: feature.color || '' }],
+    title: `Edit ${feature.name}`,
+    fields: [{ type: 'color', label: 'Colour', value: feature.color || '' }, linksField(feature)],
     okLabel: 'Save',
   });
   if (!Array.isArray(out)) return;
   try {
     await setFeatureColor(feature.name, String(out[0] ?? ''));
+    await saveLinks(feature, out[1] as PinnedLink[]);
     toast('Saved');
   } catch (e) {
     toast(errMessage(e), true);

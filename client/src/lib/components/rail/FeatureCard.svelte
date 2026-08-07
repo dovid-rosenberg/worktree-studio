@@ -26,6 +26,7 @@
    * present and cannot shift anything.
    */
   import { colorVars } from '$lib/featureColor.js';
+  import { world } from '$lib/stores/world.svelte.js';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
 
   let { feature }: { feature: Feature } = $props();
@@ -44,6 +45,21 @@
    * second line appears only once they have actually diverged.
    */
   const digit = $derived(ui.railDigits.get(`f:${feature.name}`));
+  /*
+   * repo → its MR tag, for the member rows.
+   *
+   * On the row rather than the card, because a merge request is a fact about ONE repo's
+   * branch. Not a link: the rail is a pure readout with no controls, and that rule is
+   * worth more than saving a click — the absence on a row is the useful part anyway.
+   */
+  const prTags = $derived(
+    new Map(
+      world
+        .linksFor(feature)
+        .filter((l) => l.kind === 'pr' && !l.empty && l.repo)
+        .map((l) => [l.repo as string, l.label.split(' ').pop() || '']),
+    ),
+  );
   const label = $derived(sess?.title?.trim() || feature.name);
   const renamed = $derived(label !== feature.name);
   /** Members whose start command cannot succeed — no node_modules in the worktree. */
@@ -112,6 +128,7 @@
                and a half-landed feature read as done. Per branch, it cannot. -->
           {#if m.merged}<span class="mrg" title="{m.branch || m.wtname} is merged into its base">✓</span>{/if}
           <span class="br" class:done={m.merged}>{m.branch || m.wtname}</span>
+          {#if prTags.get(m.repo)}<span class="pr">{prTags.get(m.repo)}</span>{/if}
           {#if (m.ports || []).length}
             <span class="p">{m.ports.map((p: number) => ':' + p).join(' ')}</span>
           {/if}
@@ -173,6 +190,7 @@
   .mchip .mrg { color:var(--done); flex:none; font-size:11px; }
   .mchip .br { color:var(--faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 1 auto; min-width:0; }
   .mchip .br.done { color:var(--done); }
+  .pr { color:var(--brand); flex:none; }
   .mchip .p { color:var(--done); flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }

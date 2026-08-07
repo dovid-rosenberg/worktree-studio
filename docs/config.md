@@ -333,3 +333,47 @@ corrupt one does not block boot: it is renamed to `<name>.corrupt-<timestamp>`,
 reported on stderr, and Studio continues with empty state. The copy is kept
 because `sessions.json` holds the `claudeSessionId` values that tie a session to
 a live claude conversation.
+
+## `featureLinks` and `linkProviders`
+
+A feature's links: the ticket it came from, its merge requests, and anything you pinned.
+
+`featureLinks` is written by the ✐ editor, not by hand — keyed by **feature name**, so a
+link outlives the session that produced it:
+
+```jsonc
+"featureLinks": {
+  "custom-reports": {
+    "ticket": "https://app.asana.com/0/1200999/1201777",
+    "pins": [{ "label": "Design doc", "url": "https://…" }]
+  }
+}
+```
+
+The merge-request chips are **not** stored: they come live from `gh`/`glab` on the `ci`
+frame, and are joined with this on the client.
+
+`linkProviders` is how a URL becomes a readable chip. Entries are tried **before** the
+shipped ones, so you can add a tracker or override a default:
+
+| Key | Meaning |
+|---|---|
+| `match` | Substring tested against the whole URL. A substring, not a hostname, so `"gitlab"` covers gitlab.com *and* every self-hosted instance |
+| `label` | What the chip says |
+| `glyph` | One character shown before the label; optional |
+| `idPattern` | Regex whose **first capture group** becomes the short name, e.g. `AB-1183` |
+
+Shipped: `asana`, `github`, `gitlab`. Jira and Linear are not — they are three lines here:
+
+```jsonc
+"linkProviders": [
+  { "id": "jira",   "match": "atlassian.net", "label": "Jira",   "glyph": "◇",
+    "idPattern": "/browse/([A-Z]+-\\d+)" },
+  { "id": "linear", "match": "linear.app",    "label": "Linear", "glyph": "◈",
+    "idPattern": "/issue/([A-Z]+-\\d+)" }
+]
+```
+
+**An unrecognised URL still works.** It renders under its hostname with no glyph, so
+pasting any link — a Confluence page, a Grafana dashboard, a Google Doc — is never an
+error. Recognition only makes it prettier.

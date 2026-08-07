@@ -14,6 +14,7 @@
    */
   import { labelForSource } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
+  import LinkChip from '$lib/components/LinkChip.svelte';
 
   let { session }: { session: Session } = $props();
 
@@ -26,7 +27,9 @@
    * appeared in the dock nowhere at all. Mirrors FeatureCard's second line exactly, and
    * is absent for the untouched majority whose title IS the worktree name.
    */
-  const wtname = $derived(world.featureFor(session.id)?.name || '');
+  const feature = $derived(world.featureFor(session.id));
+  const links = $derived(world.linksFor(feature));
+  const wtname = $derived(feature?.name || '');
   const showWtname = $derived(!!wtname && wtname !== session.title.trim());
 
   /** Before promote there is one implicit chip for the primary repo. */
@@ -52,6 +55,16 @@
     {#if session.source && session.source !== 'text'}<span class="src">{session.source}</span>{/if}
   {/if}
 
+  <!-- The ticket and every repo's merge request, in the header, because this is where
+       identity lives. The MR chips used to sit in the dev-server readout below, so they
+       vanished for any repo with no `start` entry — a link hidden behind a condition that
+       has nothing to do with it. -->
+  {#if links.length}
+    <span class="links">
+      {#each links as l (l.kind + l.label)}<LinkChip link={l} />{/each}
+    </span>
+  {/if}
+
   <span class="repochips">
     {#each repoChips as r (r.repo)}
       <span
@@ -75,6 +88,7 @@
   .wtname { font-family:var(--mono); font-size:11.5px; color:var(--faint); overflow:hidden;
             text-overflow:ellipsis; white-space:nowrap; max-width:220px; }
   .dock-title { font-weight:650; font-size:16px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .links { display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0; }
   .repochips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   .repochip2 { font-family:var(--mono); font-size:11.5px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:2px 7px; }
   .repochip2.primary { color:var(--brand); border-color:var(--brand); }

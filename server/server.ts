@@ -322,6 +322,55 @@ async function main() {
     res.json({ ok: true, color });
   });
 
+  /*
+   * A feature's links: its tracker URL and anything pinned by hand.
+   *
+   * Its own narrow route for the same reason the colour has one — /settings is a full
+   * replace for the maps it carries, and the last single value written through it deleted
+   * two repos' start commands on the way past.
+   *
+   * Keyed by FEATURE, deliberately, not by session: a ticket outlives the agent working
+   * on it, and `session.sourceUrl` died whenever the session did.
+   */
+  api.post('/features/:name/links', async (req, res) => {
+    const name = String(req.params.name || '').trim();
+    if (!name) return res.status(400).json({ ok: false, error: 'no feature named' });
+    const body = req.body || {};
+
+    const ticket = typeof body.ticket === 'string' ? body.ticket.trim() : undefined;
+    // Every pin needs a url; a label is optional and falls back to the provider's name.
+    // Anything without a url is dropped rather than stored as a link to nowhere.
+    const pins = Array.isArray(body.pins)
+      ? body.pins
+          .filter(isRecord)
+          .map((x: Record<string, unknown>) => ({
+            label: String(x.label || '').trim(),
+            url: String(x.url || '').trim(),
+          }))
+          .filter((x: { url: string }) => !!x.url)
+          .map((x: { label: string; url: string }) => (x.label ? x : { url: x.url }))
+      : undefined;
+
+    const next = { ...((cfg.featureLinks || {})[name] || {}) };
+    if (ticket !== undefined) {
+      if (ticket) next.ticket = ticket;
+      else delete next.ticket;
+    }
+    if (pins !== undefined) {
+      if (pins.length) next.pins = pins;
+      else delete next.pins;
+    }
+
+    cfg.featureLinks = { ...(cfg.featureLinks || {}) };
+    // An entry with nothing left in it is removed, so the map only holds live values.
+    if (Object.keys(next).length) cfg.featureLinks[name] = next;
+    else delete cfg.featureLinks[name];
+
+    configMod.save(cfg);
+    broadcastTopology();
+    res.json({ ok: true, links: next });
+  });
+
   api.post('/settings', async (req, res) => {
     // Every field is `unknown`: a JSON body can carry anything, so nothing here is a
     // string, an object or an array until it has been checked — the same rule
@@ -460,6 +509,25 @@ async function main() {
     if (out.needsConfirm) return res.json(out);
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the new worktree(s) so features update immediately
+    /*
+     * The ticket becomes the FEATURE's, at the one moment a session becomes a feature.
+     *
+     * `assemble()` also falls back to `session.sourceUrl`, so the chip renders without
+     * this — but only for as long as the session exists, and the whole point of keying
+     * links by feature is that they outlive the agent. Copying it here is the moment
+     * that has a feature to copy it to. Never overwrites: a ticket the user set by hand
+     * outranks the one intake guessed.
+     */
+    const promotedSession = manager.get(req.params.id);
+    const wtName = promotedSession?.worktree;
+    if (wtName && promotedSession?.sourceUrl) {
+      const existing = (cfg.featureLinks || {})[wtName];
+      if (!existing?.ticket) {
+        cfg.featureLinks = { ...(cfg.featureLinks || {}) };
+        cfg.featureLinks[wtName] = { ...(existing || {}), ticket: promotedSession.sourceUrl };
+        configMod.save(cfg);
+      }
+    }
     /*
      * Feature membership and SESSION membership are two different records, and nothing
      * kept them in step. A feature groups worktrees by identity; a session's `repos` is
