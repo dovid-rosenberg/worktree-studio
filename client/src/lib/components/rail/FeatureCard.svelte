@@ -25,6 +25,7 @@
    * live here (including the ⋯ menu's) is now in the bottom ActionBar, which is always
    * present and cannot shift anything.
    */
+  import { colorVars } from '$lib/featureColor.js';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
 
   let { feature }: { feature: Feature } = $props();
@@ -61,7 +62,7 @@
 
 </script>
 
-<div class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
+<div style={colorVars(feature.color)} class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
   <button
     class="hit"
     onclick={() => ui.selectFeature(feature)}
@@ -117,12 +118,20 @@
 </div>
 
 <style>
-  .fcard { border:1px solid var(--border); border-radius:10px; background:var(--panel); margin:0 8px 6px;
+  /* `var(--fc, <default>)` IS the precedence rule, written once: a tagged feature wears
+     its colour, an untagged one falls back to exactly what it looked like before. No
+     conditional class, and nothing to keep in sync — --fc is set (or not) on this element
+     by colorVars() and inherited by everything below. */
+  .fcard { border:1px solid var(--border); border-radius:10px; background:var(--fc-wash, var(--panel));
+           box-shadow:inset 3px 0 0 var(--fc, transparent); margin:0 8px 6px;
            transition:border-color .12s, background .12s; }
   @media (prefers-reduced-motion:reduce){ .fcard { transition:none; } }
   .fcard:hover { border-color:var(--border-strong); }
-  .fcard.sel { border-color:var(--brand); background:var(--elevated); }
-  .fcard.running { box-shadow:inset 3px 0 0 var(--done); }
+  .fcard.sel { border-color:var(--fc, var(--brand)); background:var(--fc-wash, var(--elevated)); }
+  /* A tag OUTRANKS the running edge, deliberately: "servers up" is already said by the
+     port numbers on the member rows, which render in --done and only exist while a server
+     is up. Identity has no second copy, so it gets the channel. */
+  .fcard.running { box-shadow:inset 3px 0 0 var(--fc, var(--done)); }
 
   /* min-width:0 at every level: without it a long branch name or a four-port list makes
      the flex children refuse to shrink and the whole rail grows a horizontal scrollbar. */

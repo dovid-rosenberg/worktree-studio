@@ -192,6 +192,27 @@ class World {
   session(id: string): Session | null {
     return this.sessions.find((s) => s.id === id) || null;
   }
+
+  /**
+   * The colour tag of the feature this session drives, if it has one.
+   *
+   * The tag belongs to the FEATURE, and the dock is handed a session — so the lookup goes
+   * the other way, through whichever feature or manual group claims it. Worth doing
+   * rather than putting a colour on the session: the tag has to survive the session being
+   * stopped and started again, and a session-side copy would not.
+   */
+  featureFor(sessionId: string): Feature | null {
+    if (!sessionId) return null;
+    return (
+      this.view.features.find((f) => f.session?.id === sessionId) ||
+      this.view.groups.find((f) => f.session?.id === sessionId) ||
+      null
+    );
+  }
+
+  featureColorFor(sessionId: string): string {
+    return this.featureFor(sessionId)?.color || '';
+  }
 }
 
 export const world = new World();

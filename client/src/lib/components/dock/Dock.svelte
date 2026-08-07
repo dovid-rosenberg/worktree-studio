@@ -9,6 +9,7 @@
    * buffer, and make every tab switch cost a redraw. `active` tells the Terminal it is
    * hidden so it stops fitting against a 0×0 box.
    */
+  import { colorVars } from '$lib/featureColor.js';
   import Terminal from '$lib/components/Terminal.svelte';
   import DockHead from '$lib/components/dock/DockHead.svelte';
   import TabStrip from '$lib/components/dock/TabStrip.svelte';
@@ -76,7 +77,7 @@
   });
 </script>
 
-<section class="dock">
+<section class="dock" style={colorVars(world.featureColorFor(sessionId))}>
   {#if isUsage}
     <FleetInsights />
   {:else if feature}

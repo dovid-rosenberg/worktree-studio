@@ -223,6 +223,8 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       const out: Feature = { ...f, session: m ? m.session : null };
       const slot = servers.slots.get(f.name);
       if (slot !== undefined) out.slot = slot;
+      const color = (cfg.featureColors || {})[f.name];
+      if (color) out.color = color;
       return out;
     };
     return {
