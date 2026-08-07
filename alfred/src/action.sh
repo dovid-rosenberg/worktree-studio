@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Alfred action — dispatches to Worktree Studio's API based on $wtaction.
-# Variables come from the Script Filter item (or its `mods` block):
-#   wtaction · path · repo · worktreePath · sessionId · group · url
+# Alfred action — dispatches to Worktree Studio's API.
+#
+# The payload arrives as one JSON blob in $1, built by filter.sh:
+#   { wtaction, path?, repo?, worktreePath?, group?, url? }
+# It used to arrive as per-item workflow `variables`, which did not survive the
+# hop to this script — every ⏎ POSTed an empty path and the API refused it. Env
+# vars are still read as a fallback, so an older imported copy of the workflow
+# keeps working, but `arg` is the channel that is actually relied on.
 #
 # Self-contained for the same reason filter.sh is: Alfred copies the workflow
 # into its own preferences folder, so there is no path back to the checkout.
@@ -41,13 +46,28 @@ post() {
   return 1
 }
 
-case "${wtaction:-open}" in
-  open)        post /api/open           "$(jq -nc --arg p "${path:-}" '{path:$p}')" ;;
-  finder)      /usr/bin/open -R "${path:-}" ;;
-  url)         [ -n "${url:-}" ] && /usr/bin/open "$url" ;;
-  start)       post /api/servers/start  "$(jq -nc --arg r "${repo:-}" --arg p "${worktreePath:-}" '{repo:$r,worktreePath:$p}')" ;;
-  stop)        post /api/servers/stop   "$(jq -nc --arg r "${repo:-}" --arg p "${worktreePath:-}" '{repo:$r,worktreePath:$p}')" ;;
-  group-start) post /api/group/start    "$(jq -nc --arg g "${group:-}" '{group:$g,stopConflicts:true}')" ;;
-  group-stop)  post /api/group/stop     "$(jq -nc --arg g "${group:-}" '{group:$g}')" ;;
-  *)           notify "unknown action: ${wtaction:-}" ; exit 1 ;;
+# $1 when it is the JSON blob, the environment otherwise. `field` reads one key.
+PAYLOAD=""
+if [ -n "${1:-}" ] && printf '%s' "$1" | jq -e 'type == "object"' >/dev/null 2>&1; then
+  PAYLOAD="$1"
+fi
+field() {
+  if [ -n "$PAYLOAD" ]; then printf '%s' "$PAYLOAD" | jq -r --arg k "$1" '.[$k] // ""'
+  else eval "printf '%s' \"\${$1:-}\""; fi
+}
+
+ACTION="$(field wtaction)"; [ -n "$ACTION" ] || ACTION=open
+P="$(field path)"; REPO="$(field repo)"; WTPATH="$(field worktreePath)"
+GROUP="$(field group)"; URL="$(field url)"
+
+case "$ACTION" in
+  open)        [ -n "$P" ] || { notify "no path came through for this item"; exit 1; }
+               post /api/open           "$(jq -nc --arg p "$P" '{path:$p}')" ;;
+  finder)      [ -n "$P" ] && /usr/bin/open -R "$P" ;;
+  url)         [ -n "$URL" ] && /usr/bin/open "$URL" ;;
+  start)       post /api/servers/start  "$(jq -nc --arg r "$REPO" --arg p "$WTPATH" '{repo:$r,worktreePath:$p}')" ;;
+  stop)        post /api/servers/stop   "$(jq -nc --arg r "$REPO" --arg p "$WTPATH" '{repo:$r,worktreePath:$p}')" ;;
+  group-start) post /api/group/start    "$(jq -nc --arg g "$GROUP" '{group:$g,stopConflicts:true}')" ;;
+  group-stop)  post /api/group/stop     "$(jq -nc --arg g "$GROUP" '{group:$g}')" ;;
+  *)           notify "unknown action: $ACTION" ; exit 1 ;;
 esac

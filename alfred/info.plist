@@ -153,8 +153,11 @@ the workflow reads the same config file and API token the app itself uses.</stri
 				<false/>
 				<key>escaping</key>
 				<integer>0</integer>
+				<!-- `"$@"` matters: Alfred runs this as `bash -c "<script>" <arg>`,
+				     so without forwarding, action.sh is invoked with no arguments and
+				     the item's payload never reaches it. -->
 				<key>script</key>
-				<string>./action.sh</string>
+				<string>./action.sh "$@"</string>
 				<key>scriptargtype</key>
 				<integer>1</integer>
 				<key>scriptfile</key>
