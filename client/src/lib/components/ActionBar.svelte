@@ -160,15 +160,29 @@
         {/if}
         <button class="btn sm" title="Add another repo to this feature" onclick={() => addRepoToSession(session)}>＋ repo</button>
         <button class="btn sm ghost" title="Edit name and colour" aria-label="Edit session" onclick={() => editSession(session)}>✐</button>
+        <!-- Glyphs, like ✐ and 🗑 beside them, with the name in `aria-label` and the
+             tooltip — an icon with no accessible name is a different bug.
+             Play/pause rather than the ▷ this app already spends on "Run a config":
+             one glyph for two actions is the trap the PR/MR note above describes. The
+             pair is honest here anyway — deactivate IS pause: the process stops, the
+             session and its conversation stay. U+FE0E keeps them as text glyphs; both
+             have emoji presentations that would arrive full-colour and oversized. -->
         {#if session.active === false}
-          <button class="btn sm primary" disabled={busy} onclick={() => guard(() => activateSession(session))}>Resume</button>
+          <button
+            class="btn sm primary"
+            title="Resume — restart the agent and reattach its conversation"
+            aria-label="Resume session"
+            disabled={busy}
+            onclick={() => guard(() => activateSession(session))}
+          >{'▶︎'}</button>
         {:else}
           <button
             class="btn sm ghost"
-            title="Stop the process but keep the session (resumable)"
+            title="Deactivate — stop the process but keep the session (resumable)"
+            aria-label="Deactivate session"
             disabled={busy}
             onclick={() => guard(() => deactivateSession(session))}
-          >Deactivate</button>
+          >{'⏸︎'}</button>
         {/if}
         <button class="btn sm ghost dangertext" aria-label="Delete session" title="Delete session" onclick={() => closeSession(session)}>🗑</button>
       {:else if feature}
