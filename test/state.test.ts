@@ -227,6 +227,15 @@ test('sessionState reports every repo a session owns, with its live server state
     running: new Map([['/code/api/.worktrees/feat-a', { pid: 7, ports: [1233] }]]),
   });
   const st = await state.buildState();
+  /*
+   * The SAME decoration the topology half carries, spread rather than hand-picked.
+   *
+   * This half re-implemented `canStart` as "a start command exists", which is what the
+   * field used to mean before decorate() redefined it as "starting this will work". So
+   * one worktree could say "deps missing, cannot start" on the rail and offer an enabled
+   * Start button here. Asserting the spread — `pid` included — is what pins that: a
+   * hand-picked list is exactly how the two halves drifted apart.
+   */
   assert.deepEqual(
     present(st.servers.s_1, "s_1's server state").repos,
     [
@@ -234,10 +243,18 @@ test('sessionState reports every repo a session owns, with its live server state
         repo: 'api',
         worktreePath: '/code/api/.worktrees/feat-a',
         running: true,
+        pid: 7,
         ports: [1233],
         canStart: true,
       },
-      { repo: 'fe', worktreePath: '/code/fe/.worktrees/feat-a', running: false, ports: [], canStart: false },
+      {
+        repo: 'fe',
+        worktreePath: '/code/fe/.worktrees/feat-a',
+        running: false,
+        pid: null,
+        ports: [],
+        canStart: false,
+      },
     ],
     'repos without a worktree are not part of the shared workspace view',
   );

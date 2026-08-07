@@ -261,3 +261,25 @@ export {
   shq,
   DEFAULT_TIMEOUT_MS,
 };
+
+/**
+ * Run an editor's open command and say whether it worked.
+ *
+ * Both open routes discarded `run()`'s exit code and answered a hardcoded `{ok: true}`,
+ * so a misconfigured `editors.<name>.open` — a renamed binary, an editor CLI that was
+ * never installed onto PATH — reported success and opened nothing. The user's only clue
+ * was that no window appeared, which is also what a slow editor looks like.
+ */
+export async function openEditor(cmds: string[]): Promise<{ ok: boolean; error?: string }> {
+  const failures: string[] = [];
+  for (const c of cmds) {
+    const r = await run('bash', ['-lc', c]);
+    if (r.code !== 0)
+      failures.push(
+        String(r.stderr || '')
+          .trim()
+          .split('\n')[0] || `exit ${r.code}`,
+      );
+  }
+  return failures.length ? { ok: false, error: failures[0] } : { ok: true };
+}

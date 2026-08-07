@@ -421,7 +421,10 @@ function createForge({
 
     // Open a PR (gh) / MR (glab) for each of a feature's branches.
     app.post('/group/pr', async (req, res) => {
-      const { group: g } = await resolve(req.body?.group);
+      // String(x ?? ''): the body can carry an array, an object, a number. Every other
+      // resolveGroup call site coerces — orchestrator.ts documents it as the resolver's
+      // contract — and this was the one that did not.
+      const { group: g } = await resolve(String(req.body?.group ?? ''));
       if (!g) return res.status(404).json({ error: 'no such feature' });
       const results: PrResult[] = [];
       for (const m of g.members) results.push(await openPullRequest(m, ENV));
@@ -436,7 +439,15 @@ function createForge({
           /* the feed must never break the route */
         }
       }
-      res.json({ ok: results.some((r) => r.url), results });
+      /*
+       * Every branch got a PR, not "at least one did".
+       *
+       * `some()` meant a two-repo feature whose FE PR opened and whose BE push was
+       * rejected — no upstream, non-fast-forward — answered ok:true, and the toast said
+       * the feature had a PR. Every other group verb settled on "no failures" for the
+       * same reason.
+       */
+      res.json({ ok: results.every((r) => !!r.url), results });
     });
   }
 

@@ -260,12 +260,23 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
         serversById[s.id] = {
           repos: list.map((r) => {
             const hit = active.get(paths.resolve(r.worktreePath));
+            /*
+             * `...decorate()`, not a hand-picked list.
+             *
+             * This re-implemented `canStart` as "a start command exists", which is what
+             * it USED to mean; decorate() redefined it as "starting this will work"
+             * (configured && !depsMissing) and added the three fields that explain a
+             * false. So the same worktree said "deps missing, cannot start" on the rail
+             * and offered an enabled Start button here — and pressing it spawned a
+             * command that died immediately, with no field on this half able to say why.
+             * Spreading is also what stops the next added field going missing on one
+             * side only; topology() has spread for exactly that reason since a
+             * hand-picked list dropped `depsMissing` once already.
+             */
             return {
               repo: r.repo,
               worktreePath: r.worktreePath,
-              running: !!hit,
-              ports: hit ? hit.ports : [],
-              canStart: !!servers.startCfg(r.repo),
+              ...servers.decorate({ repo: r.repo, path: r.worktreePath }, active),
             };
           }),
         };

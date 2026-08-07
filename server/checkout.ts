@@ -32,6 +32,10 @@ export interface PrepareResult {
   branch: string;
   /** The repo's default branch, per `origin/HEAD`. */
   defaultBranch: string;
+  /**
+   * Whether `git fetch` succeeded. READ IT — a false here invalidates the freshness this
+   * whole module exists to provide, and it used to be recorded and never looked at.
+   */
   fetched: boolean;
   /** Whether this call moved the checkout onto the default branch. */
   switched: boolean;
@@ -42,6 +46,16 @@ export interface PrepareResult {
    * everything happened.
    */
   reason?: string;
+  /** Present only when the fetch failed; the first line of git's complaint. */
+  fetchError?: string;
+}
+
+/** git puts the useful half of a failure on the first line and the advice below it. */
+function firstLine(s: string): string {
+  return String(s || '')
+    .trim()
+    .split('\n')[0]
+    .trim();
 }
 
 export interface PrepareOptions {
@@ -91,6 +105,18 @@ export async function prepareForSession(repoPath: string, opts: PrepareOptions =
     timeout: opts.fetchTimeoutMs ?? FETCH_TIMEOUT_MS,
   });
   base.fetched = fetched.code === 0;
+  /*
+   * A failed fetch is a REPORTED outcome, not a skipped step.
+   *
+   * Everything below still works when the remote is unreachable — the switch succeeds,
+   * the fast-forward is a clean no-op against a stale `origin/<default>` — and the
+   * session then starts on a branch that is confidently out of date. With nothing said,
+   * that is indistinguishable from a correct, up-to-date start. On a dropped VPN or a
+   * 15s timeout that is precisely the wrong thing to be quiet about.
+   */
+  if (!base.fetched) {
+    base.fetchError = firstLine(fetched.stderr) || 'could not reach origin';
+  }
 
   const def = await defaultBranchOf(repoPath);
   base.defaultBranch = def;
@@ -134,9 +160,19 @@ export async function prepareForSession(repoPath: string, opts: PrepareOptions =
  * is nothing worth saying.
  */
 export function describe(r: PrepareResult): string {
-  if (r.reason) return r.reason;
-  if (r.switched && r.updated) return `on ${r.branch}, updated`;
-  if (r.switched) return `on ${r.branch}`;
-  if (r.updated) return `${r.branch} updated`;
-  return '';
+  const rest = () => {
+    if (r.reason) return r.reason;
+    if (r.switched && r.updated) return `on ${r.branch}, updated`;
+    if (r.switched) return `on ${r.branch}`;
+    if (r.updated) return `${r.branch} updated`;
+    return '';
+  };
+  const tail = rest();
+  // The stale-branch warning leads, because it changes what every other clause MEANS:
+  // "on develop, updated" against an unreachable origin is up to date with nothing.
+  if (!r.fetched) {
+    const why = `could not fetch origin (${r.fetchError || 'unknown'}) — this branch may be out of date`;
+    return tail ? `${why}; ${tail}` : why;
+  }
+  return tail;
 }

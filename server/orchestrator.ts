@@ -13,7 +13,9 @@
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 import type { Router } from 'express';
 import * as worktree from './worktree.ts';
-import { run, shq } from './util.ts';
+import { openEditor, run, shq } from './util.ts';
+import * as startReport from './start-report.ts';
+import type { StartOutcome } from './start-report.ts';
 
 // The collaborators below are typed by the surface these routes touch, not by the
 // concrete objects server.ts hands over — the same rule server/routes-review.ts
@@ -35,28 +37,6 @@ interface Member {
   depsMissing?: boolean;
   noStartCmd?: boolean;
   session?: { id: string } | null;
-}
-
-/** A member /group/start declined to launch, and the reason a user can act on. */
-interface SkippedMember {
-  repo: string;
-  path: string;
-  reason: string;
-}
-
-/**
- * Why a member cannot be launched, in words the UI can show verbatim.
- *
- * `canStart` is `configured && !depsMissing` (servers.decorate), so a false value has
- * exactly two causes and both are fixable by the user — one with the Install button,
- * one by adding the repo to `config.start`. Naming them is the whole point: the stack
- * used to drop these members before the launch loop and report the remainder as a
- * complete success.
- */
-function skipReason(m: Member): string {
-  if (m.depsMissing) return 'dependencies not installed';
-  if (m.noStartCmd) return 'no start command configured for this repo';
-  return 'cannot start';
 }
 
 /** A feature/group as resolveGroup() answers it — every member is really on disk. */
@@ -94,19 +74,19 @@ interface Servers {
     | { ok: false; slotError: string }
     | {
         ok: true;
-        results: Array<{
-          repo: string;
-          ok: boolean;
-          error?: string;
-          listening?: boolean;
-          boundElsewhere?: number[];
-        }>;
+        results: StartOutcome[];
       }
   >;
   stop(repo: string, worktreePath: string): Promise<unknown>;
-  // Was `Promise<unknown>` while /group/restart threw the result away and answered a
-  // hardcoded `ok: true`. The verdict is only reportable if the type admits it exists.
-  restart(repo: string, worktreePath: string, opts: LaunchOpts): Promise<{ ok: boolean; error?: string }>;
+  /*
+   * The FULL outcome, not `{ok, error}`.
+   *
+   * A narrowed type here is not a simplification, it is a silent bug: `Servers.restart`
+   * really answers a StartResult, and declaring less erased `listening`/`boundElsewhere`
+   * on the way in, so /group/restart could not have reported a server that spawned and
+   * never bound even if it had tried.
+   */
+  restart(repo: string, worktreePath: string, opts: LaunchOpts): Promise<Omit<StartOutcome, 'repo'>>;
 }
 
 /** The session these routes hand back untouched; only its id is ever read. */
@@ -194,18 +174,10 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group, stopConflicts }: GroupBody = req.body || {};
     const { group: g, flat } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    const toStart = g.members.filter((m) => !m.running && m.canStart);
-    /*
-     * The members that SHOULD come up and cannot. Previously these were dropped by the
-     * same filter that built `toStart` and never mentioned again: a two-repo feature
-     * whose BE worktree had no node_modules — the normal state of a fresh `wt`
-     * worktree — answered `{ok:true, started:1, total:1, failures:[]}`, which is
-     * byte-identical to a full success. Half a stack, reported as a win, with the
-     * missing half named nowhere in the response.
-     */
-    const skipped: SkippedMember[] = g.members
-      .filter((m) => !m.running && !m.canStart)
-      .map((m) => ({ repo: m.repo, path: m.path, reason: skipReason(m) }));
+    // Both halves of the split come from server/start-report.ts, which is also what the
+    // session route uses — that shared rule is the whole reason this cannot drift again.
+    const toStart = startReport.toStart(g.members);
+    const skipped = startReport.toSkip(g.members);
     const conflicts: Member[] = [];
     const seen = new Set<string>();
     for (const m of toStart)
@@ -232,51 +204,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const out = await servers.startAll(toStart.map((m) => ({ repo: m.repo, worktreePath: m.path })));
     if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
 
-    let started = 0;
-    const failures: Array<{ repo: string; error?: string }> = [];
-    for (const r of out.results) {
-      if (!r.ok) {
-        failures.push({ repo: r.repo, error: r.error });
-        continue;
-      }
-      // Spawned but never bound. This used to count as a start, which is the precise
-      // shape of "it said it started and nothing is running": the process was created,
-      // so `ok` was true, and whether it survived long enough to listen was never asked.
-      if (r.listening === false) {
-        // Two very different diagnoses, and the difference is the whole value of the
-        // message: a server on an unexpected port is UP and misconfigured (its repo does
-        // not read the slot's port env var), where one on no port at all is down.
-        failures.push({
-          repo: r.repo,
-          error: r.boundElsewhere?.length
-            ? `started on port ${r.boundElsewhere.join(', ')} instead of the port this feature's slot expects — this repo does not appear to read its configured port env var, so a second feature cannot run it`
-            : 'started but no port was listening — check its log',
-        });
-        continue;
-      }
-      started++;
-    }
     await refreshRunning();
     scheduleBroadcast();
-    /*
-     * `ok` means what a client keying on it assumes: every member that should be up is
-     * up. It was hardcoded true, so a stack where all three members failed to bind
-     * answered `{ ok: true, started: 0, failures: [3 things] }` and a client that read
-     * only `ok` called total failure a success. Nothing to start is still ok — that is
-     * a no-op, not a failure.
-     *
-     * A skipped member fails it too. Skipping is not a no-op: the user asked for the
-     * stack and part of it is not running, for a reason they can fix. `total` counts
-     * what should be up rather than what was attempted, so `started/total` can finally
-     * show the shortfall — it read `1/1` for a half-started two-repo stack.
-     */
-    res.json({
-      ok: failures.length === 0 && skipped.length === 0,
-      started,
-      total: toStart.length + skipped.length,
-      skipped,
-      failures,
-    });
+    res.json(startReport.report(out.results, skipped));
   });
 
   app.post('/group/stop', async (req, res) => {
@@ -301,37 +231,30 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // Same omission /group/start had: a member that is neither running nor startable is
     // dropped here too, and a restart that silently brings back less than was asked for
     // is the same lie in a different verb.
-    const skipped: SkippedMember[] = g.members
-      .filter((m) => !m.running && !m.canStart)
-      .map((m) => ({ repo: m.repo, path: m.path, reason: skipReason(m) }));
+    const skipped = startReport.toSkip(g.members);
     for (const m of toRestart) {
       const alloc = servers.allocSlotFor(servers.featureFor(m.path)); // reuse the feature's slot across the restart
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
-    // The results were discarded and `ok` hardcoded true, so a restart where every
-    // member failed to rebind reported success.
-    const failures: Array<{ repo: string; error?: string }> = [];
-    let restarted = 0;
-    await Promise.all(
-      toRestart.map(async (m) => {
-        const r = await servers.restart(
-          m.repo,
-          m.path,
-          servers.launchOpts(m.repo, servers.featureFor(m.path)),
-        );
-        if (r.ok) restarted++;
-        else failures.push({ repo: m.repo, error: r.error });
-      }),
+    /*
+     * The full StartResult per member, not just `ok`.
+     *
+     * This counted "the process spawned" as "restarted" because the narrowed `Servers`
+     * interface below declared `restart()` as `{ok, error}` — it really answers a
+     * StartResult, so `listening` and `boundElsewhere` were being type-erased on the way
+     * in. A restart of a repo that ignores its slot's port env var therefore reported
+     * `3/3, failures: []` while the ports the UI watches stayed dark, and the message
+     * written to explain exactly that never reached this verb.
+     */
+    const results = await Promise.all(
+      toRestart.map(async (m) => ({
+        repo: m.repo,
+        ...(await servers.restart(m.repo, m.path, servers.launchOpts(m.repo, servers.featureFor(m.path)))),
+      })),
     );
     await refreshRunning();
     scheduleBroadcast();
-    res.json({
-      ok: failures.length === 0 && skipped.length === 0,
-      started: restarted,
-      total: toRestart.length + skipped.length,
-      skipped,
-      failures,
-    });
+    res.json(startReport.report(results, skipped));
   });
 
   app.post('/group/open', async (req, res) => {
@@ -348,11 +271,11 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // `$&`, `` $` ``, `$'` and `$$` in a replacement string are expanded by the engine
     // AFTER shq() has done its quoting — so a worktree path containing `$&` would open
     // some other path entirely, quoting notwithstanding. split/join is literal.
-    if (ed.openGroup) {
-      await run('bash', ['-lc', ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]);
-    } else {
-      for (const p of paths) await run('bash', ['-lc', ed.open.split('{path}').join(shq(p))]);
-    }
+    const cmds = ed.openGroup
+      ? [ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]
+      : paths.map((p) => ed.open.split('{path}').join(shq(p)));
+    const opened = await openEditor(cmds);
+    if (!opened.ok) return res.status(500).json({ ok: false, error: `editor failed: ${opened.error}` });
     res.json({ ok: true });
   });
 
