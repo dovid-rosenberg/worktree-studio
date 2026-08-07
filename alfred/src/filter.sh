@@ -35,9 +35,16 @@ if ! echo "$STATE" | jq -e 'has("repos")' >/dev/null 2>&1; then
 fi
 
 # Sessions first, then worktrees. A session is a thing you are *doing*; a worktree
-# is where it lives. Both carry the same variables, so one action script serves
-# both — a session that has not been promoted yet simply has no path, and its
-# path-shaped modifiers are marked invalid rather than silently doing nothing.
+# is where it lives. One action script serves both — a session that has not been
+# promoted yet simply has no path, and its path-shaped modifiers are marked
+# invalid rather than silently doing nothing.
+#
+# Every item's whole payload rides in `arg`, as JSON, rather than in per-item
+# `variables`. The variables did not survive the hop to the action script: an
+# ⏎ on a session reached the API with an empty path and was refused ("path or
+# paths is required"). `arg` is the one channel Alfred is guaranteed to deliver,
+# and `mods` can override it per modifier — so one mechanism carries everything
+# and there is no second one to be wrong.
 echo "$STATE" | jq -c --arg base "$BASE" '
   def dot(s): if s=="working" then "⚙" elif s=="waiting" then "🟡"
               elif s=="stopped" then "⏹" else "○" end;
@@ -55,22 +62,20 @@ echo "$STATE" | jq -c --arg base "$BASE" '
           # Prefer activity, fall back to state.
           subtitle: ( "session · \(.activity // .state)"
             + (if .branch then " · \(.repoName) \(.branch)" else " · \(.repoName) (not promoted)" end) ),
-          arg: $p,
+          arg: ({ wtaction: "open", path: $p, repo: .repoName, worktreePath: $p } | tojson),
           valid: ($p != ""),
-          variables: { wtaction: "open", path: $p, repo: .repoName, worktreePath: $p,
-                       sessionId: .id, url: (.sourceUrl // "") },
           mods: {
             cmd:   { subtitle: (if $p=="" then "no worktree yet" else "Reveal in Finder" end),
-                     valid: ($p != ""), variables: { wtaction: "finder", path: $p } },
+                     valid: ($p != ""), arg: ({ wtaction: "finder", path: $p } | tojson) },
             ctrl:  { subtitle: (if $p=="" then "no worktree yet" else "Start the feature stack" end),
-                     valid: ($p != ""), variables: { wtaction: "group-start", group: .feature } },
+                     valid: ($p != ""), arg: ({ wtaction: "group-start", group: .feature } | tojson) },
             alt:   ( if .sourceUrl
                      then { subtitle: "Open \(.source) \(.sourceId // "ticket") ↗",
-                            valid: true, variables: { wtaction: "url", url: .sourceUrl } }
+                            valid: true, arg: ({ wtaction: "url", url: .sourceUrl } | tojson) }
                      else { subtitle: (if $p=="" then "no worktree yet" else "Stop the feature stack" end),
-                            valid: ($p != ""), variables: { wtaction: "group-stop", group: .feature } } end ),
+                            valid: ($p != ""), arg: ({ wtaction: "group-stop", group: .feature } | tojson) } end ),
             shift: { subtitle: "Open the cockpit", valid: true,
-                     variables: { wtaction: "url", url: $base } } },
+                     arg: ({ wtaction: "url", url: $base } | tojson) } },
           match: "\(.title) \(.repoName) \(.branch // "") \(.feature) \(.sourceId // "")" } ) ) as $sessions
 
   | ( [ .repos[]? as $r | $r.worktrees[]? | select(.isMain | not) ]
@@ -86,19 +91,18 @@ echo "$STATE" | jq -c --arg base "$BASE" '
                  else "  ○ stopped" end)
               + (if .session then "  · agent \(.session.state)" else "" end)
               + (if .merged then "  · merged" else "" end) ),
-            arg: .path,
-            variables: { wtaction: "open", path: .path, repo: .repo, worktreePath: .path,
-                         sessionId: (.session.id // ""), url: "" },
+            arg: ({ wtaction: "open", path: .path, repo: .repo, worktreePath: .path } | tojson),
             mods: {
-              cmd:   { subtitle: "Reveal in Finder", variables: { wtaction: "finder", path: .path } },
+              cmd:   { subtitle: "Reveal in Finder",
+                       arg: ({ wtaction: "finder", path: .path } | tojson) },
               ctrl:  { subtitle: (if .canStart then "Start the dev server" else "no start command configured for \(.repo)" end),
                        valid: .canStart,
-                       variables: { wtaction: "start", repo: .repo, worktreePath: .path } },
+                       arg: ({ wtaction: "start", repo: .repo, worktreePath: .path } | tojson) },
               alt:   { subtitle: (if .running then "Stop the dev server" else "not running" end),
                        valid: .running,
-                       variables: { wtaction: "stop", repo: .repo, worktreePath: .path } },
+                       arg: ({ wtaction: "stop", repo: .repo, worktreePath: .path } | tojson) },
               shift: { subtitle: "Open the cockpit", valid: true,
-                       variables: { wtaction: "url", url: $base } } },
+                       arg: ({ wtaction: "url", url: $base } | tojson) } },
             match: "\(.repo) \(.wtname) \(.branch // "")" } ) ) as $worktrees
 
   | { items: ($sessions + $worktrees) }'
