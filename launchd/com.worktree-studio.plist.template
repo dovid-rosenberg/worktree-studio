@@ -26,6 +26,13 @@
 	<dict>
 		<key>PATH</key>
 		<string>{{PATH}}</string>
+		<!-- launchd sets no locale, so without this everything the daemon starts —
+		     terminals, tmux, dev servers, git — runs under a POSIX/US-ASCII charmap.
+		     A prompt made of powerline glyphs then measures three times too wide and
+		     wraps in the wrong place. A shell inherits this from your terminal; a
+		     launchd agent has no terminal to inherit from. -->
+		<key>LANG</key>
+		<string>{{LANG}}</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>

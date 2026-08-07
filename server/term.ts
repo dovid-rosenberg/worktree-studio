@@ -163,7 +163,14 @@ function createTerminalHandler({ manager, spawn = pty.spawn }: TerminalDeps) {
       cols,
       rows,
       cwd: s.worktreePath || s.repoPath,
-      env: spec.env || process.env,
+      // LANG FIRST, so anything real in the environment wins — this is a default, not
+      // an override. Without it a daemon started by launchd hands every pty a POSIX
+      // locale (charmap US-ASCII), where one powerline glyph counts as three
+      // characters. A prompt built from those is measured at three times its width and
+      // wraps in the wrong place, which looks like the terminal is broken rather than
+      // like a missing environment variable. Started from a terminal the daemon
+      // inherited LANG and the bug was invisible.
+      env: { LANG: 'en_US.UTF-8', ...(spec.env || process.env) },
     });
     term = attached;
     attached.onData((d) => {
