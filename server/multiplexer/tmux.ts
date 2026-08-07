@@ -73,7 +73,10 @@ export interface TmuxDriver {
   available(): Promise<boolean>;
   hasSession(name: string): Promise<boolean>;
   ensure(name: string, opts?: TmuxLaunchOptions): Promise<TmuxEnsureResult>;
-  relaunchAgent(name: string, opts: TmuxLaunchOptions & { tabId?: string | null }): Promise<TmuxRelaunchResult>;
+  relaunchAgent(
+    name: string,
+    opts: TmuxLaunchOptions & { tabId?: string | null },
+  ): Promise<TmuxRelaunchResult>;
   attachSpawn(name: string): AttachSpec;
   newTab(name: string, opts?: TmuxNewTabOptions): Promise<TmuxNewTabResult>;
   listTabs(name: string): Promise<TmuxTab[]>;

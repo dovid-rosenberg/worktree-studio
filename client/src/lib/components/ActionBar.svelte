@@ -26,7 +26,6 @@
    * its rail card — the only buttons in the rail — because it could not be selected.
    */
   import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
-  import ServerBar from '$lib/components/dock/ServerBar.svelte';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
   import {
@@ -105,12 +104,10 @@
       onclick={() => stopMainServer(mainServer)}
     >Stop server</button>
   {:else}
-    <!-- The workspace readout — ports and CI — left of the verbs that act on them. It
-         used to be its own band above the terminal, which put the chips and the buttons
-         that affect them in different places. -->
-    {#if session}<ServerBar {session} />{/if}
-
-    <span class="grow"></span>
+    <!-- The `workspace · <repo> · <repo>` readout that used to sit here is gone: it named
+         the same repos DockHead's chips name, a few hundred pixels below them. The ports
+         it carried moved onto those chips, where they are a fact about a repo rather than
+         a second list of repos. -->
 
     {#if isPending}
       <button class="btn sm" disabled>working…</button>
@@ -191,10 +188,12 @@
 </div>
 
 <style>
+  /* A GROUP inside the dock's bar, not a band of its own: no padding, no border, no
+     background and no min-height, all of which belong to whatever row hosts it. Owning
+     them here is what made this a second horizontal band at the foot of the window. */
   .actionbar {
     display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
-    padding: 8px 14px; border-top: 1px solid var(--border); background: var(--panel);
-    flex: none; min-height: 45px;
+    flex: none; min-width: 0;
   }
   /* Present even when empty, so selecting something never shifts the layout. */
   .actionbar.idle { color: var(--faint); }

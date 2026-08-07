@@ -16,7 +16,6 @@
   import Rail from '$lib/components/rail/Rail.svelte';
   import RailSplitter from '$lib/components/rail/RailSplitter.svelte';
   import Dock from '$lib/components/dock/Dock.svelte';
-  import ActionBar from '$lib/components/ActionBar.svelte';
   import { ui } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
   import { hashForSelection, selectionFromHash } from '$lib/deeplink.js';
@@ -66,8 +65,6 @@
   <RailSplitter />
   <Dock />
 </div>
-
-<ActionBar />
 
 <style>
   /* The splitter is a real column, so the rail's width is the only thing that moves. */
