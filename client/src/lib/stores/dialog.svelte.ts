@@ -22,7 +22,12 @@ export type DialogValue = string | boolean;
 export type DialogResult = null | true | DialogValue[];
 
 export interface DialogField {
-  type?: 'text' | 'checkbox' | 'select';
+  /**
+   * `color` renders the feature-colour swatches. It is a field type rather than its own
+   * dialog because picking a colour is never the whole errand — you open the editor to
+   * change a name and tag it in one pass, and two dialogs for one edit is two dismissals.
+   */
+  type?: 'text' | 'checkbox' | 'select' | 'color';
   label?: string;
   value?: DialogValue;
   placeholder?: string;

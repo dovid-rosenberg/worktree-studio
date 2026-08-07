@@ -195,6 +195,15 @@ export interface Config {
   webRepos: string[];
   groups: GroupConfig[];
   runConfigs: Record<string, RunConfig[]>;
+  /**
+   * featureName → palette id. Purely a visual tag the user assigns.
+   *
+   * Keyed by FEATURE name, not session id, because the colour is about the thing you
+   * are tracking in your head: it has to survive the session being stopped, deleted and
+   * started again. An id rather than a hex value so both themes can define what it looks
+   * like — a colour picked in dark mode must not become unreadable in light.
+   */
+  featureColors: Record<string, string>;
   sources: {
     github?: { enabled: boolean };
     // `project` is read by the REST fallback in sources/gitlab.ts and gated on by its
@@ -435,6 +444,32 @@ export type FeatureMember = Worktree | MissingMember;
  * is the same list filtered to those with 2+ members, plus every manual group.
  * A manual group appears in both.
  */
+/**
+ * The colour tags a feature may wear.
+ *
+ * A CLOSED set, and the one runtime value in this file, because the set of valid ids is
+ * as much the wire contract as the field that carries them: the server rejects anything
+ * outside it and the client has a token for each. Free-form hex was the alternative and
+ * is worse in two ways — it lets a colour be picked in one theme that is illegible in
+ * the other, and it collides with the palette that already MEANS something (green is
+ * merged/running, amber is waiting, purple is working, red is destructive).
+ *
+ * Hues chosen to sit clear of those four. `types.ts` imports nothing, so a value here
+ * still costs the client nothing but the array.
+ */
+export const FEATURE_COLORS = [
+  'teal',
+  'sky',
+  'indigo',
+  'violet',
+  'magenta',
+  'rose',
+  'olive',
+  'sand',
+] as const;
+
+export type FeatureColor = (typeof FEATURE_COLORS)[number];
+
 export interface Feature {
   name: string;
   /** false for a manual group from config.groups, true for a derived one. */
@@ -444,6 +479,8 @@ export interface Feature {
   session: EmbeddedSession | null;
   /** The concurrency slot (0,1,2…), present only while one is allocated. */
   slot?: number;
+  /** The user's colour tag (a palette id), present only when one has been set. */
+  color?: string;
 }
 
 /**

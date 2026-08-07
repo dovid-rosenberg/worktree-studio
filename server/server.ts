@@ -31,6 +31,7 @@ import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import type { Request } from 'express';
 import type { ScannedRepo } from './git.ts';
+import { FEATURE_COLORS } from './types.ts';
 import type { EditorConfig, GroupConfig, RunConfig, Session, SessionRepo, StartConfig } from './types.ts';
 
 /**
@@ -290,6 +291,30 @@ async function main() {
       githubAuthed: gh.code === 0,
     });
   });
+  /*
+   * A feature's colour tag. Its OWN route, deliberately not a field on POST /settings.
+   *
+   * /settings is a full replace for the maps it carries, and the last thing that wrote a
+   * single value through it deleted two repos' start commands on the way past. Setting a
+   * colour is a one-key write, so it does one-key work: no coercion runs, and nothing the
+   * body did not mention can be dropped. An empty colour clears the tag rather than
+   * storing a blank, so the map only ever holds live entries.
+   */
+  api.post('/features/:name/color', async (req, res) => {
+    const name = String(req.params.name || '').trim();
+    if (!name) return res.status(400).json({ ok: false, error: 'no feature named' });
+    const color = String(req.body?.color || '').trim();
+    if (color && !(FEATURE_COLORS as readonly string[]).includes(color)) {
+      return res.status(400).json({ ok: false, error: `unknown colour: ${color}` });
+    }
+    cfg.featureColors = { ...(cfg.featureColors || {}) };
+    if (color) cfg.featureColors[name] = color;
+    else delete cfg.featureColors[name];
+    configMod.save(cfg);
+    broadcastTopology();
+    res.json({ ok: true, color });
+  });
+
   api.post('/settings', async (req, res) => {
     // Every field is `unknown`: a JSON body can carry anything, so nothing here is a
     // string, an object or an array until it has been checked — the same rule

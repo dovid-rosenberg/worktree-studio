@@ -16,6 +16,20 @@
   --done:#4bb96a; --done-bg:#16301f; --idle:#5d6673; --idle-bg:#1c222b;
   --brand:#e0733f; --brand-ink:#140d08; --brand-soft:#2c1a10;
   --add:#3fb950; --add-bg:#0f2417; --del:#f85149; --del-bg:#2a1315;
+
+  /* Feature colour tags — see FEATURE_COLORS in server/types.ts.
+     Two values per hue: the ACCENT carries a 3px edge and has to read at that width,
+     the WASH tints a whole card and must not. Deliberately clear of the status hues
+     above: nothing here is green, amber, purple or red, so a tag can never be misread
+     as merged, waiting, working or dangerous. */
+  --f-teal:#2fb3a3;    --f-teal-wash:#12292a;
+  --f-sky:#3f9fe0;     --f-sky-wash:#0f2432;
+  --f-indigo:#6d8cf0;  --f-indigo-wash:#161f38;
+  --f-violet:#a774e6;  --f-violet-wash:#241a34;
+  --f-magenta:#d565b8;  --f-magenta-wash:#2e162a;
+  --f-rose:#e0736f;    --f-rose-wash:#301a1c;
+  --f-olive:#9aab4e;   --f-olive-wash:#222616;
+  --f-sand:#c99a5e;    --f-sand-wash:#2b2117;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px -14px rgba(0,0,0,.7);
   --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -52,6 +66,18 @@
   --done:#177f45; --done-bg:#d3edda; --idle:#8c94a0; --idle-bg:#e4e1d9;
   --brand:#c1521f; --brand-ink:#ffffff; --brand-soft:#f6ddcf;
   --add:#12703a; --add-bg:#dff0e4; --del:#bf1d29; --del-bg:#fbe2e2;
+
+  /* The same eight tags on a light ground. The accents are darkened for contrast
+     against #e9e6e0; the washes are tinted toward the page rather than away from it,
+     so a tagged card still reads as paper and not as a highlighter. */
+  --f-teal:#0f7a70;    --f-teal-wash:#d5e8e5;
+  --f-sky:#1a6ea8;     --f-sky-wash:#d7e6f1;
+  --f-indigo:#3f5bc4;  --f-indigo-wash:#dcdff4;
+  --f-violet:#7745b5;  --f-violet-wash:#e6dcf3;
+  --f-magenta:#a83184;  --f-magenta-wash:#f2daea;
+  --f-rose:#b0413e;    --f-rose-wash:#f5dcda;
+  --f-olive:#5f6d1c;   --f-olive-wash:#e3e7cf;
+  --f-sand:#8a5c1c;    --f-sand-wash:#efe1cd;
   /* The dark theme's shadow is invisible on a light ground; this one actually lifts. */
   --shadow:0 1px 2px rgba(20,22,28,.09),0 10px 28px -12px rgba(20,22,28,.26);
   --term-bg:#fdfcfa;

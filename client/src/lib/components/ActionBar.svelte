@@ -31,8 +31,9 @@
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
-    deleteFeature, installDeps, openGroup, openSessionRepos, pending, prFeature, promote,
-    renameSession, restartStack, runStack, startFeatureSession, stopMainServer, stopStack,
+    deleteFeature, editFeature, editSession, installDeps, openGroup, openSessionRepos,
+    pending, prFeature, promote, restartStack, runStack, startFeatureSession,
+    stopMainServer, stopStack,
   } from '$lib/ops.svelte.js';
 
   const session = $derived(ui.selected);
@@ -161,7 +162,7 @@
           <button class="btn sm primary" disabled={busy} onclick={() => guard(() => promote(session))}>Promote to worktree</button>
         {/if}
         <button class="btn sm" title="Add another repo to this feature" onclick={() => addRepoToSession(session)}>＋ repo</button>
-        <button class="btn sm ghost" title="Rename" aria-label="Rename session" onclick={() => renameSession(session)}>✐</button>
+        <button class="btn sm ghost" title="Edit name and colour" aria-label="Edit session" onclick={() => editSession(session)}>✐</button>
         {#if session.active === false}
           <button class="btn sm primary" disabled={busy} onclick={() => guard(() => activateSession(session))}>Resume</button>
         {:else}
@@ -177,6 +178,7 @@
         <button class="btn sm primary" onclick={() => startFeatureSession(feature)}>Start session</button>
         <button class="btn sm" onclick={() => openGroup(feature.name)}>Open in editor</button>
         <button class="btn sm" onclick={() => prFeature(feature.name)}>Open PR / MR</button>
+        <button class="btn sm ghost" title="Colour this feature" aria-label="Edit feature" onclick={() => editFeature(feature)}>✐</button>
         {#if anyRunning}
           <button class="btn sm ghost" onclick={() => closeFeature(feature.name)}>Close feature</button>
         {/if}

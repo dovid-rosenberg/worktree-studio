@@ -50,7 +50,13 @@
 </div>
 
 <style>
-  .dock-head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border); background:var(--panel); flex:none; flex-wrap:wrap; }
+  /* The feature's colour tag, inherited from .dock (see Dock.svelte). This is the surface
+     that matters: the rail is what you SCAN, but the dock is what you are looking at while
+     you work, so a tag only in the rail would be invisible at the moment you switch.
+     `var(--fc, …)` falls back to the untagged look, so nothing changes without a tag. */
+  .dock-head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border);
+               background:var(--fc-wash, var(--panel)); box-shadow:inset 4px 0 0 var(--fc, transparent);
+               flex:none; flex-wrap:wrap; }
   .dock-title { font-weight:650; font-size:16px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .repochips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   .repochip2 { font-family:var(--mono); font-size:11.5px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:2px 7px; }

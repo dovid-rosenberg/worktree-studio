@@ -70,6 +70,7 @@ function defaults(): ShippedConfig {
     //   branch    same capture group of `branchPattern` applied to the branch name
     //   manifest  listed together in `groups` below
     featureIdentity: { strategy: 'basename', branchPattern: '', branchFlags: '' },
+    featureColors: {},
     // Native `wt` copy-patterns (files git ignores get carried into new worktrees).
     // `.env*` covers the individual `.env`/`.env.local` entries kept below for the
     // benefit of configs that list them explicitly; `.vscode/*.json` is the

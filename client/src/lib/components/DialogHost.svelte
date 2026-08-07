@@ -8,6 +8,7 @@
    * overlay and can be opened from inside one.
    */
   import Modal from '$lib/components/Modal.svelte';
+  import { COLOR_LABELS, FEATURE_COLORS, colorVars } from '$lib/featureColor.js';
   import { dialogs } from '$lib/stores/dialog.svelte.js';
 
   const entry = $derived(dialogs.current);
@@ -75,6 +76,26 @@
               <label class="dlg-check">
                 <input class="dlgf" type="checkbox" bind:checked={values[i]} /> {f.label || ''}
               </label>
+            {:else if f.type === 'color'}
+              <div class="field">
+                <span class="lbl">{f.label || ''}</span>
+                <!-- A radio GROUP, not buttons: arrow keys move between swatches and the
+                     selected one is announced, which a row of divs would not be. -->
+                <div class="swatches" role="radiogroup" aria-label={f.label || 'Colour'}>
+                  <label class="sw none" class:on={!values[i]} title="No colour">
+                    <input type="radio" value="" bind:group={values[i]} />
+                    <span class="chip" aria-hidden="true">✕</span>
+                    <span class="vh">None</span>
+                  </label>
+                  {#each FEATURE_COLORS as c (c)}
+                    <label class="sw" class:on={values[i] === c} title={COLOR_LABELS[c] || c} style={colorVars(c)}>
+                      <input type="radio" value={c} bind:group={values[i]} />
+                      <span class="chip tint" aria-hidden="true"></span>
+                      <span class="vh">{COLOR_LABELS[c] || c}</span>
+                    </label>
+                  {/each}
+                </div>
+              </div>
             {:else if f.type === 'select'}
               <div class="field">
                 <label for="dlgf-{i}">{f.label || ''}</label>
@@ -114,6 +135,23 @@
   .dlg-check { display:flex; align-items:center; gap:8px; font-size:14.5px; }
   .dlg-check input { accent-color:var(--brand); }
   .field { display:flex; flex-direction:column; gap:6px; }
+  /* The swatch labels are `.lbl`, not `label`: the rule below styles `.field label` as a
+     caption, and every swatch IS a label wrapping its radio. */
+  .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); }
+  .swatches { display:flex; flex-wrap:wrap; gap:8px; }
+  .sw { position:relative; cursor:pointer; border-radius:8px; padding:3px; border:2px solid transparent; line-height:0; }
+  .sw:hover { border-color:var(--border-strong); }
+  .sw.on { border-color:var(--fc, var(--brand)); }
+  /* Visually hidden but focusable — the ring lands on the swatch via :focus-within. */
+  .sw input { position:absolute; opacity:0; width:0; height:0; }
+  .sw:focus-within { outline:2px solid var(--brand); outline-offset:2px; }
+  .chip { display:block; width:26px; height:26px; border-radius:6px; border:1px solid var(--border-strong); }
+  /* Wash inside, accent as the rim — the same two-value split the cards use, so the
+     swatch is a genuine preview of what the feature will look like. */
+  .chip.tint { background:var(--fc-wash); border-color:var(--fc); }
+  .sw.none .chip { display:flex; align-items:center; justify-content:center; line-height:1;
+                   color:var(--faint); font-size:13px; background:var(--panel); }
+  .vh { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
   .field label { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
   /* The shortcuts cheatsheet is a messageHtml payload, so its rules live here. */
   .dlg-msg :global(.kbd-list) { display:flex; flex-direction:column; gap:8px; }

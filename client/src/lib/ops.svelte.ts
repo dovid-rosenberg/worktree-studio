@@ -14,6 +14,7 @@
 import { api } from '$lib/api.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
 import type { Feature, Session } from '../../../server/types';
+import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
 import { liveMembers, ui } from '$lib/stores/ui.svelte.js';
@@ -247,15 +248,52 @@ export async function closeSession(s: Session) {
   }
 }
 
-export async function renameSession(s: Session) {
-  const title = await uiPrompt('Rename session:', s.title);
-  if (title === null || !title.trim()) return;
+/**
+ * Edit a session: its name and its feature's colour tag, in one dialog.
+ *
+ * The two travel together because they answer the same question — "which one is this?" —
+ * and they are two routes because they are two different things underneath: the name
+ * belongs to the SESSION, the colour to the FEATURE, which outlives it. Only what
+ * actually changed is sent, so cancelling out of a colour does not re-write a title.
+ */
+export async function editSession(s: Session) {
+  const feature = world.featureFor(s.id);
+  const fields: DialogField[] = [{ type: 'text', label: 'Name', value: s.title }];
+  if (feature) fields.push({ type: 'color', label: 'Colour', value: feature.color || '' });
+
+  const out = await uiDialog({ title: 'Edit session', fields, okLabel: 'Save' });
+  if (!Array.isArray(out)) return;
+
+  const title = String(out[0] ?? '').trim();
+  const color = feature ? String(out[1] ?? '') : '';
   try {
-    await api('POST', `/api/v1/sessions/${s.id}/rename`, { title });
-    toast('Renamed');
+    if (title && title !== s.title) await api('POST', `/api/v1/sessions/${s.id}/rename`, { title });
+    if (feature && color !== (feature.color || '')) await setFeatureColor(feature.name, color);
+    toast('Saved');
   } catch (e) {
     toast(errMessage(e), true);
   }
+}
+
+/** Colour a feature that has no session — the same tag, reached from the feature itself. */
+export async function editFeature(feature: Feature) {
+  const out = await uiDialog({
+    title: `Colour ${feature.name}`,
+    fields: [{ type: 'color', label: 'Colour', value: feature.color || '' }],
+    okLabel: 'Save',
+  });
+  if (!Array.isArray(out)) return;
+  try {
+    await setFeatureColor(feature.name, String(out[0] ?? ''));
+    toast('Saved');
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
+}
+
+/** Its own narrow route — see the comment on it in server/server.ts. */
+function setFeatureColor(name: string, color: string) {
+  return api('POST', `/api/v1/features/${encodeURIComponent(name)}/color`, { color });
 }
 
 export async function deactivateSession(s: Session) {
