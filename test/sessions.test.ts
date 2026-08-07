@@ -964,3 +964,49 @@ test('a relaunch that fails leaves the session stopped, not idle', async () => {
   assert.equal(got(m, 'r3').state, 'stopped');
   assert.match(got(m, 'r3').activity, /no server running/);
 });
+
+/*
+ * A session that was running all along and only LOOKED dead, because its recorded
+ * window id was stale. Resume must adopt the live agent, not start a second one into
+ * the same tmux session — two claudes resuming one conversation is a worse outcome
+ * than the wrong badge that sent you to the button.
+ */
+test('activate adopts an agent that is already running instead of launching a second one', async () => {
+  const m = manager();
+  let launches = 0;
+  m.mux = muxStub({
+    async ensure() {
+      return { created: false };
+    },
+    async relaunchAgent() {
+      return { ok: true, id: '@5', running: true }; // found it alive
+    },
+    async newTab() {
+      launches += 1;
+      return { ok: true };
+    },
+  });
+  m.sessions.set(
+    'r4',
+    session({
+      id: 'r4',
+      muxName: 'mux-r4',
+      repoPath: '/tmp/r4',
+      home: '/tmp/r4',
+      worktreePath: null,
+      settingsFile: '/tmp/r4.settings.json',
+      repos: [sessionRepo({ repo: 'r4', primary: true })],
+      claudeSessionId: 'sid-r4',
+      agentTabId: '@2', // stale
+      active: false,
+      state: 'stopped',
+      createdAt: Date.now(),
+    }),
+  );
+
+  expectOk(await m.activate('r4'), 'activate()');
+  assert.equal(launches, 0, 'nothing was launched');
+  assert.equal(got(m, 'r4').agentTabId, '@5', 'the live window id is recorded');
+  assert.equal(got(m, 'r4').state, 'idle');
+  assert.equal(got(m, 'r4').activity, 'already running', 'and it does not claim to have resumed anything');
+});
