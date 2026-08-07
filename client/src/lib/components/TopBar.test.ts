@@ -84,11 +84,16 @@ describe('TopBar summary', () => {
     expect(screen.queryByRole('button', { name: /Overview/ })).not.toBeInTheDocument();
   });
 
-  it('carries the waiting count as an attention badge on Insights', () => {
-    // notify.waitingCount is fed by the stream diff, not by this component, so the
-    // badge is asserted as present-and-zero rather than driven here.
+  it('shows NO waiting button while nothing is waiting', () => {
+    /*
+     * The count used to be a badge on Insights, so the one state worth interrupting you
+     * for routed you to the usage breakdown — away from the session asking for you. It
+     * is its own button now, and an attention control that is always present is not an
+     * attention control, so it is absent at zero.
+     */
     render(TopBar);
-    expect(screen.getByRole('button', { name: /Insights/ })).toHaveAttribute('data-n');
+    expect(screen.queryByRole('button', { name: /Waiting/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Insights/ })).not.toHaveAttribute('data-n');
   });
 
   it('offers the stack-wide verbs in the menu only when something is actually running', async () => {

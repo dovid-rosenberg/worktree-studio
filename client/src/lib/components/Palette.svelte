@@ -20,25 +20,40 @@
 
   const q = $derived(query.trim().toLowerCase());
 
-  /** id → position in the rail, for the ⌘N hint. */
-  const railIdx = $derived(new Map(ui.railOrder.map((/** @type {any} */ s, /** @type {number} */ i) => [s.id, i])));
-
+  /*
+   * Everything the rail can select, not just what has a session.
+   *
+   * This listed `world.sessions`, so a feature with no agent — the case the rail was
+   * re-keyed around making visible — was absent: you could SEE it on the left, ⌥N could
+   * select it, and typing its name into ⌘K answered "No matches". Two ways to switch
+   * with different reachable sets means you learn to trust neither. Sourcing from
+   * railRows makes the palette's set the rail's set by construction.
+   */
   const sessionRows = $derived(
-    world.sessions
-      .filter((s) => !q || `${s.title} ${s.repoName} ${s.state}`.toLowerCase().includes(q))
-      .map((s) => {
-        const i = railIdx.get(s.id);
+    ui.railRows
+      .filter((r) => r.kind !== 'mainserver')
+      .map((r) => {
+        const sess = r.kind === 'session' ? r.session : r.feature.session;
+        const state = sess?.state || 'idle';
+        const repo = r.kind === 'session' ? r.session.repoName : `${r.feature.members.length} repo(s)`;
+        const digit = ui.railDigits.get(r.key);
         return {
-          key: `s:${s.id}`,
-          glyph: s.worktreePath ? '⎇' : '✦',
-          dot: s.state,
-          title: s.title,
+          key: r.key,
+          hay: `${r.name} ${repo} ${state}`.toLowerCase(),
+          glyph: r.kind === 'feature' ? '⌗' : r.session.worktreePath ? '⎇' : '✦',
+          dot: state,
+          title: r.kind === 'session' ? r.session.title : r.name,
           // ⌥, not ⌘: shortcuts.svelte.ts binds altKey + Digit1-9 (⌘-digit belongs to the
           // browser's tab switcher). The palette advertised a key that did nothing.
-          sub: `${s.repoName} · ${s.state}${i != null && i < 9 ? ` · ⌥${i + 1}` : ''}`,
-          run: () => { overlays.closePalette(); ui.goToSession(s.id); },
+          sub: `${repo} · ${state}${digit ? ` · ⌥${digit}` : ''}`,
+          run: () => {
+            overlays.closePalette();
+            if (r.kind === 'session') ui.goToSession(r.session.id);
+            else ui.selectFeature(r.feature);
+          },
         };
-      }),
+      })
+      .filter((row) => !q || row.hay.includes(q)),
   );
 
   const commandRows = $derived((() => {
