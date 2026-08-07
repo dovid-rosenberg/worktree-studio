@@ -37,6 +37,8 @@ export interface TmuxRelaunchResult {
   id?: string;
   /** False when the old window could not be reused and a new one was opened. */
   reused?: boolean;
+  /** The agent was already running there — nothing was launched. */
+  running?: boolean;
 }
 
 export interface TmuxNewTabOptions {
@@ -250,10 +252,18 @@ const tmux: TmuxDriver = {
    * after the agent quits and the launch script's `exec zsh -l` takes the pane. Resume
    * went through ensure alone, saw "session exists", and relaunched nothing.
    *
-   * The old window is reused only when its pane is sitting at a plain shell. Anything
-   * else gets a new window instead of keystrokes: during a Bash tool call a LIVE
-   * agent's pane reports the tool as its command, and typing a launch line into a
-   * running claude would be worse than an extra tab.
+   * What the agent's pane is running decides between the three outcomes:
+   *
+   * - a plain shell → the agent exited and left its login shell; relaunch there.
+   * - anything else → SOMETHING is alive in the agent's window. Adopt it rather than
+   *   launch: a live claude reports its Bash tool as the pane command, so "not a
+   *   shell" cannot be told from "busy agent", and guessing wrong the other way puts
+   *   a second claude in the same session, both resuming the same conversation.
+   * - no agent window at all → open one.
+   *
+   * Adopting is also the whole repair for a session that was ALREADY running and only
+   * looked dead because its recorded window id was stale: the caller gets the live id
+   * back and the state stops lying, without touching the agent.
    */
   async relaunchAgent(name, { cwd, cmd, tabId } = {}) {
     const tabs = await this.listTabs(name);
@@ -261,18 +271,19 @@ const tmux: TmuxDriver = {
     const target = tabs.find((t) => t.id === tabId) || tabs.find((t) => t.title === 'claude');
     if (target) {
       const running = (await this.paneCommand(name, target.id)).trim();
-      if (/^(-?(z|ba|k|c|tc|da)?sh|login)$/.test(running)) {
-        const sent = await T([
-          'send-keys',
-          '-t',
-          `${name}:${target.id}`,
-          '--',
-          launchKeys(`${name}-${target.id}`, cmd),
-          'Enter',
-        ]);
-        if (sent.code !== 0) return { ok: false, error: sent.stderr.trim() };
-        return { ok: true, id: target.id, reused: true };
+      if (running && !/^(-?(z|ba|k|c|tc|da)?sh|login)$/.test(running)) {
+        return { ok: true, id: target.id, reused: true, running: true };
       }
+      const sent = await T([
+        'send-keys',
+        '-t',
+        `${name}:${target.id}`,
+        '--',
+        launchKeys(`${name}-${target.id}`, cmd),
+        'Enter',
+      ]);
+      if (sent.code !== 0) return { ok: false, error: sent.stderr.trim() };
+      return { ok: true, id: target.id, reused: true };
     }
     const opened = await this.newTab(name, { title: 'claude', cwd, cmd });
     if (!opened.ok) return { ok: false, error: opened.error };

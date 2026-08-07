@@ -40,6 +40,8 @@ export interface MuxRelaunchResult {
   ok: boolean;
   error?: string;
   id?: string;
+  /** The agent was already alive there — nothing was launched. */
+  running?: boolean;
 }
 
 export interface MuxNewTabOptions {
@@ -1141,10 +1143,12 @@ class SessionManager extends EventEmitter {
      */
     const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
     if (r.created && r.id) s.agentTabId = r.id;
+    let adopted = false;
     if (!r.created && !r.error) {
       const again = await this.mux.relaunchAgent(s.muxName, { cwd, cmd, tabId: s.agentTabId });
       if (again.id) s.agentTabId = again.id;
       if (!again.ok) r.error = again.error || 'could not restart the agent';
+      adopted = !!again.running;
     }
     /*
      * The launch result decides the state, rather than being reported alongside a state
@@ -1158,6 +1162,11 @@ class SessionManager extends EventEmitter {
     if (r.error) {
       s.state = 'stopped';
       s.activity = `failed to start: ${r.error}`;
+    } else if (adopted) {
+      // Nothing was launched: the agent was already there and only its recorded window
+      // id was wrong. Saying "resumed" would credit this call with work it did not do.
+      s.state = 'idle';
+      s.activity = 'already running';
     } else {
       s.state = 'idle';
       s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
