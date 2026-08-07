@@ -19,6 +19,40 @@
   import ActionBar from '$lib/components/ActionBar.svelte';
   import { ui } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
+  import { hashForSelection, selectionFromHash } from '$lib/deeplink.js';
+  import { onMount } from 'svelte';
+
+  /*
+   * Deep links, both directions.
+   *
+   * Reading once at load is not enough: when Alfred or the menubar opens the cockpit's
+   * URL and a tab is already on it, the browser focuses that tab and only changes the
+   * fragment — no reload, no mount. Without the `hashchange` listener the second link
+   * you follow would appear to do nothing.
+   *
+   * Writing keeps the URL honest as you navigate, so the address bar is always a link
+   * to what you are looking at. `replaceState` rather than a hash assignment: assigning
+   * `location.hash` pushes a history entry per click, turning Back into an undo of your
+   * last twenty selections. It also does not re-enter the listener above, which an
+   * assignment would.
+   */
+  onMount(() => {
+    const fromUrl = () => {
+      const s = selectionFromHash(window.location.hash);
+      if (s) ui.applySelection(s);
+    };
+    fromUrl();
+    window.addEventListener('hashchange', fromUrl);
+    return () => window.removeEventListener('hashchange', fromUrl);
+  });
+
+  $effect(() => {
+    const want = hashForSelection(ui.selection);
+    // Nothing selected leaves the existing fragment alone rather than rewriting the URL
+    // on the way to a blank one — the app clears the selection during ordinary work.
+    if (!want || want === window.location.hash) return;
+    window.history.replaceState(null, '', want);
+  });
 </script>
 
 <TopBar />

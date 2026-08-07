@@ -106,9 +106,9 @@ echo "New session… | href=$BASE"
 echo "---"
 
 # ── Sessions ───────────────────────────────────────────────────────────────
-# Waiting first: the whole point of the section is "who needs you". Every line
-# opens the cockpit — the client has no per-session deep link, so a `#session=`
-# fragment would be a URL that looks like it targets and does not.
+# Waiting first: the whole point of the section is "who needs you". Each line
+# deep-links to that session in the cockpit (`#s:<id>`), so clicking the agent
+# that wants you lands on the agent that wants you.
 echo "$STATE" | jq -r --arg base "$BASE" '
   def dot(s): if s=="working" then "⚙" elif s=="waiting" then "🟡"
               elif s=="stopped" then "⏹" else "○" end;
@@ -119,7 +119,7 @@ echo "$STATE" | jq -r --arg base "$BASE" '
     else
       "Sessions | color=#888888",
       ( $s[]
-        | "\(dot(.state)) \(.title) | href=\($base)",
+        | "\(dot(.state)) \(.title) | href=\($base)/#s:\(.id|@uri)",
           "--\(.activity // .state)",
           ( if .sourceUrl then "--\(.source): \(.sourceId // "link") ↗ | href=\(.sourceUrl)" else empty end ),
           ( .repos[]?
@@ -131,7 +131,7 @@ echo "---"
 # ── Features and their dev servers ─────────────────────────────────────────
 # `slot` is present only while one is allocated, and absent is not slot 0 —
 # hence `has("slot")` rather than a truthiness test that would hide slot 0.
-echo "$STATE" | jq -r --arg act "$ACT" '
+echo "$STATE" | jq -r --arg act "$ACT" --arg base "$BASE" '
   def dot(s): if s=="working" then "⚙" elif s=="waiting" then "🟡" else "○" end;
   if (.features|length) == 0 then "No features | color=#888888"
   else
@@ -143,9 +143,14 @@ echo "$STATE" | jq -r --arg act "$ACT" '
       | ( if ($m|any(.session.state=="waiting")) then "🟡"
           elif ($m|any(.session.state=="working")) then "⚙"
           elif $up>0 then "🟢" else "⚪" end ) as $sym
+      # The feature line deep-links the same way the session lines do: to its
+      # agent when it has one, since that is what the cockpit would show anyway,
+      # and to the feature itself when it does not.
       | "\($sym) \($f.name)  (\($up)/\($tot))"
           + ($f.auto|if . then "" else " · manual" end)
-          + (if ($f|has("slot")) then "  · slot \($f.slot)" else "" end),
+          + (if ($f|has("slot")) then "  · slot \($f.slot)" else "" end)
+          + ( if $f.session then " | href=\($base)/#s:\($f.session.id|@uri)"
+              else " | href=\($base)/#f:\($f.name|@uri)" end ),
         ( $m[]
           | "--\(if .running then "🟢" else "⚪" end) \(.repo) \(.branch // .wtname)"
             + (if (.ports|length)>0 then "  :\(.ports|join(","))" else "" end)

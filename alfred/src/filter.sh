@@ -51,7 +51,10 @@ echo "$STATE" | jq -c --arg base "$BASE" '
   def rank(s): if s=="waiting" then 0 elif s=="working" then 1
                elif s=="idle" then 2 else 3 end;
 
-  ( [ .sessions[]? | select(.active) ]
+  # worktree path → the feature it is a member of, built once.
+  ( [ .features[]? as $f | $f.members[]? | select(.missing | not) | { key: .path, value: $f.name } ]
+    | from_entries ) as $featureOf
+  | ( [ .sessions[]? | select(.active) ]
     | sort_by(rank(.state), -(.lastEventAt // .createdAt))
     | map(
         (.worktreePath // "") as $p
@@ -62,11 +65,13 @@ echo "$STATE" | jq -c --arg base "$BASE" '
           # Prefer activity, fall back to state.
           subtitle: ( "session · \(.activity // .state)"
             + (if .branch then " · \(.repoName) \(.branch)" else " · \(.repoName) (not promoted)" end) ),
-          arg: ({ wtaction: "open", path: $p, repo: .repoName, worktreePath: $p } | tojson),
-          valid: ($p != ""),
+          # ⏎ goes to the studio, focused on THIS session — the deep link is the
+          # whole point of defaulting here rather than to the editor.
+          arg: ({ wtaction: "url", url: "\($base)/#s:\(.id|@uri)" } | tojson),
+          valid: true,
           mods: {
-            cmd:   { subtitle: (if $p=="" then "no worktree yet" else "Reveal in Finder" end),
-                     valid: ($p != ""), arg: ({ wtaction: "finder", path: $p } | tojson) },
+            cmd:   { subtitle: (if $p=="" then "no worktree yet" else "Open in the editor" end),
+                     valid: ($p != ""), arg: ({ wtaction: "open", path: $p } | tojson) },
             ctrl:  { subtitle: (if $p=="" then "no worktree yet" else "Start the feature stack" end),
                      valid: ($p != ""), arg: ({ wtaction: "group-start", group: .feature } | tojson) },
             alt:   ( if .sourceUrl
@@ -74,8 +79,8 @@ echo "$STATE" | jq -c --arg base "$BASE" '
                             valid: true, arg: ({ wtaction: "url", url: .sourceUrl } | tojson) }
                      else { subtitle: (if $p=="" then "no worktree yet" else "Stop the feature stack" end),
                             valid: ($p != ""), arg: ({ wtaction: "group-stop", group: .feature } | tojson) } end ),
-            shift: { subtitle: "Open the cockpit", valid: true,
-                     arg: ({ wtaction: "url", url: $base } | tojson) } },
+            shift: { subtitle: (if $p=="" then "no worktree yet" else "Reveal in Finder" end),
+                     valid: ($p != ""), arg: ({ wtaction: "finder", path: $p } | tojson) } },
           match: "\(.title) \(.repoName) \(.branch // "") \(.feature) \(.sourceId // "")" } ) ) as $sessions
 
   | ( [ .repos[]? as $r | $r.worktrees[]? | select(.isMain | not) ]
@@ -91,18 +96,25 @@ echo "$STATE" | jq -c --arg base "$BASE" '
                  else "  ○ stopped" end)
               + (if .session then "  · agent \(.session.state)" else "" end)
               + (if .merged then "  · merged" else "" end) ),
-            arg: ({ wtaction: "open", path: .path, repo: .repo, worktreePath: .path } | tojson),
+            # Link to the agent when there is one, else to the feature. The feature
+            # is looked up by path, not assumed from the directory name: under a
+            # non-basename identity strategy `wtname` is NOT the feature name, and
+            # the link would point at nothing.
+            arg: ({ wtaction: "url",
+                    url: ( if .session then "\($base)/#s:\(.session.id|@uri)"
+                           elif $featureOf[.path] then "\($base)/#f:\($featureOf[.path]|@uri)"
+                           else $base end ) } | tojson),
             mods: {
-              cmd:   { subtitle: "Reveal in Finder",
-                       arg: ({ wtaction: "finder", path: .path } | tojson) },
+              cmd:   { subtitle: "Open in the editor",
+                       arg: ({ wtaction: "open", path: .path } | tojson) },
               ctrl:  { subtitle: (if .canStart then "Start the dev server" else "no start command configured for \(.repo)" end),
                        valid: .canStart,
                        arg: ({ wtaction: "start", repo: .repo, worktreePath: .path } | tojson) },
               alt:   { subtitle: (if .running then "Stop the dev server" else "not running" end),
                        valid: .running,
                        arg: ({ wtaction: "stop", repo: .repo, worktreePath: .path } | tojson) },
-              shift: { subtitle: "Open the cockpit", valid: true,
-                       arg: ({ wtaction: "url", url: $base } | tojson) } },
+              shift: { subtitle: "Reveal in Finder", valid: true,
+                       arg: ({ wtaction: "finder", path: .path } | tojson) } },
             match: "\(.repo) \(.wtname) \(.branch // "")" } ) ) as $worktrees
 
   | { items: ($sessions + $worktrees) }'

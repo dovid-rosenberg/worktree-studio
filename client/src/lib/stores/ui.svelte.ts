@@ -489,6 +489,24 @@ class UI {
   }
 
   /**
+   * Apply a selection that arrived from outside the app — a deep link.
+   *
+   * Unlike `selectFeature`, this does not need the Feature object: a link can name
+   * something the world has not streamed yet, and `selectionPending` already covers
+   * the gap between selecting and arriving. Re-applying what is already selected is a
+   * no-op, which is what keeps the URL-writing effect from fighting the hash listener.
+   */
+  applySelection(s: Selection): void {
+    if (selectionKey(s) === selectionKey(this.selection)) return;
+    this.#pick(s);
+  }
+
+  /** The current selection as a rail key — what a deep link is built from. */
+  get key(): string {
+    return selectionKey(this.selection);
+  }
+
+  /**
    * Pick a feature. One with an agent behaves exactly as picking that session did; one
    * without has no terminal to show, so the dock renders the feature pane instead.
    */

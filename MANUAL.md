@@ -112,7 +112,8 @@ title carries one number, picked by urgency — agents **waiting on you** (🟡)
 agents working (⚙), else dev servers up (▶). Open it for:
 
 - **Sessions**, waiting first, each with its activity, the repos it spans, and a link
-  to its ticket when it came from one.
+  to its ticket when it came from one. Clicking one opens the cockpit *on that
+  session* — see [Deep links](#deep-links).
 - **Features**, each with its members' branches, ports, merge marks and concurrency
   slot, plus start / stop / restart / open-in-editor for the whole stack.
 
@@ -145,15 +146,41 @@ Type `wt` to get your active sessions first, then every worktree, and:
 
 | Key | On a session | On a worktree |
 | --- | --- | --- |
-| `⏎` | open its worktree in your editor | open it in your editor |
-| `⌘` | reveal in Finder | reveal in Finder |
+| `⏎` | **open it in Studio** — the cockpit, focused on that session | open it in Studio: its agent, or its feature |
+| `⌘` | open its worktree in your editor | open it in your editor |
 | `⌃` | start the whole feature's stack | start this repo's dev server |
 | `⌥` | open its ticket ↗, or stop the stack when there is no ticket | stop this repo's dev server |
-| `⇧` | open the cockpit | open the cockpit |
+| `⇧` | reveal in Finder | reveal in Finder |
 
 A modifier whose action cannot apply — no worktree yet, no `start` command
 configured, nothing running to stop — is shown greyed out with the reason, rather
 than accepting the keystroke and doing nothing.
+
+### Deep links
+
+`⏎` works because the cockpit reads its selection from the URL fragment:
+
+| Link | Opens |
+| --- | --- |
+| `http://127.0.0.1:7788/#s:<session-id>` | that session |
+| `http://127.0.0.1:7788/#f:<feature-name>` | that feature |
+| `http://127.0.0.1:7788/#w:<main-checkout-path>` | that main-checkout dev server |
+
+It is the rail's own key scheme, not a second vocabulary for the same three things,
+and the value is percent-encoded so group names with spaces and paths with `#` in
+them survive. The menubar's session and feature lines use the same links.
+
+This works in **both** directions and in an **already-open tab**, which is what makes
+it usable rather than a demo:
+
+- Following a link when a tab is already on the cockpit changes only the fragment —
+  no reload, no mount — so the app listens for `hashchange` rather than reading the
+  URL once at startup. Without that, the second link you followed would appear to do
+  nothing.
+- Navigating inside Studio rewrites the fragment, so the address bar is always a link
+  to what you are looking at. It uses `replaceState`: assigning `location.hash` would
+  push a history entry per click and turn Back into an undo of your last twenty
+  selections.
 
 ---
 
