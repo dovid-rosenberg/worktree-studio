@@ -186,7 +186,10 @@ test('the old copyPatterns list still loads and gains the new editor-agnostic pa
   for (const p of ['.env', '.env.local', '.env.*.local', 'config/*-config.ts']) {
     assert.ok(cfg.copyPatterns.default.includes(p), `lost the existing pattern ${p}`);
   }
-  for (const p of ['.env*', '.vscode/*.json', 'src/config.ts', 'src/config/config.ts']) {
+  // `.js`: these globs match files in the USER'S repo, not modules in this codebase.
+  // A rename of this project's own specifiers to `.ts` swept them along, and this
+  // assertion is what made the mistake look deliberate.
+  for (const p of ['.env*', '.vscode/*.json', 'src/config.js', 'src/config/config.js']) {
     assert.ok(cfg.copyPatterns.default.includes(p), `missing the newly shipped ${p}`);
   }
 });

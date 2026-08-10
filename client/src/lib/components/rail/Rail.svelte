@@ -64,10 +64,23 @@
 
   <div class="rail-list" role="list" aria-labelledby="rail-label">
     {#if !rows.length}
-      <!-- The button is directly above, so the copy no longer has to point at it. -->
-      <div class="rail-empty">
-        Nothing here yet. Start a session above, or promote one to create a worktree.
-      </div>
+      <!-- Two different empty states, because they have two different fixes.
+           "No repos at all" means Studio is pointed at a folder that does not exist or
+           holds no git repositories — the default `~/code` is a guess, not a convention.
+           Telling that user to "start a session" sends them into an empty dropdown and
+           an `unknown repo ''`, implying they did something wrong. -->
+      {#if !world.repos.length}
+        <div class="rail-empty">
+          <b>No repositories found.</b>
+          Studio scans your repo folders for git checkouts and found none. Set the folders
+          in <button class="linkish" onclick={() => overlays.openSettings()}>Settings</button>.
+        </div>
+      {:else}
+        <!-- The button is directly above, so the copy no longer has to point at it. -->
+        <div class="rail-empty">
+          Nothing here yet. Start a session above, or promote one to create a worktree.
+        </div>
+      {/if}
     {/if}
 
     {#each rows as row, i (row.key)}
@@ -113,6 +126,12 @@
   .rail-foot .foot-counts { display:flex; flex-wrap:wrap; gap:9px; }
   .rail-foot .c { display:inline-flex; align-items:center; gap:5px; }
   .rail-empty { padding:14px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
+  .rail-empty b { display:block; color:var(--ink); margin-bottom:4px; }
+  /* A button that reads as a link: it opens the modal that fixes the problem the
+     sentence just described, and sending someone hunting for Settings instead is the
+     dead end this empty state exists to end. */
+  .linkish { background:none; border:0; padding:0; font:inherit; color:var(--brand);
+             text-decoration:underline; cursor:pointer; }
 
   /* A hairline, not a header: it separates, it does not label a category. Deliberately
      not sticky — the four sticky headers it replaces used to pile up on each other. */

@@ -64,9 +64,27 @@ beforeEach(() => {
 });
 
 describe('Rail', () => {
-  it('says what to do when there is nothing yet', () => {
+  /*
+   * Two empty states, because they have two different fixes.
+   *
+   * `baseDirs` defaults to `~/code`, which its own comment calls "a guess, not a
+   * convention" — so a first run on any other layout finds zero repos. Telling THAT user
+   * to "start a session" walks them into an empty repo dropdown and an `unknown repo ''`,
+   * with nothing anywhere naming the real cause.
+   */
+  it('when there are no REPOS, names the actual problem and offers the fix', () => {
+    give([], [], []); // nothing scanned — the first-run state
+    render(Rail);
+    expect(screen.getByText(/No repositories found/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing here yet/)).not.toBeInTheDocument();
+  });
+
+  it('with repos but no work, says what to do next', () => {
+    give([], [], [{ name: 'accept-blue', path: '/code/accept-blue', worktrees: [] }]);
     render(Rail);
     expect(screen.getByText(/Nothing here yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/No repositories found/)).not.toBeInTheDocument();
   });
 
   it('draws a running feature ONCE — the duplication that started all this', () => {

@@ -83,9 +83,19 @@ function defaults(): ShippedConfig {
         '.env.local',
         '.env.*.local',
         '.env*',
-        'config/*-config.ts',
-        'src/config.ts',
-        'src/config/config.ts',
+        /*
+         * `.js`, not `.ts` — these are globs matched against the USER'S repo.
+         *
+         * A commit that rewrote this codebase's own module specifiers to `.ts` swept
+         * these along with it. They are not module specifiers: they name gitignored
+         * local config in whatever repo you point Studio at, where the extension is a
+         * property of that repo. Every doc (README, MANUAL, docs/config.md) has always
+         * said `.js`. The effect was silent — a promoted worktree simply came up without
+         * the local config, and the dev server failed for an unrelated-looking reason.
+         */
+        'config/*-config.js',
+        'src/config.js',
+        'src/config/config.js',
         '.vscode/*.json',
       ],
     },
