@@ -162,3 +162,46 @@ test('remove({ force }) gets past it', async () => {
   assert.equal(fs.existsSync(res.path), false, 'the worktree is gone');
   fs.rmSync(repo, { recursive: true, force: true });
 });
+
+/*
+ * A NAME collision must not cost you the BRANCH you asked for.
+ *
+ * One loop tested `nameTaken || branchTaken` and, on either, rewrote both — so promoting
+ * with a fresh unused branch under a name that happened to be taken silently created a
+ * different branch. The only warning mentioned the name, so nothing connected the two,
+ * and the branch you actually asked for was never used.
+ */
+test('a taken NAME suffixes the name and leaves the branch alone', async () => {
+  const repo = plainRepo();
+  await worktree.create(repo, 'feature/first', 'shared', { fetch: false, copyPatterns: [], unique: true });
+
+  const res = await worktree.create(repo, 'feature/second', 'shared', {
+    fetch: false,
+    copyPatterns: [],
+    unique: true,
+  });
+  expectOk(res, 'create()');
+  assert.equal(res.branch, 'feature/second', 'the requested branch was free — it must be used');
+  assert.equal(res.name, 'shared-2', 'only the name needed suffixing');
+  assert.equal(await worktree.branchExists(repo, 'feature/second'), true);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('a taken BRANCH suffixes the branch, and says so', async () => {
+  const repo = plainRepo();
+  await worktree.create(repo, 'feature/dup', 'one', { fetch: false, copyPatterns: [], unique: true });
+
+  const res = await worktree.create(repo, 'feature/dup', 'two', {
+    fetch: false,
+    copyPatterns: [],
+    unique: true,
+  });
+  const ok = expectOk(res, 'create()');
+  assert.equal(ok.name, 'two', 'the name was free');
+  assert.equal(ok.branch, 'feature/dup-2');
+  assert.ok(
+    (ok.warnings || []).some((w: string) => /branch "feature\/dup" already exists/.test(w)),
+    `the branch substitution must be reported: ${JSON.stringify(ok.warnings)}`,
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});

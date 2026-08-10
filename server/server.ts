@@ -26,7 +26,7 @@ import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart, isRecord } 
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
-import { run, has, openEditor, shq, slug, expandTilde } from './util.ts';
+import { run, has, openEditor, resolveEditor, shq, slug, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
 import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
@@ -395,8 +395,21 @@ async function main() {
       cfg.notify = { ...(cfg.notify || {}), ...notify };
     }
     let rescanNeeded = false;
+    let missingDirs: string[] = [];
     if (Array.isArray(baseDirs)) {
       cfg.baseDirs = baseDirs.map((s) => expandTilde(String(s).trim())).filter(Boolean);
+      /*
+       * A directory that does not exist is REPORTED, not silently accepted.
+       *
+       * The save answered ok:true and echoed the new dirs back, the scan then found
+       * nothing there, and the dashboard emptied — with the three facts connected
+       * nowhere. A typo in a path is the single most likely thing to go wrong in this
+       * form, and it looked exactly like a successful save.
+       *
+       * Saved anyway rather than rejected: the directory may be on a volume that is not
+       * mounted right now, and refusing the whole save over one row would be worse.
+       */
+      missingDirs = cfg.baseDirs.filter((d) => !fs.existsSync(d));
       rescanNeeded = true;
     }
     // Dev-server launch config { "<repo>": { cmd, ports:[…] } } — full replace, drop blank rows.
@@ -423,6 +436,8 @@ async function main() {
     else broadcastTopology();
     res.json({
       ok: true,
+      // Present only when something is wrong, so the quiet path stays quiet.
+      ...(missingDirs.length ? { warnings: [`these folders do not exist: ${missingDirs.join(', ')}`] } : {}),
       sources: cfg.sources,
       baseDirs: cfg.baseDirs,
       runConfigs: cfg.runConfigs,
@@ -640,28 +655,59 @@ async function main() {
    * it merged?" without starting one. Same shape, so the client renders both the same
    * way.
    */
+  /**
+   * One repo's review rollup: its commits, its base, and what is uncommitted.
+   *
+   * Extracted because `/group/:name/commits` and `/sessions/:id/commits` were two copies
+   * of the same 25 lines that differed only in where they got the path from — so a fix
+   * to one (a vanished worktree being reported as a clean empty review) had to be applied
+   * to both, or one of them would go on lying.
+   */
+  async function reviewRollup(repo: string, worktreePath: string, branch?: string | null) {
+    /*
+     * A worktree that is gone is REPORTED, not reviewed as empty.
+     *
+     * util.git() returns '' for any non-zero exit, including a missing cwd — so every git
+     * call quietly answered nothing and the response was byte-for-byte identical to a
+     * healthy branch with no changes: zero commits, zero files, and a fabricated `base`
+     * that no command had produced. If your work was in that worktree, the Review pane
+     * told you everything was fine and empty.
+     */
+    if (!fs.existsSync(worktreePath)) {
+      return {
+        repo,
+        worktreePath,
+        branch,
+        error: 'this worktree is no longer on disk',
+        commits: [],
+        uncommitted: { fileCount: 0, added: 0, deleted: 0 },
+      };
+    }
+    const def = defaultBranchOf(repo);
+    const { base, commits } = await review.commits(worktreePath, def);
+    const wc = await review.working(worktreePath);
+    return {
+      repo,
+      worktreePath,
+      branch,
+      base,
+      defaultBranch: def,
+      commits,
+      uncommitted: {
+        fileCount: wc.files.length,
+        added: wc.files.reduce((n, f) => n + (f.added || 0), 0),
+        deleted: wc.files.reduce((n, f) => n + (f.deleted || 0), 0),
+      },
+    };
+  }
+
   api.get('/group/:name/commits', async (req, res) => {
     const { group: g } = await resolveGroup(String(req.params.name || ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const out = [];
     for (const m of g.members) {
       if (!m.path) continue;
-      const def = defaultBranchOf(m.repo);
-      const { base, commits } = await review.commits(m.path, def);
-      const wc = await review.working(m.path);
-      out.push({
-        repo: m.repo,
-        worktreePath: m.path,
-        branch: m.branch,
-        base,
-        defaultBranch: def,
-        commits,
-        uncommitted: {
-          fileCount: wc.files.length,
-          added: wc.files.reduce((n, f) => n + (f.added || 0), 0),
-          deleted: wc.files.reduce((n, f) => n + (f.deleted || 0), 0),
-        },
-      });
+      out.push(await reviewRollup(m.repo, m.path, m.branch));
     }
     res.json({ repos: out });
   });
@@ -672,23 +718,7 @@ async function main() {
     const out = [];
     for (const entry of s.repos || []) {
       if (!entry.worktreePath) continue;
-      const def = defaultBranchOf(entry.repo);
-      const { base, commits } = await review.commits(entry.worktreePath, def);
-      const wc = await review.working(entry.worktreePath);
-      const uncommitted = {
-        fileCount: wc.files.length,
-        added: wc.files.reduce((n, f) => n + (f.added || 0), 0),
-        deleted: wc.files.reduce((n, f) => n + (f.deleted || 0), 0),
-      };
-      out.push({
-        repo: entry.repo,
-        worktreePath: entry.worktreePath,
-        branch: entry.branch,
-        base,
-        defaultBranch: def,
-        commits,
-        uncommitted,
-      });
+      out.push(await reviewRollup(entry.repo, entry.worktreePath, entry.branch));
     }
     res.json({ repos: out });
   });
@@ -745,6 +775,12 @@ async function main() {
     const { repo, worktreePath, branch, deleteBranch, force } = req.body || {};
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
+    // Its three siblings all guard this; this one passed the value straight into a git
+    // argv, so an omitted field became the literal string "undefined" in an error that
+    // was then reported with a 200.
+    if (!worktreePath || typeof worktreePath !== 'string') {
+      return res.status(400).json({ ok: false, error: 'worktreePath is required' });
+    }
     const out = await worktree.remove(repoObj.path, worktreePath, { branch, deleteBranch, force: !!force });
     await rescan();
     res.json(out);
@@ -765,15 +801,40 @@ async function main() {
   });
 
   api.post('/servers/start', async (req, res) => {
-    const { repo, worktreePath } = req.body || {};
+    /*
+     * Validate, like every neighbouring route already does.
+     *
+     * With no body, `startAll` had nothing to start, `results` was empty, and
+     * `res.json(undefined)` is a zero-length 200 in express@5 — so a client calling
+     * `await r.json()` got a parse error instead of the message. It also skipped the
+     * canStart gate that /sessions/:id/servers/start applies, so it would happily launch
+     * into a worktree with no dependencies or none at all.
+     */
+    const repo = String(req.body?.repo || '').trim();
+    const worktreePath = String(req.body?.worktreePath || '').trim();
+    if (!repo || !worktreePath) {
+      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
+    }
+    const member = {
+      repo,
+      path: worktreePath,
+      ...servers.decorate({ repo, path: worktreePath }, runningCache),
+    };
+    const skipped = startReport.toSkip([member]);
+    if (skipped.length) return res.status(409).json(startReport.report([], skipped));
+
     const out = await servers.startAll([{ repo, worktreePath }]);
     if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
     await refreshRunning();
     broadcastTopology();
-    res.json(out.results[0]);
+    res.json(startReport.report(out.results));
   });
   api.post('/servers/stop', async (req, res) => {
-    const { repo, worktreePath } = req.body || {};
+    const repo = String(req.body?.repo || '').trim();
+    const worktreePath = String(req.body?.worktreePath || '').trim();
+    if (!repo || !worktreePath) {
+      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
+    }
     const out = await servers.stop(repo, worktreePath);
     await refreshRunning();
     // This route already had the right rule; it is now the shared one (releaseSlotIfIdle).
@@ -782,7 +843,11 @@ async function main() {
     res.json(out);
   });
   api.post('/servers/restart', async (req, res) => {
-    const { repo, worktreePath } = req.body || {};
+    const repo = String(req.body?.repo || '').trim();
+    const worktreePath = String(req.body?.worktreePath || '').trim();
+    if (!repo || !worktreePath) {
+      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
+    }
     const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
@@ -931,8 +996,11 @@ async function main() {
    */
   api.post('/open', async (req, res) => {
     const { path: p, paths, editor } = req.body || {};
-    const ed = (cfg.editors && (cfg.editors[editor] || cfg.editors[cfg.defaultEditor])) || null;
-    if (!ed) return res.status(400).json({ error: 'no editor configured' });
+    // Splits "did not name one" from "named one that does not exist" — the old
+    // `editors[x] || editors[default]` silently opened the default for a typo.
+    const pick = resolveEditor(cfg.editors, editor, cfg.defaultEditor);
+    if (!pick.ok) return res.status(400).json({ ok: false, error: pick.error });
+    const ed = pick.editor;
     // Dedupe: two repos of one feature are distinct worktrees, but a caller that passed
     // the same path twice must not open two windows on it.
     const list = [

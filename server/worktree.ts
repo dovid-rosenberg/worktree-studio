@@ -250,19 +250,36 @@ async function create(
   let wtName = slug(name || branch.replace(/\//g, '-'));
   let dest = layoutMod.destFor(layout, repoPath, wtName);
 
-  // On a name/branch collision: opts.unique auto-suffixes (foo → foo-2) instead
-  // of hard-failing, keeping the worktree name and branch's last segment in sync.
+  /*
+   * On a collision, opts.unique suffixes rather than hard-failing — but the NAME and the
+   * BRANCH are two separate collisions, and this used to conflate them.
+   *
+   * One loop tested `nameTaken || branchTaken` and, on either, rewrote BOTH: so asking
+   * for a fresh unused branch under a name that happened to be taken silently created a
+   * different branch. The only warning mentioned the name, so nothing connected the two,
+   * and the branch you asked for was simply never used. Keeping the name and the branch's
+   * last segment "in sync" is a nicety; using a branch nobody asked for is not.
+   */
   if (opts.unique) {
     const baseName = wtName;
     let n = 1;
-    // eslint-disable-next-line no-await-in-loop
-    while (fs.existsSync(dest) || (await branchExists(repoPath, branch))) {
+    while (fs.existsSync(dest)) {
       n += 1;
       wtName = `${baseName}-${n}`;
       dest = layoutMod.destFor(layout, repoPath, wtName);
-      branch = branch.replace(/[^/]+$/, wtName);
     }
     if (n > 1) warnings.push(`name was taken — using "${wtName}"`);
+
+    // Only NOW, and only if the branch itself is taken. Suffixed independently, so a
+    // name collision never costs you the branch you asked for.
+    const baseBranch = branch;
+    let b = 1;
+    // eslint-disable-next-line no-await-in-loop
+    while (await branchExists(repoPath, branch)) {
+      b += 1;
+      branch = `${baseBranch}-${b}`;
+    }
+    if (b > 1) warnings.push(`branch "${baseBranch}" already exists — using "${branch}"`);
   }
 
   if (fs.existsSync(dest)) {

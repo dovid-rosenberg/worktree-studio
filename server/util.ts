@@ -280,6 +280,37 @@ export {
 };
 
 /**
+ * Resolve an editor by name, telling "not named" apart from "named, but unknown".
+ *
+ * Both open routes wrote `editors[name] || editors[defaultEditor]`, an expression that
+ * cannot distinguish the two: asking for "NoSuchEditor" silently opened your default one
+ * and answered `{ok: true}`. Which is worse than an error, because a typo in a config or
+ * a keyboard shortcut looks like it worked and you learn otherwise only by noticing the
+ * wrong application in front of you.
+ */
+export function resolveEditor(
+  editors: Record<string, EditorLike> | undefined,
+  name: unknown,
+  fallback: string,
+): { ok: true; name: string; editor: EditorLike } | { ok: false; error: string } {
+  const map = editors || {};
+  const asked = name === undefined || name === null ? '' : String(name).trim();
+  if (asked) {
+    const hit = map[asked];
+    return hit ? { ok: true, name: asked, editor: hit } : { ok: false, error: `unknown editor: ${asked}` };
+  }
+  const def = map[fallback];
+  if (def) return { ok: true, name: fallback, editor: def };
+  return { ok: false, error: 'no editor configured' };
+}
+
+/** The shape both open routes need — the full EditorConfig lives in types.ts. */
+export interface EditorLike {
+  open: string;
+  openGroup?: string;
+}
+
+/**
  * Run an editor's open command and say whether it worked.
  *
  * Both open routes discarded `run()`'s exit code and answered a hardcoded `{ok: true}`,

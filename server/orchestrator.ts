@@ -13,7 +13,7 @@
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 import type { Router } from 'express';
 import * as worktree from './worktree.ts';
-import { openEditor, run, shq } from './util.ts';
+import { openEditor, resolveEditor, run, shq } from './util.ts';
 import * as startReport from './start-report.ts';
 import type { StartOutcome } from './start-report.ts';
 
@@ -275,8 +275,11 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // String(): `editor` is whatever the body carried — it can be an array, an object,
     // a number. A property access coerces the key exactly this way already, so naming
     // the coercion cannot change which editor is picked.
-    const ed = (cfg.editors && (cfg.editors[String(editor)] || cfg.editors[cfg.defaultEditor])) || null;
-    if (!ed) return res.status(400).json({ error: 'no editor configured' });
+    // Same resolution as POST /open, from the same helper — this was the second copy of
+    // an expression that could not tell an unnamed editor from an unknown one.
+    const pick = resolveEditor(cfg.editors, editor, cfg.defaultEditor);
+    if (!pick.ok) return res.status(400).json({ ok: false, error: pick.error });
+    const ed = pick.editor;
     const paths = g.members.map((m) => m.path);
     // split/join, never replace(): the shell-quoted path is the REPLACEMENT string, and
     // `$&`, `` $` ``, `$'` and `$$` in a replacement string are expanded by the engine

@@ -178,7 +178,7 @@
 
     notify.prefs = { ...notify.prefs, ...nt };
     try {
-      await api('POST', '/api/v1/settings', {
+      const saved = await api('POST', '/api/v1/settings', {
         sources: {
           gitlab: { enabled: gl.enabled, host: gl.host.trim(), project: gl.project.trim(), token: gl.token.trim() },
           asana: { enabled: as.enabled, token: as.token.trim(), workspace: as.workspace.trim() },
@@ -203,7 +203,15 @@
         groups,
       });
       overlays.closeSettings();
-      toast('Settings saved');
+      /*
+       * Report a folder that does not exist. The save really did succeed — the path may
+       * be on an unmounted volume — but the scan will find nothing there and the rail
+       * will empty, and previously nothing connected those two facts to the typo that
+       * caused them.
+       */
+      const warnings: string[] = saved?.warnings || [];
+      if (warnings.length) toast(warnings.join(' · '), true);
+      else toast('Settings saved');
     } catch (e) { toast(errMessage(e), true); }
     finally { saving = false; }
   }
