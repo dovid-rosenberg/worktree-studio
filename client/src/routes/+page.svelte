@@ -56,6 +56,17 @@
 
 <TopBar />
 
+<!-- No multiplexer means NOTHING works: every session, every terminal, every run needs
+     tmux. The daemon logged one line to a terminal nobody is looking at and carried on,
+     so the UI presented a full working app in which every action failed for a reason
+     stated nowhere on screen. `role="alert"` because this is not a status, it is a stop. -->
+{#if world.connected && world.mux === 'none'}
+  <div class="streamwarn danger" role="alert">
+    tmux was not found, so sessions and terminals cannot start. Install it
+    (<code>brew install tmux</code>) and restart Studio.
+  </div>
+{/if}
+
 {#if world.streamError}
   <div class="streamwarn" role="status">{world.streamError}</div>
 {/if}
@@ -70,4 +81,6 @@
   /* The splitter is a real column, so the rail's width is the only thing that moves. */
   .main { flex:1; display:grid; grid-template-columns: var(--rail-w) auto 1fr; min-height:0; min-width:0; }
   .streamwarn { font-family:var(--mono); font-size:12px; color:var(--waiting); background:var(--waiting-bg); padding:5px 16px; flex:none; }
+  .streamwarn.danger { color:var(--del); background:var(--del-bg); }
+  .streamwarn code { background:none; border:0; padding:0; }
 </style>

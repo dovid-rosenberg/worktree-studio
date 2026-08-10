@@ -118,7 +118,15 @@ interface RepoRef {
 }
 
 interface OrchestratorDeps {
-  cfg: { editors?: Record<string, { open: string; openGroup?: string }>; defaultEditor: string };
+  cfg: {
+    editors?: Record<string, { open: string; openGroup?: string }>;
+    defaultEditor: string;
+    /** Per-feature decoration, cleaned up when the feature is deleted. */
+    featureColors?: Record<string, string>;
+    featureLinks?: Record<string, unknown>;
+  };
+  /** Persist cfg — called after the delete strips a feature's decoration. */
+  saveConfig?: () => void;
   servers: Servers;
   manager: Manager;
   repos: () => RepoRef[];
@@ -152,6 +160,7 @@ interface GroupBody {
 function register(app: Router, deps: OrchestratorDeps): void {
   const {
     cfg,
+    saveConfig,
     servers,
     manager,
     repos,
@@ -299,7 +308,8 @@ function register(app: Router, deps: OrchestratorDeps): void {
   // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
   app.post('/group/delete', async (req, res) => {
     const { group, deleteBranches, force }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(String(group ?? ''));
+    const name = String(group ?? '');
+    const { group: g } = await resolveGroup(name);
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const results: Array<{ repo: string; ok: boolean; error?: string; branchError?: string }> = [];
     for (const m of g.members) {
@@ -347,6 +357,26 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // feature no longer exists. Guarding here would leak the slot forever if some stray
     // process were still holding a port from a path that has been deleted.
     for (const m of g.members) servers.releaseSlot(servers.featureFor(m.path));
+    /*
+     * A deleted feature's decoration goes with it.
+     *
+     * `featureColors` and `featureLinks` are keyed by feature NAME, which is what makes
+     * them outlive a session — deliberately. But nothing removed them when the feature
+     * itself was deleted, and feature names are slugs of free text, so a later unrelated
+     * feature that happens to share a name silently inherited the old ticket and colour.
+     *
+     * Worse in one direction: the promote-time copy explicitly refuses to overwrite an
+     * existing ticket ("a ticket set by hand outranks the one intake guessed"), so the
+     * stale entry actively BLOCKED the correct one from ever being written.
+     */
+    let stripped = false;
+    for (const map of [cfg.featureColors, cfg.featureLinks]) {
+      if (map && name in map) {
+        delete map[name];
+        stripped = true;
+      }
+    }
+    if (stripped) saveConfig?.();
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   });

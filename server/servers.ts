@@ -687,9 +687,27 @@ class Servers {
    */
   depsMissing(worktreePath: string): boolean {
     try {
-      if (!fs.existsSync(path.join(worktreePath, 'package.json'))) return false;
-      return !fs.existsSync(path.join(worktreePath, 'node_modules'));
+      const pkgPath = path.join(worktreePath, 'package.json');
+      if (!fs.existsSync(pkgPath)) return false;
+      if (fs.existsSync(path.join(worktreePath, 'node_modules'))) return false;
+      /*
+       * A package with NO dependencies is not missing any.
+       *
+       * This was exactly "package.json exists && node_modules does not" — but npm only
+       * creates node_modules when there is something to install. So a repo whose
+       * package.json is just a name and a `start` script was permanently undeployable:
+       * the stack refused with "dependencies not installed", the Install button ran npm,
+       * npm said "up to date" and created nothing, and the predicate stayed true. An
+       * unsatisfiable instruction, repeatable forever — only `mkdir node_modules` broke it.
+       */
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+      const declared = ['dependencies', 'devDependencies', 'optionalDependencies'].some(
+        (k) => pkg?.[k] && Object.keys(pkg[k]).length > 0,
+      );
+      return declared;
     } catch {
+      // Unparseable package.json: not a claim we can make either way, and blocking the
+      // start on a JSON syntax error would be a confusing place to learn about it.
       return false;
     }
   }

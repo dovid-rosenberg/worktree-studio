@@ -487,3 +487,44 @@ test('re-serializing a real diff of an awkward file reproduces git’s bytes exa
   }
   rm(dir);
 });
+
+/*
+ * The stale-diff guard has to hold for BOTH shapes of `expect`.
+ *
+ * `hunks` is normalised to an array one line above; `expect` was not, and the check sat
+ * behind `if (Array.isArray(expect))`. The type is `string | string[]` and the route
+ * accepts both — so the SCALAR form, which is the common single-hunk case, skipped the
+ * guard entirely. That is precisely what the guard's own docblock says must not happen:
+ * "without the guard a stale index would silently stage the WRONG hunk".
+ */
+test('a WRONG expected header is refused in the scalar form, not just the array form', async () => {
+  const dir = threeHunkRepo();
+  const out = await hunks.stage(dir, { file: 'p.txt', hunks: 0, expect: '@@ -999,1 +999,1 @@' });
+  const err = expectErr(out, 'stage() with a stale header');
+  assert.match(err.error, /diff changed/);
+  assert.equal(cached(dir), '', 'and nothing was staged');
+  rm(dir);
+});
+
+test('the array form is still refused too — the shape that always worked', async () => {
+  const dir = threeHunkRepo();
+  const out = await hunks.stage(dir, { file: 'p.txt', hunks: [0], expect: ['@@ -999,1 +999,1 @@'] });
+  assert.match(expectErr(out, 'stage()').error, /diff changed/);
+  rm(dir);
+});
+
+test('a CORRECT expected header still stages, in both shapes', async () => {
+  for (const scalar of [true, false]) {
+    const dir = threeHunkRepo();
+    const fh = await hunks.fileHunks(dir, 'p.txt');
+    const header = side(fh, 'unstaged').hunks[0].header;
+    const out = await hunks.stage(dir, {
+      file: 'p.txt',
+      hunks: scalar ? 0 : [0],
+      expect: scalar ? header : [header],
+    });
+    expectOk(out);
+    assert.notEqual(cached(dir), '', `the ${scalar ? 'scalar' : 'array'} form should have staged`);
+    rm(dir);
+  }
+});
