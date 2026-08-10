@@ -280,6 +280,26 @@ export {
 };
 
 /**
+ * One value off a query string.
+ *
+ * Express hands back a string, an ARRAY for `?a=1&a=2`, or a nested object for `?a[b]=1`.
+ * An array or object reaching a git argv is a TypeError — a 500 for what is a bad request.
+ *
+ * Solved three times in three styles: `qs()` in server.ts, `one`/`str` in
+ * transcript-routes.ts, a third open-coded copy for the hook receiver, and an inline
+ * `String(req.query.sha ?? '')` in routes-review.ts. That last one is not a duplicate but
+ * a BUG: `String(['a','b'])` is `"a,b"`, so a repeated param silently became one
+ * comma-joined value rather than the first. It happens to be caught downstream by a sha
+ * validator today; the same shape on a field with no validator would not be.
+ *
+ * Typed structurally rather than against express, so util.ts stays free of it.
+ */
+export function qs(v: unknown): string {
+  const x = Array.isArray(v) ? v[0] : v;
+  return x === undefined || x === null ? '' : String(x);
+}
+
+/**
  * Resolve an editor by name, telling "not named" apart from "named, but unknown".
  *
  * Both open routes wrote `editors[name] || editors[defaultEditor]`, an expression that

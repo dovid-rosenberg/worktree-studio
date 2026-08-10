@@ -26,7 +26,7 @@ import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart, isRecord } 
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
-import { run, has, openEditor, resolveEditor, shq, slug, expandTilde } from './util.ts';
+import { run, has, openEditor, qs, resolveEditor, shq, slug, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
 import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
@@ -44,10 +44,6 @@ import fs from 'fs';
  * TypeError rather than a 400 — so every read below goes through `qs()`.
  */
 type QueryValue = Request['query'][string];
-const qs = (v: QueryValue): string => {
-  const x = Array.isArray(v) ? v[0] : v;
-  return x === undefined || x === null ? '' : String(x);
-};
 
 /** A thrown value's message. `catch` binds `unknown`, and not everything thrown is an Error. */
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));

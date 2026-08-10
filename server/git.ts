@@ -199,7 +199,6 @@ async function scan(baseDirs: string[], depth: number): Promise<ScannedRepo[]> {
 
 export {
   scan,
-  describeRepo,
   findRepos,
   walkTree,
   originHead,

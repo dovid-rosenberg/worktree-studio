@@ -141,4 +141,4 @@ function attachableWorktrees(
   return out;
 }
 
-export { computeFeatures, isLinked, resolveRef, attachableWorktrees };
+export { computeFeatures, resolveRef, attachableWorktrees };

@@ -363,14 +363,4 @@ async function remove(
   return branchError ? { ok: true, branchDeleted, branchError } : { ok: true, branchDeleted };
 }
 
-export {
-  create,
-  remove,
-  populate,
-  branchExists,
-  defaultBase,
-  expandPattern,
-  worktreeCopyOpts,
-  DEFAULT_COPY_ALWAYS,
-  FETCH_TIMEOUT_MS,
-};
+export { create, remove, branchExists, defaultBase, worktreeCopyOpts, DEFAULT_COPY_ALWAYS, FETCH_TIMEOUT_MS };

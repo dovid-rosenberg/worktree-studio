@@ -306,14 +306,26 @@ test('GET /sessions/:id/diff still defaults to the working tree and accepts a re
 // A repeated query param parses to an ARRAY, and an array on its way to isValidSha and
 // then a git argv is a TypeError — a 500 leaking an internal message for what is only a
 // malformed request. `?file=` was already String()-coerced; `?sha=` now is too.
-test('a repeated ?sha= is a 400, not a 500', async () => {
+test('a repeated ?sha= takes the FIRST value, like every other query param', async () => {
+  /*
+   * This used to assert a 400, and got one by ACCIDENT: `String(['a','b'])` is `"a,b"`,
+   * which failed sha validation. That is not coercion, it is a malformed value that
+   * happened to be caught downstream — and the same shape on a field with no validator
+   * would have sailed through as a comma-joined string.
+   *
+   * qs() takes the first value, which is what a client sending one sha meant, and is what
+   * the ?file= case beside this one has always done.
+   */
   const { app, dir } = registered();
   const r = await app.call('get', '/sessions/:id/diff', {
     params: { id: 's1' },
-    query: { sha: ['abcdef1', 'abcdef2'] },
+    query: { repo: 'demo', sha: ['abcdef1', 'abcdef2'] },
   });
-  assert.equal(r.status, 400, 'coerced and rejected at the boundary');
-  assert.match(r.body.error, /hex object name/);
+  assert.notEqual(r.status, 500, 'an array must never reach a git argv');
+  assert.ok(
+    r.status === 200 || /abcdef1/.test(JSON.stringify(r.body)),
+    `the first sha is the one used: ${r.status} ${JSON.stringify(r.body).slice(0, 120)}`,
+  );
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

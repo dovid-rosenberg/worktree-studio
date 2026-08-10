@@ -584,7 +584,6 @@ export {
   locate,
   scan,
   readTranscript,
-  toEntry,
   normalizeUsage,
   contentText,
   aggregate,

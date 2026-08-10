@@ -9,6 +9,7 @@
 import type { Request, Response, Router } from 'express';
 import * as review from './review.ts';
 import * as hunks from './hunks.ts';
+import { qs } from './util.ts';
 
 // The injected collaborators are typed by the surface these routes touch, not by the
 // classes server.ts happens to hand over: `manager` is one lookup and a session is two
@@ -105,7 +106,10 @@ function register(api: Router, deps: ReviewDeps): void {
     // `?sha=a&sha=b` parses to an ARRAY, and an array reaching isValidSha/execFile is
     // a TypeError — a 500 leaking an internal message where a 400 belongs. Coerce
     // first, exactly like `?file=` below.
-    const sha = String(req.query.sha ?? '') || 'uncommitted';
+    // qs(), not String(): `?sha=a&sha=b` is an ARRAY, and String() joins it with a comma
+    // rather than taking the first. Caught by isValidSha here; the same shape on a field
+    // with no validator would not be.
+    const sha = qs(req.query.sha) || 'uncommitted';
     // Reject at the boundary, so a `sha` that is really a git option never reaches
     // an argv (see review.ts). A bad request is a 400, not a 500.
     if (!review.isValidSha(sha))
@@ -121,7 +125,7 @@ function register(api: Router, deps: ReviewDeps): void {
     const r = resolveWorktree(deps, req, req.query.repo);
     if (!r.entry) return res.status(r.status).json({ error: r.error });
     if (!req.query.file) return res.status(400).json({ error: 'file is required' });
-    res.json(await hunks.fileHunks(r.entry.worktreePath, String(req.query.file)));
+    res.json(await hunks.fileHunks(r.entry.worktreePath, qs(req.query.file)));
   });
 
   // Stage / unstage individual hunks. This sits alongside file-level staging (the
