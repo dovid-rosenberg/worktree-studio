@@ -440,6 +440,15 @@ export interface Worktree {
   depsInstalling?: boolean;
   /** No `config.start` entry for this repo — the other reason `canStart` is false. */
   noStartCmd?: boolean;
+  /**
+   * The worktree directory is not on disk.
+   *
+   * git keeps listing a worktree somebody deleted until the repo is pruned, so this row
+   * can outlive its directory. Nothing checked, and depsMissing() reported "deps fine"
+   * for a vanished path — so the row rendered with a live Run button that spawned into a
+   * nonexistent cwd.
+   */
+  gone?: boolean;
 }
 
 /**

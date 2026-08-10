@@ -745,10 +745,10 @@ async function main() {
   });
 
   api.delete('/worktrees', async (req, res) => {
-    const { repo, worktreePath, branch, deleteBranch } = req.body || {};
+    const { repo, worktreePath, branch, deleteBranch, force } = req.body || {};
     const repoObj = repos.find((r) => r.name === repo);
     if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
-    const out = await worktree.remove(repoObj.path, worktreePath, { branch, deleteBranch });
+    const out = await worktree.remove(repoObj.path, worktreePath, { branch, deleteBranch, force: !!force });
     await rescan();
     res.json(out);
   });

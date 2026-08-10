@@ -128,3 +128,37 @@ test('a branch that DID delete carries no error — the quiet path stays quiet',
   assert.equal('branchError' in ok, false, 'nothing to report means no key at all');
   fs.rmSync(repo, { recursive: true, force: true });
 });
+
+/*
+ * A worktree holding untracked files must still be deletable.
+ *
+ * `git worktree remove` refuses a tree with modified or untracked files, and Studio's own
+ * "Install dependencies" button creates exactly that — npm writes an untracked
+ * package-lock.json. With no force option on either delete route and no prune route
+ * anywhere, such a worktree could never be removed through the API at all: the same error,
+ * forever. remove()'s own fallback string already read "(use force?)", so the gap was
+ * known; there was simply no argument to answer it with.
+ */
+test('remove() REFUSES a worktree with untracked files, and says why', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/dirty', 'dirty', { fetch: false, copyPatterns: [] });
+  fs.writeFileSync(path.join(res.path, 'package-lock.json'), '{}\n'); // what install-deps leaves
+
+  const out = await worktree.remove(repo, res.path);
+  const err = expectErr(out, 'remove()');
+  // git's own line names the blocking file and the flag — the one actionable thing.
+  assert.match(err.error, /untracked|--force/);
+  assert.equal(fs.existsSync(res.path), true, 'still there, which is why force must exist');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('remove({ force }) gets past it', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/dirty2', 'dirty2', { fetch: false, copyPatterns: [] });
+  fs.writeFileSync(path.join(res.path, 'package-lock.json'), '{}\n');
+
+  const out = await worktree.remove(repo, res.path, { force: true });
+  expectOk(out, 'remove({force})');
+  assert.equal(fs.existsSync(res.path), false, 'the worktree is gone');
+  fs.rmSync(repo, { recursive: true, force: true });
+});

@@ -68,6 +68,17 @@ export type WorktreeCreateResult = WorktreeCreateSuccess | WorktreeCreateFailure
 export interface WorktreeRemoveOptions {
   branch?: string | null;
   deleteBranch?: boolean;
+  /**
+   * Pass `--force`, for a worktree git refuses to remove.
+   *
+   * `git worktree remove` declines when the tree holds modified or untracked files —
+   * and Studio's own "Install dependencies" button creates exactly that state, by
+   * writing an untracked `package-lock.json`. With no way to pass this flag, and no
+   * prune route anywhere, such a worktree could never be deleted through the API at
+   * all: the same error, forever. The fallback message already read "(use force?)",
+   * so the gap was known; there was simply no argument to answer it with.
+   */
+  force?: boolean;
 }
 
 export type WorktreeRemoveResult =
@@ -315,8 +326,14 @@ async function remove(
   worktreePath: string,
   opts: WorktreeRemoveOptions = {},
 ): Promise<WorktreeRemoveResult> {
-  const r = await gitFull(repoPath, ['worktree', 'remove', worktreePath]);
-  if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'worktree remove failed (use force?)' };
+  const args = ['worktree', 'remove', ...(opts.force ? ['--force'] : []), worktreePath];
+  const r = await gitFull(repoPath, args);
+  if (r.code !== 0) {
+    // git's own line names the blocking file and says `use --force`, which is the one
+    // actionable thing in the response — so it is passed through verbatim rather than
+    // replaced with a generic failure.
+    return { ok: false, error: r.stderr.trim() || 'worktree remove failed (use force?)' };
+  }
   let branchDeleted = false;
   let branchError: string | undefined;
   if (opts.deleteBranch && opts.branch) {

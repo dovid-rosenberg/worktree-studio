@@ -144,6 +144,8 @@ interface GroupBody {
   stopConflicts?: unknown;
   editor?: unknown;
   deleteBranches?: unknown;
+  /** `git worktree remove --force` — see WorktreeRemoveOptions.force. */
+  force?: unknown;
 }
 
 // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
@@ -296,7 +298,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   // Delete a feature: kill its sessions + remove its worktrees (optionally branches).
   app.post('/group/delete', async (req, res) => {
-    const { group, deleteBranches }: GroupBody = req.body || {};
+    const { group, deleteBranches, force }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const results: Array<{ repo: string; ok: boolean; error?: string; branchError?: string }> = [];
@@ -306,12 +308,28 @@ function register(app: Router, deps: OrchestratorDeps): void {
         results.push({ repo: m.repo, ok: false, error: 'unknown repo' });
         continue;
       }
+      /*
+       * STOP THE SERVER, REMOVE THE WORKTREE, and only then close the session.
+       *
+       * The session used to be closed BEFORE the removal, so a removal git refused —
+       * an untracked file is enough, and Studio's own Install-dependencies button
+       * creates one — had already destroyed the agent. The user was left with a
+       * worktree that still existed, no session driving it, and an error telling them
+       * to retry something that would fail identically forever.
+       *
+       * The server stop stays first: a live dev server holds the directory open, so
+       * removing under it is the failure this ordering exists to avoid. Only the
+       * session close moved.
+       */
       if (m.running) await servers.stop(m.repo, m.path);
-      if (m.session) await manager.close(m.session.id);
       const rr = await worktree.remove(repoObj.path, m.path, {
         branch: m.branch,
         deleteBranch: !!deleteBranches,
+        force: !!force,
       });
+      // The agent goes with the worktree it was working in — and only if that worktree
+      // actually went. A surviving worktree keeps its session.
+      if (rr.ok && m.session) await manager.close(m.session.id);
       /*
        * The branch refusal rides along. `git branch -d` declines an unmerged branch, and
        * that outcome was discarded here — so "Also delete the branches" answered a clean

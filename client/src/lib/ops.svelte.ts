@@ -611,6 +611,11 @@ export async function closeFeature(name: string) {
   });
 }
 
+/** One /group/delete attempt. Split out so the force retry is the same call, once. */
+function deleteFeatureOnce(group: string, deleteBranches: boolean, force: boolean) {
+  return api('POST', '/api/v1/group/delete', { group, deleteBranches, force });
+}
+
 export async function deleteFeature(f: Feature) {
   const ms = liveMembers(f);
   const anyMerged = ms.some((m) => m.merged);
@@ -625,7 +630,7 @@ export async function deleteFeature(f: Feature) {
   const deleteBranches = Boolean(r0[0]);
   return pending.run(f.name, async () => {
     try {
-      const r = await api('POST', '/api/v1/group/delete', { group: f.name, deleteBranches });
+      const r = await deleteFeatureOnce(f.name, deleteBranches, false);
       /*
        * Name the branches that did NOT go.
        *
@@ -637,8 +642,30 @@ export async function deleteFeature(f: Feature) {
       const kept = (r.results || [])
         .filter((x: { branchError?: string }) => x.branchError)
         .map((x: { repo: string }) => x.repo);
-      if (!r.ok) toast('Some removals failed', true);
-      else if (kept.length) toast(`Deleted ${f.name} — branch kept in ${kept.join(', ')} (not merged)`, true);
+      if (!r.ok) {
+        /*
+         * Show git's OWN reason, and offer the flag that answers it.
+         *
+         * `git worktree remove` refuses a tree holding modified or untracked files — and
+         * Studio's own Install-dependencies button creates one. With the whole `results`
+         * array collapsed into "Some removals failed" and no force option anywhere, that
+         * worktree could never be deleted: the same error, forever, with the one
+         * actionable line ("use --force") never shown.
+         */
+        const failed = (r.results || []).filter((x: { ok: boolean }) => !x.ok);
+        const why = failed
+          .map((x: { repo: string; error?: string }) => `${x.repo}: ${x.error || 'failed'}`)
+          .join('\n');
+        const retry = await uiConfirm(
+          `Could not remove ${failed.length} worktree(s):\n\n${why}\n\nForce removal? Uncommitted and untracked files in those worktrees will be lost.`,
+          { title: 'Delete failed', okLabel: 'Force delete', danger: true },
+        );
+        if (!retry) return;
+        const r2 = await deleteFeatureOnce(f.name, deleteBranches, true);
+        toast(r2.ok ? `Deleted ${f.name}` : 'Force delete failed — see the server log', !r2.ok);
+        return;
+      }
+      if (kept.length) toast(`Deleted ${f.name} — branch kept in ${kept.join(', ')} (not merged)`, true);
       else toast(`Deleted ${f.name}`);
     } catch (e) {
       toast(errMessage(e), true);

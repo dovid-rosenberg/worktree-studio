@@ -27,6 +27,8 @@ export interface Startable {
   canStart?: boolean;
   depsMissing?: boolean;
   noStartCmd?: boolean;
+  /** The worktree directory is gone — see servers.decorate(). */
+  gone?: boolean;
 }
 
 /** One member that should be up and cannot be, with the reason it cannot. */
@@ -64,6 +66,9 @@ export interface StartReport {
  * drop these members before the launch loop and report the remainder as a full success.
  */
 export function skipReason(m: Startable): string {
+  // First, because it makes the other two moot: there is nothing to install into and no
+  // command could run there.
+  if (m.gone) return 'the worktree directory no longer exists';
   if (m.depsMissing) return 'dependencies not installed';
   if (m.noStartCmd) return 'no start command configured for this repo';
   return 'cannot start';

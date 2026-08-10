@@ -700,9 +700,20 @@ class Servers {
     running: Map<string, RunningServer>,
   ): Pick<
     Worktree,
-    'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling' | 'noStartCmd'
+    'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling' | 'noStartCmd' | 'gone'
   > {
     const hit = running.get(realpath(worktree.path));
+    /*
+     * A worktree that is no longer on disk cannot start anything.
+     *
+     * git's `worktree list` keeps reporting a directory somebody deleted until the repo
+     * is pruned, and nothing in the topology build checked. depsMissing() made it worse
+     * by design: its first line returns `false` for a path with no package.json, which
+     * for a VANISHED directory reads as "dependencies are fine". So the row rendered
+     * with canStart:true and a live Run button — and pressing it spawned into a cwd that
+     * does not exist, which is precisely how one HTTP request killed the daemon.
+     */
+    const gone = !fs.existsSync(worktree.path);
     const deps = this.depsMissing(worktree.path);
     const configured = !!this.startCfg(worktree.repo);
     return {
@@ -712,7 +723,8 @@ class Servers {
       // `canStart` used to mean "a start command is configured", so it stayed true for a
       // worktree that could not possibly start. Every caller reads it as "starting this
       // will work" — /group/start filters `toStart` on it — so it now means that.
-      canStart: configured && !deps,
+      canStart: configured && !deps && !gone,
+      gone,
       depsMissing: deps,
       depsInstalling: this.installing.has(worktree.path),
       /*

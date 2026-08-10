@@ -11,7 +11,7 @@
 // what `git add -p` / `git reset -p` do.
 import { spawn } from 'child_process';
 import { git, gitFull, type RunResult } from './util.ts';
-import { parsePatch, formatFilePatch } from './diff.ts';
+import { DIFF_FLAGS, parsePatch, formatFilePatch } from './diff.ts';
 import type { DiffFile } from './types.ts';
 
 // What a stdin-fed `git apply` can report back: run()'s result minus the parts only
@@ -43,10 +43,8 @@ export interface HunkApplyOptions {
 
 export type HunkApplyResult = { ok: false; error: string } | ({ ok: true; hunks: number[] } & FileHunks);
 
-// Canonical diff flags: force `a/`+`b/` prefixes and plain output so neither the user's
-// global git config (diff.mnemonicPrefix gives `c/`+`w/`, diff.noprefix gives none) nor
-// an external difftool can change the bytes we parse and hand back to git apply.
-const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '-U3'];
+// One home, in diff.ts with the parser that depends on them — review.ts was running the
+// bare command, so its output was at the mercy of the reader's ~/.gitconfig.
 
 // git apply reads the patch on stdin — nothing hits the disk, and a patch that would
 // half-apply never gets written anywhere. util.run() can't feed stdin, hence spawn.

@@ -4,7 +4,7 @@
 import fs from 'fs';
 import path from 'path';
 import { git, gitFull } from './util.ts';
-import { parsePatch } from './diff.ts';
+import { DIFF_FLAGS, parsePatch } from './diff.ts';
 import type { DiffFile } from './types.ts';
 
 /**
@@ -207,11 +207,15 @@ async function working(worktreePath: string): Promise<{ files: ReviewFile[] }> {
 
 // Raw unified diff for one working-tree file (vs HEAD); untracked → /dev/null diff.
 async function workingFileDiff(worktreePath: string, file: string): Promise<string> {
-  const r = await gitFull(worktreePath, ['diff', 'HEAD', '--', file]);
+  // DIFF_FLAGS, as hunks.ts has always passed. Without them a reader whose ~/.gitconfig
+  // sets `diff.noprefix` gets `--- server/review.ts` instead of `--- a/server/review.ts`,
+  // stripPrefix chops the real first directory, and every file in a subdirectory is
+  // mislabelled in the Changes pane. The bytes must not depend on the reader's config.
+  const r = await gitFull(worktreePath, ['diff', ...DIFF_FLAGS, 'HEAD', '--', file]);
   if (r.stdout) return r.stdout;
   const st = await git(worktreePath, ['status', '--porcelain', '--', file]);
   if (st.startsWith('??')) {
-    const u = await gitFull(worktreePath, ['diff', '--no-index', '--', '/dev/null', file]);
+    const u = await gitFull(worktreePath, ['diff', '--no-index', ...DIFF_FLAGS, '--', '/dev/null', file]);
     return u.stdout;
   }
   return r.stdout;
@@ -286,7 +290,9 @@ async function commitDetail(
   }
   const files = [...byPath.values()];
   for (const f of files) {
-    f.diff = (await gitFull(worktreePath, ['show', '--format=', sha, '--', f.file])).stdout;
+    // Same flags: this output is parsed by the same parser, so it is exposed to the same
+    // ~/.gitconfig prefix problem.
+    f.diff = (await gitFull(worktreePath, ['show', '--format=', ...DIFF_FLAGS, sha, '--', f.file])).stdout;
     f.parsed = structure(f.diff);
   }
   return { files };
@@ -360,4 +366,4 @@ async function commit(
   return { ok: true, sha: await git(worktreePath, ['rev-parse', 'HEAD']) };
 }
 
-export { base, working, commits, commitDetail, commit, isValidSha };
+export { base, working, workingFileDiff, commits, commitDetail, commit, isValidSha };
