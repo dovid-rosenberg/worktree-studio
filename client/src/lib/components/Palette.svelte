@@ -159,7 +159,11 @@
   .palette-list { max-height:340px; overflow:auto; padding:6px; }
   .psec { font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:8px 12px 4px; }
   .pcmd { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; font-size:14.5px; }
-  .pcmd.on { background:var(--elevated); }
+  /* The elevated wash alone was 1.07:1 against the panel — the ONLY indicator of which row
+     Enter will run, and effectively invisible. Same treatment DiffViewport's .jumprow.at
+     already uses: a brand rule that does not depend on distinguishing two near-identical
+     greys. */
+  .pcmd.on { background:var(--elevated); box-shadow:inset 2px 0 0 var(--brand); }
   .pcmd .pg { width:20px; text-align:center; color:var(--brand); flex:none; }
   .pcmd .dot { flex:none; }
   .pcmd .ptitle { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

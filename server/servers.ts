@@ -826,6 +826,32 @@ class Servers {
         fs.closeSync(fd);
       }
       child.unref();
+      /*
+       * A failed spawn is an EVENT, and an unhandled one killed the whole daemon.
+       *
+       * Node reports a spawn that never happened — a missing `bash`, and crucially a
+       * `cwd` that no longer exists — asynchronously as an 'error' event rather than by
+       * throwing. Unhandled, that becomes an uncaughtException, and crash.ts treats
+       * anything outside the connection-error codes as fatal and exits. So pressing Run
+       * on a feature whose worktree had been deleted behind Studio's back took down every
+       * PTY, the SSE fan-out and the HTTP server with it — one request, total loss.
+       *
+       * This was the ONLY spawn site missing the guard: runner.ts, installDeps below and
+       * hunks.ts all attach one. Exactly the drift this codebase keeps producing.
+       *
+       * setImmediate resolves the race the other way: 'error' fires on the next tick at
+       * the latest, so if it has not fired by then the spawn succeeded.
+       */
+      const spawnError = await new Promise<Error | null>((resolve) => {
+        child.once('error', resolve);
+        setImmediate(() => resolve(null));
+      });
+      if (spawnError) {
+        // Nothing was started, so nothing is tracked — `child.pid` is undefined for a
+        // failed spawn, and persisting that junk record surfaced at the next boot as
+        // "dropped stale tracked pid undefined".
+        return { ok: false, error: `could not start ${repo}: ${spawnError.message}` };
+      }
       this.tracked[worktreePath] = { pid: child.pid, repo, log, startedAt };
       this._save();
       /*
@@ -911,8 +937,26 @@ class Servers {
 
   // Ports a server in this worktree would be listening on: the feature's
   // slot-derived ports when concurrency-slotted, else the repo's configured ports.
+  /**
+   * The ports this worktree would be using — or NOTHING, when that cannot be known.
+   *
+   * `launchOpts` resolves `slots.get(feature) ?? 0`, which conflates "this feature has no
+   * slot" with "this feature is at slot 0". Harmless on the launch path, where startAll
+   * allocates a slot before anything is spawned. Not harmless here: stop() feeds this
+   * list into a port sweep that SIGTERMs whatever is listening, so a slot-less feature
+   * derived slot 0's base ports and killed the dev servers of whichever OTHER feature
+   * actually holds slot 0 — answering `killed: true` while stopping nothing of its own.
+   *
+   * When concurrency governs this repo and the feature holds no slot, the honest answer
+   * is that it has no ports. An empty list stops nothing, which is correct: a feature
+   * with no slot never started anything through a slot.
+   */
   _portsFor(repo: string, worktreePath: string): number[] {
-    const opts = this.launchOpts(repo, this.featureFor(worktreePath));
+    const feature = this.featureFor(worktreePath);
+    if (this._concEnabled() && this._repoConc(repo) && this.slots.get(feature) === undefined) {
+      return [];
+    }
+    const opts = this.launchOpts(repo, feature);
     if (opts.ports?.length) return opts.ports;
     const sc = this.startCfg(repo);
     return sc ? sc.ports : [];
@@ -949,15 +993,29 @@ class Servers {
     }
     // Also free any listener still holding one of this worktree's known ports —
     // a targeted per-port lookup rather than a full lsof-all-sockets discovery scan.
+    const mine = realpath(worktreePath);
     for (const p of this._portsFor(repo, worktreePath)) {
       const pid = await this.portPid(p);
-      if (pid && (!t || pid !== t.pid)) {
-        try {
-          process.kill(pid, 'SIGTERM');
-          killed = true;
-        } catch {
-          /* */
-        }
+      if (!pid || (t && pid === t.pid)) continue;
+      /*
+       * Prove the listener is OURS before signalling it.
+       *
+       * The port list alone is not proof of ownership: two features run the same repo
+       * from different worktrees, and a stale or mis-derived port (see _portsFor) points
+       * straight at a sibling's dev server. `kill` here is not a near miss — it stops
+       * work in progress in a feature the user did not touch, and reported `killed:true`
+       * while doing it. Resolving the pid's own worktree is the only honest test.
+       *
+       * A pid we cannot resolve is left alone: not-in-a-git-worktree means it is not a
+       * dev server Studio started, so it is somebody else's process.
+       */
+      const info = await this._resolvePid(String(pid));
+      if (!info || realpath(info.top) !== mine) continue;
+      try {
+        process.kill(pid, 'SIGTERM');
+        killed = true;
+      } catch {
+        /* already gone — the outcome we wanted either way */
       }
     }
     delete this.tracked[worktreePath];

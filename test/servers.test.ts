@@ -254,3 +254,72 @@ test('pruneTracked is safe to call repeatedly — the sweep runs it every few se
   assert.deepEqual(await s.pruneTracked(), []);
   assert.deepEqual(await s.pruneTracked(), []);
 });
+
+/*
+ * A spawn that never happens must be REPORTED, not thrown into the void.
+ *
+ * Node delivers a failed spawn — including an ENOENT for a `cwd` that no longer exists —
+ * asynchronously as an 'error' event. Unhandled, that becomes an uncaughtException, and
+ * crash.ts treats anything outside the connection-error codes as fatal and exits. So
+ * pressing Run on a feature whose worktree had been deleted behind Studio's back took the
+ * whole daemon down: every PTY, the SSE fan-out, the HTTP server.
+ *
+ * This was the only spawn site missing the guard that runner.ts, installDeps and hunks.ts
+ * all have — the same one-rule-implemented-in-several-places drift this codebase keeps
+ * producing.
+ */
+test('a spawn into a MISSING cwd is reported, and does not kill the process', async () => {
+  const s = servers();
+  const gone = tempWorktree();
+  fs.rmSync(gone, { recursive: true, force: true }); // deleted behind Studio's back
+
+  // The assertion is as much that this line RETURNS at all: before the fix the 'error'
+  // event escaped as an uncaughtException and took the test runner with it.
+  const r = await s.start('api', gone);
+
+  assert.equal(r.ok, false);
+  // Narrowed via `ok`: StartResult is a union, and only the failure arm carries `error`.
+  assert.match(r.ok === false ? r.error || '' : '', /could not start api/);
+  assert.equal(s.tracked[gone], undefined, 'a process that never existed is not tracked');
+});
+
+/*
+ * Stopping one feature must never signal another feature's dev servers.
+ *
+ * `launchOpts` resolves `slots.get(feature) ?? 0`, conflating "has no slot" with "is at
+ * slot 0". Harmless while launching (startAll allocates first), destructive while
+ * stopping: a slot-less feature derived slot 0's BASE ports, and stop()'s port sweep
+ * SIGTERMed whatever held them — the dev servers of whichever other feature actually had
+ * slot 0 — then answered `killed: true` for stopping nothing of its own.
+ */
+test('a feature with NO slot claims no ports, so it cannot sweep another feature away', () => {
+  const s = servers({
+    concurrency: {
+      enabled: true,
+      offsetStep: 10,
+      maxSlots: 3,
+      repos: { api: { portEnv: { APP_PORT: 4100 } } },
+    },
+  });
+  const held = tempWorktree(); // this one is running, on slot 0
+  const slotless = tempWorktree(); // this one never started
+
+  s.slots.set(s.featureFor(held), 0);
+  assert.deepEqual(s._portsFor('api', held), [4100], 'the slot holder knows its own port');
+  assert.deepEqual(
+    s._portsFor('api', slotless),
+    [],
+    'no slot means no ports — guessing yields slot 0s, which belong to someone else',
+  );
+
+  for (const d of [held, slotless]) fs.rmSync(d, { recursive: true, force: true });
+});
+
+test('without concurrency, a repo still reports its configured ports', () => {
+  // The non-concurrent design is unchanged: the guard above is scoped to repos that
+  // concurrency actually governs, so a plain single-feature setup still stops itself.
+  const s = servers({ start: { api: { cmd: ':', ports: [3000] } } });
+  const wt = tempWorktree();
+  assert.deepEqual(s._portsFor('api', wt), [3000]);
+  fs.rmSync(wt, { recursive: true, force: true });
+});

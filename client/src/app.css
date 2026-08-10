@@ -11,11 +11,14 @@
 
 :root {
   --bg:#0e1116; --panel:#161b22; --elevated:#1b212a; --border:#262d38; --border-strong:#333c49;
-  --ink:#e7ebf1; --muted:#8b95a3; --faint:#868f9e;
+  --ink:#e7ebf1; --muted:#a3adbb; --faint:#858e9c;
   --working:#9b8cf5; --working-bg:#221f3a; --waiting:#e5ab3c; --waiting-bg:#332a16;
   --done:#4bb96a; --done-bg:#16301f; --idle:#5d6673; --idle-bg:#1c222b;
   --brand:#e0733f; --brand-ink:#140d08; --brand-soft:#2c1a10;
   --add:#3fb950; --add-bg:#0f2417; --del:#f85149; --del-bg:#2a1315;
+  /* A solid destructive FILL. --del is tuned to be read as text on the page;
+     white on it is 3.35:1, so a filled button needs its own darker value. */
+  --danger-fill:#c93c39;
 
   /* Feature colour tags — see FEATURE_COLORS in server/types.ts.
      Two values per hue: the ACCENT carries a 3px edge and has to read at that width,
@@ -61,11 +64,12 @@
    saturation they need to survive on a light ground. */
 :root[data-theme="light"] {
   --bg:#e9e6e0; --panel:#ffffff; --elevated:#f3f0ea; --border:#d5cec1; --border-strong:#b3aa99;
-  --ink:#141922; --muted:#4d5563; --faint:#5f6775;
-  --working:#5b46d6; --working-bg:#e6e1fa; --waiting:#b87503; --waiting-bg:#f8ead0;
-  --done:#177f45; --done-bg:#d3edda; --idle:#8c94a0; --idle-bg:#e4e1d9;
+  --ink:#141922; --muted:#4d5563; --faint:#6b7280;
+  --working:#5b46d6; --working-bg:#e6e1fa; --waiting:#8a5602; --waiting-bg:#f8ead0;
+  --done:#0f6236; --done-bg:#d3edda; --idle:#8c94a0; --idle-bg:#e4e1d9;
   --brand:#c1521f; --brand-ink:#ffffff; --brand-soft:#f6ddcf;
   --add:#12703a; --add-bg:#dff0e4; --del:#bf1d29; --del-bg:#fbe2e2;
+  --danger-fill:#bf1d29;
 
   /* The same eight tags on a light ground. The accents are darkened for contrast
      against #e9e6e0; the washes are tinted toward the page rather than away from it,
@@ -123,8 +127,10 @@ button { font-family:inherit; }
 .btn:hover { border-color:var(--brand); }
 .btn.primary { background:var(--brand); border-color:var(--brand); color:var(--brand-ink); }
 .btn.primary:hover { filter:brightness(1.06); }
-.btn.danger { background:#e5484d; border-color:#e5484d; color:#fff; }
-.btn.danger:hover { filter:brightness(1.06); border-color:#e5484d; }
+/* --del, not a literal: #e5484d on white measured 3.91:1, under AA, and it was a third
+   red alongside --del and --danger-bg that nothing kept in step. */
+.btn.danger { background:var(--danger-fill); border-color:var(--danger-fill); color:#fff; }
+.btn.danger:hover { filter:brightness(1.06); border-color:var(--danger-fill); }
 /* No `.btn.go`. Green is a STATE in this app — a running server, a merged branch — and
    a green button made it mean "start this" as well, so the same colour answered two
    different questions. Actions are the brand hue; only status wears --done. */
@@ -146,7 +152,9 @@ button { font-family:inherit; }
 .pill { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:999px; }
 .pill.working{ color:var(--working); background:var(--working-bg); } .pill.waiting{ color:var(--waiting); background:var(--waiting-bg); }
 .pill.done{ color:var(--done); background:var(--done-bg); } .pill.idle{ color:var(--muted); background:var(--idle-bg); }
-.pill.stopped{ color:var(--faint); background:var(--idle-bg); }
+/* --muted, not --faint: a pill is a LABEL meant to be read, and --faint is the
+   tertiary tier. On the light idle wash --faint measured 3.7:1, under AA. */
+.pill.stopped{ color:var(--muted); background:var(--idle-bg); }
 .pill.run{ color:var(--done); background:var(--done-bg); }
 .pill.run .pi{ font-style:normal; }
 .pill.agent { box-shadow:inset 2px 0 0 currentColor; padding-left:9px; }
