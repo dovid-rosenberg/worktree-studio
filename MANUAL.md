@@ -85,7 +85,10 @@ Two things the generated plist has to spell out, because launchd will not work t
 out for you:
 
 - **PATH.** launchd hands a process `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else.
-  Studio exits immediately when it cannot find `tmux`, and `git`/`gh`/`glab` would
+  Studio still starts when it cannot find `tmux`, and says so in the log and in a banner
+  across the top of the UI — sessions and terminals will not work until it is installed.
+  It does not exit, so an autostarted daemon does not crash-loop where nobody can read
+  the reason. `git`/`gh`/`glab` would
   fail the same way, so the agent carries an explicit PATH with Homebrew on it.
 - **The node binary, absolutely.** An nvm-managed node is on no PATH launchd would
   build, so the plist names the exact binary. **Re-run `./install.sh --autostart`

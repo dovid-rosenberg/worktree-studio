@@ -355,6 +355,16 @@ test('the add-repo CLI path in the system prompt actually exists on disk', () =>
   const found = cmd.match(/(\S*bin\/wt-studio\.\w+)/);
   assert.ok(found, `the prompt should name the add-repo CLI: ${cmd}`);
   assert.ok(fs.existsSync(found[1]), `the prompt names a CLI that does not exist: ${found[1]}`);
+
+  /*
+   * EXISTING is not the same as RUNNABLE.
+   *
+   * The prompt says "run: <path> add-repo <repo>" — a bare command, not `node <path>` —
+   * and the file was mode 644 with a shebang. So the agent got `permission denied`, which
+   * is a different dead end from the module-not-found above and equally unplaceable. The
+   * previous fix checked that the path resolved and stopped one step short.
+   */
+  fs.accessSync(found[1], fs.constants.X_OK);
 });
 
 test('activate/restore resume cwd resolves to home (transcript dir) for a promoted session', async () => {

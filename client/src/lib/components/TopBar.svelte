@@ -17,11 +17,29 @@
    */
   import AppMenu from '$lib/components/AppMenu.svelte';
   import { world } from '$lib/stores/world.svelte.js';
+  import { uiConfirm } from '$lib/stores/dialog.svelte.js';
   import { ui, featureActive, liveMembers } from '$lib/stores/ui.svelte.js';
   import { notify } from '$lib/stores/notify.svelte.js';
   import { restartStack, stopStack } from '$lib/ops.svelte.js';
 
   const feats = $derived(world.features);
+  /*
+   * Fleet-wide and irreversible, so it asks — as every other destructive verb in
+   * ops.svelte.ts already does (closeSession, deleteFeature, closeFeature,
+   * deactivateSession all go through uiConfirm). This one fired on a single click, from a
+   * 32px menu row directly below "Restart all servers", so a mis-aimed click killed every
+   * dev server running anywhere.
+   */
+  async function stopAllServers() {
+    const feats = runningFeats();
+    if (!feats.length) return;
+    const ok = await uiConfirm(
+      `Stop the dev servers of all ${feats.length} running feature(s): ${feats.map((f) => f.name).join(', ')}?`,
+      { title: 'Stop all servers', okLabel: 'Stop all', danger: true },
+    );
+    if (ok) for (const f of feats) stopStack(f.name);
+  }
+
   const runningFeats = () => feats.filter((f) => liveMembers(f).some((m) => m.running));
   const anyRunning = $derived(feats.some(featureActive));
 </script>
@@ -56,7 +74,7 @@
   <AppMenu
     {anyRunning}
     onrestartall={() => runningFeats().forEach((f) => restartStack(f.name))}
-    onstopall={() => runningFeats().forEach((f) => stopStack(f.name))}
+    onstopall={stopAllServers}
   />
 </header>
 

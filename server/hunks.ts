@@ -150,12 +150,20 @@ async function apply(
   if (!list.length || list.some((n) => !Number.isInteger(n) || n < 0 || n >= fd.hunks.length)) {
     return { ok: false, error: `hunks must be indexes into the ${scope} diff (0…${fd.hunks.length - 1})` };
   }
-  if (Array.isArray(expect)) {
-    for (let i = 0; i < list.length; i++) {
-      const want = expect[i];
-      if (want && fd.hunks[list[i]].header !== want) {
-        return { ok: false, error: 'the diff changed since it was loaded — reload and try again' };
-      }
+  /*
+   * Normalised the SAME way `hunks` is, one line above.
+   *
+   * The type is `string | string[]` and the route accepts both, but this tested
+   * `Array.isArray(expect)` and simply skipped the check for a scalar — so the single-hunk
+   * form, which is the common one, sailed past the guard entirely. That is the exact
+   * failure the guard exists to prevent: this docblock says "without the guard a stale
+   * index would silently stage the WRONG hunk", and for a scalar there was no guard.
+   */
+  const wants = expect === undefined ? [] : Array.isArray(expect) ? expect : [expect];
+  for (let i = 0; i < list.length; i++) {
+    const want = wants[i];
+    if (want && fd.hunks[list[i]].header !== want) {
+      return { ok: false, error: 'the diff changed since it was loaded — reload and try again' };
     }
   }
 

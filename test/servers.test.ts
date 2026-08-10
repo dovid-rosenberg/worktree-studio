@@ -155,8 +155,12 @@ test('depsMissing is true only for a package.json with no node_modules', () => {
   // no package.json at all — not a node project, so not our problem to flag
   assert.equal(s.depsMissing(dir), false);
 
-  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
-  assert.equal(s.depsMissing(dir), true, 'package.json without node_modules');
+  // A package that DECLARES dependencies. The fixture used to be `{"name":"x"}` — no
+  // dependencies at all — which encoded the bug: npm creates no node_modules for such a
+  // package, so "install your dependencies" was an instruction that could never be
+  // satisfied, and the worktree was unstartable forever.
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","dependencies":{"express":"^4"}}');
+  assert.equal(s.depsMissing(dir), true, 'declared dependencies, no node_modules');
 
   fs.mkdirSync(path.join(dir, 'node_modules'));
   assert.equal(s.depsMissing(dir), false, 'once installed it is startable again');
@@ -165,7 +169,8 @@ test('depsMissing is true only for a package.json with no node_modules', () => {
 test('canStart is false when the deps a start command needs are absent', () => {
   const s = servers({ start: { demo: { cmd: 'npm run dev' } } });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-deps2-'));
-  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x"}');
+  // Declares a dependency, so npm installing it would genuinely change something.
+  fs.writeFileSync(path.join(dir, 'package.json'), '{"name":"x","dependencies":{"express":"^4"}}');
 
   const bare = s.decorate({ path: dir, repo: 'demo' }, new Map());
   assert.equal(bare.depsMissing, true);
@@ -350,5 +355,59 @@ test('a worktree that IS on disk is unaffected', () => {
   const d = s.decorate({ repo: 'api', path: wt }, new Map());
   assert.equal(d.gone, false);
   assert.equal(d.canStart, true, 'a configured repo with no package.json still starts');
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * "Install dependencies" must be a SATISFIABLE instruction.
+ *
+ * depsMissing() was exactly "package.json exists && node_modules does not" — but npm only
+ * creates node_modules when there is something to install. A repo whose package.json is
+ * just a name and a `start` script was therefore permanently unstartable: the stack
+ * refused with "dependencies not installed", the Install button ran npm, npm reported
+ * "up to date" and created nothing, and the predicate stayed true. Forever.
+ */
+function pkgWorktree(pkg: Record<string, unknown>): string {
+  const dir = tempWorktree();
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg));
+  return dir;
+}
+
+test('a package with NO dependencies is not missing any', () => {
+  const s = servers();
+  const wt = pkgWorktree({ name: 'backend', scripts: { start: 'node server.js' } });
+  assert.equal(s.depsMissing(wt), false, 'npm would create nothing — the ask is unsatisfiable');
+  assert.equal(s.decorate({ repo: 'api', path: wt }, new Map()).canStart, true);
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('a package that DECLARES dependencies still reports them missing', () => {
+  const s = servers();
+  const wt = pkgWorktree({ name: 'backend', dependencies: { express: '^4' } });
+  assert.equal(s.depsMissing(wt), true, 'this one npm really can fix');
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('devDependencies count too — a build step is a dependency', () => {
+  const s = servers();
+  const wt = pkgWorktree({ name: 'fe', devDependencies: { vite: '^5' } });
+  assert.equal(s.depsMissing(wt), true);
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('an installed worktree is satisfied whatever it declares', () => {
+  const s = servers();
+  const wt = pkgWorktree({ name: 'backend', dependencies: { express: '^4' } });
+  fs.mkdirSync(path.join(wt, 'node_modules'));
+  assert.equal(s.depsMissing(wt), false);
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('an unparseable package.json does not block the start', () => {
+  // Refusing to launch over a JSON syntax error would be a confusing place to learn it.
+  const s = servers();
+  const wt = tempWorktree();
+  fs.writeFileSync(path.join(wt, 'package.json'), '{ not json');
+  assert.equal(s.depsMissing(wt), false);
   fs.rmSync(wt, { recursive: true, force: true });
 });

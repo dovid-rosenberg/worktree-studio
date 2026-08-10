@@ -890,6 +890,8 @@ async function main() {
   // ---- feature/group orchestration (run whole stack · stop & switch) ----
   orchestrator.register(api, {
     cfg,
+    // Deleting a feature strips its colour and links, which live in the config file.
+    saveConfig: () => configMod.save(cfg),
     servers,
     manager,
     repos: () => repos,
