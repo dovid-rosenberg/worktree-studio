@@ -57,6 +57,41 @@ const SERVER_NAME = /^(start|dev|serve|watch|run)\b|(^|[^a-z])(server|daemon)([^
  * Compared with the worktree path folded out, since a discovered command carries absolute
  * paths and a configured one does not.
  */
+/**
+ * THE decision: is this configuration a long-lived server, or a finite job?
+ *
+ * It routes the command into two completely different subsystems — Servers (a concurrency
+ * slot, a port pre-check, a tracked pid, reachable by "Stop stack") or Runner (a run with
+ * an exit code, shown in the Runs panel). Getting it wrong for a server means a dev server
+ * that no Stop can reach and a Runs row that never finishes.
+ *
+ * It was decided SIX different ways across the parsers: one hardcoded 'task', one that
+ * tested the name but not the command, one that tested the command but not the name, one
+ * that never called matchesStartCmd at all — and discover() did not even PASS startCmd to
+ * two of them, so those could not have applied the rule if they had tried. So the exact
+ * case this exists for (a Zed or VS Code task whose command IS `config.start[repo].cmd`)
+ * was classified 'task', while the identical command in a JetBrains XML was a server.
+ *
+ * One function now, with every signal the callers had between them:
+ *   - an explicit declaration from the editor (VS Code's `isBackground`) wins outright;
+ *   - then the configured start command, which is knowledge rather than a guess;
+ *   - then the name/command heuristic, which is the fallback it always was.
+ */
+function isServer(opts: {
+  cmd: string;
+  name: string;
+  worktreePath: string;
+  startCmd?: string;
+  /** The editor said so itself — VS Code's `isBackground`. `undefined` = it did not say. */
+  declared?: boolean;
+  /** An npm script name or task label, when it differs from the display name. */
+  script?: string;
+}): boolean {
+  if (opts.declared !== undefined) return opts.declared;
+  if (matchesStartCmd(opts.cmd, opts.worktreePath, opts.startCmd)) return true;
+  return SERVER_NAME.test(opts.script || opts.name) || SERVER_NAME.test(opts.cmd);
+}
+
 function matchesStartCmd(cmd: string, worktreePath: string, startCmd?: string): boolean {
   if (!startCmd) return false;
   const norm = (s: string) =>
@@ -168,8 +203,11 @@ export function parseJetBrains(
     const command = xmlValue(block, 'command') || 'run';
     const script = (block.match(/<script\s+value="([^"]*)"/) || [])[1];
     const cmd = script ? `npm ${command} ${script}` : `npm ${command}`;
-    const server = matchesStartCmd(cmd, worktreePath, startCmd) || SERVER_NAME.test(script || name);
-    return { ...base, cmd, kind: server ? 'server' : 'task' };
+    return {
+      ...base,
+      cmd,
+      kind: isServer({ cmd, name, script, worktreePath, startCmd }) ? 'server' : 'task',
+    };
   }
 
   if (type === 'mocha-javascript-test-runner') {
@@ -198,8 +236,7 @@ export function parseJetBrains(
     if (!js) return null;
     const args = resolvePlaceholders(xmlValue(block, 'application-parameters'), worktreePath);
     const cmd = `node ${q(js)}${args ? ` ${args}` : ''}`;
-    const server = matchesStartCmd(cmd, worktreePath, startCmd) || SERVER_NAME.test(name);
-    return { ...base, cmd, kind: server ? 'server' : 'task' };
+    return { ...base, cmd, kind: isServer({ cmd, name, worktreePath, startCmd }) ? 'server' : 'task' };
   }
 
   return null; // an unrecognised type is skipped, not guessed at
@@ -225,7 +262,14 @@ interface VsCodeLaunch {
 }
 
 /** `.vscode/tasks.json` — `type: shell | process | npm`. */
-export function parseVsCodeTasks(text: string, worktreePath: string, file: string): DiscoveredConfig[] {
+export function parseVsCodeTasks(
+  text: string,
+  worktreePath: string,
+  file: string,
+  // Was absent, so this parser could not apply the configured-start-command rule even in
+  // principle — the exact case isServer() exists for was unreachable from here.
+  startCmd?: string,
+): DiscoveredConfig[] {
   const doc = parseJsonc<{ tasks?: VsCodeTask[] }>(text);
   const out: DiscoveredConfig[] = [];
   for (const t of doc?.tasks || []) {
@@ -240,7 +284,16 @@ export function parseVsCodeTasks(text: string, worktreePath: string, file: strin
       cmd: resolvePlaceholders(cmd, worktreePath),
       // `isBackground` is VS Code's own word for "this does not finish" — believe it
       // over the name when it is present.
-      kind: (t.isBackground ?? SERVER_NAME.test(t.script || name)) ? 'server' : 'task',
+      kind: isServer({
+        cmd,
+        name,
+        script: t.script,
+        worktreePath,
+        startCmd,
+        declared: t.isBackground,
+      })
+        ? 'server'
+        : 'task',
       env: t.options?.env,
       source: 'vscode',
       file,
@@ -273,10 +326,7 @@ export function parseVsCodeLaunch(
     out.push({
       name,
       cmd: resolvePlaceholders(cmd, worktreePath),
-      kind:
-        matchesStartCmd(cmd, worktreePath, startCmd) || SERVER_NAME.test(cmd) || SERVER_NAME.test(name)
-          ? 'server'
-          : 'task',
+      kind: isServer({ cmd, name, worktreePath, startCmd }) ? 'server' : 'task',
       env: c.env,
       source: 'vscode',
       file,
@@ -293,7 +343,13 @@ interface ZedTask {
 }
 
 /** `.zed/tasks.json` — a bare array of `{label, command, args}`. */
-export function parseZed(text: string, worktreePath: string, file: string): DiscoveredConfig[] {
+export function parseZed(
+  text: string,
+  worktreePath: string,
+  file: string,
+  /** Same omission as parseVsCodeTasks — see the note there. */
+  startCmd?: string,
+): DiscoveredConfig[] {
   const doc = parseJsonc<ZedTask[]>(text);
   if (!Array.isArray(doc)) return [];
   const out: DiscoveredConfig[] = [];
@@ -303,7 +359,7 @@ export function parseZed(text: string, worktreePath: string, file: string): Disc
     out.push({
       name: t.label,
       cmd,
-      kind: SERVER_NAME.test(t.label) ? 'server' : 'task',
+      kind: isServer({ cmd, name: t.label, worktreePath, startCmd }) ? 'server' : 'task',
       env: t.env,
       source: 'zed',
       file,
@@ -350,7 +406,7 @@ export async function discover(
 
   const tasks = path.join(worktreePath, '.vscode', 'tasks.json');
   const tasksText = read(tasks);
-  if (tasksText) out.push(...parseVsCodeTasks(tasksText, worktreePath, tasks));
+  if (tasksText) out.push(...parseVsCodeTasks(tasksText, worktreePath, tasks, opts.startCmd));
 
   const launch = path.join(worktreePath, '.vscode', 'launch.json');
   const launchText = read(launch);
@@ -358,7 +414,7 @@ export async function discover(
 
   const zed = path.join(worktreePath, '.zed', 'tasks.json');
   const zedText = read(zed);
-  if (zedText) out.push(...parseZed(zedText, worktreePath, zed));
+  if (zedText) out.push(...parseZed(zedText, worktreePath, zed, opts.startCmd));
 
   const seen = new Set<string>();
   return out.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true)));

@@ -323,3 +323,32 @@ test('without concurrency, a repo still reports its configured ports', () => {
   assert.deepEqual(s._portsFor('api', wt), [3000]);
   fs.rmSync(wt, { recursive: true, force: true });
 });
+
+/*
+ * A worktree that is no longer on disk cannot start anything.
+ *
+ * git's `worktree list` keeps reporting a directory somebody deleted until the repo is
+ * pruned, and nothing in the topology build checked for existence. depsMissing() made it
+ * worse by design — its first line returns `false` when there is no package.json, which
+ * for a VANISHED directory reads as "dependencies are fine". So the row rendered with
+ * canStart:true and a live Run button, and pressing it spawned into a cwd that does not
+ * exist: exactly the path that killed the whole daemon.
+ */
+test('a DELETED worktree reports gone, and cannot be started', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  fs.rmSync(wt, { recursive: true, force: true });
+
+  const d = s.decorate({ repo: 'api', path: wt }, new Map());
+  assert.equal(d.gone, true);
+  assert.equal(d.canStart, false, 'a live Run button here spawns into a nonexistent cwd');
+});
+
+test('a worktree that IS on disk is unaffected', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  const d = s.decorate({ repo: 'api', path: wt }, new Map());
+  assert.equal(d.gone, false);
+  assert.equal(d.canStart, true, 'a configured repo with no package.json still starts');
+  fs.rmSync(wt, { recursive: true, force: true });
+});

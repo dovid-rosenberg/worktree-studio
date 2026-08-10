@@ -237,3 +237,46 @@ test('a worktree with no editor configs discovers nothing, quietly', async () =>
   assert.deepEqual(await discover(dir), []);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+/*
+ * "Is this a server?" must be ONE decision, applied by every parser.
+ *
+ * It was six different expressions: one hardcoded 'task', one testing the name but not the
+ * command, one the command but not the name, one that never consulted the configured start
+ * command at all — and discover() did not pass `startCmd` to the VS Code tasks or Zed
+ * parsers, so those two could not have applied the rule even if they had tried.
+ *
+ * The consequence is not cosmetic: `kind` routes the command into two different
+ * subsystems. A server misfiled as a task gets no concurrency slot, no port pre-check and
+ * no tracked pid, "Stop stack" cannot reach it, and it sits in the Runs panel as a job
+ * that never finishes.
+ */
+const START = 'npm run dev';
+
+test('a Zed task whose command IS the start command is a SERVER', () => {
+  // Zed's parser only ever tested the label, and never received startCmd at all.
+  const zed = JSON.stringify([{ label: 'boot it', command: 'npm', args: ['run', 'dev'] }]);
+  const [cfg] = parseZed(zed, '/wt', '.zed/tasks.json', START);
+  assert.equal(cfg.kind, 'server', 'the label says nothing; the command says everything');
+});
+
+test('a VS Code task whose command IS the start command is a SERVER', () => {
+  const tasks = JSON.stringify({ tasks: [{ label: 'boot it', type: 'shell', command: 'npm run dev' }] });
+  const [cfg] = parseVsCodeTasks(tasks, '/wt', '.vscode/tasks.json', START);
+  assert.equal(cfg.kind, 'server');
+});
+
+test("VS Code's own isBackground OUTRANKS the heuristics — the editor knows", () => {
+  // A task literally named "watch" that the editor says is NOT background.
+  const tasks = JSON.stringify({
+    tasks: [{ label: 'watch', type: 'shell', command: 'tsc --noEmit', isBackground: false }],
+  });
+  const [cfg] = parseVsCodeTasks(tasks, '/wt', '.vscode/tasks.json', START);
+  assert.equal(cfg.kind, 'task', 'an explicit declaration beats a name pattern');
+});
+
+test('a genuinely finite command stays a task', () => {
+  const zed = JSON.stringify([{ label: 'unit tests', command: 'npm', args: ['test'] }]);
+  const [cfg] = parseZed(zed, '/wt', '.zed/tasks.json', START);
+  assert.equal(cfg.kind, 'task');
+});
