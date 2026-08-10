@@ -7,7 +7,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
-import { run, readJsonState, writeJson, realpath, slug } from './util.ts';
+import { CHILD_ENV, run, readJsonState, writeJson, realpath, slug } from './util.ts';
 import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
@@ -164,7 +164,7 @@ export interface LogTail {
   skipped: number;
 }
 
-const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+const ENV = CHILD_ENV;
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
 
 // How far a process's real start time may sit from the moment we recorded spawning

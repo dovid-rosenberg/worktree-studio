@@ -10,6 +10,8 @@ import { git, gitFull, slug } from './util.ts';
 import * as layoutMod from './layout.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Config, PartialDeep } from './types.ts';
+// One resolver, in git.ts — this module had its own copy with a different prefix rule.
+import { defaultBase } from './git.ts';
 
 /** How many files `populate()` carried into a new checkout. */
 export interface CopyCounts {
@@ -218,13 +220,6 @@ async function branchExists(repoPath: string, branch: string): Promise<boolean> 
     `refs/remotes/origin/${branch}`,
   ]);
   return remote.code === 0;
-}
-
-async function defaultBase(repoPath: string): Promise<string> {
-  const sym = await git(repoPath, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
-  if (sym) return sym; // e.g. origin/develop
-  const cur = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  return cur || 'main';
 }
 
 /**

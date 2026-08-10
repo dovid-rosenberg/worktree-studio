@@ -106,11 +106,45 @@ function parseWorktrees(porcelain: string): PorcelainWorktree[] {
   return out;
 }
 
-async function defaultBranch(repoPath: string): Promise<string> {
-  const sym = await git(repoPath, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
-  if (sym) return sym.replace(/^origin\//, '');
+/*
+ * "What is this repo's default branch" — asked THREE ways, answered three ways.
+ *
+ * The same `symbolic-ref refs/remotes/origin/HEAD` lookup was written here, in
+ * worktree.defaultBase() and in checkout.defaultBranchOf(), and the three disagreed on
+ * both the `origin/` prefix and the fallback. For a repo with no `origin/HEAD`, git.ts
+ * reported the current branch (or literally 'main') while checkout.ts reported '' — two
+ * answers to one question, in one process, about one repo. review.base() computes the
+ * diff baseline from whatever it is handed, so the day a caller picks the other one it
+ * silently shows the wrong diff.
+ *
+ * One lookup now, in three named forms, because the three CALLERS genuinely differ:
+ *
+ *   originHead()      — the raw truth, '' when there is none. For code that must be able
+ *                       to tell "no default branch" from a guess (checkout.ts refuses to
+ *                       switch rather than switching to something invented).
+ *   defaultBranch()   — a bare branch name, guessed if need be. For display and diffs.
+ *   defaultBase()     — keeps `origin/`, so a new worktree branches off the REMOTE tip
+ *                       rather than a stale local copy. That prefix is the whole point.
+ */
+async function originHead(repoPath: string): Promise<string> {
+  return git(repoPath, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+}
+
+/** The current branch, or 'main' — the shared fallback when `origin/HEAD` is absent. */
+async function guessDefault(repoPath: string): Promise<string> {
   const cur = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
   return cur || 'main';
+}
+
+async function defaultBranch(repoPath: string): Promise<string> {
+  const sym = await originHead(repoPath);
+  return sym ? sym.replace(/^origin\//, '') : guessDefault(repoPath);
+}
+
+/** Like defaultBranch, but KEEPS `origin/` — a start point, not a name. */
+async function defaultBase(repoPath: string): Promise<string> {
+  const sym = await originHead(repoPath);
+  return sym || guessDefault(repoPath);
 }
 
 async function describeRepo(repoPath: string): Promise<ScannedRepo> {
@@ -153,4 +187,14 @@ async function scan(baseDirs: string[], depth: number): Promise<ScannedRepo[]> {
   return repos;
 }
 
-export { scan, describeRepo, findRepos, walkTree, defaultBranch, parseWorktrees, isLinkedWorktree };
+export {
+  scan,
+  describeRepo,
+  findRepos,
+  walkTree,
+  originHead,
+  defaultBranch,
+  defaultBase,
+  parseWorktrees,
+  isLinkedWorktree,
+};

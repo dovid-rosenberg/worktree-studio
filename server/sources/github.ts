@@ -1,8 +1,8 @@
 // GitHub issues via the `gh` CLI (uses your existing gh auth; no token config).
 import type { SourceAdapter } from '../types.ts';
-import { run, has } from '../util.ts';
+import { CHILD_ENV, run, has } from '../util.ts';
 
-const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+const ENV = CHILD_ENV;
 
 /** The issue fields the two `gh --json` calls below ask for, optional where the code guards. */
 interface GithubIssue {

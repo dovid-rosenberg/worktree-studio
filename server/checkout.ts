@@ -23,6 +23,7 @@
 // Every refusal is REPORTED, not swallowed: a session that started somewhere other than
 // where you expected should say which branch it is on and why.
 import { run } from './util.ts';
+import { originHead } from './git.ts';
 
 /** How long a fetch may hold up a session launch before we give up and carry on. */
 const FETCH_TIMEOUT_MS = 15000;
@@ -66,10 +67,16 @@ export interface PrepareOptions {
 
 const git = async (repoPath: string, args: string[]) => run('git', ['-C', repoPath, ...args]);
 
-/** The repo's default branch, or '' when there is no `origin/HEAD` to read. */
+/**
+ * The repo's default branch, or '' when there is no `origin/HEAD` to read.
+ *
+ * `originHead` rather than `defaultBranch`, deliberately: this module must be able to
+ * tell "there is no default branch" from a guess. `prepareForSession` REFUSES to switch
+ * when it gets '', and switching to an invented 'main' would be exactly the wrong move —
+ * it would either fail or land the session somewhere nobody asked for.
+ */
 export async function defaultBranchOf(repoPath: string): Promise<string> {
-  const sym = await git(repoPath, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
-  return sym.stdout.trim().replace(/^origin\//, '');
+  return (await originHead(repoPath)).replace(/^origin\//, '');
 }
 
 /**

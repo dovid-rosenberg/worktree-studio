@@ -1,9 +1,9 @@
 // GitLab issues. Prefers the `glab` CLI when installed; otherwise falls back to
 // the REST API using a configured token + project path.
 import type { Config, PartialDeep, SourceAdapter } from '../types.ts';
-import { run, has } from '../util.ts';
+import { CHILD_ENV, run, has } from '../util.ts';
 
-const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+const ENV = CHILD_ENV;
 
 /** The `sources.gitlab` block as this adapter reads it: defensively, key by key. */
 type GitlabConfig = PartialDeep<NonNullable<Config['sources']['gitlab']>>;

@@ -69,14 +69,30 @@ async function gitFull(cwd: string, args: string[], opts: RunOptions = {}): Prom
   return run('git', ['-C', cwd, ...args], opts);
 }
 
+/**
+ * The environment every child process gets, Homebrew first.
+ *
+ * A GUI-launched daemon (launchd, an app bundle) inherits a minimal PATH that does not
+ * include `/opt/homebrew/bin` or `/usr/local/bin`, so `gh`, `glab` and `tmux` are simply
+ * not there. This prelude was copy-pasted into six modules — servers, runner, forge, tmux
+ * and both source adapters — and `has()` below did NOT use it, so Studio probed for a CLI
+ * under one PATH and then ran it under another. On a launchd start that reports a tool
+ * missing which is about to work fine, or present when the probe got lucky.
+ */
+const CHILD_ENV: NodeJS.ProcessEnv = {
+  ...process.env,
+  PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
+};
+
 function has(cmd: string): boolean {
-  // synchronous best-effort lookup used at startup.
+  // Synchronous best-effort lookup used at startup — under CHILD_ENV, so it answers the
+  // question the caller is actually asking: "will this work when I run it?"
   try {
-    execFileSync('command', ['-v', cmd], { shell: '/bin/bash', stdio: 'ignore' });
+    execFileSync('command', ['-v', cmd], { shell: '/bin/bash', stdio: 'ignore', env: CHILD_ENV });
     return true;
   } catch {
     try {
-      execFileSync('/usr/bin/which', [cmd], { stdio: 'ignore' });
+      execFileSync('/usr/bin/which', [cmd], { stdio: 'ignore', env: CHILD_ENV });
       return true;
     } catch {
       return false;
@@ -244,6 +260,7 @@ function shq(s: unknown): string {
 // enforced lives in exactly one place: crash.routeErrors(), mounted last in server.ts.
 
 export {
+  CHILD_ENV,
   HOME,
   expandTilde,
   run,

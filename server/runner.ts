@@ -19,9 +19,9 @@ import { type ChildProcess, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
-import { makeId, readJsonState, slug, writeJson } from './util.ts';
+import { CHILD_ENV, makeId, readJsonState, slug, writeJson } from './util.ts';
 
-const ENV = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}` };
+const ENV = CHILD_ENV;
 
 /** How many finished runs to keep. History is for "what did the last one say", not an archive. */
 const KEEP_RUNS = 60;
