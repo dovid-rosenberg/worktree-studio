@@ -187,4 +187,21 @@ describe('Rail', () => {
     render(Rail);
     expect(screen.getByRole('button', { name: /New session/ })).toBeInTheDocument();
   });
+
+  it('carries the fleet-wide controls above that, rather than a bar across the window', () => {
+    /*
+     * The scope split is already drawn down the middle of the screen: the rail is the
+     * FLEET, the dock is ONE FEATURE. Insights, the waiting jump and the ⋮ menu are all
+     * fleet-wide, so they belong on this side of it — as a full-width header they were a
+     * third horizontal stripe sitting directly above a bar that acts on one selection,
+     * with nothing but a divider to say which was which.
+     *
+     * Rendered as part of Rail and not a peer of it, so this test would fail if AppHead
+     * were ever hoisted back out to +page.svelte.
+     */
+    give([]);
+    render(Rail);
+    expect(screen.getByRole('button', { name: 'Insights' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Menu')).toBeInTheDocument();
+  });
 });

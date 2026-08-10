@@ -36,8 +36,13 @@ const ops = vi.hoisted(() =>
   ),
 );
 vi.mock('$lib/ops.svelte.js', () => ({ ...ops, pending: new Set() }));
-// The Run menu fetches on open; the bar's own tests are about which verbs it offers.
-vi.mock('$lib/components/RunConfigMenu.svelte', () => ({ default: (() => {}) as never }));
+/*
+ * The Run menu fetches on open, so it is stubbed — but as a SPY, because where it is
+ * mounted is now part of what this bar promises. Svelte 5 mounts a component by calling
+ * it, so "was it called" is "was it rendered".
+ */
+const runMenu = vi.hoisted(() => vi.fn());
+vi.mock('$lib/components/RunConfigMenu.svelte', () => ({ default: runMenu as never }));
 
 const { default: ActionBar } = await import('./ActionBar.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');
@@ -125,6 +130,31 @@ describe('ActionBar', () => {
     expect(screen.queryByRole('button', { name: /Stop servers/ })).not.toBeInTheDocument();
     // And the cluster says what those verbs act on.
     expect(screen.getByRole('group', { name: 'Dev servers' })).toBeInTheDocument();
+  });
+
+  it('hands ▷ Run… to the Runs tab for a session, and keeps it only where there is no tab', () => {
+    /*
+     * The menu produces runs, and a run's whole outcome — status, duration, exit code,
+     * output — is in the Runs tab. Pressing it from here meant acting in one place and
+     * finding out what happened in another, and it cost the bar a third cluster beside
+     * `servers` and `agent`.
+     *
+     * A sessionless feature keeps it, and that is not an inconsistency to tidy away: a
+     * run needs only a worktree (`/run-configs/run` never read the sessionId this bar used
+     * to send), so a feature CAN run its configs while having no Runs tab to host the
+     * button. Deleting this mount would delete the capability with it.
+     */
+    give([feature()], [session()]);
+    ui.select('s1');
+    const { unmount } = render(ActionBar);
+    expect(runMenu).not.toHaveBeenCalled();
+    unmount();
+
+    runMenu.mockClear();
+    give([feature()], []);
+    ui.selectFeature({ name: 'token-race-fix' } as never);
+    render(ActionBar);
+    expect(runMenu).toHaveBeenCalled();
   });
 
   it('shows stack verbs for a selected SESSION by resolving its feature', () => {

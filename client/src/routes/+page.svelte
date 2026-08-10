@@ -12,7 +12,6 @@
    * the rail's selection, and anchoring it to the window means selecting something never
    * changes the geometry of anything above it.
    */
-  import TopBar from '$lib/components/TopBar.svelte';
   import Rail from '$lib/components/rail/Rail.svelte';
   import RailSplitter from '$lib/components/rail/RailSplitter.svelte';
   import Dock from '$lib/components/dock/Dock.svelte';
@@ -53,8 +52,6 @@
     window.history.replaceState(null, '', want);
   });
 </script>
-
-<TopBar />
 
 <!-- No multiplexer means NOTHING works: every session, every terminal, every run needs
      tmux. The daemon logged one line to a terminal nobody is looking at and carried on,

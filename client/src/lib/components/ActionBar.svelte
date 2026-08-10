@@ -72,19 +72,14 @@
   const isPending = $derived(!!target && pending.has(target.name));
 
   /*
-   * EVERY worktree the ▷ Run menu reads configs from — one per repo of the feature.
+   * EVERY worktree the ▷ Run… menu reads configs from — one per repo of the feature.
    *
-   * Not just the session's own: a feature is several repos, so a menu showing one of them
-   * can only reach half the work. On a BE+FE feature you want both sets of tests.
-   *
-   * Falls back to the session's own worktree when there is no resolved feature (a
-   * promoted session whose feature has not landed in the topology yet).
+   * ONLY FOR A FEATURE WITH NO SESSION. A session's copy moved into the Runs tab, beside
+   * the history and output a run produces; a sessionless feature has no such tab, and a
+   * run needs only a worktree, so this stays as its way in rather than the capability
+   * disappearing with the tab it does not have.
    */
-  const runTargets = $derived.by(() => {
-    const fromFeature = ms.map((m) => ({ repo: m.repo, path: m.path }));
-    if (fromFeature.length) return fromFeature;
-    return session?.worktreePath ? [{ repo: session.repoName, path: session.worktreePath }] : [];
-  });
+  const runTargets = $derived(ms.map((m) => ({ repo: m.repo, path: m.path })));
 
   /*
    * No identity block here.
@@ -160,9 +155,6 @@
             title="{needDeps.map((m) => m.repo).join(', ')} cannot start until their dependencies are installed"
             onclick={() => needDeps.forEach((m) => installDeps({ repo: m.repo, path: m.path }))}
           >{installingDeps ? 'Installing…' : `Install deps (${needDeps.length})`}</button>
-        {/if}
-        {#if runTargets.length}
-          <RunConfigMenu targets={runTargets} sessionId={session?.id ?? null} />
         {/if}
       {/if}
 
@@ -272,6 +264,10 @@
           <button class="btn sm ghost" title="Start a fresh agent instead" onclick={() => startFeatureSession(feature)}>Start fresh</button>
         {:else}
           <button class="btn sm primary" onclick={() => startFeatureSession(feature)}>Start session</button>
+        {/if}
+        <!-- The one mount of this outside the Runs tab — see runTargets above. -->
+        {#if runTargets.length}
+          <RunConfigMenu targets={runTargets} />
         {/if}
         <button class="btn sm" onclick={() => openGroup(feature.name)}>Open in editor</button>
         <!-- "Open PR / MR" said CREATE here and OPEN IN BROWSER on the CI pill — the same four
