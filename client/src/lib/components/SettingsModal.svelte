@@ -66,6 +66,36 @@
    */
   let pristine = '';
 
+  /*
+   * Asana workspaces for the token currently typed in the box.
+   *
+   * Fetched on demand rather than on every keystroke: it is a network call against a
+   * value the user is still typing, and a 401 per character is noise. The button is the
+   * signal that the token is complete.
+   */
+  let asanaWorkspaces = $state<Array<{ gid: string; name: string }>>([]);
+  let asanaLoading = $state(false);
+  let asanaError = $state('');
+
+  async function loadAsanaWorkspaces() {
+    asanaLoading = true;
+    asanaError = '';
+    try {
+      const r = await api('POST', '/api/v1/sources/asana/workspaces', { token: as.token.trim() });
+      if (!r.ok) throw new Error(r.error || 'could not reach Asana');
+      asanaWorkspaces = r.workspaces || [];
+      // One workspace is the common case, and making someone pick from a list of one is
+      // a step for nothing.
+      if (asanaWorkspaces.length === 1) as.workspace = asanaWorkspaces[0].gid;
+      if (!asanaWorkspaces.length) asanaError = 'that token can see no workspaces';
+    } catch (e) {
+      asanaError = errMessage(e);
+      asanaWorkspaces = [];
+    } finally {
+      asanaLoading = false;
+    }
+  }
+
   function snapshot(): string {
     const rows = <T extends { key: number }>(list: T[]) =>
       list.map(({ key: _key, ...rest }) => rest);
@@ -282,7 +312,29 @@
       <div class="field">
         <label class="inline"><input type="checkbox" bind:checked={as.enabled} /> Asana <span class="hint">— API token</span></label>
         <input class="input" type="password" placeholder="Personal access token" bind:value={as.token} aria-label="Asana token" />
-        <input class="input" placeholder="Workspace GID" bind:value={as.workspace} aria-label="Asana workspace" />
+        <!--
+          The workspace is PICKED, not typed.
+          A "Workspace GID" is a number Asana surfaces nowhere in its own UI — you get it
+          by reading it out of a URL. The token already knows the answer, so asking for it
+          was asking the user to make an API call by hand. The text field stays for anyone
+          who has the id and would rather paste it.
+        -->
+        <div class="wsrow">
+          {#if asanaWorkspaces.length}
+            <select class="select" bind:value={as.workspace} aria-label="Asana workspace">
+              <option value="">Pick a workspace…</option>
+              {#each asanaWorkspaces as w (w.gid)}<option value={w.gid}>{w.name}</option>{/each}
+            </select>
+          {:else}
+            <input class="input" placeholder="Workspace GID" bind:value={as.workspace} aria-label="Asana workspace" />
+          {/if}
+          <button
+            class="btn ghost xs"
+            disabled={!as.token.trim() || asanaLoading}
+            onclick={loadAsanaWorkspaces}
+          >{asanaLoading ? 'Checking…' : asanaWorkspaces.length ? 'Recheck' : 'Find workspaces'}</button>
+        </div>
+        {#if asanaError}<span class="hint err">{asanaError}</span>{/if}
       </div>
 
       <div class="field">

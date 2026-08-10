@@ -7,6 +7,7 @@ import * as worktree from './worktree.ts';
 const { worktreeCopyOpts } = worktree;
 import * as review from './review.ts';
 import * as sources from './sources/index.ts';
+import * as asana from './sources/asana.ts';
 import { SessionManager } from './sessions.ts';
 import { Servers } from './servers.ts';
 import { createIdentity } from './identity.ts';
@@ -473,6 +474,24 @@ async function main() {
 
   // ---- sources ----
   api.get('/sources', (_req, res) => res.json(sources.enabled(cfg)));
+  /*
+   * Asana's workspaces for a token the user has just typed.
+   *
+   * Takes the token in the BODY rather than reading config, because it is asked before
+   * the token has been saved — the whole point is to fill in the workspace field so the
+   * save is complete. Nothing is persisted here.
+   */
+  api.post('/sources/asana/workspaces', async (req, res) => {
+    const token = String(req.body?.token || '').trim();
+    if (!token) return res.status(400).json({ ok: false, error: 'a token is required' });
+    try {
+      const list = await asana.workspaces({ sources: { asana: { enabled: true, token, workspace: '' } } });
+      res.json({ ok: true, workspaces: list });
+    } catch (e) {
+      // Asana answers 401 for a bad token, which is the commonest thing to get wrong.
+      res.status(400).json({ ok: false, error: msg(e) });
+    }
+  });
   api.get('/sources/:source/items', async (req, res) => {
     const repo = repos.find((r) => r.name === req.query.repo);
     const out = await sources.list(cfg, req.params.source, { repoPath: repo?.path, q: req.query.q });

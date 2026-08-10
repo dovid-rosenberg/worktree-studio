@@ -56,7 +56,20 @@ export interface DialogField {
    * with no adapter, must still be pasteable. A picker that replaced the field would make
    * the common case easier and the uncommon one impossible.
    */
-  pick?: { source: 'tasks'; placeholder?: string };
+  pick?: {
+    source: 'tasks';
+    placeholder?: string;
+    /**
+     * Repos a repo-scoped source should be asked about — this feature's, not every repo
+     * you own.
+     *
+     * A source with `needsRepo` lists issues FROM a repo, and the first version fanned out
+     * over all of them: twelve `gh issue list` subprocesses to fill one dropdown, most of
+     * them about repos that have nothing to do with the feature being edited. The caller
+     * knows which repos are relevant; the dialog cannot.
+     */
+    repos?: string[];
+  };
   /**
    * Read-only lines shown above a `links` field's editable rows.
    *

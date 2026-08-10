@@ -14,7 +14,6 @@
   import { moveItem, reorderable } from '$lib/actions/reorderable.js';
   import { api } from '$lib/api.js';
   import { errMessage } from '$lib/errmsg.js';
-  import { world } from '$lib/stores/world.svelte.js';
 
   const entry = $derived(dialogs.current);
   const spec = $derived(entry?.spec ?? null);
@@ -59,15 +58,17 @@
           return;
         }
         /*
-         * A source with `needsRepo` lists issues from a REPO, so it needs one to ask
-         * about. The first version omitted this, so every such source silently answered
-         * with nothing — which is most of them, and is why this list came back empty even
-         * where it should have worked.
+         * A source with `needsRepo` lists issues FROM a repo, so it needs one to ask
+         * about — and only the repos this feature actually spans. Omitting it entirely
+         * made every such source answer with nothing; fanning out over every repo you own
+         * made it twelve subprocesses for one dropdown.
          */
-        const repos = world.repos.map((r) => r.name);
+        const repos = fields.find((f) => f.pick)?.pick?.repos || [];
         const all: Array<{ title: string; subtitle: string; url: string }> = [];
         for (const s of trackers) {
+          // A repo-scoped source with no repo to ask about is skipped, not guessed at.
           const targets = s.needsRepo ? repos : [''];
+          if (!targets.length) continue;
           for (const repo of targets) {
             const q = repo ? `?repo=${encodeURIComponent(repo)}` : '';
             const r = await api('GET', `/api/v1/sources/${encodeURIComponent(s.id)}/items${q}`);
