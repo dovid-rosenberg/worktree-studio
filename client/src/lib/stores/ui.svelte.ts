@@ -28,7 +28,7 @@
  */
 
 import { world } from '$lib/stores/world.svelte.js';
-import type { Feature, FeatureMember, Session, Worktree } from '../../../../server/types';
+import type { EmbeddedSession, Feature, FeatureMember, Session, Worktree } from '../../../../server/types';
 
 /** A member that survived the on-disk check — `missing` rows are filtered out first. */
 export type LiveMember = Worktree;
@@ -45,6 +45,25 @@ export type RailRow =
   | { kind: 'session'; key: string; name: string; session: Session; active: boolean }
   | { kind: 'mainserver'; key: string; name: string; worktree: Worktree; active: boolean }
   | { kind: 'feature'; key: string; name: string; feature: Feature; active: boolean };
+
+/**
+ * The agent driving a rail row, whichever kind of row it is.
+ *
+ * A row is one of three shapes, and the session lives in a different place in two of
+ * them: `kind:'session'` is an UNPROMOTED session and carries it directly, while a
+ * promoted one appears as `kind:'feature'` with the session embedded. Anything asking
+ * "what is this agent doing" has to look in both, and the code that did not — the waiting
+ * sort and the jump-to-next-waiting — silently covered only unpromoted sessions.
+ *
+ * That is close to nothing in practice: promoting is the normal path, so a fleet of ten
+ * promoted features had a waiting badge that counted them and a button that could not
+ * find a single one.
+ */
+export function rowSession(r: RailRow): EmbeddedSession | Session | null {
+  if (r.kind === 'session') return r.session;
+  if (r.kind === 'feature') return r.feature.session;
+  return null;
+}
 
 export interface RailEntry {
   kind: 'session' | 'feature';
@@ -340,7 +359,7 @@ class UI {
        * to find than anything else. Waiting now reliably occupies row one, which is also
        * what makes the ⌥ digit on the card worth reading.
        */
-      const waiting = (r: RailRow) => (r.kind === 'session' ? r.session.state === 'waiting' : false);
+      const waiting = (r: RailRow) => rowSession(r)?.state === 'waiting';
       return rows.sort(
         (a, b) =>
           Number(waiting(b)) - Number(waiting(a)) ||
@@ -551,11 +570,16 @@ class UI {
    * question ("who needs me?"); this is the answer.
    */
   goToNextWaiting(): boolean {
-    const waiting = this.railRows.filter((r) => r.kind === 'session' && r.session.state === 'waiting');
+    // rowSession, not `r.kind === 'session'`: a PROMOTED session is a `feature` row with
+    // the agent embedded, and promoting is the normal path — so the old filter matched
+    // almost nothing and the button did nothing for a whole fleet.
+    const waiting = this.railRows.filter((r) => rowSession(r)?.state === 'waiting');
     if (!waiting.length) return false;
     const here = waiting.findIndex((r) => r.key === selectionKey(this.selection));
     const next = waiting[(here + 1) % waiting.length];
+    // Both shapes, again: selecting the feature is what puts a promoted agent on screen.
     if (next.kind === 'session') this.goToSession(next.session.id);
+    else if (next.kind === 'feature') this.selectFeature(next.feature);
     return true;
   }
 
