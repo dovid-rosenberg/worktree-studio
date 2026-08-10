@@ -19,6 +19,13 @@ function repo(): { dir: string; g: (...a: string[]) => string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-git-'));
   const g = (...a: string[]) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: ENV });
   g('init', '-b', 'main');
+  // Identity in the repo's OWN config, not just in this helper's env.
+  // The env only reaches git calls THIS file makes; the code under test shells out
+  // separately and would be left relying on git's auto-detection — which works on a
+  // developer machine and fails in a container whose hostname it will not guess from.
+  // That is a green suite locally and a red one in CI, for a reason nothing reports.
+  g('config', 'user.email', 't@t');
+  g('config', 'user.name', 't');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   g('add', '-A');
   g('commit', '-m', 'one');

@@ -34,6 +34,13 @@ function repoWith(settings: string[][]): string {
       },
     });
   g('init', '-b', 'main');
+  // Identity in the repo's OWN config, not just in this helper's env.
+  // The env only reaches git calls THIS file makes; the code under test shells out
+  // separately and would be left relying on git's auto-detection — which works on a
+  // developer machine and fails in a container whose hostname it will not guess from.
+  // That is a green suite locally and a red one in CI, for a reason nothing reports.
+  g('config', 'user.email', 't@t');
+  g('config', 'user.name', 't');
   for (const [k, v] of settings) g('config', k, v);
   fs.mkdirSync(path.join(dir, 'server'));
   fs.writeFileSync(path.join(dir, 'server', 'review.ts'), 'one\n');
