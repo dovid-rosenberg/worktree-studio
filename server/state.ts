@@ -267,7 +267,6 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       if (list.length) {
         serversById[s.id] = {
           repos: list.map((r) => {
-            const hit = active.get(paths.resolve(r.worktreePath));
             /*
              * `...decorate()`, not a hand-picked list.
              *

@@ -35,19 +35,11 @@ import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import * as reinstate from './reinstate.ts';
 import * as layoutMod from './layout.ts';
-import type { Request } from 'express';
 import type { ScannedRepo } from './git.ts';
 import { FEATURE_COLORS } from './types.ts';
-import type { EditorConfig, GroupConfig, RunConfig, Session, SessionRepo, StartConfig } from './types.ts';
+import type { Session, SessionRepo } from './types.ts';
 import * as startReport from './start-report.ts';
 import fs from 'fs';
-
-/**
- * One value off a query string. Express hands back a string, an array (`?a=1&a=2`)
- * or a nested object (`?a[b]=1`), and an array or object reaching a git argv is a
- * TypeError rather than a 400 — so every read below goes through `qs()`.
- */
-type QueryValue = Request['query'][string];
 
 /** A thrown value's message. `catch` binds `unknown`, and not everything thrown is an Error. */
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -948,7 +940,7 @@ async function main() {
   api.delete('/runs/:id', (req, res) => res.json(runner.remove(req.params.id)));
 
   api.post('/run-configs/run', async (req, res) => {
-    const { repo, worktreePath, name, sessionId } = req.body || {};
+    const { repo, worktreePath, name } = req.body || {};
     if (!worktreePath || !name) return res.status(400).json({ error: 'worktreePath and name are required' });
 
     const found = await runConfigs.discover(String(worktreePath), {

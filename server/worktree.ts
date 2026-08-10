@@ -6,7 +6,7 @@
 // and .env files (`copyPatterns`).
 import fs from 'fs';
 import path from 'path';
-import { git, gitFull, slug } from './util.ts';
+import { gitFull, slug } from './util.ts';
 import * as layoutMod from './layout.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Config, PartialDeep } from './types.ts';
