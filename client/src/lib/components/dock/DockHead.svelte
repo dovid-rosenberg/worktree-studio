@@ -17,7 +17,7 @@
    * acting on the selection.)
    */
   import { labelForSource } from '$lib/stores/ui.svelte.js';
-  import { webAppsFor, world } from '$lib/stores/world.svelte.js';
+  import { appUrl, webAppsFor, world } from '$lib/stores/world.svelte.js';
   import LinkChip from '$lib/components/LinkChip.svelte';
   import ActionBar from '$lib/components/ActionBar.svelte';
 
@@ -118,7 +118,7 @@
         <a
           class="repochip2 up link"
           class:primary={r.primary}
-          href={`http://127.0.0.1:${web}`}
+          href={appUrl(web)}
           target="_blank"
           rel="noreferrer"
           title="Open {r.repo} at :{web}"

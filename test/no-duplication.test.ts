@@ -37,9 +37,23 @@ function serverFiles(): string[] {
   return out;
 }
 
+/** Every client source the UI is built from — `.ts` and `.svelte`, tests excluded. */
+function clientFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.(ts|svelte)$/.test(e.name) && !e.name.includes('.test.')) out.push(full);
+    }
+  };
+  walk(path.join(ROOT, 'client', 'src'));
+  return out;
+}
+
 /** Files containing a pattern, as repo-relative paths. */
-function containing(re: RegExp): string[] {
-  return serverFiles()
+function containing(re: RegExp, files: string[] = serverFiles()): string[] {
+  return files
     .filter((f) => re.test(fs.readFileSync(f, 'utf8')))
     .map((f) => path.relative(ROOT, f))
     .sort();
@@ -63,6 +77,31 @@ test('the origin/HEAD lookup is written in exactly one place', () => {
     containing(/refs\/remotes\/origin\/HEAD/),
     ['server/git.ts'],
     'use originHead / defaultBranch / defaultBase from git.ts',
+  );
+});
+
+test("a dev server's URL is built in exactly one place, and never from an IP literal", () => {
+  /*
+   * There were two builders and they disagreed: `openApp` opened `http://localhost:${port}`
+   * while DockHead's port chip — the one you actually click — linked
+   * `http://127.0.0.1:${port}`.
+   *
+   * That is not a cosmetic difference. Vite and friends bind loopback by FAMILY, and on a
+   * modern Node that is frequently `[::1]` alone, so the IPv4 literal is refused by a
+   * server that is running perfectly well:
+   *
+   *     node ... TCP [::1]:3031 (LISTEN)
+   *     curl http://127.0.0.1:3031/  → connection refused
+   *     curl http://localhost:3031/  → 200
+   *
+   * A running frontend therefore read as dead — Studio reported the port correctly and
+   * then handed out a link to nowhere. `localhost` resolves to whichever family bound,
+   * which is the only form that works for both, so appUrl() is the single builder.
+   */
+  assert.deepEqual(
+    containing(/http:\/\/(?:localhost|127\.0\.0\.1):\$\{/, clientFiles()),
+    ['client/src/lib/stores/world.svelte.ts'],
+    'use appUrl(port) from world.svelte.ts rather than composing a dev-server URL',
   );
 });
 
