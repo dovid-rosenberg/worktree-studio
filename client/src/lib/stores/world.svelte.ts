@@ -229,6 +229,11 @@ class World {
    * rebroadcasting the whole repo shape — the same reason sessions are stitched rather
    * than embedded. `assemble()` is the server's own module, so both sides cannot drift.
    */
+  /** featureName → its ticket's workflow status, when a tracker could tell us. */
+  get taskStatus(): Record<string, { label: string; done: boolean }> {
+    return this.view.taskStatus || {};
+  }
+
   linksFor(feature: Feature | null): Link[] {
     if (!feature) return [];
     const sessionId = feature.session?.id || '';
@@ -241,7 +246,13 @@ class World {
         .filter((r): r is string => !!r),
       pins: feature.pins,
       providers: this.view.linkProviders,
-    });
+    }).map((l) =>
+      // The ticket chip carries its status. Only the ticket: a merge request has its own
+      // state already, and a pinned link has no workflow to be in.
+      l.kind === 'ticket' && this.taskStatus[feature.name]
+        ? { ...l, sub: this.taskStatus[feature.name].label }
+        : l,
+    );
   }
 }
 

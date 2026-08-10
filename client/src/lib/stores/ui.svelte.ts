@@ -112,6 +112,77 @@ export function selectionKey(s: Selection, enc: (v: string) => string = (v) => v
 
 const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
+const SORT_KEY = 'wts-rail-sort';
+
+/**
+ * How the rail is ordered. `attention` is the default and the one the app is designed
+ * around; the others exist because what you are looking FOR changes with what you are
+ * doing — reviewing a board is a different question from finding the agent that stopped.
+ */
+export type RailSort = 'attention' | 'status' | 'running' | 'agent' | 'name';
+
+export const RAIL_SORTS: Array<{ id: RailSort; label: string; hint: string }> = [
+  { id: 'attention', label: 'Attention', hint: 'Waiting first, then anything active' },
+  { id: 'status', label: 'Task status', hint: 'By the tracker’s own workflow order' },
+  { id: 'running', label: 'Running', hint: 'Features with dev servers up first' },
+  { id: 'agent', label: 'Agent state', hint: 'Waiting, working, idle, stopped' },
+  { id: 'name', label: 'Name', hint: 'Alphabetical, and never moves' },
+];
+
+/**
+ * Agent states in the order you care about them.
+ *
+ * `waiting` is blocked on YOU, `working` is progress you may want to watch, and the rest
+ * are at rest. Numbers rather than a string compare, because alphabetical would put
+ * `idle` above `waiting` — the exact inversion this ordering exists to prevent.
+ */
+const AGENT_RANK: Record<string, number> = { waiting: 0, working: 1, idle: 2, stopped: 3 };
+
+/**
+ * A tracker's own column order, as far as we can guess it.
+ *
+ * Trackers name their columns freely, so this matches on substrings and falls to the end
+ * for anything unrecognised — a status we cannot place sorts after ones we can, rather
+ * than jumbling in among them. Ranked by where work IS, not alphabetically: a board reads
+ * in-progress → review → todo → backlog → done.
+ */
+const STATUS_ORDER = ['progress', 'review', 'todo', 'next', 'backlog', 'done'];
+
+function statusRank(label: string | undefined): number {
+  if (!label) return STATUS_ORDER.length + 1; // no ticket, or no status: after the known ones
+  const l = label.toLowerCase();
+  const i = STATUS_ORDER.findIndex((s) => l.includes(s));
+  return i === -1 ? STATUS_ORDER.length : i;
+}
+
+const byName = (a: RailRow, b: RailRow) => a.name.localeCompare(b.name);
+const waiting = (r: RailRow) => rowSession(r)?.state === 'waiting';
+
+const COMPARATORS: Record<RailSort, (a: RailRow, b: RailRow) => number> = {
+  // The default, and why the rail exists: what needs you, then what is alive.
+  attention: (a, b) =>
+    Number(waiting(b)) - Number(waiting(a)) || Number(b.active) - Number(a.active) || byName(a, b),
+  status: (a, b) => statusRank(rowStatus(a)) - statusRank(rowStatus(b)) || byName(a, b),
+  running: (a, b) => Number(rowRunning(b)) - Number(rowRunning(a)) || byName(a, b),
+  agent: (a, b) => agentRank(a) - agentRank(b) || byName(a, b),
+  // Deliberately stable: nothing about the world reorders it, which is the point.
+  name: byName,
+};
+
+function agentRank(r: RailRow): number {
+  const s = rowSession(r);
+  return s ? (AGENT_RANK[s.state] ?? 9) : 10; // no agent at all sorts last
+}
+
+function rowRunning(r: RailRow): boolean {
+  if (r.kind === 'feature') return liveMembers(r.feature).some((m) => m.running);
+  return r.kind === 'mainserver';
+}
+
+/** This module already imports `world`; an injection hook would be indirection for nothing. */
+function rowStatus(r: RailRow): string | undefined {
+  return r.kind === 'feature' ? world.taskStatus[r.feature.name]?.label : undefined;
+}
 
 /** Drag bounds for the rail. Below this the member chips stop being readable — the floor
     moved with the type scale, which went up a point across the app. */
@@ -136,6 +207,16 @@ function savedDock(): DockView {
     return localStorage.getItem(DOCK_KEY) === 'usage' ? 'usage' : 'term';
   } catch {
     return 'term';
+  }
+}
+
+/** A chosen sort persists: it is a working preference, not a per-visit whim. */
+function savedRailSort(): RailSort {
+  try {
+    const v = localStorage.getItem(SORT_KEY) as RailSort | null;
+    return v && RAIL_SORTS.some((s) => s.id === v) ? v : 'attention';
+  } catch {
+    return 'attention';
   }
 }
 
@@ -205,6 +286,8 @@ class UI {
   #dockMemory = new Map<string, { view: DockView; tab: string }>();
   /** Rail repo filter — '' means all repos. */
   repoFilter = $state('');
+  /** How the rail is ordered — see RAIL_SORTS. */
+  railSort = $state<RailSort>(savedRailSort());
   /** Which dock panel is showing. 'term' keeps the live terminal mounted. */
   dockView = $state<DockView>(savedDock());
   /** Rail width in px — dragged by the splitter, persisted, clamped to [MIN, MAX]. */
@@ -359,18 +442,22 @@ class UI {
        * to find than anything else. Waiting now reliably occupies row one, which is also
        * what makes the ⌥ digit on the card worth reading.
        */
-      const waiting = (r: RailRow) => rowSession(r)?.state === 'waiting';
-      return rows.sort(
-        (a, b) =>
-          Number(waiting(b)) - Number(waiting(a)) ||
-          Number(b.active) - Number(a.active) ||
-          a.name.localeCompare(b.name),
-      );
+      return rows.sort(COMPARATORS[this.railSort] || COMPARATORS.attention);
     })(),
   );
 
-  /** Index of the first quiet row, or -1 when everything is active (or nothing is). */
-  dividerAt = $derived(this.railRows.some((r) => r.active) ? this.railRows.findIndex((r) => !r.active) : -1);
+  /**
+   * Index of the first quiet row, or -1 when there is no meaningful boundary.
+   *
+   * Only under `attention`, which is the sort that groups active above quiet — under any
+   * other the rows are not in that order, so a line labelled "idle · N" would fall in an
+   * arbitrary place and claim something untrue about everything below it.
+   */
+  dividerAt = $derived(
+    this.railSort !== 'attention' || !this.railRows.some((r) => r.active)
+      ? -1
+      : this.railRows.findIndex((r) => !r.active),
+  );
 
   /**
    * What ⌘1–9 picks, in the order the rail actually draws it.
@@ -483,6 +570,15 @@ class UI {
     // Seed the drill-down with whatever is open, so opening Insights while looking at a
     // session lands on that session's breakdown rather than nowhere.
     this.openInsights(this.selectedId);
+  }
+
+  setRailSort(v: RailSort): void {
+    this.railSort = v;
+    try {
+      localStorage.setItem(SORT_KEY, v);
+    } catch {
+      /* private mode */
+    }
   }
 
   setRailWidth(px: number): void {

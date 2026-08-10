@@ -27,6 +27,17 @@ function adapterFor(source: string): SourceAdapter | null {
   return Object.hasOwn(ADAPTERS, source) ? ADAPTERS[source] : null;
 }
 
+/**
+ * The enabled adapters themselves, not their descriptions.
+ *
+ * `enabled()` below returns SourceInfo for the picker; this returns the objects, because
+ * task-status.ts needs to CALL one. Same gate, so an adapter with no token is still not
+ * reachable.
+ */
+function enabledAdapters(cfg: PartialDeep<Config>): SourceAdapter[] {
+  return Object.values(ADAPTERS).filter((a) => a.isEnabled(cfg));
+}
+
 function enabled(cfg: PartialDeep<Config>): SourceInfo[] {
   return Object.values(ADAPTERS)
     .filter((a) => a.isEnabled(cfg))
@@ -56,4 +67,4 @@ async function seed(cfg: PartialDeep<Config>, source: string, params?: SourcePar
   return a.seed(cfg, params || {});
 }
 
-export { ADAPTERS, adapterFor, enabled, list, seed };
+export { ADAPTERS, adapterFor, enabled, enabledAdapters, list, seed };

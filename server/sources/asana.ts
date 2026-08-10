@@ -10,6 +10,16 @@ interface AsanaTask {
   name: string;
   notes?: string;
   permalink_url: string;
+  completed?: boolean;
+  /**
+   * Which section of which project the task sits in.
+   *
+   * Asana has no "status" field — the SECTION is the workflow column, so "Backlog" and
+   * "In Progress" are section names. A task can be in several projects; the first
+   * membership with a section is the one shown, because a task tracked in two boards is
+   * rare and picking the first is better than rendering both in a chip.
+   */
+  memberships?: Array<{ section?: { name?: string } | null }>;
 }
 
 function cfgOf(cfg: PartialDeep<Config>): AsanaConfig {
@@ -46,6 +56,23 @@ const adapter: SourceAdapter = {
       `/tasks?assignee=me&workspace=${encodeURIComponent(a.workspace!)}&completed_since=now&opt_fields=name,permalink_url&limit=30`,
     );
     return tasks.map((t) => ({ id: t.gid, title: t.name, subtitle: 'Asana task' }));
+  },
+  /**
+   * Where the task sits in its board.
+   *
+   * The gid comes out of the permalink — `/0/<project>/<task>` and the newer
+   * `/1/<ws>/project/<p>/task/<t>` both end in it, possibly followed by `/f`. Parsed
+   * rather than stored, so a link pasted by hand works exactly like one from intake.
+   */
+  async status(cfg, url) {
+    const gid = /(\d+)(?:\/f)?\/?$/.exec(String(url || ''))?.[1];
+    if (!gid) return null;
+    const t = await api<AsanaTask>(cfg, `/tasks/${gid}?opt_fields=completed,memberships.section.name`);
+    // `completed` outranks the section: a task can sit in "In Progress" and be ticked,
+    // and the tick is the more definite statement.
+    if (t.completed) return { label: 'Done', done: true };
+    const section = (t.memberships || []).map((m) => m.section?.name).find(Boolean);
+    return section ? { label: section, done: false } : null;
   },
   async seed(cfg, { id }) {
     const t = await api<AsanaTask>(cfg, `/tasks/${id}?opt_fields=name,notes,permalink_url`);
