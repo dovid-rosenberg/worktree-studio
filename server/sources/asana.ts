@@ -39,6 +39,19 @@ async function api<T>(cfg: PartialDeep<Config>, pathAndQuery: string): Promise<T
   return ((await res.json()) as { data: T }).data;
 }
 
+/**
+ * The workspaces a token can see.
+ *
+ * Connecting Asana otherwise means finding a "Workspace GID" — a number with no UI
+ * anywhere in Asana that surfaces it, which you get by reading it out of a URL. The token
+ * already knows the answer, so asking the user for it is asking them to do an API call by
+ * hand. Exported for the settings route rather than being part of SourceAdapter: no other
+ * tracker has this shape of ambiguity, so it is not a contract, it is one adapter's helper.
+ */
+export async function workspaces(cfg: PartialDeep<Config>): Promise<Array<{ gid: string; name: string }>> {
+  return api<Array<{ gid: string; name: string }>>(cfg, '/workspaces?opt_fields=name');
+}
+
 const adapter: SourceAdapter = {
   id: 'asana',
   label: 'Asana',

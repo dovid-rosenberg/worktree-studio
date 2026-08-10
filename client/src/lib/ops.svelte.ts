@@ -329,7 +329,13 @@ function linksFields(feature: Feature): DialogField[] {
       label: 'Ticket',
       value: feature.ticket || '',
       placeholder: 'https://app.asana.com/… — or pick one above',
-      pick: { source: 'tasks', placeholder: 'Your assigned tasks…' },
+      pick: {
+        source: 'tasks',
+        placeholder: 'Your assigned tasks…',
+        // This feature's repos only — a repo-scoped tracker has nothing useful to say
+        // about the other eleven.
+        repos: [...new Set(liveMembers(feature).map((m) => m.repo))],
+      },
     },
     {
       type: 'links',

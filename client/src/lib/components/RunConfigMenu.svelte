@@ -123,13 +123,24 @@
 </script>
 
 <div class="runmenu" bind:this={root}>
-  <button
-    class="btn sm"
-    aria-haspopup="menu"
-    aria-expanded={open}
-    title="Run a configuration from this worktree's editor configs"
-    onclick={toggle}
-  >▷ Run</button>
+  <!--
+    A cluster like the two beside it, and a caret because it OPENS something.
+    `▷ Run` read as a button that runs a thing — there was nothing to say it presents a
+    list, and it sat at the same weight as the state verbs while doing something quite
+    different. The caret is the only mark in the bar that means "this expands", and it
+    flips when open.
+  -->
+  <span class="cluster">
+    <span class="cl-label">run</span>
+    <button
+      class="btn sm ghost trigger"
+      class:on={open}
+      aria-haspopup="menu"
+      aria-expanded={open}
+      title="Pick a run configuration — tests, builds, scripts from your editor's configs"
+      onclick={toggle}
+    >{'▷'}<span class="caret" aria-hidden="true">{open ? '▴' : '▾'}</span></button>
+  </span>
 
   {#if open}
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
@@ -171,9 +182,25 @@
 
 <style>
   .runmenu { position: relative; display: inline-flex; }
+  /* Matches the servers/agent clusters in ActionBar — same border, same label treatment,
+     because this is the same kind of thing: several actions on one subject. */
+  .cluster { display:inline-flex; align-items:center; gap:2px; border:1px solid var(--border);
+             border-radius:8px; padding:2px 3px 2px 0; background:var(--bg); }
+  .cluster .btn { border-color:transparent; background:transparent; }
+  .cluster .btn:hover, .cluster .btn.on { border-color:var(--border-strong); color:var(--ink); }
+  .cl-label { font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--faint);
+              padding:0 2px 0 8px; user-select:none; }
+  .caret { font-size:9px; margin-left:3px; opacity:.75; }
 
   .sheet {
-    position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 60;
+    /*
+     * DOWN, not up.
+     *
+     * `bottom: 100%` was correct when the action bar was a band at the FOOT of the window
+     * — a menu had nowhere to go but upward. The bar moved to the top of the dock and this
+     * did not, so the list opened over the header it hangs from, away from the button.
+     */
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
     min-width: 260px; max-width: 420px; padding: 5px;
     background: var(--panel); border: 1px solid var(--border-strong);
     border-radius: 10px; box-shadow: var(--shadow);
