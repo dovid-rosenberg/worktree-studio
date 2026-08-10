@@ -23,7 +23,8 @@
   import FeatureCard from '$lib/components/rail/FeatureCard.svelte';
   import MainServerCard from '$lib/components/rail/MainServerCard.svelte';
   import SessionCard from '$lib/components/rail/SessionCard.svelte';
-  import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+  import { RAIL_SORTS, ui, liveMembers } from '$lib/stores/ui.svelte.js';
+  import type { RailSort } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
 
@@ -59,6 +60,18 @@
     <select class="mini-select" bind:value={ui.repoFilter} title="Filter by repo" aria-label="Filter by repo">
       <option value="">all repos</option>
       {#each ui.repoNames as n (n)}<option value={n}>{n}</option>{/each}
+    </select>
+    <!-- Beside the filter, because they are the same kind of control: both change what
+         this list shows you without changing anything about the work. The choice
+         persists — it is a working preference, not a per-visit whim. -->
+    <select
+      class="mini-select"
+      value={ui.railSort}
+      onchange={(e) => ui.setRailSort(e.currentTarget.value as RailSort)}
+      title="Sort the list"
+      aria-label="Sort the list"
+    >
+      {#each RAIL_SORTS as s (s.id)}<option value={s.id} title={s.hint}>{s.label}</option>{/each}
     </select>
   </div>
 

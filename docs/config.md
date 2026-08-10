@@ -377,3 +377,31 @@ Shipped: `asana`, `github`, `gitlab`. Jira and Linear are not — they are three
 **An unrecognised URL still works.** It renders under its hostname with no glyph, so
 pasting any link — a Confluence page, a Grafana dashboard, a Google Doc — is never an
 error. Recognition only makes it prettier.
+
+## Task status on the ticket chip
+
+A feature's ticket chip can show where the task sits in its tracker — `Backlog`,
+`In Progress`, `Done` — and the rail can sort by it.
+
+This is the **one** part of a link that cannot be derived from its URL. The label and the
+glyph come from a pattern (see `linkProviders` above), deliberately, so display needs no
+auth. A status is a fact on the tracker's server, so it needs a token:
+
+```jsonc
+"sources": {
+  "asana": { "enabled": true, "token": "1/1234…", "workspace": "1200…" }
+}
+```
+
+With no token the chip renders exactly as it does today and no request is made.
+
+**Asana has no status field** — the *section* is the workflow column, so "Backlog" and
+"In Progress" are section names. A completed task reports `Done` regardless of section,
+because the tick is the more definite statement.
+
+Cached for 10 minutes (a human dragging a card is not a fast event), and a failed lookup
+is remembered for 5 — otherwise a tracker that is down would be retried on every sweep.
+
+**Another tracker?** Give its adapter in `server/sources/` an optional `status(cfg, url)`
+returning `{ label, done }`. Adapters without one are skipped, and their chips render
+unchanged.

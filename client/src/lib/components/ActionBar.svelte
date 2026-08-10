@@ -31,7 +31,7 @@
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
     deleteFeature, editFeature, editSession, installDeps, openGroup, openSessionRepos,
-    pending, prFeature, promote, restartStack, runStack, startFeatureSession,
+    pending, prFeature, promote, restartStack, restartTerminal, runStack, startFeatureSession,
     stopMainServer, stopStack,
   } from '$lib/ops.svelte.js';
 
@@ -176,6 +176,17 @@
             onclick={() => guard(() => activateSession(session))}
           >{'▶︎'}</button>
         {:else}
+          <!-- Restart the TERMINAL, not the agent: for a pane that has stopped redrawing
+               or come back the wrong size after a display change. Beside pause because
+               they are the same kind of thing — a state you get out of — and distinct
+               from Delete, which ends the work. -->
+          <button
+            class="btn sm ghost"
+            title="Restart the terminal — keeps the agent and its conversation"
+            aria-label="Restart terminal"
+            disabled={busy}
+            onclick={() => guard(() => restartTerminal(session))}
+          >{'↺'}</button>
           <button
             class="btn sm ghost"
             title="Deactivate — stop the process but keep the session (resumable)"

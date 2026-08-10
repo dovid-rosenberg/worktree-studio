@@ -51,14 +51,18 @@ function give({
   sessions = [] as Session[],
   repos = [] as unknown[],
   webRepos = [] as string[],
+  taskStatus = undefined as Record<string, { label: string; done: boolean }> | undefined,
 }) {
   world.topology = { features, groups: [], repos, webRepos } as never;
   world.sessionHalf = { sessions, servers: {} } as never;
+  // The ci half carries task status — same cadence, same kind of thing (see CiPayload).
+  world.ciHalf = { ci: {}, taskStatus } as never;
 }
 
 beforeEach(() => {
   give({});
   ui.repoFilter = '';
+  ui.railSort = 'attention'; // the default, so one test's choice does not leak into the next
   ui.clearSelection();
 });
 
@@ -342,5 +346,74 @@ describe('switching without losing your place', () => {
       const key = row.kind === 'session' ? `s:${row.id}` : `f:${row.name}`;
       if (i < 9) expect(ui.railDigits.get(key)).toBe(i + 1);
     }
+  });
+});
+
+describe('rail sorting', () => {
+  /*
+   * The default sort is what the app is designed around; the others exist because what
+   * you are looking FOR changes with what you are doing. Reviewing a board is a different
+   * question from finding the agent that stopped.
+   */
+  const board = () =>
+    give({
+      features: [
+        feature('zeta', [member('accept-blue', { running: true })], embedded('s1', 'idle')),
+        feature('alpha', [member('merchant-v3')], embedded('s2', 'waiting')),
+        feature('mid', [member('ab-su')], embedded('s3', 'working')),
+      ],
+      sessions: [
+        session('s1', { state: 'idle', worktreePath: '/wt/zeta' }),
+        session('s2', { state: 'waiting', worktreePath: '/wt/alpha' }),
+        session('s3', { state: 'working', worktreePath: '/wt/mid' }),
+      ],
+    });
+
+  it('attention puts what needs you first, then what is alive', () => {
+    board();
+    ui.setRailSort('attention');
+    expect(ui.railRows[0].name).toBe('alpha'); // waiting
+  });
+
+  it('name is stable — nothing about the world reorders it', () => {
+    board();
+    ui.setRailSort('name');
+    expect(ui.railRows.map((r) => r.name)).toEqual(['alpha', 'mid', 'zeta']);
+  });
+
+  it('running puts features with dev servers up first', () => {
+    board();
+    ui.setRailSort('running');
+    expect(ui.railRows[0].name).toBe('zeta');
+  });
+
+  it('agent orders by the state you care about, not alphabetically', () => {
+    // The reason it is a rank and not a string compare: alphabetically `idle` sorts above
+    // `waiting`, which is the exact inversion the ordering exists to prevent.
+    board();
+    ui.setRailSort('agent');
+    expect(ui.railRows.map((r) => r.name)).toEqual(['alpha', 'mid', 'zeta']);
+  });
+
+  it('the idle divider is drawn ONLY under attention', () => {
+    // Any other sort does not group active above quiet, so a line labelled "idle · N"
+    // would land somewhere arbitrary and claim something untrue about everything below it.
+    board();
+    ui.setRailSort('attention');
+    expect(ui.dividerAt).toBeGreaterThanOrEqual(-1);
+    ui.setRailSort('name');
+    expect(ui.dividerAt).toBe(-1);
+  });
+
+  it('an unrecognised task status sorts AFTER the ones we can place', () => {
+    // Trackers name columns freely. Something we cannot rank must not jumble in among
+    // the ones we can — it goes to the end, where "we do not know" belongs.
+    give({
+      features: [feature('known', [member('accept-blue')]), feature('odd', [member('ab-su')])],
+      sessions: [],
+      taskStatus: { known: { label: 'In Progress', done: false }, odd: { label: 'Wibble', done: false } },
+    });
+    ui.setRailSort('status');
+    expect(ui.railRows.map((r) => r.name)).toEqual(['known', 'odd']);
   });
 });

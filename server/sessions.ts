@@ -1121,6 +1121,31 @@ class SessionManager extends EventEmitter {
     return { ok: true };
   }
 
+  /**
+   * Kill the multiplexer session and bring it straight back, resuming the conversation.
+   *
+   * For when the terminal itself is wrong rather than the agent: a pane that has stopped
+   * redrawing, a mangled size after a display change, a shell left in a strange mode. The
+   * two halves already existed as separate verbs, but doing it by hand means the session
+   * sits `stopped` in between, which looks like something went wrong rather than like a
+   * deliberate restart.
+   *
+   * The CONVERSATION is not affected: `activate` resumes from `claudeSessionId`, and the
+   * transcript belongs to Claude rather than to the tmux session being replaced. Extra
+   * TABS do not survive — restore recreates only the primary window — so this is worth a
+   * confirmation on the client when there is more than one.
+   */
+  async restartTerminal(id: string) {
+    const s = this.get(id);
+    if (!s) return { ok: false, error: 'no such session' };
+    await this.mux.kill(s.muxName);
+    // No _touch between the two: a broadcast here would render the session as `stopped`
+    // for the length of the relaunch, which is exactly the flicker this verb exists to
+    // avoid. activate() touches once at the end, with the real outcome.
+    s.active = false;
+    return this.activate(id);
+  }
+
   // Bring a deactivated session back, resuming its conversation.
   async activate(id: string) {
     const s = this.get(id);

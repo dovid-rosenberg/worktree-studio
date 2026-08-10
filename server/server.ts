@@ -14,6 +14,7 @@ import { createState } from './state.ts';
 import { createBroadcast } from './broadcast.ts';
 import { createForge } from './forge.ts';
 import { createCiFeed } from './ci.ts';
+import { createTaskStatusFeed } from './task-status.ts';
 import * as orchestrator from './orchestrator.ts';
 import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
@@ -186,7 +187,26 @@ async function main() {
     onChange: () => bus.schedule({ ci: true }),
   });
 
-  const bus = createBroadcast({ topology, sessionState, ci: ciFeed.snapshot });
+  /*
+   * Ticket status — the one part of a link that needs an API rather than a pattern.
+   *
+   * Refreshed alongside CI because they are the same KIND of thing: external state on
+   * somebody else's server, pulled on a long timer. It rides the `ci` frame for the same
+   * reason. With no tracker token configured this resolves nothing and costs nothing.
+   */
+  const taskFeed = createTaskStatusFeed({ cfg });
+  const refreshTaskStatus = async () => {
+    const feats = Object.entries(cfg.featureLinks || {})
+      .filter(([, v]) => v?.ticket)
+      .map(([name, v]) => ({ name, ticket: v.ticket }));
+    if (await taskFeed.refresh(feats)) bus.schedule({ ci: true });
+  };
+
+  const bus = createBroadcast({
+    topology,
+    sessionState,
+    ci: () => ({ ...ciFeed.snapshot(), taskStatus: taskFeed.snapshot() }),
+  });
   // A run starting or finishing is a real state change and a rare one — unlike the hook
   // stream, this cannot flood the fan-out.
   runner.on('change', () => bus.schedule({}));
@@ -261,6 +281,9 @@ async function main() {
     // nothing at all, so its snapshot may be stale or empty — this is what makes an
     // opened dashboard fill in within a second rather than at the next safety net.
     ciFeed.poke();
+    // Same reason, and equally cheap: with no ticket configured, or nothing stale, this
+    // is a filter over a small object and no request at all.
+    void refreshTaskStatus();
     const hb = setInterval(() => {
       try {
         res.write(':hb\n\n');
@@ -484,6 +507,11 @@ async function main() {
 
   api.post('/sessions/:id/rename', async (req, res) => {
     res.json(await manager.rename(req.params.id, req.body?.title || ''));
+  });
+  // Kill the mux session and relaunch it, keeping the conversation — see restartTerminal.
+  api.post('/sessions/:id/restart-terminal', async (req, res) => {
+    const out = await manager.restartTerminal(req.params.id);
+    res.json(out);
   });
   api.post('/sessions/:id/deactivate', async (req, res) => {
     res.json(await manager.deactivate(req.params.id));

@@ -661,6 +661,15 @@ export type CiSnapshot = Record<string, CiRepo[]>;
 /** The `ci` half. Note the extra nesting: the payload wraps the map in `ci`. */
 export interface CiPayload {
   ci: CiSnapshot;
+  /**
+   * featureName → its ticket's status. Rides the `ci` frame rather than the topology.
+   *
+   * Both are EXTERNAL state on somebody else's server, pulled on a timer and changing on
+   * the order of minutes — as opposed to the topology, which is rebuilt whenever a file
+   * moves. Putting a per-feature HTTP round trip on that path would mean fetching a
+   * tracker every time you save a file.
+   */
+  taskStatus?: Record<string, TaskStatus>;
 }
 
 // ---- the assembled payload --------------------------------------------------
@@ -939,4 +948,21 @@ export interface SourceAdapter extends SourceInfo {
   isEnabled(cfg: PartialDeep<Config>): boolean;
   list(cfg: PartialDeep<Config>, params: SourceParams): Promise<SourceItem[]>;
   seed(cfg: PartialDeep<Config>, params: SourceParams): Promise<SourceSeed>;
+  /**
+   * Where this task sits in its tracker's workflow — "Backlog", "In Progress", "Done".
+   *
+   * OPTIONAL, and the only part of a link that cannot be derived from its URL: a status
+   * is a fact on the tracker's server, so unlike the label and the glyph (server/links.ts)
+   * it genuinely needs an API call and a token. An adapter without one simply omits this,
+   * and the chip renders as it does today.
+   */
+  status?(cfg: PartialDeep<Config>, url: string): Promise<TaskStatus | null>;
+}
+
+/** A task's position in its tracker's workflow. */
+export interface TaskStatus {
+  /** The tracker's own words — a section name, a column, a state. Rendered verbatim. */
+  label: string;
+  /** Whether the tracker considers it finished, which is the one status worth a colour. */
+  done: boolean;
 }

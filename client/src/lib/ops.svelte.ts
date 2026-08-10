@@ -368,6 +368,32 @@ function setFeatureColor(name: string, color: string) {
   return api('POST', `/api/v1/features/${encodeURIComponent(name)}/color`, { color });
 }
 
+/**
+ * Kill the terminal and bring it straight back, keeping the conversation.
+ *
+ * For a pane that has stopped redrawing or come back the wrong size — the terminal being
+ * wrong rather than the agent. Confirmed only when there is more than one tab, because
+ * only the primary window is recreated and losing the others silently would be a surprise.
+ */
+export async function restartTerminal(s: Session) {
+  const extras = (s.tabs || []).length - 1;
+  if (extras > 0) {
+    const ok = await uiConfirm(
+      `Restart the terminal for “${s.title}”? The agent and its conversation are kept, but ${extras} extra tab(s) will close.`,
+      { title: 'Restart terminal', okLabel: 'Restart', danger: true },
+    );
+    if (!ok) return;
+  }
+  return pending.run(s.id, async () => {
+    try {
+      const r = await api('POST', `/api/v1/sessions/${s.id}/restart-terminal`, {});
+      toast(r.ok ? 'Terminal restarted' : r.error || 'Could not restart the terminal', !r.ok);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
+  });
+}
+
 export async function deactivateSession(s: Session) {
   const ok = await uiConfirm(
     `Deactivate “${s.title}”? Stops the process; you can resume it later to continue the conversation.`,
