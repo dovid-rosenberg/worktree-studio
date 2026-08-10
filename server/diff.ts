@@ -72,6 +72,20 @@ function stripPrefix(p: string | null | undefined): string | null {
 /**
  * @param lines only the line KINDS matter here — rows carry indexes, never text
  */
+
+/**
+ * Canonical diff flags — force `a/`+`b/` prefixes and plain output.
+ *
+ * Neither the user's global git config (`diff.mnemonicPrefix` gives `c/`+`w/`,
+ * `diff.noprefix` gives none) nor an external difftool may change the bytes we parse.
+ * stripPrefix() below chops a leading `a/`; with `diff.noprefix` set it would chop the
+ * real first directory instead, so every file in a subdirectory came back mislabelled.
+ *
+ * They live HERE, with the parser, rather than beside one of the two producers: hunks.ts
+ * passed them and review.ts did not, which is how one module's output stayed parseable
+ * and the other's depended on the reader's ~/.gitconfig.
+ */
+export const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '-U3'];
 function alignRows(lines: Array<{ type: DiffLineType }>): DiffRow[] {
   const rows: DiffRow[] = [];
   let i = 0;
