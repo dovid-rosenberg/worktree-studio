@@ -39,6 +39,7 @@ import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
 import { runStack } from '$lib/ops.svelte.js';
+import { toast } from '$lib/stores/toasts.svelte.js';
 
 /*
  * What the app ACTUALLY binds — checked against the handlers, not remembered.
@@ -168,18 +169,33 @@ export function handleShortcut(e: KeyboardEvent): void {
    * of them — the key was swallowed and did nothing at all. Promote is still on the
    * ActionBar and in the palette, which is where a once-per-session verb belongs.
    */
+  /*
+   * preventDefault stays UNCONDITIONAL — see the tests of the same name.
+   *
+   * The review proposed falling through to the browser when there is nothing to act on.
+   * That trades one problem for a worse one: ⌘R would reload the page, destroying every
+   * terminal view, depending on invisible selection state. A key whose outcome varies
+   * with something you cannot see is harder to live with than one that reliably does
+   * nothing. What was actually wrong is that it did nothing SILENTLY — so it now says why.
+   */
   if (e.key === 'd' || e.key === 'D') {
     e.preventDefault();
-    if (s?.worktreePath) {
-      ui.goToSession(s.id);
-      ui.dockView = 'changes';
+    if (!s?.worktreePath) {
+      toast('Select a session with a worktree to review its changes');
+      return;
     }
+    ui.goToSession(s.id);
+    ui.dockView = 'changes';
     return;
   }
   // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the
   // session-addressed op, which is the same worktrees without the conflict handling.
   if (e.key === 'r' || e.key === 'R') {
     e.preventDefault();
-    if (s?.worktreePath && s.feature) runStack(s.feature);
+    if (!s?.worktreePath || !s.feature) {
+      toast('Select a promoted session to run its stack');
+      return;
+    }
+    runStack(s.feature);
   }
 }

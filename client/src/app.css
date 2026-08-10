@@ -140,14 +140,29 @@ button { font-family:inherit; }
 .btn.xs { font-size:11.5px; padding:2px 8px; font-weight:600; }
 .btn[disabled] { opacity:.5; cursor:not-allowed; }
 
-/* ---- status vocabulary (dot + pill), shared by rail, fleet and palette ---- */
+/* ---- status vocabulary (dot + pill), shared by rail, fleet and palette ----
+   FIVE states told apart by hue ALONE was the whole vocabulary: five identical 9px
+   circles. In the dock header and the tab strip the dot appears with no accompanying
+   text at all, so for anyone who cannot separate those hues there was no signal.
+   Shape is the second channel — solid, hollow, and haloed — and it survives both a
+   monochrome display and a colour-vision difference. */
 .dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
 .dot.working{ background:var(--working); } .dot.waiting{ background:var(--waiting); }
-.dot.done{ background:var(--done); } .dot.idle{ background:var(--idle); box-shadow:inset 0 0 0 1.5px var(--border-strong); }
-.dot.stopped{ background:var(--faint); }
+.dot.done{ background:var(--done); }
+/* Hollow: nothing is happening. Two of the five states, and the two that mean "at rest". */
+.dot.idle{ background:var(--idle); box-shadow:inset 0 0 0 1.5px var(--border-strong); }
+.dot.stopped{ background:transparent; box-shadow:inset 0 0 0 1.5px var(--faint); }
+/* Haloed: WAITING FOR YOU, the one state that is about you rather than about the agent. */
+.dot.waiting{ box-shadow:0 0 0 2px var(--waiting-bg), 0 0 0 3px var(--waiting); }
+
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
-.dot.working { animation:pulse 1.4s ease-in-out infinite; }
-@media (prefers-reduced-motion:reduce){ .dot.working{ animation:none; } }
+/* Motion goes to `waiting`, not `working`.
+   It was on `working` — an agent busy on its own, which needs nothing from you and is the
+   most common state on screen, so the rail shimmered constantly and the pulse meant
+   "normal". `waiting` is the one state that is BLOCKED on you, and it is what motion is
+   for: drawing an eye that is looking somewhere else. */
+.dot.waiting { animation:pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion:reduce){ .dot.waiting{ animation:none; } }
 
 .pill { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11.5px; font-weight:600; padding:2px 8px; border-radius:999px; }
 .pill.working{ color:var(--working); background:var(--working-bg); } .pill.waiting{ color:var(--waiting); background:var(--waiting-bg); }

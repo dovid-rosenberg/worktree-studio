@@ -12,6 +12,7 @@
   import { colorVars } from '$lib/featureColor.js';
   import Terminal from '$lib/components/Terminal.svelte';
   import ActionBar from '$lib/components/ActionBar.svelte';
+  import LinkChip from '$lib/components/LinkChip.svelte';
   import DockHead from '$lib/components/dock/DockHead.svelte';
   import TabStrip from '$lib/components/dock/TabStrip.svelte';
   import LogsPanel from '$lib/components/dock/LogsPanel.svelte';
@@ -88,6 +89,12 @@
          home per selection kind: DockHead's row for a session, this for a feature. -->
     <div class="dockbar">
       <span class="who">{feature.name}</span>
+      <!-- The ticket and merge-request chips, which used to render ONLY in DockHead —
+           i.e. only for a feature that has a session. links.ts states the fix outright:
+           "a feature with no session had neither". This is the surface that made that
+           still true, and it is exactly the feature you are most likely to want a ticket
+           link for, since nobody has started work on it yet. -->
+      {#each world.linksFor(feature) as l (l.kind + l.label)}<LinkChip link={l} />{/each}
       <span class="grow"></span>
       <ActionBar />
     </div>
@@ -158,6 +165,8 @@
              border-bottom:1px solid var(--border); background:var(--fc-wash, var(--panel));
              box-shadow:inset 4px 0 0 var(--fc, transparent); }
   .dockbar .who { font-weight:650; font-size:16px; }
+  /* Wrap rather than overflow: a four-repo feature's chips must not push the verbs off. */
+  .dockbar { row-gap:6px; }
   .dockbar .wtname { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   .dockbar .grow { flex:1; }
   .empty { margin:auto; text-align:center; max-width:440px; padding:40px; color:var(--muted); }
