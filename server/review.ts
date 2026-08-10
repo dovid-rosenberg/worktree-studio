@@ -328,9 +328,31 @@ async function commit(
   const list: unknown[] = paths || [];
   if (!list.every((p): p is string => typeof p === 'string' && !!p))
     return { ok: false, error: 'every entry in paths must be a non-empty string' };
-  const add = list.length ? ['add', '--', ...list] : ['add', '-A'];
-  const a = await gitFull(worktreePath, add);
-  if (a.code !== 0) return { ok: false, error: a.stderr.trim() || 'git add failed' };
+  /*
+   * A NON-EMPTY INDEX IS AN INSTRUCTION. Never sweep it away.
+   *
+   * This was `list.length ? ['add','--',...list] : ['add','-A']`, so an absent `paths`
+   * meant "stage everything" — and there was no argument at all meaning "commit what is
+   * already staged". Stage one hunk of nine in the review panel, commit, and you got all
+   * nine plus every untracked file in the worktree. hunks.ts states that hunk staging
+   * "coexists with (does not replace) the file-level staging in review.commit()"; this
+   * line is what made that untrue, and it destroyed deliberate user intent silently.
+   *
+   * The index is consulted rather than a new flag being invented: if something is staged,
+   * the user staged it, and that IS the commit. `add -A` is reserved for the genuinely
+   * empty-index case, which is what a plain "commit everything" call means.
+   */
+  if (list.length) {
+    const a = await gitFull(worktreePath, ['add', '--', ...list]);
+    if (a.code !== 0) return { ok: false, error: a.stderr.trim() || 'git add failed' };
+  } else {
+    // `--quiet` exits 1 when the index differs from HEAD — i.e. something is staged.
+    const staged = await gitFull(worktreePath, ['diff', '--cached', '--quiet']);
+    if (staged.code === 0) {
+      const a = await gitFull(worktreePath, ['add', '-A']);
+      if (a.code !== 0) return { ok: false, error: a.stderr.trim() || 'git add failed' };
+    }
+  }
   const args = ['commit', '-m', message];
   if (amend) args.push('--amend');
   const c = await gitFull(worktreePath, args);

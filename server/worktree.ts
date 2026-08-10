@@ -68,7 +68,21 @@ export interface WorktreeRemoveOptions {
   deleteBranch?: boolean;
 }
 
-export type WorktreeRemoveResult = { ok: true; branchDeleted: boolean } | { ok: false; error: string };
+export type WorktreeRemoveResult =
+  | {
+      ok: true;
+      branchDeleted: boolean;
+      /**
+       * Why the branch survived, when one was asked for and did not go.
+       *
+       * `git branch -d` REFUSES an unmerged branch — that is its whole job — and this
+       * discarded the stderr, so "Also delete the branches" reported a clean success and
+       * left every branch in place. `branchDeleted` existed but had no consumer anywhere
+       * in the codebase, which is the same defect one level up.
+       */
+      branchError?: string;
+    }
+  | { ok: false; error: string };
 
 // Expand a shell-style pattern (e.g. "config/*-config.ts", ".env.*.local")
 // relative to base. Supports `*` (any chars within one path segment). Segments
@@ -309,11 +323,15 @@ async function remove(
   const r = await gitFull(repoPath, ['worktree', 'remove', worktreePath]);
   if (r.code !== 0) return { ok: false, error: r.stderr.trim() || 'worktree remove failed (use force?)' };
   let branchDeleted = false;
+  let branchError: string | undefined;
   if (opts.deleteBranch && opts.branch) {
     const d = await gitFull(repoPath, ['branch', '-d', opts.branch]);
     branchDeleted = d.code === 0;
+    // The refusal is the useful part: it names the branch and says it is unmerged, which
+    // is exactly what the user needs in order to decide whether to force it.
+    if (!branchDeleted) branchError = d.stderr.trim() || `could not delete branch ${opts.branch}`;
   }
-  return { ok: true, branchDeleted };
+  return branchError ? { ok: true, branchDeleted, branchError } : { ok: true, branchDeleted };
 }
 
 export {

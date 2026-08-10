@@ -299,7 +299,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group, deleteBranches }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    const results: Array<{ repo: string; ok: boolean; error?: string }> = [];
+    const results: Array<{ repo: string; ok: boolean; error?: string; branchError?: string }> = [];
     for (const m of g.members) {
       const repoObj = repos().find((r) => r.name === m.repo);
       if (!repoObj) {
@@ -312,7 +312,18 @@ function register(app: Router, deps: OrchestratorDeps): void {
         branch: m.branch,
         deleteBranch: !!deleteBranches,
       });
-      results.push({ repo: m.repo, ok: rr.ok, error: rr.ok ? undefined : rr.error });
+      /*
+       * The branch refusal rides along. `git branch -d` declines an unmerged branch, and
+       * that outcome was discarded here — so "Also delete the branches" answered a clean
+       * success and left every branch standing. The worktree really did go, so `ok` stays
+       * true; what changes is that the part which did NOT happen is now named.
+       */
+      results.push({
+        repo: m.repo,
+        ok: rr.ok,
+        error: rr.ok ? undefined : rr.error,
+        ...(rr.ok && rr.branchError ? { branchError: rr.branchError } : {}),
+      });
     }
     // Unconditional, and the ONE place that is right: the worktrees are gone, so the
     // feature no longer exists. Guarding here would leak the slot forever if some stray
