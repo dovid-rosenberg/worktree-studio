@@ -2,6 +2,13 @@
   /*
    * The ▷ Run menu: this worktree's editor run configurations.
    *
+   * IT LIVES IN THE RUNS TAB, above the history and output it produces. It used to sit in
+   * the action bar, so pressing it moved you to a different part of the window to see what
+   * happened — and the bar had no room to say how many configurations there were or where
+   * they were read from, which is why "Run (config)" read as a button that ran something
+   * rather than one that opens a list. (RunsPanel mounts it for a session; ActionBar still
+   * mounts it for a feature with no session, which has no Runs tab to put it in.)
+   *
    * FETCHED ON OPEN, not carried in the topology payload. The payload is broadcast on
    * every git rescan, and putting a per-worktree directory scan on that path would cost a
    * handful of stats per worktree per broadcast for a list that is only read when this
@@ -21,10 +28,13 @@
   /** One repo of the feature: which repo, and the worktree to read its configs from. */
   export interface Target { repo: string; path: string }
 
-  let { targets, sessionId = null }: {
-    targets: Target[];
-    sessionId?: string | null;
-  } = $props();
+  /*
+   * No `sessionId`. It was threaded from the ActionBar into the POST body and
+   * `/run-configs/run` never read it — a finite command becomes a Run, which needs a
+   * worktree and nothing else ("It also needed a session to exist, which a feature may
+   * not have", server.ts).
+   */
+  let { targets }: { targets: Target[] } = $props();
 
   interface Cfg { name: string; cmd: string; kind: string; source: string; file?: string }
   interface Group { repo: string; path: string; configs: Cfg[] }
@@ -78,7 +88,7 @@
     running = `${g.repo}:${c.name}`;
     try {
       const r = await api('POST', '/api/v1/run-configs/run', {
-        repo: g.repo, worktreePath: g.path, name: c.name, sessionId,
+        repo: g.repo, worktreePath: g.path, name: c.name,
       });
       if (!r.ok) {
         toast(r.error || `Could not run “${c.name}”`, true);
@@ -124,23 +134,21 @@
 
 <div class="runmenu" bind:this={root}>
   <!--
-    A cluster like the two beside it, and a caret because it OPENS something.
-    `▷ Run` read as a button that runs a thing — there was nothing to say it presents a
-    list, and it sat at the same weight as the state verbs while doing something quite
-    different. The caret is the only mark in the bar that means "this expands", and it
-    flips when open.
+    Named, with an ellipsis and a caret, because it OPENS something.
+    It was a glyph inside a cluster labelled "run", matching the servers and agent clusters
+    beside it — which made it look like a state verb acting on a subject, when it is the
+    one control in the app that presents a list. Away from those clusters there is nothing
+    left to match, so it can say what it does: `▷ Run…`, ellipsis for "more is coming",
+    caret flipping when it does.
   -->
-  <span class="cluster">
-    <span class="cl-label">run</span>
-    <button
-      class="btn sm ghost trigger"
-      class:on={open}
-      aria-haspopup="menu"
-      aria-expanded={open}
-      title="Pick a run configuration — tests, builds, scripts from your editor's configs"
-      onclick={toggle}
-    >{'▷'}<span class="caret" aria-hidden="true">{open ? '▴' : '▾'}</span></button>
-  </span>
+  <button
+    class="btn sm trigger"
+    class:on={open}
+    aria-haspopup="menu"
+    aria-expanded={open}
+    title="Pick a run configuration — tests, builds and scripts from your editor's configs"
+    onclick={toggle}
+  >{'▷ Run…'}<span class="caret" aria-hidden="true">{open ? '▴' : '▾'}</span></button>
 
   {#if open}
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
@@ -182,25 +190,22 @@
 
 <style>
   .runmenu { position: relative; display: inline-flex; }
-  /* Matches the servers/agent clusters in ActionBar — same border, same label treatment,
-     because this is the same kind of thing: several actions on one subject. */
-  .cluster { display:inline-flex; align-items:center; gap:2px; border:1px solid var(--border);
-             border-radius:8px; padding:2px 3px 2px 0; background:var(--bg); }
-  .cluster .btn { border-color:transparent; background:transparent; }
-  .cluster .btn:hover, .cluster .btn.on { border-color:var(--border-strong); color:var(--ink); }
-  .cl-label { font-family:var(--mono); font-size:10px; letter-spacing:.08em; color:var(--faint);
-              padding:0 2px 0 8px; user-select:none; }
-  .caret { font-size:9px; margin-left:3px; opacity:.75; }
+  .trigger.on { border-color: var(--border-strong); color: var(--ink); }
+  .caret { font-size:9px; margin-left:5px; opacity:.75; }
 
   .sheet {
     /*
-     * DOWN, not up.
+     * DOWN, and anchored to the button's LEFT edge.
      *
      * `bottom: 100%` was correct when the action bar was a band at the FOOT of the window
      * — a menu had nowhere to go but upward. The bar moved to the top of the dock and this
      * did not, so the list opened over the header it hangs from, away from the button.
+     *
+     * `right: 0` was right for a button pinned near the bar's right edge. In the Runs tab
+     * the button starts at the left, so right-anchoring would hang the sheet off the
+     * screen edge; `left: 0` grows it into the panel it belongs to either way.
      */
-    position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
     min-width: 260px; max-width: 420px; padding: 5px;
     background: var(--panel); border: 1px solid var(--border-strong);
     border-radius: 10px; box-shadow: var(--shadow);

@@ -10,8 +10,14 @@
    * starting or finishing, so the status and duration update themselves. The OUTPUT is
    * pulled: a byte-offset tail like LogsPanel's, because streaming every run's stdout over
    * the SSE fan-out would put a test suite's console on the same channel as agent state.
+   *
+   * ▷ Run… IS PART OF THIS PANEL. It was in the action bar, one bar and one tab away from
+   * everything it produces, so starting a test meant pressing a control in one place and
+   * then going somewhere else to find out what it did. Here the tab is the whole activity:
+   * pick a configuration, watch it run, read what it said.
    */
   import { api } from '$lib/api.js';
+  import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
   import { toast } from '$lib/stores/toasts.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
   import type { Run, Session } from '../../../../../server/types';
@@ -29,6 +35,20 @@
   );
 
   const runs = $derived((world.view.runs || []).filter((r) => paths.has(r.worktreePath)));
+
+  /*
+   * Every worktree ▷ Run… reads configurations from — one per repo of the session.
+   *
+   * The same set `paths` is built from, but carrying the repo name each path belongs to,
+   * because the menu heads its groups by repo when a feature spans more than one. A menu
+   * showing the primary alone can only reach half of a BE+FE feature's tests.
+   */
+  const runTargets = $derived([
+    ...(session.worktreePath ? [{ repo: session.repoName, path: session.worktreePath }] : []),
+    ...(session.repos || [])
+      .filter((r) => r.worktreePath && r.worktreePath !== session.worktreePath)
+      .map((r) => ({ repo: r.repo, path: r.worktreePath as string })),
+  ]);
 
   let selectedId = $state('');
   /** The selected run, falling back to the newest so the panel is never blank. */
@@ -111,13 +131,26 @@
   }
 </script>
 
+<!-- The panel's own bar: the verb that fills it, above what it fills. Present whether or
+     not anything has run, so the empty state can point AT it rather than describe where
+     else to look. -->
+{#if runTargets.length}
+  <div class="runbar">
+    <RunConfigMenu targets={runTargets} />
+    <span class="from">
+      read from <code>.idea</code>, <code>.vscode</code> and <code>.zed</code>
+      {runTargets.length > 1 ? ` in all ${runTargets.length} worktrees` : ''}
+    </span>
+  </div>
+{/if}
+
 <div class="runs">
   {#if !runs.length}
     <div class="empty">
       <p>Nothing has been run here yet.</p>
       <p class="dim">
-        Use <b>▷ Run</b> in the bar below — Studio reads the run configurations your editor
-        already has. Tests and builds land here with their output and exit code; anything
+        Press <b>▷ Run…</b> above to pick one of the run configurations your editor already
+        has. Tests and builds land here with their output and exit code; anything
         long-lived is tracked as a dev server instead.
       </p>
     </div>
@@ -165,6 +198,12 @@
 </div>
 
 <style>
+  /* Sits above the two panes, not inside either: it acts on the whole tab. */
+  .runbar { flex:none; display:flex; align-items:center; gap:10px; flex-wrap:wrap; row-gap:5px;
+            padding:8px 12px; border-bottom:1px solid var(--border); background:var(--panel); }
+  .runbar .from { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
+  .runbar code { font-family:var(--mono); font-size:10.5px; background:none; border:0; padding:0; }
+
   /* Two panes: the history on the left, the selected run's output on the right. */
   .runs { flex:1; min-height:0; display:grid; grid-template-columns:minmax(240px, 30%) 1fr; background:var(--bg); }
   .list { border-right:1px solid var(--border); overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:2px; }

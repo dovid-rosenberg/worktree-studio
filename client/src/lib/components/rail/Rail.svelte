@@ -20,6 +20,7 @@
    * Keyed by `row.key` so a `session-state` frame mutates text nodes and class lists and
    * touches nothing else: scroll position and the focus ring on a card both survive.
    */
+  import AppHead from '$lib/components/rail/AppHead.svelte';
   import FeatureCard from '$lib/components/rail/FeatureCard.svelte';
   import MainServerCard from '$lib/components/rail/MainServerCard.svelte';
   import SessionCard from '$lib/components/rail/SessionCard.svelte';
@@ -48,6 +49,11 @@
 </script>
 
 <aside class="rail">
+  <!-- The fleet's own controls, at the head of the column that IS the fleet. They were a
+       full-width band above everything; the dock's bar acts on one selection, so stacking
+       the two put two different scopes in two identical-looking stripes. -->
+  <AppHead />
+
   <!-- The verb that creates what this list contains, at the head of the list. It used to
        sit in the top bar, on the other side of the app from its result. -->
   <div class="rail-new">

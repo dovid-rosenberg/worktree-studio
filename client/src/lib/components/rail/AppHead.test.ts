@@ -1,20 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import type { Feature, Session } from '../../../../server/types';
+import type { Feature, Session } from '../../../../../server/types';
 
 /*
- * The header is three things now: brand, Insights (with the waiting badge), and the ⋮
- * menu. Everything else moved — New session and the fleet counts to the rail, the rest
- * behind the menu — so what is left to pin here is that the header stays EMPTY of them.
+ * The app header is four things: brand, the waiting button, Insights and the ⋮ menu.
+ * Everything else moved — New session and the fleet counts to the rail below it, the rest
+ * behind the menu — so what is pinned here is that the header stays EMPTY of them.
+ *
+ * Since it moved into a 212px rail column, two of its controls are glyph-only. That makes
+ * their ACCESSIBLE NAMES load-bearing rather than decorative: `◔` and `◉ 3` say nothing to
+ * a screen reader, and nothing to anyone who has not learnt them, so every test below
+ * queries by name and would fail if a label were dropped along with the visible word.
  *
  * The counting rules (per-agent, not per-member; two vocabularies said separately) are
  * tested where they now render: Rail.test.ts.
  */
 vi.mock('$lib/ops.svelte.js', () => ({ restartStack: vi.fn(), stopStack: vi.fn() }));
 
-const { default: TopBar } = await import('./TopBar.svelte');
+const { default: AppHead } = await import('./AppHead.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');
 const { world } = await import('$lib/stores/world.svelte.js');
+// Set imperatively by notify.observe() as frames land, so tests set it directly rather
+// than trying to drive it through the world halves.
+const { notify } = await import('$lib/stores/notify.svelte.js');
 
 const member = (repo: string, over: Record<string, unknown> = {}) => ({
   repo,
@@ -30,7 +38,7 @@ const member = (repo: string, over: Record<string, unknown> = {}) => ({
 });
 const feature = (name: string, members: unknown[], session: unknown = null): Feature =>
   ({ name, auto: true, members, session }) as unknown as Feature;
-const _session = (id: string, state: string, over: Record<string, unknown> = {}): Session =>
+const session = (id: string, state: string, over: Record<string, unknown> = {}): Session =>
   ({
     id,
     title: id,
@@ -48,24 +56,25 @@ function give(features: Feature[], sessions: Session[] = []) {
 
 beforeEach(() => {
   ui.dockView = 'term';
+  notify.waitingCount = 0;
   give([]);
 });
 
-describe('TopBar summary', () => {
+describe('AppHead summary', () => {
   it('no longer carries the fleet counts — they live beside the rows they count', () => {
     give([feature('f', [member('accept-blue', { running: true })])]);
-    const { container } = render(TopBar);
+    const { container } = render(AppHead);
     expect(container.querySelector('.counts')).toBeNull();
   });
 
   it('no longer carries New session — it heads the rail it creates rows in', () => {
-    render(TopBar);
+    render(AppHead);
     expect(screen.queryByText(/New session/)).not.toBeInTheDocument();
   });
 
   it('puts the rare and the destructive behind one ⋮ rather than in the bar', () => {
     give([feature('f', [member('accept-blue', { running: true })])]);
-    render(TopBar);
+    render(AppHead);
     // Settings, theme and Stop all were permanent buttons competing with the content.
     expect(screen.queryByLabelText('Toggle theme')).not.toBeInTheDocument();
     expect(screen.queryByText('Stop all')).not.toBeInTheDocument();
@@ -74,14 +83,27 @@ describe('TopBar summary', () => {
 
   it('does not advertise mux: tmux — it is the only driver and it was noise', () => {
     give([]);
-    render(TopBar);
+    render(AppHead);
     expect(screen.queryByText(/mux:/)).not.toBeInTheDocument();
   });
 
   it('offers Insights, and no Overview — that view was the rail drawn wide', () => {
-    render(TopBar);
+    render(AppHead);
     expect(screen.getByRole('button', { name: /Insights/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Overview/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps Insights findable by name after losing its visible word to the rail width', () => {
+    /*
+     * The button reads `◔` and nothing else. A glyph is not a name, so dropping the
+     * aria-label while shortening the button would leave a control that no assistive
+     * technology — and no new user — can identify. Asserted separately from the test above
+     * because that one would still pass on a `title` alone in some engines.
+     */
+    render(AppHead);
+    const insights = screen.getByRole('button', { name: 'Insights' });
+    expect(insights).toHaveAttribute('aria-pressed', 'false');
+    expect(insights.textContent?.trim()).toBe('◔');
   });
 
   it('shows NO waiting button while nothing is waiting', () => {
@@ -91,20 +113,36 @@ describe('TopBar summary', () => {
      * is its own button now, and an attention control that is always present is not an
      * attention control, so it is absent at zero.
      */
-    render(TopBar);
-    expect(screen.queryByRole('button', { name: /Waiting/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Insights/ })).not.toHaveAttribute('data-n');
+    render(AppHead);
+    expect(screen.queryByRole('button', { name: /waiting/i })).not.toBeInTheDocument();
+  });
+
+  it('makes the count the waiting button itself, not a badge beside a word', () => {
+    /*
+     * In the rail, `◉ Waiting` plus a superimposed count badge printed the same number
+     * twice and cost width the column does not have. The number IS the label — so it has
+     * to be the number, and the button still has to say what pressing it does.
+     */
+    give(
+      [feature('f', [member('accept-blue')])],
+      [session('a', 'waiting'), session('b', 'waiting'), session('c', 'working')],
+    );
+    notify.waitingCount = 2;
+    render(AppHead);
+    const attn = screen.getByRole('button', { name: /2 session\(s\) waiting/ });
+    expect(attn.textContent).toContain('2');
+    expect(attn.textContent).not.toContain('Waiting');
   });
 
   it('offers the stack-wide verbs in the menu only when something is actually running', async () => {
     give([feature('quiet', [member('accept-blue')])]);
-    const { unmount } = render(TopBar);
+    const { unmount } = render(AppHead);
     screen.getByLabelText('Menu').click();
     expect(screen.queryByText(/Stop all servers/)).not.toBeInTheDocument();
     unmount();
 
     give([feature('busy', [member('accept-blue', { running: true })])]);
-    render(TopBar);
+    render(AppHead);
     screen.getByLabelText('Menu').click();
     expect(await screen.findByText(/Stop all servers/)).toBeInTheDocument();
   });
