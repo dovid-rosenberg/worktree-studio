@@ -23,6 +23,7 @@
   let { sessionId = null, onselect = () => {} } = $props();
 
   import type { FleetUsage } from './types';
+  import { errMessage } from '$lib/errmsg.js';
     let data: FleetUsage|null = $state(null);
     let status: import('./types.js').TranscriptStatus|null = $state(null);
   let loading = $state(true);
@@ -53,7 +54,7 @@
       // the emphasis in the ranking always means the same thing as the selection.
       if (!picked) picked = u.sessions.find((x) => (x.costUsd || 0) > 0)?.session?.id ?? u.sessions[0]?.session?.id ?? null;
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = errMessage(e);
     } finally {
       everLoaded = true;
       loading = false;

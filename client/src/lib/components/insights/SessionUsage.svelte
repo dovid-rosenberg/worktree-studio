@@ -10,6 +10,7 @@
   import EstimateNote from './EstimateNote.svelte';
   import { usd, compactTokens, exactTokens, totalTokens, shortModel, span, stamp, pct, share } from './format.js';
   import type { ModelUsage } from './types';
+  import { errMessage, isAbort } from '$lib/errmsg.js';
 
   /**
    * @type {{
@@ -34,7 +35,7 @@
     error = null;
     sessionUsage(id, ctrl.signal)
       .then((u) => { fetched = u; })
-      .catch((e) => { if (!(e instanceof Error && e.name === 'AbortError')) error = e instanceof Error ? e.message : String(e); })
+      .catch((e) => { if (!isAbort(e)) error = errMessage(e); })
       .finally(() => { loading = false; });
     return () => ctrl.abort();
   });

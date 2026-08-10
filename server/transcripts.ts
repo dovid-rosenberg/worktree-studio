@@ -370,7 +370,10 @@ function toEntry(rec: TranscriptRecord): TranscriptEntry | null {
   const type = rec.type;
   if (type !== 'assistant' && type !== 'user') return null;
   const msg: RawMessage = rec.message && typeof rec.message === 'object' ? (rec.message as RawMessage) : {};
-  let text = type === 'user' ? contentText(msg.content) : contentText(msg.content);
+  // Both branches of a `type === 'user' ? … : …` here were the same expression; the
+  // condition decided nothing. Removing it rather than picking a branch, because there
+  // was never a difference to preserve.
+  let text = contentText(msg.content);
   if (text.length > ENTRY_CAP) text = `${text.slice(0, ENTRY_CAP)}…`;
   const ts: IsoTimestamp | null = typeof rec.timestamp === 'string' ? rec.timestamp : null;
   const tsMs = ts ? Date.parse(ts) : NaN;

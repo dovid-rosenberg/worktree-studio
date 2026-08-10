@@ -66,16 +66,29 @@ export type Selection =
   | null;
 
 /**
- * A stable key for a selection — the same scheme the rail keys its rows with.
+ * A stable key for a selection — THE encoder for the `s:` / `f:` / `w:` scheme.
  *
  * `null` maps to '', which is a key nothing is ever stored under, so "nothing was
  * selected" cannot accidentally share a slot with something that was.
+ *
+ * This scheme was spelled out independently in four places: here, three times inline in
+ * railRows below, and twice more in deeplink.ts (once with encodeURIComponent, once
+ * inverted). deeplink's own header asserts the coupling — "the fragment reuses the rail's
+ * own key scheme instead of inventing a second vocabulary" — but the reuse was by
+ * convention, and convention does not fail a build.
+ *
+ * The failure mode is silent: railDigits and goToNextWaiting both match a row's `key`
+ * against selectionKey(selection). Change a prefix letter in one place and the rail
+ * highlights nothing while ⌥-digit picks the wrong row, with no compile error anywhere.
+ *
+ * `enc` exists for the URL form, which needs its values escaped and its structure
+ * identical — one encoder, two escapings.
  */
-function selectionKey(s: Selection): string {
+export function selectionKey(s: Selection, enc: (v: string) => string = (v) => v): string {
   if (!s) return '';
-  if (s.kind === 'session') return `s:${s.id}`;
-  if (s.kind === 'feature') return `f:${s.name}`;
-  return `w:${s.path}`;
+  if (s.kind === 'session') return `s:${enc(s.id)}`;
+  if (s.kind === 'feature') return `f:${enc(s.name)}`;
+  return `w:${enc(s.path)}`;
 }
 
 const DOCK_KEY = 'wts-dock';
@@ -294,7 +307,7 @@ class UI {
         ...this.unpromotedSessions.map(
           (s): RailRow => ({
             kind: 'session',
-            key: `s:${s.id}`,
+            key: selectionKey({ kind: 'session', id: s.id }),
             name: s.title,
             session: s,
             active: s.state !== 'stopped',
@@ -303,7 +316,7 @@ class UI {
         ...this.visibleMainServers.map(
           (w): RailRow => ({
             kind: 'mainserver',
-            key: `w:${w.path}`,
+            key: selectionKey({ kind: 'mainserver', path: w.path }),
             name: w.repo,
             worktree: w,
             active: true,
@@ -312,7 +325,7 @@ class UI {
         ...this.visibleFeatures.map(
           (f): RailRow => ({
             kind: 'feature',
-            key: `f:${f.name}`,
+            key: selectionKey({ kind: 'feature', name: f.name }),
             name: f.name,
             feature: f,
             active: featureActive(f),

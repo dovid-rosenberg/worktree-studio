@@ -16,6 +16,7 @@
   import { toast } from '$lib/stores/toasts.svelte.js';
   import { notify } from '$lib/stores/notify.svelte.js';
   import { moveItem, reorderable } from '$lib/actions/reorderable.js';
+  import { errMessage } from '$lib/errmsg.js';
 
   let loaded = $state(false);
   let saving = $state(false);
@@ -145,7 +146,7 @@
         // server sent are not themselves counted as edits.
         pristine = snapshot();
       } catch (e) {
-        if (alive) error = (e as Error).message;
+        if (alive) error = errMessage(e);
       }
     })();
     return () => { alive = false; };
@@ -203,7 +204,7 @@
       });
       overlays.closeSettings();
       toast('Settings saved');
-    } catch (e) { toast((e as Error).message, true); }
+    } catch (e) { toast(errMessage(e), true); }
     finally { saving = false; }
   }
 

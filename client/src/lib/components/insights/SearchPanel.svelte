@@ -17,6 +17,7 @@
   import IndexStatus from './IndexStatus.svelte';
 
   import type { Hit, StateSession } from './types';
+  import { errMessage, isAbort } from '$lib/errmsg.js';
 
   /**
    * @type {{
@@ -88,10 +89,9 @@
   let seq = 0;
 
   /** @param {unknown} e */
-  const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
   async function refreshStatus() {
-    try { status = await transcriptStatus(); } catch (e) { statusError = errText(e); }
+    try { status = await transcriptStatus(); } catch (e) { statusError = errMessage(e); }
   }
 
   $effect(() => {
@@ -144,9 +144,9 @@
       ranAt = Date.now();
       selected = -1;
     } catch (e) {
-      if (e instanceof Error && e.name === 'AbortError') return;
+      if (isAbort(e)) return;
       if (my !== seq) return;
-      error = errText(e);
+      error = errMessage(e);
       hits = [];
       ran = true;
       ranQuery = query;
@@ -164,7 +164,7 @@
       await refreshStatus();
       if (q.trim()) await run();
     } catch (e) {
-      statusError = errText(e);
+      statusError = errMessage(e);
     } finally {
       indexing = false;
     }

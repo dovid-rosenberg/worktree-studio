@@ -18,15 +18,13 @@ import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
 import { liveMembers, ui } from '$lib/stores/ui.svelte.js';
+import { errMessage } from '$lib/errmsg.js';
 
 /**
  * `catch (e)` binds `unknown` under strict mode, and every handler below reports
  * `e.message`. One helper rather than a cast per site — a cast would claim the thrown
  * value is an Error, which nothing guarantees.
  */
-function errMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
 
 /* ---------------- sessions ---------------- */
 

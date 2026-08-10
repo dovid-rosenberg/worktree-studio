@@ -14,6 +14,7 @@
    */
   import { api } from '$lib/api.js';
   import { liveMembers } from '$lib/stores/ui.svelte.js';
+  import { errMessage } from '$lib/errmsg.js';
 
   let { feature }: { feature: Feature } = $props();
 
@@ -61,7 +62,7 @@
     rollError = '';
     api('GET', `/api/v1/group/${encodeURIComponent(name)}/commits`)
       .then((d) => { if (alive) roll = d.repos || []; })
-      .catch((e) => { if (alive) rollError = e instanceof Error ? e.message : String(e); });
+      .catch((e) => { if (alive) rollError = errMessage(e); });
     return () => { alive = false; };
   });
 

@@ -31,6 +31,7 @@
   import { activatable } from '$lib/actions/activatable.js';
   import CommitList from './CommitList.svelte';
   import DiffViewport from './DiffViewport.svelte';
+  import { errMessage } from '$lib/errmsg.js';
 
   let {
     /** Session id from /api/v1/state. */
@@ -102,7 +103,7 @@
         else { sel = null; files = []; }
       }
     } catch (e) {
-      listError = (e as Error).message;
+      listError = errMessage(e);
     } finally {
       loadingList = false;
     }
@@ -130,7 +131,7 @@
       }
     } catch (e) {
       if (token !== detailToken) return;
-      detailError = (e as Error).message;
+      detailError = errMessage(e);
       loadingDetail = false;
     }
   }
@@ -147,7 +148,7 @@
           const h = await fetchHunks(sessionId, repo, file);
           if (token === detailToken) hunkState.set(file, h);
         } catch (e) {
-          if (token === detailToken) hunkState.set(file, { error: (e as Error).message });
+          if (token === detailToken) hunkState.set(file, { error: errMessage(e) });
         }
       }
     };
@@ -169,7 +170,7 @@
       });
       if (token === detailToken) hunkState.set(a.file, res);
     } catch (e) {
-      banner = `${a.op === 'stage' ? 'Stage' : 'Unstage'} failed — ${(e as Error).message}`;
+      banner = `${a.op === 'stage' ? 'Stage' : 'Unstage'} failed — ${errMessage(e)}`;
       // A refusal usually means the file moved under us. Re-read it so what is on screen
       // is what is on disk before the user tries again.
       try {

@@ -20,7 +20,9 @@ import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
 import { attachableWorktrees } from './features.ts';
 import * as runConfigs from './run-configs.ts';
-import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart } from './settings.ts';
+// isRecord too: this file had a byte-identical copy, docstring included, of a
+// predicate settings.ts already exported — and already imports four symbols from.
+import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart, isRecord } from './settings.ts';
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
@@ -49,11 +51,6 @@ const qs = (v: QueryValue): string => {
 
 /** A thrown value's message. `catch` binds `unknown`, and not everything thrown is an Error. */
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/** A plain object, as opposed to null or an array — what every JSON-body check means. */
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return !!v && typeof v === 'object' && !Array.isArray(v);
-}
 
 /**
  * A session repo that has been promoted. Everything that starts, stops or slots a

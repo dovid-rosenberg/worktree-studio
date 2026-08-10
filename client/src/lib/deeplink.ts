@@ -16,6 +16,7 @@
  * `hashchange`, write on selection) lives in the page component; this half is what the
  * tests can hold still.
  */
+import { selectionKey } from './stores/ui.svelte.js';
 import type { Selection } from './stores/ui.svelte.js';
 
 /** `#s:s_abc` → `{ kind: 'session', id: 's_abc' }`. Null for anything unrecognised. */
@@ -39,10 +40,15 @@ export function selectionFromHash(hash: string): Selection {
   return null;
 }
 
-/** The inverse. Empty string when nothing is selected — no stale fragment left behind. */
+/**
+ * The inverse. Empty string when nothing is selected — no stale fragment left behind.
+ *
+ * Built from the rail's OWN encoder rather than a second spelling of the same scheme.
+ * This file's header already claimed that coupling; now it is code. A prefix letter can
+ * only be changed in one place, so the fragment and the row keys cannot drift apart —
+ * which they could have done silently, since nothing compares them at build time.
+ */
 export function hashForSelection(s: Selection): string {
-  if (!s) return '';
-  if (s.kind === 'session') return `#s:${encodeURIComponent(s.id)}`;
-  if (s.kind === 'feature') return `#f:${encodeURIComponent(s.name)}`;
-  return `#w:${encodeURIComponent(s.path)}`;
+  const key = selectionKey(s, encodeURIComponent);
+  return key ? `#${key}` : '';
 }
