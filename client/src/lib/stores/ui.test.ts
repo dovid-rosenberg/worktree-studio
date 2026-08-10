@@ -284,6 +284,36 @@ describe('switching without losing your place', () => {
     expect(ui.railRows[0].name).toBe('zzz');
   });
 
+  it('finds a waiting agent on a PROMOTED feature — the normal case', () => {
+    /*
+     * The bug that made the button dead. A rail row is one of three shapes, and a promoted
+     * session appears as `kind:'feature'` with the agent EMBEDDED — while an unpromoted
+     * one is `kind:'session'` carrying it directly. Both the waiting sort and the jump
+     * filtered on `kind === 'session'`, so they covered only unpromoted sessions.
+     *
+     * Promoting is the normal path: a fleet of ten promoted features had a badge counting
+     * them and a button that could not find a single one.
+     */
+    give({
+      features: [
+        feature('quiet', [member('accept-blue')], embedded('s1', 'idle')),
+        feature('needs-you', [member('merchant-v3')], embedded('s2', 'waiting')),
+      ],
+      // Promoted, so they do NOT also appear as their own unpromoted rows — which is what
+      // makes them `feature` rows and is the whole point of this test.
+      sessions: [
+        session('s1', { state: 'idle', worktreePath: '/wt/quiet' }),
+        session('s2', { state: 'waiting', worktreePath: '/wt/needs-you' }),
+      ],
+    });
+
+    // It sorts to the top…
+    expect(ui.railRows[0].name).toBe('needs-you');
+    // …and the jump actually selects it.
+    expect(ui.goToNextWaiting()).toBe(true);
+    expect(ui.selectedFeatureName === 'needs-you' || ui.selectedId === 's2').toBe(true);
+  });
+
   it('goToNextWaiting cycles, and says so when nothing is waiting', () => {
     give({
       features: [],
