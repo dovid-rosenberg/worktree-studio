@@ -15,6 +15,7 @@
   import { toast } from '$lib/stores/toasts.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
   import type { Run, Session } from '../../../../../server/types';
+  import { errMessage } from '$lib/errmsg.js';
 
   let { session }: { session: Session } = $props();
 
@@ -88,7 +89,7 @@
 
   async function stop(r: Run) {
     try { await api('POST', `/api/v1/runs/${r.id}/stop`, {}); }
-    catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
+    catch (e) { toast(errMessage(e), true); }
   }
 
   async function rerun(r: Run) {
@@ -98,7 +99,7 @@
       // output. The list is newest-first, so it is already at the top.
       if (res.ok && res.run?.id) selectedId = res.run.id;
       else if (!res.ok) toast(res.error || 'Could not rerun', true);
-    } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
+    } catch (e) { toast(errMessage(e), true); }
   }
 
   async function forget(r: Run) {
@@ -106,7 +107,7 @@
       const res = await api('DELETE', `/api/v1/runs/${r.id}`);
       if (!res.ok) toast(res.error || 'Could not remove that run', true);
       else if (selectedId === r.id) selectedId = '';
-    } catch (e) { toast(e instanceof Error ? e.message : String(e), true); }
+    } catch (e) { toast(errMessage(e), true); }
   }
 </script>
 

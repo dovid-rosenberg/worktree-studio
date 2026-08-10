@@ -11,6 +11,7 @@
   import { ui } from '$lib/stores/ui.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
   import { toast } from '$lib/stores/toasts.svelte.js';
+  import { errMessage } from '$lib/errmsg.js';
 
   const KNOWN = [
     { id: 'freetext', label: 'Free text' },
@@ -61,7 +62,7 @@
       if (!out.ok) throw new Error(out.error || 'failed');
       issues = out.items || [];
       if (!issues.length) toast('No items found.');
-    } catch (e) { toast((e as Error).message, true); }
+    } catch (e) { toast(errMessage(e), true); }
     finally { loading = false; }
   }
 
@@ -90,7 +91,7 @@
       overlays.closeIntake();
       ui.goToSession(s.id);
       toast(`Session started — ${s.title}`);
-    } catch (e) { toast((e as Error).message, true); }
+    } catch (e) { toast(errMessage(e), true); }
     finally { starting = false; }
   }
 </script>

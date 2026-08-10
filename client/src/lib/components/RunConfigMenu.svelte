@@ -16,6 +16,7 @@
   import { api } from '$lib/api.js';
   import { ui } from '$lib/stores/ui.svelte.js';
   import { toast } from '$lib/stores/toasts.svelte.js';
+  import { errMessage } from '$lib/errmsg.js';
 
   /** One repo of the feature: which repo, and the worktree to read its configs from. */
   export interface Target { repo: string; path: string }
@@ -60,7 +61,7 @@
         }),
       );
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      error = errMessage(e);
     } finally {
       loading = false;
     }
@@ -93,7 +94,7 @@
         ui.setDockView('runs');
       }
     } catch (e) {
-      toast(e instanceof Error ? e.message : String(e), true);
+      toast(errMessage(e), true);
     } finally {
       running = '';
       open = false;

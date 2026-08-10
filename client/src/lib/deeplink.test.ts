@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { hashForSelection, selectionFromHash } from './deeplink.js';
+import { selectionKey } from './stores/ui.svelte.js';
 import type { Selection } from './stores/ui.svelte.js';
 
 /*
@@ -62,5 +63,47 @@ describe('hashForSelection', () => {
       { kind: 'mainserver', path: '/code/api' },
     ];
     for (const c of cases) expect(round(c)).toEqual(c);
+  });
+});
+
+/*
+ * The fragment scheme and the rail's row keys must stay the SAME scheme.
+ *
+ * `s:` / `f:` / `w:` was spelled out in four independent places — selectionKey, three
+ * inline literals in railRows, and twice more here. This file's header already asserted
+ * the coupling ("the fragment reuses the rail's own key scheme instead of inventing a
+ * second vocabulary"), but the reuse was by convention, and convention does not fail a
+ * build.
+ *
+ * The failure is silent: railDigits and goToNextWaiting both match a row's `key` against
+ * selectionKey(selection). Change a prefix letter in one and the rail highlights nothing
+ * while ⌥-digit picks the wrong row, with no compile error anywhere. So it is asserted.
+ */
+describe('the key scheme is shared, not merely similar', () => {
+  const cases: Selection[] = [
+    { kind: 'session', id: 's_abc' },
+    { kind: 'feature', name: 'token-race-fix' },
+    { kind: 'mainserver', path: '/code/accept-blue' },
+  ];
+
+  it('the URL fragment is the rail key, escaped — same prefix, same order', () => {
+    for (const sel of cases) {
+      expect(hashForSelection(sel)).toBe(`#${selectionKey(sel, encodeURIComponent)}`);
+    }
+  });
+
+  it('a value needing escaping round-trips, and the rail key keeps it raw', () => {
+    // A feature name with a space and a slash: the fragment must escape both, the row key
+    // must not — they are the same structure with different escaping, which is exactly
+    // why one encoder with an `enc` hook beats two spellings.
+    const sel: Selection = { kind: 'feature', name: 'fix/google pay' };
+    expect(selectionKey(sel)).toBe('f:fix/google pay');
+    expect(hashForSelection(sel)).toBe('#f:fix%2Fgoogle%20pay');
+    expect(selectionFromHash(hashForSelection(sel))).toEqual(sel);
+  });
+
+  it('nothing selected leaves no fragment behind', () => {
+    expect(selectionKey(null)).toBe('');
+    expect(hashForSelection(null)).toBe('');
   });
 });
