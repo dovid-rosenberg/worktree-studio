@@ -626,7 +626,20 @@ export async function deleteFeature(f: Feature) {
   return pending.run(f.name, async () => {
     try {
       const r = await api('POST', '/api/v1/group/delete', { group: f.name, deleteBranches });
-      toast(r.ok ? `Deleted ${f.name}` : 'Some removals failed', !r.ok);
+      /*
+       * Name the branches that did NOT go.
+       *
+       * `git branch -d` refuses an unmerged branch, and the whole chain used to swallow
+       * that: the toast said "Deleted <name>" while every branch was still there. The
+       * worktrees really are gone, so this is not an error — it is a partial outcome, and
+       * the user needs to know which half happened.
+       */
+      const kept = (r.results || [])
+        .filter((x: { branchError?: string }) => x.branchError)
+        .map((x: { repo: string }) => x.repo);
+      if (!r.ok) toast('Some removals failed', true);
+      else if (kept.length) toast(`Deleted ${f.name} — branch kept in ${kept.join(', ')} (not merged)`, true);
+      else toast(`Deleted ${f.name}`);
     } catch (e) {
       toast(errMessage(e), true);
     }

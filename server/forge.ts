@@ -9,7 +9,7 @@
 //   create → { ok:true, url } or { ok:false, stderr }
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
-import { run, has } from './util.ts';
+import { CHILD_ENV, run, has } from './util.ts';
 import type { CiChecks, CiRepo, SessionRepo } from './types.ts';
 import type { Router } from 'express';
 
@@ -32,10 +32,7 @@ export interface Provider {
   create: (branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<CreateResult>;
 }
 
-const ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
-};
+const ENV: NodeJS.ProcessEnv = CHILD_ENV;
 
 /**
  * The CLI environment, with a configured token handed to the CLI that wants it.

@@ -5,7 +5,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { run } from '../util.ts';
+import { CHILD_ENV, run } from '../util.ts';
 import type { RunResult } from '../util.ts';
 import { CONFIG_DIR } from '../config.ts';
 
@@ -125,10 +125,7 @@ const CONF = path.join(CONFIG_DIR, 'tmux.conf');
   }
 })();
 
-const ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
-};
+const ENV: NodeJS.ProcessEnv = CHILD_ENV;
 function T(args: string[]): Promise<RunResult> {
   return run('tmux', ['-L', SOCK, '-f', CONF, ...args], { env: ENV });
 }

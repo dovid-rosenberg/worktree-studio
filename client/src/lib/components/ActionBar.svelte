@@ -214,5 +214,6 @@
   .hint { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 
   .grow { flex: 1; }
-  .dangertext { color: #e5484d; }
+  /* --del: the literal was a fourth red, and failed AA at 3.91:1. */
+  .dangertext { color: var(--del); }
 </style>

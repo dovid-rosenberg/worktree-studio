@@ -150,7 +150,20 @@
            transition:border-color .12s, background .12s; }
   @media (prefers-reduced-motion:reduce){ .fcard { transition:none; } }
   .fcard:hover { border-color:var(--border-strong); }
-  .fcard.sel { border-color:var(--fc, var(--brand)); background:var(--fc-wash, var(--elevated)); }
+  /*
+   * Selection needs a channel the colour tag is not already using.
+   *
+   * This was `background: var(--fc-wash, var(--elevated))` — which, for a TAGGED card,
+   * resolves to the same wash the unselected card already has, so selecting it changed
+   * the background not at all. The border went to `--fc`, a colour the card is already
+   * wearing as its 3px edge. Net effect: opting into a colour tag made a card's selection
+   * state WEAKER than an untagged one's, which is backwards.
+   *
+   * So selection is now a ring in the brand hue — never a feature colour, so it cannot
+   * collide with the tag — plus a widened edge. Both read on a tagged and an untagged card.
+   */
+  .fcard.sel { border-color:var(--brand); box-shadow:inset 3px 0 0 var(--fc, var(--brand)), 0 0 0 1px var(--brand); }
+  .fcard.sel.running { box-shadow:inset 3px 0 0 var(--fc, var(--done)), 0 0 0 1px var(--brand); }
   /* A tag OUTRANKS the running edge, deliberately: "servers up" is already said by the
      port numbers on the member rows, which render in --done and only exist while a server
      is up. Identity has no second copy, so it gets the channel. */

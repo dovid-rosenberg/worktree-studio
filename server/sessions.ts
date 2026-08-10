@@ -16,6 +16,7 @@ import type { WorktreeCreateResult } from './worktree.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Identity, IdentityInput } from './identity.ts';
 import type { Config, PartialDeep, Session, SourceSeed, SessionTab } from './types.ts';
+import { originHead } from './git.ts';
 const { worktreeCopyOpts } = worktree;
 
 // ---- the collaborators, typed by what this file asks of them ----------------
@@ -739,15 +740,11 @@ class SessionManager extends EventEmitter {
       const branch = head.stdout.trim();
       // Detached HEAD has no branch to be "ahead" of and no sensible thing to offer.
       if (!branch || branch === 'HEAD') return empty;
-      const sym = await run('git', [
-        '-C',
-        repoPath,
-        'symbolic-ref',
-        '--quiet',
-        '--short',
-        'refs/remotes/origin/HEAD',
-      ]);
-      const base = sym.stdout.trim();
+      // originHead() from git.ts — this was a FOURTH hand-rolled copy of the same
+      // lookup. The raw form is right here: no origin/HEAD means there is genuinely no
+      // base to be ahead of, and guessing 'main' would compare against a branch that may
+      // not exist and offer to carry commits that are already upstream.
+      const base = await originHead(repoPath);
       if (!base) return empty;
       /*
        * `--cherry-pick --right-only` with THREE dots, not a plain `base..HEAD`.

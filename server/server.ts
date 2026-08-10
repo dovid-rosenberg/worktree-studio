@@ -34,6 +34,7 @@ import type { ScannedRepo } from './git.ts';
 import { FEATURE_COLORS } from './types.ts';
 import type { EditorConfig, GroupConfig, RunConfig, Session, SessionRepo, StartConfig } from './types.ts';
 import * as startReport from './start-report.ts';
+import fs from 'fs';
 
 /**
  * One value off a query string. Express hands back a string, an array (`?a=1&a=2`)
@@ -1090,6 +1091,28 @@ async function main() {
     console.log(
       `[wt-studio] http://${cfg.web.host}:${cfg.web.port}  (${repos.length} repos, mux=${mux ? mux.name : 'none'})`,
     );
+    /*
+     * Zero repos is a DEAD END, and it used to be announced as a number.
+     *
+     * `baseDirs` defaults to `['~/code']`, which its own comment calls "a guess, not a
+     * convention" — so on any machine that does not happen to use that layout, a first
+     * run boots clean, prints `(0 repos)`, and every surface downstream then implies the
+     * user did something wrong: an empty rail, an empty repo dropdown, and `unknown
+     * repo ''` if they try anyway. Nothing anywhere names the actual cause, which is a
+     * directory that does not exist.
+     *
+     * Distinguishing the two causes matters: a path that is absent is a different fix
+     * (point it somewhere real) from a path that exists and holds no git repos.
+     */
+    if (!repos.length) {
+      const dirs = (cfg.baseDirs || []).map((d) => expandTilde(String(d)));
+      const missing = dirs.filter((d) => !fs.existsSync(d));
+      console.warn(
+        `[wt-studio] no repos found. Studio scans ${dirs.join(', ') || '(nothing — baseDirs is empty)'} ` +
+          `${missing.length ? `— ${missing.join(', ')} does not exist. ` : 'and found no git repositories there. '}` +
+          `Set your repo folders in Settings, or edit "baseDirs" in ${cfg._file || 'the config file'}.`,
+      );
+    }
   });
 }
 

@@ -20,7 +20,9 @@ function writeConfig(obj: unknown): void {
 }
 
 // The shipped default patterns that must always be present after load().
-const SHIPPED = ['src/config.ts', 'src/config/config.ts'];
+// `.js`, not `.ts`: these globs are matched against the USER'S repo, where the
+// extension belongs to that repo. See the note on copyPatterns in server/config.ts.
+const SHIPPED = ['src/config.js', 'src/config/config.js'];
 
 test('load() unions shipped default copyPatterns into an existing (stale) copyPatterns.default', () => {
   // Old on-disk config: has copyPatterns but WITHOUT the newer FE paths.

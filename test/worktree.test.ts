@@ -90,3 +90,41 @@ test('remove() with { deleteBranch } also deletes the branch', async () => {
   assert.equal(await worktree.branchExists(repo, 'feature/gone2'), false, 'branch is gone');
   fs.rmSync(repo, { recursive: true, force: true });
 });
+
+/*
+ * An UNMERGED branch is refused by `git branch -d`, and that refusal must reach the user.
+ *
+ * `remove()` recorded only `branchDeleted = d.code === 0` and threw the stderr away — and
+ * `branchDeleted` had no consumer anywhere in the codebase, only its declaration and the
+ * two lines setting it. So ticking "Also delete the branches" on a feature with unmerged
+ * work answered a clean success, toasted "Deleted <name>", and left every branch standing.
+ */
+test('remove() REPORTS a branch it could not delete, instead of claiming success', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/unmerged', 'unmerged', { fetch: false, copyPatterns: [] });
+  // Commit inside the worktree so the branch is genuinely ahead — what `-d` refuses.
+  fs.writeFileSync(path.join(res.path, 'work.txt'), 'unmerged work\n');
+  sh(res.path, 'git', ['add', '-A']);
+  sh(res.path, 'git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'ahead']);
+
+  const out = await worktree.remove(repo, res.path, { deleteBranch: true, branch: 'feature/unmerged' });
+  const ok = expectOk(out, 'remove()');
+
+  // The worktree really did go, so this is a PARTIAL outcome, not a failure.
+  assert.equal(fs.existsSync(res.path), false, 'the worktree is gone');
+  assert.equal(ok.branchDeleted, false);
+  assert.ok(ok.branchError, 'the refusal is carried, not swallowed');
+  assert.match(ok.branchError || '', /not fully merged|feature\/unmerged/);
+  assert.equal(await worktree.branchExists(repo, 'feature/unmerged'), true, 'the branch survived');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('a branch that DID delete carries no error — the quiet path stays quiet', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/clean', 'clean', { fetch: false, copyPatterns: [] });
+  const out = await worktree.remove(repo, res.path, { deleteBranch: true, branch: 'feature/clean' });
+  const ok = expectOk(out, 'remove()');
+  assert.equal(ok.branchDeleted, true);
+  assert.equal('branchError' in ok, false, 'nothing to report means no key at all');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
