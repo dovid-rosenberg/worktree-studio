@@ -992,7 +992,10 @@ class Servers {
     return sc ? sc.ports : [];
   }
 
-  async stop(repo: string, worktreePath: string): Promise<{ ok: true; killed: boolean }> {
+  async stop(
+    repo: string,
+    worktreePath: string,
+  ): Promise<{ ok: true; killed: boolean; stillListening: number[] }> {
     let killed = false;
     const t = this.tracked[worktreePath];
     // Never signal a pid we cannot still prove is ours — see _trackedPidState.
@@ -1050,7 +1053,36 @@ class Servers {
     }
     delete this.tracked[worktreePath];
     this._save();
-    return { ok: true, killed };
+
+    /*
+     * Did it actually stop? SIGTERM is a REQUEST, and a process may decline it.
+     *
+     * The return type was literally `{ ok: true; killed: boolean }` — `ok` was a constant
+     * and there was no failure channel at all, so a server with a `process.on('SIGTERM')`
+     * handler that keeps listening was reported as stopped while `lsof` still showed the
+     * port bound. Nothing escalated, and the group verbs discarded even `killed`.
+     *
+     * One re-check after a short settle, then SIGKILL what is left. A caller that asked
+     * for a stop is entitled to know whether it happened.
+     */
+    const ports = this._portsFor(repo, worktreePath);
+    if (!killed || !ports.length) return { ok: true, killed, stillListening: [] };
+
+    await new Promise((r) => setTimeout(r, 600));
+    const stubborn: number[] = [];
+    for (const p of ports) {
+      const pid = await this.portPid(p);
+      if (!pid) continue;
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* gone between the check and the signal, which is the outcome we wanted */
+      }
+      stubborn.push(p);
+    }
+    // Reported whether or not the SIGKILL landed: the caller wanted to know that a polite
+    // stop was not enough, and a port that needed killing twice is worth surfacing.
+    return { ok: true, killed, stillListening: stubborn };
   }
 
   async restart(repo: string, worktreePath: string, opts: Partial<LaunchOpts> = {}): Promise<StartResult> {

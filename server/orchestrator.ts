@@ -77,7 +77,15 @@ interface Servers {
         results: StartOutcome[];
       }
   >;
-  stop(repo: string, worktreePath: string): Promise<unknown>;
+  /*
+   * The real outcome, not `unknown` — the same narrowing trap `restart` had.
+   *
+   * Declaring less than Servers.stop() actually returns type-ERASES the answer on the way
+   * in, so this route could not have reported a server that refused to die even if it had
+   * tried. That is how /group/restart came to report "3/3 restarted" for three servers
+   * that never bound a port.
+   */
+  stop(repo: string, worktreePath: string): Promise<{ ok: true; killed: boolean; stillListening: number[] }>;
   /*
    * The FULL outcome, not `{ok, error}`.
    *
@@ -224,14 +232,38 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    await Promise.all(g.members.filter((m) => m.running).map((m) => servers.stop(m.repo, m.path)));
+    const running = g.members.filter((m) => m.running);
+    const stops = await Promise.all(
+      running.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path)) })),
+    );
     // Refresh first, then release: the guard reads what is still listening, and this
     // released the slot BEFORE looking — so a member that refused to die still took its
     // ports while the slot went back in the pool.
     await refreshRunning();
     releaseIdleSlots(g.members);
     scheduleBroadcast();
-    res.json({ ok: true });
+    /*
+     * `ok` means the stack is actually down.
+     *
+     * This answered a hardcoded `{ok: true}` and discarded every per-member result, so a
+     * dev server that installs a SIGTERM handler and keeps listening was reported as
+     * stopped while its port was still bound. stop() now re-checks and escalates; this
+     * reports what it found.
+     */
+    const stubborn = stops.filter((s) => s.stillListening.length);
+    res.json({
+      ok: stubborn.length === 0,
+      stopped: stops.length - stubborn.length,
+      total: stops.length,
+      ...(stubborn.length
+        ? {
+            failures: stubborn.map((s) => ({
+              repo: s.repo,
+              error: `still listening on port ${s.stillListening.join(', ')} after SIGTERM and SIGKILL`,
+            })),
+          }
+        : {}),
+    });
   });
 
   app.post('/group/restart', async (req, res) => {

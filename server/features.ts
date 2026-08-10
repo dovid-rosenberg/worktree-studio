@@ -51,10 +51,26 @@ function computeFeatures(
     members: (g.members || []).map((ref) => resolveRef(worktrees, ref)),
   }));
   const manualNames = new Set(manual.map((g) => g.name));
+  /*
+   * The PATHS a manual group has claimed — not its names.
+   *
+   * The dedupe below compared the auto-identity against manual group NAMES, which never
+   * match a member's basename. So a group `{name:'mixed', members:['api/alpha','web/beta']}`
+   * produced `mixed` AND `alpha` AND `beta`: three cards, each independently startable,
+   * each taking its own concurrency slot. Under the `manifest` strategy the identities
+   * happen to collapse to the group name and the name test appears to work, which is what
+   * hid this for the one strategy anybody tested it with.
+   *
+   * A path is what a worktree IS, so it cannot fail to match the way a name can.
+   */
+  const claimed = new Set(
+    manual.flatMap((g) => (g.members || []).map((m) => (m && 'path' in m ? m.path : ''))).filter(Boolean),
+  );
 
   // group linked worktrees by feature identity
   const byName = new Map<string, Worktree[]>();
   for (const w of linked) {
+    if (claimed.has(w.path)) continue; // already spoken for by a manual group
     const key = identity.of(w);
     const bucket = byName.get(key);
     if (bucket) bucket.push(w);

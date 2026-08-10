@@ -81,3 +81,42 @@ test('manual group name suppresses the auto feature of the same name', () => {
 test('resolveRef returns a missing stub for unknown refs', () => {
   assert.deepEqual(resolveRef([], 'x/y'), { missing: true, ref: 'x/y' });
 });
+
+/*
+ * A worktree claimed by a manual group must not ALSO be its own singleton feature.
+ *
+ * The dedupe compared the auto-identity against manual group NAMES, which never match a
+ * member's basename — so `{name:'mixed', members:['api/alpha','web/beta']}` produced
+ * `mixed` and `alpha` and `beta`: three cards, each independently startable, each taking
+ * its own concurrency slot. Under the `manifest` strategy the identities happen to
+ * collapse to the group name and the name test appears to work, which is what hid it for
+ * the one strategy anybody exercised.
+ */
+test('members of a manual group do not reappear as singleton features', () => {
+  const worktrees = [
+    wt('api', 'alpha', 'feature/alpha'),
+    wt('web', 'beta', 'feature/beta'),
+    wt('worker', 'gamma', 'feature/gamma'),
+    wt('other', 'unrelated', 'feature/unrelated'),
+  ];
+  const groups = [{ name: 'mixed', members: ['api/alpha', 'web/beta', 'worker/gamma'] }];
+
+  const { features } = computeFeatures(worktrees, groups);
+  const names = features.map((f) => f.name).sort();
+
+  assert.deepEqual(names, ['mixed', 'unrelated'], 'alpha/beta/gamma belong to mixed, not to themselves');
+  assert.equal(
+    present(
+      features.find((f) => f.name === 'mixed'),
+      'mixed',
+    ).members.length,
+    3,
+  );
+});
+
+test('a worktree NOT in any group is still its own feature', () => {
+  // The guard is scoped to claimed paths, so everything else is untouched.
+  const worktrees = [wt('api', 'solo', 'feature/solo')];
+  const { features } = computeFeatures(worktrees, [{ name: 'empty-ish', members: ['api/nope'] }]);
+  assert.ok(features.some((f) => f.name === 'solo'));
+});
