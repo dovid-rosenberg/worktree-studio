@@ -44,4 +44,7 @@
   .modal { width:min(560px,96vw); background:var(--panel); border:1px solid var(--border-strong); border-radius:14px; box-shadow:var(--shadow); overflow:hidden; max-height:92vh; display:flex; flex-direction:column; }
   .modal:global(.dlg) { width:min(460px,94vw); }
   .modal:global(.palette) { width:min(600px,96vw); }
+  /* Settings only. 160px of sidebar + the 560px the form has always had — wide enough to
+     gain the nav without any panel getting narrower than it is today, and no wider. */
+  .modal:global(.settings) { width:min(720px,96vw); }
 </style>

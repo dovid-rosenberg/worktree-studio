@@ -66,6 +66,25 @@
    */
   let pristine = '';
 
+  /**
+   * The five panels, and which of three groups each belongs to.
+   *
+   * Ordered by how often you come here for them, not alphabetically. The GROUP is what a
+   * flat tab strip could not express: repos, dev servers and editors are all about your
+   * code; the trackers and forges are somebody else's server; notifications are Studio
+   * itself.
+   */
+  const SECTIONS = [
+    { id: 'repos', label: 'Repos & groups', glyph: '◧', group: 'code' },
+    { id: 'servers', label: 'Dev servers', glyph: '▶', group: 'code' },
+    { id: 'editors', label: 'Editors', glyph: '↗', group: 'code' },
+    { id: 'conn', label: 'Connections', glyph: '◎', group: 'out' },
+    { id: 'notify', label: 'Notifications', glyph: '◔', group: 'app' },
+  ] as const;
+
+  /** Not persisted: which panel you were last on is not a preference, it is where you were. */
+  let tab = $state<(typeof SECTIONS)[number]['id']>('repos');
+
   /*
    * Connecting Asana: prove the token, learn who it belongs to, pick a workspace.
    *
@@ -297,19 +316,63 @@
   }
 </script>
 
-<Modal label="Connections & settings" onclose={tryClose}>
+<Modal panelClass="settings" label="Settings" onclose={tryClose}>
   <div class="modal-head">
-    <span>⚙</span><b>Connections &amp; settings</b>
+    <span>⚙</span><b>Settings</b>
     <span class="spacer"></span>
     <button class="btn ghost" title="Close" aria-label="Close" onclick={tryClose}>✕</button>
   </div>
 
-  <div class="modal-body">
+  <!--
+    A SIDEBAR, not nine sections in one scroll.
+    The form was 568 lines in a single column — repo roots, three integrations,
+    notifications, dev servers, editors, run configurations and feature groups, stacked.
+    Five panels now, under three headings that say something the panel names cannot: repos,
+    dev servers and editors are all about YOUR CODE, while the trackers and forges are
+    ELSEWHERE. That is the distinction you navigate by.
+
+    160px of sidebar plus the 560px the form has always had — so nothing got narrower.
+  -->
+  <div class="setwrap">
     {#if error}
       <div class="conn-status"><span class="warn">Could not load settings: {error}</span></div>
     {:else if !loaded}
       <div class="conn-status">Loading…</div>
     {:else}
+      <!-- A div, not a <nav>: a tablist is a widget role, and putting it on a landmark
+           element is a contradiction the linter is right to flag. -->
+      <div class="setnav" role="tablist" aria-label="Settings sections">
+        <span class="navsec">Your code</span>
+        {#each SECTIONS.filter((s) => s.group === 'code') as s (s.id)}
+          <button
+            role="tab"
+            aria-selected={tab === s.id}
+            aria-controls="setpanel-{s.id}"
+            onclick={() => (tab = s.id)}
+          ><span class="g" aria-hidden="true">{s.glyph}</span><span class="nm">{s.label}</span></button>
+        {/each}
+        <span class="navsec">Elsewhere</span>
+        {#each SECTIONS.filter((s) => s.group === 'out') as s (s.id)}
+          <button
+            role="tab"
+            aria-selected={tab === s.id}
+            aria-controls="setpanel-{s.id}"
+            onclick={() => (tab = s.id)}
+          ><span class="g" aria-hidden="true">{s.glyph}</span><span class="nm">{s.label}</span></button>
+        {/each}
+        <span class="navsec">Studio</span>
+        {#each SECTIONS.filter((s) => s.group === 'app') as s (s.id)}
+          <button
+            role="tab"
+            aria-selected={tab === s.id}
+            aria-controls="setpanel-{s.id}"
+            onclick={() => (tab = s.id)}
+          ><span class="g" aria-hidden="true">{s.glyph}</span><span class="nm">{s.label}</span></button>
+        {/each}
+      </div>
+
+      <div class="setpanel" id="setpanel-{tab}" role="tabpanel">
+        {#if tab === 'repos'}
       <div class="setsec">
         <span class="lbl">Repo roots <span class="lbl-note">— folders scanned for your repos, in scan order</span></span>
         {#each rootRows as row, i (row.key)}
@@ -327,104 +390,29 @@
         <button class="btn ghost xs add" onclick={() => (rootRows = [...rootRows, { key: ++rowKey, path: '' }])}>＋ add root</button>
       </div>
 
-      <div class="field">
-        <span class="lbl">GitHub <span class="hint">— uses the <code>gh</code> CLI</span></span>
-        <div class="conn-status">
-          {#if tools.gh}
-            {#if githubAuthed}<span class="ok">✓ gh installed &amp; authenticated</span>
-            {:else}<span class="warn">gh installed — run <code>gh auth login</code></span>{/if}
-          {:else}
-            <span class="warn">gh not installed (brew install gh)</span>
-          {/if}
-        </div>
+      <div class="setsec">
+        <span class="lbl">Feature groups <span class="lbl-note">— only for worktrees whose names do NOT match</span></span>
+        <!-- Said out loud, because the word "group" does not carry it: a feature is
+             normally AUTOMATIC — worktrees in different repos that share a name are one
+             feature. A group is the manual override for when the names cannot match. -->
+        <p class="secnote">
+          Worktrees that share a name are already one feature — you need a group only when
+          they differ, e.g. <code>api/fix-login</code> with <code>web/login-cleanup</code>.
+        </p>
+        {#each groupRows as row, i (row.key)}
+          <div
+            class="srvcfg-row cols3"
+            use:reorderable={{ index: i, onmove: (f, tIdx) => (groupRows = move(groupRows, f, tIdx)) }}
+          >
+            <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
+            <input bind:value={row.name} placeholder="group name…" aria-label="Group name" />
+            <input bind:value={row.members} placeholder="repo/branch, repo/branch…" aria-label="Group members" />
+            <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (groupRows = groupRows.filter((r) => r.key !== row.key))}>✕</button>
+          </div>
+        {/each}
+        <button class="btn ghost xs add" onclick={() => (groupRows = [...groupRows, { key: ++rowKey, name: '', members: '' }])}>＋ add group</button>
       </div>
-
-      <!--
-        A CONNECTION, not three fields and a checkbox.
-        Filling in a token IS the statement "I want this connected" — but `enabled` was a
-        separate tick, so credentials could be saved, correct, and inert, with nothing on
-        screen saying so. That is exactly what happened: a valid token and workspace sat
-        beside `enabled: false` and the picker went on asking GitHub.
-
-        So there is no checkbox. Connect proves the token works, says WHO it belongs to —
-        a tick proves a request succeeded, a name proves it succeeded as you, which is what
-        "assigned to me" actually rests on — and enables the source. Disconnect is the off
-        switch, and it is unambiguous.
-      -->
-      <div class="field">
-        <span class="lbl">GitLab <span class="lbl-note">{tools.glab ? '— the glab CLI is available; a token is only needed for API mode' : '— API token'}</span></span>
-        {#if gl.enabled && gl.token}
-          <div class="conn"><span class="ok">✓ connected</span><span class="conn-what">{gl.host || 'gitlab.com'}{gl.project ? ` · ${gl.project}` : ''}</span>
-            <button class="btn ghost xs" onclick={() => { gl.enabled = false; gl.token = ''; }}>Disconnect</button>
-          </div>
-        {:else}
-          <div class="conn-row">
-            <input class="input" placeholder="https://gitlab.com" bind:value={gl.host} aria-label="GitLab host" />
-            <input class="input" placeholder="group/project (API mode)" bind:value={gl.project} aria-label="GitLab project" />
-          </div>
-          <div class="conn-row">
-            <input class="input" type="password" placeholder="Personal access token" bind:value={gl.token} aria-label="GitLab token" />
-            <button class="btn xs" disabled={!gl.token.trim()} onclick={() => (gl.enabled = true)}>Connect</button>
-          </div>
-        {/if}
-      </div>
-
-      <div class="field">
-        <span class="lbl">Asana <span class="lbl-note">— where your tasks come from</span></span>
-        {#if as.enabled && as.token && as.workspace}
-          <div class="conn">
-            <span class="ok">✓ connected</span>
-            <span class="conn-what">{asanaWho || 'Asana'}{asanaWorkspaceName ? ` · ${asanaWorkspaceName}` : ''}</span>
-            <button class="btn ghost xs" onclick={disconnectAsana}>Disconnect</button>
-          </div>
-        {:else}
-          <div class="conn-row">
-            <input
-              class="input"
-              type="password"
-              placeholder="Personal access token"
-              bind:value={as.token}
-              aria-label="Asana token"
-            />
-            <button class="btn xs" disabled={!as.token.trim() || asanaLoading} onclick={connectAsana}>
-              {asanaLoading ? 'Checking…' : 'Connect'}
-            </button>
-          </div>
-          <span class="hint">Create one at <code>app.asana.com</code> → your photo → My settings → Apps → Personal access tokens</span>
-          {#if asanaWorkspaces.length > 1}
-            <!-- Only when there is a real choice. One workspace is picked automatically,
-                 because making someone choose from a list of one is a step for nothing. -->
-            <div class="conn-row">
-              <select class="select" bind:value={as.workspace} aria-label="Asana workspace">
-                <option value="">Pick a workspace…</option>
-                <!-- The COUNT, not just the name: this account has two workspaces both
-                   called "accept.blue", one with twenty tasks and one with none. The name
-                   alone offers the same word twice and no way to choose. -->
-              {#each asanaWorkspaces as w (w.gid)}
-                <option value={w.gid}>{w.name}{w.tasks >= 0 ? ` — ${w.tasks === 0 ? 'no tasks' : `${w.tasks} task${w.tasks === 1 ? '' : 's'}`} assigned to you` : ''}</option>
-              {/each}
-              </select>
-              <button class="btn xs" disabled={!as.workspace} onclick={() => (as.enabled = true)}>Use this</button>
-            </div>
-          {/if}
-          {#if asanaError}<span class="hint err">{asanaError}</span>{/if}
-        {/if}
-      </div>
-
-      <div class="field">
-        <span class="lbl">Notifications <span class="hint">— when a session needs you</span></span>
-        <label class="chk">
-          <input type="checkbox" bind:checked={nt.waiting} onchange={() => nt.waiting && notify.requestPermission()} />
-          Desktop notification when a session needs input
-        </label>
-        <label class="chk"><input type="checkbox" bind:checked={nt.sound} /> Play a sound</label>
-        <label class="chk"><input type="checkbox" bind:checked={nt.idle} /> Notify when a turn completes</label>
-      </div>
-
-      <datalist id="setRepoList">
-        {#each world.repos as r (r.name)}<option value={r.name}></option>{/each}
-      </datalist>
-
+        {:else if tab === 'servers'}
       <div class="setsec">
         <span class="lbl">Dev servers <span class="lbl-note">— per-repo launch command &amp; ports (space/comma separated)</span></span>
         {#each startRows as row, i (row.key)}
@@ -440,35 +428,6 @@
           </div>
         {/each}
         <button class="btn ghost xs add" onclick={() => (startRows = [...startRows, { key: ++rowKey, repo: '', cmd: '', ports: '' }])}>＋ add server</button>
-      </div>
-
-      <div class="setsec">
-        <span class="lbl">Editors <span class="lbl-note">— <code>{'{path}'}</code> is the worktree path</span></span>
-        {#each editorRows as row, i (row.key)}
-          <div
-            class="srvcfg-row cols3"
-            use:reorderable={{ index: i, onmove: (f, tIdx) => (editorRows = move(editorRows, f, tIdx)) }}
-          >
-            <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
-            <input bind:value={row.name} placeholder="name…" aria-label="Editor name" />
-            <input bind:value={row.open} placeholder="open command with {'{path}'}…" aria-label="Open command" />
-            <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (editorRows = editorRows.filter((r) => r.key !== row.key))}>✕</button>
-          </div>
-        {/each}
-        <button class="btn ghost xs add" onclick={() => (editorRows = [...editorRows, { key: ++rowKey, name: '', open: '', openGroup: '' }])}>＋ add editor</button>
-
-        <!-- Which editor "Open in editor" actually uses. The server has always accepted
-             `defaultEditor` and returned it; this modal never sent it and offered no
-             control, so the choice was stuck at whatever config.json said and could only
-             be changed by hand-editing the file and restarting the daemon. -->
-        <label class="picker">
-          <span>Open in editor uses</span>
-          <select class="mini-select" bind:value={defaultEditor} aria-label="Default editor">
-            {#each editorRows.filter((r) => r.name.trim()) as r (r.key)}
-              <option value={r.name.trim()}>{r.name.trim()}</option>
-            {/each}
-          </select>
-        </label>
       </div>
 
       <div class="setsec">
@@ -499,27 +458,197 @@
         <button class="btn ghost xs add" onclick={() => (runRows = [...runRows, { key: ++rowKey, repo: '', name: '', cmd: '', kind: 'task' }])}>＋ add run configuration</button>
       </div>
 
+        {:else if tab === 'editors'}
       <div class="setsec">
-        <span class="lbl">Feature groups <span class="lbl-note">— only for worktrees whose names do NOT match</span></span>
-        <!-- Said out loud, because the word "group" does not carry it: a feature is
-             normally AUTOMATIC — worktrees in different repos that share a name are one
-             feature. A group is the manual override for when the names cannot match. -->
-        <p class="secnote">
-          Worktrees that share a name are already one feature — you need a group only when
-          they differ, e.g. <code>api/fix-login</code> with <code>web/login-cleanup</code>.
-        </p>
-        {#each groupRows as row, i (row.key)}
+        <span class="lbl">Editors <span class="lbl-note">— <code>{'{path}'}</code> is the worktree path</span></span>
+        {#each editorRows as row, i (row.key)}
           <div
             class="srvcfg-row cols3"
-            use:reorderable={{ index: i, onmove: (f, tIdx) => (groupRows = move(groupRows, f, tIdx)) }}
+            use:reorderable={{ index: i, onmove: (f, tIdx) => (editorRows = move(editorRows, f, tIdx)) }}
           >
             <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
-            <input bind:value={row.name} placeholder="group name…" aria-label="Group name" />
-            <input bind:value={row.members} placeholder="repo/branch, repo/branch…" aria-label="Group members" />
-            <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (groupRows = groupRows.filter((r) => r.key !== row.key))}>✕</button>
+            <input bind:value={row.name} placeholder="name…" aria-label="Editor name" />
+            <input bind:value={row.open} placeholder="open command with {'{path}'}…" aria-label="Open command" />
+            <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (editorRows = editorRows.filter((r) => r.key !== row.key))}>✕</button>
           </div>
         {/each}
-        <button class="btn ghost xs add" onclick={() => (groupRows = [...groupRows, { key: ++rowKey, name: '', members: '' }])}>＋ add group</button>
+        <button class="btn ghost xs add" onclick={() => (editorRows = [...editorRows, { key: ++rowKey, name: '', open: '', openGroup: '' }])}>＋ add editor</button>
+
+        <!-- Which editor "Open in editor" actually uses. The server has always accepted
+             `defaultEditor` and returned it; this modal never sent it and offered no
+             control, so the choice was stuck at whatever config.json said and could only
+             be changed by hand-editing the file and restarting the daemon. -->
+        <label class="picker">
+          <span>Open in editor uses</span>
+          <select class="mini-select" bind:value={defaultEditor} aria-label="Default editor">
+            {#each editorRows.filter((r) => r.name.trim()) as r (r.key)}
+              <option value={r.name.trim()}>{r.name.trim()}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
+
+        {:else if tab === 'conn'}
+      <div class="field">
+        <span class="lbl">Asana <span class="lbl-note">— where your tasks come from</span></span>
+        <!--
+          THREE STEPS, drawn as three steps.
+          A token box, a Connect button, a workspace dropdown and a "Use this" button used
+          to share two cramped rows while the state changed underneath — so it read as one
+          crowded thing rather than a sequence with a beginning and an end.
+        -->
+        {#if as.enabled && as.token && as.workspace}
+          <div class="conn">
+            <span class="ok">✓ connected</span>
+            <span class="conn-what">{asanaWho || 'Asana'}{asanaWorkspaceName ? ` · ${asanaWorkspaceName}` : ''}</span>
+            <button class="btn ghost xs" onclick={disconnectAsana}>Disconnect</button>
+          </div>
+          <span class="hint">
+            Your assigned tasks appear when you link a feature to a task, and each ticket chip
+            shows where it sits on the board.
+          </span>
+        {:else}
+          <ol class="steps">
+            <li class="step" class:done={asanaWho} class:now={!asanaWho}>
+              <span class="n" aria-hidden="true">{asanaWho ? '✓' : '1'}</span>
+              <div class="sbody">
+                {#if asanaWho}
+                  <span class="t">Connected as {asanaWho}</span>
+                {:else}
+                  <span class="t">Paste a personal access token</span>
+                  <input
+                    class="input"
+                    type="password"
+                    placeholder="Personal access token"
+                    bind:value={as.token}
+                    aria-label="Asana token"
+                  />
+                  <span class="hint">
+                    app.asana.com → your photo → My settings → Apps → Personal access tokens
+                  </span>
+                  <button
+                    class="btn xs primary"
+                    disabled={!as.token.trim() || asanaLoading}
+                    onclick={connectAsana}
+                  >{asanaLoading ? 'Checking…' : 'Connect'}</button>
+                {/if}
+              </div>
+            </li>
+
+            <li class="step" class:now={asanaWho} class:todo={!asanaWho}>
+              <span class="n" aria-hidden="true">2</span>
+              <div class="sbody">
+                <span class="t">Choose a workspace</span>
+                {#if !asanaWho}
+                  <span class="hint">Studio will list the ones your token can see.</span>
+                {:else if asanaWorkspaces.length > 1}
+                  <!--
+                    RADIO ROWS, not a dropdown. This account has two workspaces both named
+                    "accept.blue" — one with 28 tasks assigned and one with none — and a
+                    <select> hides the count until you open it, which is exactly how the
+                    empty one came to be chosen.
+                  -->
+                  <span class="hint">The count is how you tell same-named workspaces apart.</span>
+                  <div class="wslist" role="radiogroup" aria-label="Asana workspace">
+                    {#each asanaWorkspaces as w (w.gid)}
+                      <button
+                        type="button"
+                        class="ws"
+                        role="radio"
+                        aria-checked={as.workspace === w.gid}
+                        onclick={() => (as.workspace = w.gid)}
+                      >
+                        <span class="radio" aria-hidden="true"></span>
+                        <span class="nm">{w.name}</span>
+                        <span class="ct">
+                          {w.tasks < 0
+                            ? ''
+                            : w.tasks === 0
+                              ? 'no tasks'
+                              : `${w.tasks} task${w.tasks === 1 ? '' : 's'} assigned to you`}
+                        </span>
+                      </button>
+                    {/each}
+                  </div>
+                  <button
+                    class="btn xs primary"
+                    disabled={!as.workspace}
+                    onclick={() => (as.enabled = true)}
+                  >Use this workspace</button>
+                {/if}
+              </div>
+            </li>
+
+            <li class="step todo">
+              <span class="n" aria-hidden="true">3</span>
+              <div class="sbody">
+                <span class="t">Done</span>
+                <span class="hint">Your tasks appear in the picker and on feature cards.</span>
+              </div>
+            </li>
+          </ol>
+          {#if asanaError}<span class="hint err">{asanaError}</span>{/if}
+        {/if}
+      </div>
+
+      <div class="field">
+        <span class="lbl">GitLab <span class="lbl-note">{tools.glab ? '— the glab CLI is available; a token is only needed for API mode' : '— API token'}</span></span>
+        {#if gl.enabled && gl.token}
+          <div class="conn"><span class="ok">✓ connected</span><span class="conn-what">{gl.host || 'gitlab.com'}{gl.project ? ` · ${gl.project}` : ''}</span>
+            <button class="btn ghost xs" onclick={() => { gl.enabled = false; gl.token = ''; }}>Disconnect</button>
+          </div>
+        {:else}
+          <div class="conn-row">
+            <input class="input" placeholder="https://gitlab.com" bind:value={gl.host} aria-label="GitLab host" />
+            <input class="input" placeholder="group/project (API mode)" bind:value={gl.project} aria-label="GitLab project" />
+          </div>
+          <div class="conn-row">
+            <input class="input" type="password" placeholder="Personal access token" bind:value={gl.token} aria-label="GitLab token" />
+            <button class="btn xs" disabled={!gl.token.trim()} onclick={() => (gl.enabled = true)}>Connect</button>
+          </div>
+        {/if}
+      </div>
+
+      <div class="field">
+        <span class="lbl">GitHub <span class="hint">— uses the <code>gh</code> CLI</span></span>
+        <div class="conn-status">
+          {#if tools.gh}
+            {#if githubAuthed}<span class="ok">✓ gh installed &amp; authenticated</span>
+            {:else}<span class="warn">gh installed — run <code>gh auth login</code></span>{/if}
+          {:else}
+            <span class="warn">gh not installed (brew install gh)</span>
+          {/if}
+        </div>
+      </div>
+
+      <!--
+        A CONNECTION, not three fields and a checkbox.
+        Filling in a token IS the statement "I want this connected" — but `enabled` was a
+        separate tick, so credentials could be saved, correct, and inert, with nothing on
+        screen saying so. That is exactly what happened: a valid token and workspace sat
+        beside `enabled: false` and the picker went on asking GitHub.
+
+        So there is no checkbox. Connect proves the token works, says WHO it belongs to —
+        a tick proves a request succeeded, a name proves it succeeded as you, which is what
+        "assigned to me" actually rests on — and enables the source. Disconnect is the off
+        switch, and it is unambiguous.
+      -->
+        {:else if tab === 'notify'}
+      <div class="field">
+        <span class="lbl">Notifications <span class="hint">— when a session needs you</span></span>
+        <label class="chk">
+          <input type="checkbox" bind:checked={nt.waiting} onchange={() => nt.waiting && notify.requestPermission()} />
+          Desktop notification when a session needs input
+        </label>
+        <label class="chk"><input type="checkbox" bind:checked={nt.sound} /> Play a sound</label>
+        <label class="chk"><input type="checkbox" bind:checked={nt.idle} /> Notify when a turn completes</label>
+      </div>
+
+      <datalist id="setRepoList">
+        {#each world.repos as r (r.name)}<option value={r.name}></option>{/each}
+      </datalist>
+
+        {/if}
       </div>
     {/if}
   </div>
@@ -534,7 +663,30 @@
 
 <style>
   .modal-head { display:flex; align-items:center; gap:9px; padding:14px 16px; border-bottom:1px solid var(--border); font-size:15px; }
-  .modal-body { padding:16px; background:var(--elevated); border-top:1px solid var(--border); display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
+  /* Sidebar + panel. min-height keeps the modal from resizing as you switch between a
+     long panel and a short one, which reads as the dialog jumping under the cursor. */
+  .setwrap { display:flex; min-height:340px; max-height:70vh; }
+  .setnav { width:160px; flex:none; border-right:1px solid var(--border); background:var(--elevated);
+            padding:8px; overflow-y:auto; }
+  .setnav button { display:flex; align-items:center; gap:9px; width:100%; font:inherit; font-size:13px;
+                   background:none; border:0; border-radius:7px; color:var(--muted); padding:8px 9px;
+                   cursor:pointer; text-align:left; }
+  .setnav button:hover { background:var(--panel); color:var(--ink); }
+  .setnav button[aria-selected='true'] { background:var(--panel); color:var(--ink); font-weight:600;
+                                         box-shadow:inset 2px 0 0 var(--brand); }
+  .setnav .g { width:15px; text-align:center; color:var(--faint); font-family:var(--mono); font-size:12px; }
+  .setnav button[aria-selected='true'] .g { color:var(--brand); }
+  .navsec { display:block; font-family:var(--mono); font-size:9.5px; letter-spacing:.11em;
+            text-transform:uppercase; color:var(--faint); padding:11px 9px 5px; }
+  .setpanel { flex:1; min-width:0; overflow-y:auto; padding:16px; display:flex;
+              flex-direction:column; gap:18px; }
+  /* Under ~700px the modal is already at 96vw, so the labels go and the glyphs carry it. */
+  @media (max-width:700px) {
+    .setnav { width:46px; }
+    .setnav .nm, .navsec { display:none; }
+    .setnav button { justify-content:center; padding:9px 0; }
+  }
+
   .modal-foot { display:flex; align-items:center; gap:10px; padding:13px 16px; border-top:1px solid var(--border); }
   .foot-note { font-family:var(--mono); font-size:12px; color:var(--faint); }
   .field { display:flex; flex-direction:column; gap:6px; }
