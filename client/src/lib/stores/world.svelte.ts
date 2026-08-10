@@ -269,46 +269,133 @@ export interface StreamHooks {
   onSessionFrame?: (frame: SessionStatePayload) => void;
 }
 
+/**
+ * How long without a single byte before the stream is assumed dead.
+ *
+ * The daemon heartbeats every 25s, so silence for more than twice that is not a quiet
+ * period — it is a connection that is gone without having said so.
+ */
+const SILENCE_MS = 60_000;
+
 export function connectStream(hooks: StreamHooks = {}): () => void {
-  // EventSource cannot set headers, so the boot token rides in the query string.
-  const ev = new EventSource(`/api/v1/events${tokenQuery('?')}`);
+  /*
+   * The browser's own reconnect is NOT enough, in two distinct ways — and both present
+   * identically to the user: you click something, nothing happens, and a page refresh
+   * fixes it.
+   *
+   * 1. A HALF-OPEN socket. Sleep the laptop, change network, and the TCP connection is
+   *    gone while the EventSource still reports OPEN. No error fires, because from the
+   *    browser's point of view nothing has failed — it is simply waiting. It waits
+   *    forever. This is the common one for a tool that lives in a background tab.
+   *
+   * 2. A PERMANENT close. Per the spec, a reconnect that receives a non-200 status or the
+   *    wrong content-type must FAIL THE CONNECTION rather than retry — so a reconnect
+   *    landing mid-restart can kill the stream for good, while `onerror` cheerfully says
+   *    "reconnecting" forever. That message was a claim the code could not back.
+   *
+   * So: a silence watchdog for the first, and a readyState check for the second.
+   */
+  let ev: EventSource | null = null;
+  let lastByte = Date.now();
+  let watchdog: ReturnType<typeof setInterval> | null = null;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  let closed = false;
+  /** Backoff, so a daemon that is down does not get a request per second. */
+  let attempt = 0;
 
-  const apply = (half: 'topology' | 'sessions' | 'ci') => (e: MessageEvent) => {
-    // `any`, not `unknown`: the three branches below hand it straight to $state.raw
-    // fields typed by the wire contract, and the daemon is the only writer of this
-    // stream. Naming the type is what stops it being an *implicit* any.
-    let frame: any;
+  const open = () => {
+    if (closed) return;
+    // EventSource cannot set headers, so the boot token rides in the query string.
+    ev = new EventSource(`/api/v1/events${tokenQuery('?')}`);
+    wire(ev);
+  };
+
+  const reconnect = (why: string) => {
+    if (closed || retry) return;
+    world.streamError = why;
     try {
-      frame = JSON.parse(e.data);
+      ev?.close();
     } catch {
-      return;
+      /* already gone */
     }
-    if (half === 'sessions') {
-      hooks.onSessionFrame?.(frame); // diff BEFORE swapping in
-      world.sessionHalf = frame;
-    } else if (half === 'ci') {
-      world.ciHalf = frame;
-    } else {
-      world.topology = frame;
-    }
-    world.connected = true;
-    world.streamError = '';
+    ev = null;
+    // 1s, 2s, 4s… capped. A tab that has been asleep for hours must not stampede.
+    const wait = Math.min(1000 * 2 ** attempt, 15_000);
+    attempt += 1;
+    retry = setTimeout(() => {
+      retry = null;
+      open();
+    }, wait);
   };
 
-  ev.addEventListener('topology', apply('topology'));
-  ev.addEventListener('session-state', apply('sessions'));
-  // The daemon pushes CI (server/ci.js decides when to look and only emits a frame when
-  // the snapshot changed). Dropping this event is what forced the serverbar to poll.
-  ev.addEventListener('ci', apply('ci'));
-  // The browser reconnects on its own and the server re-snapshots, so this is only a
-  // surface for the UI to say "stale" while that is happening.
-  ev.onerror = () => {
-    world.streamError = 'stream interrupted — reconnecting';
+  const wire = (src: EventSource) => {
+    const apply = (half: 'topology' | 'sessions' | 'ci') => (e: MessageEvent) => {
+      lastByte = Date.now();
+      // `any`, not `unknown`: the three branches below hand it straight to $state.raw
+      // fields typed by the wire contract, and the daemon is the only writer of this
+      // stream. Naming the type is what stops it being an *implicit* any.
+      let frame: any;
+      try {
+        frame = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (half === 'sessions') {
+        hooks.onSessionFrame?.(frame); // diff BEFORE swapping in
+        world.sessionHalf = frame;
+      } else if (half === 'ci') {
+        world.ciHalf = frame;
+      } else {
+        world.topology = frame;
+      }
+      world.connected = true;
+      world.streamError = '';
+      attempt = 0; // a frame arrived, so the backoff has served its purpose
+    };
+
+    src.addEventListener('topology', apply('topology'));
+    src.addEventListener('session-state', apply('sessions'));
+    // The daemon pushes CI (server/ci.ts decides when to look and only emits a frame when
+    // the snapshot changed). Dropping this event is what forced the serverbar to poll.
+    src.addEventListener('ci', apply('ci'));
+    // Comments (`:hb`) fire no event, but they DO keep the socket warm; the watchdog below
+    // is what notices when they stop.
+    src.addEventListener('open', () => {
+      lastByte = Date.now();
+      world.streamError = '';
+    });
+
+    src.onerror = () => {
+      /*
+       * CLOSED means the browser has given up permanently — it will not retry, whatever the
+       * old message claimed. CONNECTING means it is retrying on its own and there is nothing
+       * to do but say so.
+       */
+      if (src.readyState === EventSource.CLOSED) reconnect('reconnecting…');
+      else world.streamError = 'stream interrupted — reconnecting';
+    };
   };
+
+  open();
+
+  /*
+   * The silence watchdog. This is the half-open case: no error ever fires, the stream
+   * reports OPEN, and nothing arrives. Only elapsed time can tell.
+   */
+  watchdog = setInterval(() => {
+    if (closed || retry) return;
+    if (Date.now() - lastByte > SILENCE_MS) {
+      lastByte = Date.now(); // do not re-fire every tick while the reconnect is in flight
+      reconnect('connection went quiet — reconnecting…');
+    }
+  }, 15_000);
 
   return () => {
+    closed = true;
+    if (watchdog) clearInterval(watchdog);
+    if (retry) clearTimeout(retry);
     try {
-      ev.close();
+      ev?.close();
     } catch {
       /* already closed */
     }
