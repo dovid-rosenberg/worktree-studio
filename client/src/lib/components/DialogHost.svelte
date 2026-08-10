@@ -247,21 +247,44 @@
               <div class="field">
                 <label for="dlgf-{i}">{f.label || ''}</label>
                 {#if f.pick}
-                  <!-- Pick one, or type your own. The list is what the tracker says is
-                       assigned to you; the field below it is how anything else gets in. -->
-                  <select
-                    class="select"
-                    aria-label="Pick a task"
-                    onchange={(e) => {
-                      const v = e.currentTarget.value;
-                      if (v) values[i] = v;
-                      e.currentTarget.selectedIndex = 0;
-                    }}
-                  >
-                    <option value="">{tasksLoading ? 'Loading…' : tasksNote || f.pick.placeholder || 'Pick…'}</option>
-                    {#each tasks as t (t.url)}<option value={t.url}>{t.title}{t.subtitle ? ` · ${t.subtitle}` : ''}</option>{/each}
-                  </select>
+                  {@const chosen = tasks.find((t) => t.url === values[i])}
+                  {#if chosen}
+                    <!--
+                      SHOW WHAT WAS PICKED.
+                      The select used to reset itself to the placeholder on change, so the
+                      only evidence of choosing a task was a long URL appearing in a
+                      different box — i.e. picking a task looked like nothing happening. The
+                      task now stays on screen, named; the URL is a detail, not the receipt.
+                    -->
+                    <div class="picked">
+                      <span class="pg" aria-hidden="true">◎</span>
+                      <span class="pnm">{chosen.title}</span>
+                      <button
+                        class="btn xs ghost"
+                        type="button"
+                        title="Choose a different task"
+                        aria-label="Clear the chosen task"
+                        onclick={() => (values[i] = '')}
+                      >✕</button>
+                    </div>
+                  {:else}
+                    <!-- Pick one, or type your own. The list is what the tracker says is
+                         assigned to you; the field below it is how anything else gets in. -->
+                    <select
+                      class="select"
+                      aria-label="Pick a task"
+                      onchange={(e) => {
+                        const v = e.currentTarget.value;
+                        if (v) values[i] = v;
+                      }}
+                    >
+                      <option value="">{tasksLoading ? 'Loading…' : tasksNote || f.pick.placeholder || 'Pick…'}</option>
+                      {#each tasks as t (t.url)}<option value={t.url}>{t.title}{t.subtitle ? ` · ${t.subtitle}` : ''}</option>{/each}
+                    </select>
+                  {/if}
                 {/if}
+                <!-- Kept even when a task is chosen: it is the URL that gets saved, and a
+                     pasted link from a tracker with no adapter has nowhere else to go. -->
                 <input id="dlgf-{i}" class="input dlgf" bind:value={values[i]} placeholder={f.placeholder || ''} />
               </div>
             {/if}
@@ -295,6 +318,12 @@
      caption, and every swatch IS a label wrapping its radio. */
   .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); }
   /* A grip column first, so the rows line up with the settings modal's lists. */
+  /* The chosen task, named. Brand-tinted because it is a choice you made, not a status. */
+  .picked { display:flex; align-items:center; gap:9px; padding:7px 10px; border:1px solid var(--brand);
+            border-radius:8px; background:var(--brand-soft); }
+  .picked .pg { color:var(--brand); flex:none; }
+  .picked .pnm { flex:1; min-width:0; font-size:13.5px; overflow:hidden; text-overflow:ellipsis;
+                 white-space:nowrap; }
   .linkrow { display:grid; grid-template-columns:18px 120px 1fr 26px 26px 28px; gap:8px; align-items:center; }
   /* The add row has no grip and nothing to move: one field across the whole width. */
   .linkrow.addrow { grid-template-columns:1fr; }
