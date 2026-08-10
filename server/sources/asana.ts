@@ -55,7 +55,7 @@ const adapter: SourceAdapter = {
       cfg,
       `/tasks?assignee=me&workspace=${encodeURIComponent(a.workspace!)}&completed_since=now&opt_fields=name,permalink_url&limit=30`,
     );
-    return tasks.map((t) => ({ id: t.gid, title: t.name, subtitle: 'Asana task' }));
+    return tasks.map((t) => ({ id: t.gid, title: t.name, subtitle: 'Asana task', url: t.permalink_url }));
   },
   /**
    * Where the task sits in its board.

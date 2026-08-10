@@ -22,7 +22,15 @@ const adapter: SourceAdapter = {
   },
   async list(_cfg, { repoPath, q }) {
     if (!repoPath) return [];
-    const args = ['issue', 'list', '--json', 'number,title,url,labels', '--limit', '30'];
+    /*
+     * `--assignee @me`, matching the Asana adapter.
+     *
+     * This listed every open issue in the repo while asana.list() used `assignee=me`, so
+     * the same picker meant "my tasks" for one source and "all issues" for another. A
+     * token is user-scoped in every one of these APIs, so "mine" is the answerable
+     * question and the one the picker is for.
+     */
+    const args = ['issue', 'list', '--assignee', '@me', '--json', 'number,title,url,labels', '--limit', '30'];
     // `q` reaches an execFile argv, and it comes from `req.query.q` — which express
     // parses to an ARRAY for `?q=a&q=b`. execFile rejects a non-string arg with a
     // TypeError, i.e. a 500 leaking an internal message for what is just a malformed
@@ -37,6 +45,7 @@ const adapter: SourceAdapter = {
       id: String(it.number),
       title: it.title,
       subtitle: `#${it.number}${it.labels?.length ? ` · ${it.labels.map((l) => l.name).join(', ')}` : ''}`,
+      url: it.url,
     }));
   },
   async seed(_cfg, { repoPath, id }) {

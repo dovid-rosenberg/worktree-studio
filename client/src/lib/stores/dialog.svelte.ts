@@ -48,6 +48,16 @@ export interface DialogField {
   placeholder?: string;
   options?: string[];
   /**
+   * Turn a text field into "pick one, or type your own".
+   *
+   * The dialog fetches the candidates itself, so a caller does not have to load them
+   * before it can open. The TEXT FIELD STAYS: every tracker token is user-scoped, so the
+   * list is "assigned to me" — and a task nobody assigned to you, or one in a tracker
+   * with no adapter, must still be pasteable. A picker that replaced the field would make
+   * the common case easier and the uncommon one impossible.
+   */
+  pick?: { source: 'tasks'; placeholder?: string };
+  /**
    * Read-only lines shown above a `links` field's editable rows.
    *
    * For links that are DERIVED — the ticket from intake, the merge requests from the

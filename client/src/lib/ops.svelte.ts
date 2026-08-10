@@ -17,6 +17,8 @@ import type { Feature, PinnedLink, Session } from '../../../server/types';
 import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
+import { orphans } from '$lib/stores/orphans.svelte.js';
+import type { Orphan } from '$lib/stores/orphans.svelte.js';
 import { liveMembers, ui } from '$lib/stores/ui.svelte.js';
 import { errMessage } from '$lib/errmsg.js';
 
@@ -308,14 +310,27 @@ function linksFields(feature: Feature): DialogField[] {
     .filter((l) => l.kind === 'pr' && !l.empty)
     .map((l) => `${l.glyph} ${l.label}${l.sub ? ` · ${l.sub}` : ''}`);
   return [
-    // Its OWN field, not a row in the list below.
-    //
-    // It rode in the list under a reserved label of `Ticket`, which was fragile in two
-    // ways that only showed up once the rows became draggable: a pin the user happened to
-    // label "Ticket" would be silently promoted to the tracker link, and dragging the
-    // ticket row anywhere did nothing, because assemble() always renders it first. There
-    // is exactly one ticket and its position is fixed, so it is not a list.
-    { type: 'text', label: 'Ticket', value: feature.ticket || '', placeholder: 'https://app.asana.com/…' },
+    /*
+     * Its OWN field, not a row in the list below.
+     *
+     * It rode in the list under a reserved label of `Ticket`, which was fragile in two
+     * ways that only showed up once the rows became draggable: a pin the user happened to
+     * label "Ticket" would be silently promoted to the tracker link, and dragging the
+     * ticket row anywhere did nothing, because assemble() always renders it first. There
+     * is exactly one ticket and its position is fixed, so it is not a list.
+     *
+     * `pick` turns it into a dropdown of YOUR assigned tasks with the text field kept
+     * underneath. Every one of these tokens is user-scoped, so "assigned to me" is the
+     * answerable question — but a task nobody assigned to you, or one in a tracker with no
+     * adapter, still has to be pasteable. The list is a shortcut, never the only way in.
+     */
+    {
+      type: 'text',
+      label: 'Ticket',
+      value: feature.ticket || '',
+      placeholder: 'https://app.asana.com/… — or pick one above',
+      pick: { source: 'tasks', placeholder: 'Your assigned tasks…' },
+    },
     {
       type: 'links',
       label: 'Links',
@@ -358,6 +373,33 @@ export async function editFeature(feature: Feature) {
     await setFeatureColor(feature.name, String(out[0] ?? ''));
     await saveLinks(feature, String(out[1] ?? ''), out[2] as PinnedLink[]);
     toast('Saved');
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
+}
+
+/**
+ * Bring a closed session's conversation back.
+ *
+ * Recreates the worktree when it is missing — which is safe only because the server
+ * checked the BRANCH still exists — and then adopts with `--resume`, so the agent returns
+ * with its history rather than as a blank one in a directory full of half-finished work.
+ */
+export async function reinstateOrphan(o: Orphan) {
+  const ok = await uiConfirm(
+    `Bring back the agent for “${o.name}” in ${o.repo}?` +
+      `\n\nIts conversation from ${new Date(o.lastModified).toLocaleDateString()} is resumed` +
+      `${o.conversations > 1 ? ` (the most recent of ${o.conversations})` : ''}.` +
+      `\nThe worktree is recreated from ${o.branch} if it is missing.`,
+    { title: 'Resume previous agent', okLabel: 'Resume' },
+  );
+  if (!ok) return;
+  try {
+    const r = await api('POST', '/api/v1/orphans/reinstate', { worktreePath: o.worktreePath });
+    if (!r.ok) return toast(r.error || 'Could not resume that agent', true);
+    toast(`Resumed ${o.name}`);
+    void orphans.refresh();
+    if (r.session?.id) ui.goToSession(r.session.id);
   } catch (e) {
     toast(errMessage(e), true);
   }
