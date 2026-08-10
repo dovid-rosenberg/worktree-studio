@@ -20,14 +20,13 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 import { CHILD_ENV, makeId, readJsonState, slug, writeJson } from './util.ts';
+import { tailFile } from './log-tail.ts';
+import type { LogTail } from './log-tail.ts';
 
 const ENV = CHILD_ENV;
 
 /** How many finished runs to keep. History is for "what did the last one say", not an archive. */
 const KEEP_RUNS = 60;
-
-/** A single read of a run's log never pulls more than this into memory. */
-const TAIL_MAX_BYTES = 512 * 1024;
 
 export type RunStatus = 'running' | 'passed' | 'failed' | 'stopped';
 
@@ -235,32 +234,23 @@ export class Runner extends EventEmitter {
   /**
    * Incremental log tail, guarded to this runner's own log files.
    *
-   * Same contract as Servers.logs: omit `offset` for the tail, pass one back for only
-   * what arrived since. A client that has been away cannot make us allocate the whole gap.
+   * Same contract as Servers.logs — and now literally the same code, which is what that
+   * sentence used to claim without it being true. The three ways it differed:
+   *
+   *   ROTATION, handled the opposite way. `offset > size` means the file shrank, so the
+   *   read should restart from the beginning; this clamped `from` to `size` instead, so
+   *   `from >= size` held and it returned an empty tail on EVERY subsequent poll. A run
+   *   whose log rotated simply stopped updating in the Runs panel, permanently.
+   *
+   *   UTF-8. It sliced at a raw byte offset, so a multi-byte character straddling the
+   *   window rendered as a replacement char. Servers drops the clipped first line, which
+   *   disposes of exactly that.
+   *
+   *   `skipped` was absent, so a client could not tell a quiet log from one it had
+   *   fallen behind.
    */
-  logs(id: string, opts: { offset?: number } = {}): { offset: number; text: string; size: number } {
-    const run = this.get(id);
-    const empty = { offset: opts.offset ?? 0, text: '', size: 0 };
-    if (!run) return empty;
-    let size: number;
-    try {
-      size = fs.statSync(run.log).size;
-    } catch {
-      return empty;
-    }
-    const from =
-      typeof opts.offset === 'number' && Number.isFinite(opts.offset)
-        ? Math.max(Math.min(opts.offset, size), size - TAIL_MAX_BYTES)
-        : Math.max(0, size - TAIL_MAX_BYTES);
-    if (from >= size) return { offset: size, text: '', size };
-    const fd = fs.openSync(run.log, 'r');
-    try {
-      const buf = Buffer.alloc(size - from);
-      const n = fs.readSync(fd, buf, 0, buf.length, from);
-      return { offset: size, text: buf.toString('utf8', 0, n), size };
-    } finally {
-      fs.closeSync(fd);
-    }
+  logs(id: string, opts: { offset?: number; lines?: number } = {}): LogTail {
+    return tailFile(this.get(id)?.log, opts);
   }
 
   /** Forget a finished run and its log. A running one is left alone. */

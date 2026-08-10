@@ -12,6 +12,7 @@ import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
 import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, Worktree } from './types.ts';
+import { TAIL_MAX_BYTES, readTail, tailFile } from './log-tail.ts';
 
 /**
  * The config `Servers` reads.
@@ -194,41 +195,6 @@ function featureFromPath(worktreePath: string): string {
 //   TAIL_MAX_BYTES  the most any single read may pull into memory
 const MAX_LOG_BYTES = 16 * 1024 * 1024;
 const KEEP_LOG_BYTES = 4 * 1024 * 1024;
-const TAIL_MAX_BYTES = 512 * 1024;
-
-// Read a byte range [start, end) from a file as UTF-8 (used for incremental log tails).
-function readRange(file: string, start: number, end: number): string {
-  const len = end - start;
-  if (len <= 0) return '';
-  const fd = fs.openSync(file, 'r');
-  try {
-    const buf = Buffer.alloc(len);
-    const n = fs.readSync(fd, buf, 0, len, start);
-    return buf.toString('utf8', 0, n);
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-// The last `lines` lines of a file, read backwards from the end and capped at
-// `maxBytes` — never the whole file. A first line the window clipped is dropped
-// rather than shown as a fragment, which also disposes of the half UTF-8 sequence
-// an arbitrary byte offset can land in the middle of.
-function readTail(file: string, lines: number, maxBytes = TAIL_MAX_BYTES): string {
-  let size: number;
-  try {
-    size = fs.statSync(file).size;
-  } catch {
-    return '';
-  }
-  const start = Math.max(0, size - maxBytes);
-  let text = readRange(file, start, size);
-  if (start > 0) {
-    const nl = text.indexOf('\n');
-    text = nl >= 0 ? text.slice(nl + 1) : '';
-  }
-  return text.split('\n').slice(-lines).join('\n');
-}
 
 // Trim a log back to its last `keep` bytes once it passes `max`. Returns whether
 // it did anything.
@@ -1117,29 +1083,10 @@ class Servers {
   // Always returns { offset, text, size, skipped } where `offset` is the byte position
   // to pass next and `skipped` is how many bytes the read cap dropped (0 normally).
   logs(worktreePath: string, opts: LogsOptions = {}): LogTail {
-    // Captured rather than re-read: "this call is incremental" and "the offset it is
-    // incremental from" are one fact, and null is the form that carries both.
-    const offset = typeof opts.offset === 'number' && Number.isFinite(opts.offset) ? opts.offset : null;
-    const t = this.tracked[worktreePath];
-    const log = t?.log;
-    const empty = { offset: offset ?? 0, text: '', size: 0, skipped: 0 };
-    if (!log || !fs.existsSync(log)) return empty;
-    let size: number;
-    try {
-      size = fs.statSync(log).size;
-    } catch {
-      return empty;
-    }
-    if (offset !== null) {
-      // a shrunken file means it was truncated/rotated — re-read from the start
-      const start = offset > size ? 0 : Math.max(0, offset);
-      // A client that has been away — or a server that dumped a burst — must not be
-      // able to make us allocate the whole gap in one Buffer. Skip forward to the
-      // last TAIL_MAX_BYTES and report what that cost.
-      const from = Math.max(start, size - TAIL_MAX_BYTES);
-      return { offset: size, text: readRange(log, from, size), size, skipped: from - start };
-    }
-    return { offset: size, text: readTail(log, opts.lines || 300), size, skipped: 0 };
+    // The shared tailer — Runner.logs() said it followed "the same contract as
+    // Servers.logs" while implementing rotation, UTF-8 and `skipped` differently. Now it
+    // is the same code rather than the same claim.
+    return tailFile(this.tracked[worktreePath]?.log, opts);
   }
 }
 
