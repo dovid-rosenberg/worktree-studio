@@ -27,11 +27,13 @@ import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart, isRecord } 
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
-import { run, has, openEditor, qs, resolveEditor, shq, slug, expandTilde } from './util.ts';
+import { run, has, openEditor, qs, realpath, resolveEditor, shq, slug, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
 import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
+import * as reinstate from './reinstate.ts';
+import * as layoutMod from './layout.ts';
 import type { Request } from 'express';
 import type { ScannedRepo } from './git.ts';
 import { FEATURE_COLORS } from './types.ts';
@@ -996,6 +998,120 @@ async function main() {
   forge.register(api);
 
   // Start a session in an existing worktree (Fleet: "Start session here")
+  /*
+   * ---- reinstating a closed session ----
+   *
+   * Closing a session deletes Studio's pointer; the CONVERSATION belongs to Claude Code
+   * and stays on disk. These two routes find those orphans and bring one back.
+   *
+   * Candidates are built HERE rather than in reinstate.ts because only this scope knows
+   * the repo scan, the layout and which sessions are live — and because the lookup can
+   * only go forwards, from a path to its transcript. The slug is lossy (see reinstate.ts),
+   * so walking a transcript directory back to a worktree path is not possible at all.
+   */
+  async function orphanCandidates() {
+    const taken = new Set(
+      manager
+        .all()
+        .flatMap((s) => [s.worktreePath, ...(s.repos || []).map((r) => r.worktreePath)])
+        .filter((p): p is string => !!p)
+        .map((p) => realpath(p)),
+    );
+    const out: Array<{
+      worktreePath: string;
+      repo: string;
+      name: string;
+      branch: string;
+      branchExists: boolean;
+      repoPath: string;
+    }> = [];
+
+    for (const r of repos) {
+      // Worktrees that exist right now and have no session — the common orphan.
+      for (const w of r.worktrees || []) {
+        if (w.isMain || !w.path || taken.has(realpath(w.path))) continue;
+        out.push({
+          worktreePath: w.path,
+          repo: r.name,
+          name: w.name || '',
+          branch: w.branch || '',
+          branchExists: true, // it is checked out, so it exists by definition
+          repoPath: r.path,
+        });
+      }
+      /*
+       * And worktrees that are GONE: for every local branch with no worktree, the path one
+       * WOULD occupy. Deterministic from the layout, which is what makes this findable at
+       * all — the transcript itself cannot be mapped back to a path (the slug is lossy).
+       *
+       * Enumerated LAZILY, here, rather than added to ScannedRepo: that would put a git
+       * call per repo on every scan — which fires whenever a file changes — to answer a
+       * question nobody asks until they open this list.
+       */
+      const raw = await run('git', ['-C', r.path, 'branch', '--format=%(refname:short)']);
+      const live = new Set((r.worktrees || []).map((w) => w.path));
+      for (const b of raw.stdout
+        .split('\n')
+        .map((x) => x.trim())
+        .filter(Boolean)) {
+        const name = b.split('/').pop() || b;
+        const dest = layoutMod.destFor(identity.layout, r.path, name);
+        if (live.has(dest) || taken.has(realpath(dest))) continue;
+        out.push({ worktreePath: dest, repo: r.name, name, branch: b, branchExists: true, repoPath: r.path });
+      }
+    }
+    return out;
+  }
+
+  api.get('/orphans', async (_req, res) => {
+    const cands = await orphanCandidates();
+    res.json({ orphans: reinstate.findOrphans(cands) });
+  });
+
+  /**
+   * Bring one back: recreate the worktree if it is missing, then adopt with `--resume`.
+   *
+   * Refuses rather than improvises when the branch is gone — recreating then would give an
+   * empty branch off the default with a transcript attached, i.e. an agent resuming into a
+   * directory that does not hold the code it is discussing.
+   */
+  api.post('/orphans/reinstate', async (req, res) => {
+    const worktreePath = String(req.body?.worktreePath || '').trim();
+    if (!worktreePath) return res.status(400).json({ ok: false, error: 'worktreePath is required' });
+
+    const cand = (await orphanCandidates()).find((c) => c.worktreePath === worktreePath);
+    if (!cand) return res.status(404).json({ ok: false, error: 'nothing to reinstate at that path' });
+    const [orphan] = reinstate.findOrphans([cand]);
+    if (!orphan)
+      return res.status(404).json({ ok: false, error: 'no conversation was found for that worktree' });
+    if (!orphan.recoverable) return res.status(409).json({ ok: false, error: orphan.reason });
+
+    if (!fs.existsSync(worktreePath)) {
+      // The branch exists — that is what `recoverable` checked — so this checks it out at
+      // the path the transcript is keyed to, which is what makes --resume find it.
+      const made = await worktree.create(cand.repoPath, cand.branch, cand.name, {
+        fetch: false,
+        layout: identity.layout,
+        ...worktreeCopyOpts(cfg, cand.repo),
+      });
+      if (!made.ok) return res.status(400).json({ ok: false, error: made.error });
+      await rescan();
+    }
+
+    const s = await manager.adopt({
+      worktreePath,
+      repoName: cand.repo,
+      repoPath: cand.repoPath,
+      branch: cand.branch,
+      wtname: cand.name,
+      resumeId: orphan.claudeSessionId,
+    });
+    broadcastTopology();
+    if (!s)
+      return res.status(409).json({ ok: false, error: 'a session for that worktree is already opening' });
+    res.json({ ok: true, session: s });
+  });
+
   api.post('/worktrees/adopt', async (req, res) => {
     const { repo, worktreePath, branch, wtname } = req.body || {};
     if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });

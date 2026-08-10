@@ -12,6 +12,7 @@
   import { dialogs } from '$lib/stores/dialog.svelte.js';
   import type { DialogLink } from '$lib/stores/dialog.svelte.js';
   import { moveItem, reorderable } from '$lib/actions/reorderable.js';
+  import { api } from '$lib/api.js';
 
   const entry = $derived(dialogs.current);
   const spec = $derived(entry?.spec ?? null);
@@ -21,6 +22,41 @@
   let values = $state<any[]>([]);
   /** Monotonic row identity for the `links` field — see DialogLink.key. */
   let linkKey = 0;
+
+  /*
+   * Assigned tasks for a `pick` field, fetched when a dialog that wants them opens.
+   *
+   * Here rather than in the caller so opening the editor never waits on a tracker: the
+   * field renders immediately and the options fill in. A failure is silent — the text
+   * field is still there, which is the whole point of keeping it.
+   */
+  let tasks = $state<Array<{ title: string; subtitle: string; url: string }>>([]);
+  let tasksLoading = $state(false);
+
+  $effect(() => {
+    if (!fields.some((f) => f.pick)) return;
+    let alive = true;
+    tasksLoading = true;
+    (async () => {
+      try {
+        const srcs = await api('GET', '/api/v1/sources');
+        const withTasks = (srcs || []).filter((s: { id: string }) => s.id !== 'freetext');
+        const all: Array<{ title: string; subtitle: string; url: string }> = [];
+        for (const s of withTasks) {
+          const r = await api('GET', `/api/v1/sources/${encodeURIComponent(s.id)}/items`);
+          for (const it of r.items || []) if (it.url) all.push(it);
+        }
+        if (alive) tasks = all;
+      } catch {
+        /* the text field is still there — that is why it stays */
+      } finally {
+        if (alive) tasksLoading = false;
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  });
 
   /** Keyboard equivalent of a drag, as SettingsModal does it: dragging serves a mouse only. */
   function nudge(i: number, rows: DialogLink[], by: number): DialogLink[] {
@@ -176,6 +212,22 @@
             {:else}
               <div class="field">
                 <label for="dlgf-{i}">{f.label || ''}</label>
+                {#if f.pick}
+                  <!-- Pick one, or type your own. The list is what the tracker says is
+                       assigned to you; the field below it is how anything else gets in. -->
+                  <select
+                    class="select"
+                    aria-label="Pick a task"
+                    onchange={(e) => {
+                      const v = e.currentTarget.value;
+                      if (v) values[i] = v;
+                      e.currentTarget.selectedIndex = 0;
+                    }}
+                  >
+                    <option value="">{tasksLoading ? 'Loading…' : f.pick.placeholder || 'Pick…'}</option>
+                    {#each tasks as t (t.url)}<option value={t.url}>{t.title}{t.subtitle ? ` · ${t.subtitle}` : ''}</option>{/each}
+                  </select>
+                {/if}
                 <input id="dlgf-{i}" class="input dlgf" bind:value={values[i]} placeholder={f.placeholder || ''} />
               </div>
             {/if}

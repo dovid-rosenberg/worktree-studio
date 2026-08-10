@@ -114,17 +114,24 @@ describe('ActionBar', () => {
     give([feature()], [session()]);
     ui.select('s1');
     render(ActionBar);
-    expect(screen.getByText('Run stack')).toBeInTheDocument();
+    /*
+     * Found by ACCESSIBLE NAME, not by text: the verbs are glyphs in a labelled cluster
+     * now, so the name lives in aria-label. That is also the assertion worth making —
+     * a glyph with no accessible name is a different bug, and this catches it.
+     */
+    expect(screen.getByRole('button', { name: 'Start dev servers' })).toBeInTheDocument();
     // The duplicate that started the same worktrees by the weaker route.
-    expect(screen.queryByText('Run servers')).not.toBeInTheDocument();
-    expect(screen.queryByText('Stop servers')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Run servers/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Stop servers/ })).not.toBeInTheDocument();
+    // And the cluster says what those verbs act on.
+    expect(screen.getByRole('group', { name: 'Dev servers' })).toBeInTheDocument();
   });
 
   it('shows stack verbs for a selected SESSION by resolving its feature', () => {
     give([feature({ members: [member('accept-blue', { running: true })] })], [session()]);
     ui.select('s1');
     render(ActionBar);
-    screen.getByText('Stop stack').click();
+    screen.getByRole('button', { name: 'Stop dev servers' }).click();
     expect(ops.stopStack).toHaveBeenCalledWith('token-race-fix');
   });
 
@@ -193,14 +200,18 @@ describe('ActionBar', () => {
     give([], [session({ active: false })]);
     ui.select('s1');
     const { unmount } = render(ActionBar);
-    expect(screen.getByLabelText('Resume session')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Deactivate session')).not.toBeInTheDocument();
+    // "agent", not "session": the cluster labels what these act ON, which is what tells
+    // ▶ here apart from ▶ in the servers cluster beside it.
+    expect(screen.getByLabelText('Resume agent')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Pause agent')).not.toBeInTheDocument();
     unmount();
 
     give([], [session({ active: true })]);
     render(ActionBar);
-    expect(screen.getByLabelText('Deactivate session')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Resume session')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Pause agent')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Resume agent')).not.toBeInTheDocument();
+    // Restarting the terminal is only meaningful while it is running.
+    expect(screen.getByLabelText('Restart terminal')).toBeInTheDocument();
   });
 
   it('gives a sessionless feature its own verbs, starting with the one that matters', () => {
@@ -227,7 +238,7 @@ describe('ActionBar', () => {
     const { container } = render(ActionBar);
     expect(container.querySelector('.who')).toBeNull();
     // Still acting on the right thing, which is the part that matters.
-    screen.getByText('Run stack').click();
+    screen.getByRole('button', { name: 'Start dev servers' }).click();
     expect(ops.runStack).toHaveBeenCalledWith('token-race-fix');
   });
 });

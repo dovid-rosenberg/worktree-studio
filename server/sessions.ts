@@ -139,6 +139,14 @@ export interface SessionAdoptArgs {
   branch?: string | null;
   wtname?: string | null;
   seed?: SessionSeed;
+  /**
+   * Claude's own conversation id, to resume rather than start fresh.
+   *
+   * For reinstating a closed session: the transcript outlived Studio's record of it, and
+   * this is the only surviving copy of the id — recovered from the FILENAME of the
+   * `.jsonl` in Claude's projects directory (see server/reinstate.ts).
+   */
+  resumeId?: string | null;
 }
 
 export interface SessionAttachArgs {
@@ -625,6 +633,7 @@ class SessionManager extends EventEmitter {
     branch,
     wtname,
     seed,
+    resumeId,
   }: SessionAdoptArgs): Promise<Session | null> {
     // dedup: never open two sessions for the same worktree, even on concurrent calls
     const existing = this.sessionForWorktree(worktreePath);
@@ -632,7 +641,7 @@ class SessionManager extends EventEmitter {
     if (this._adopting.has(worktreePath)) return null;
     this._adopting.add(worktreePath);
     try {
-      return await this._doAdopt({ worktreePath, repoName, repoPath, branch, wtname, seed });
+      return await this._doAdopt({ worktreePath, repoName, repoPath, branch, wtname, seed, resumeId });
     } finally {
       this._adopting.delete(worktreePath);
     }
@@ -645,6 +654,7 @@ class SessionManager extends EventEmitter {
     branch,
     wtname,
     seed,
+    resumeId,
   }: SessionAdoptArgs): Promise<Session> {
     const s: SessionSeed = seed || {
       source: 'freetext',
@@ -685,7 +695,14 @@ class SessionManager extends EventEmitter {
       suggestedBranch: branch || null,
       suggestedName: wtname || slug(title),
       muxName,
-      claudeSessionId: null,
+      /*
+       * The conversation to resume, when there is one to resume.
+       *
+       * claudeCmd() adds `-r <id>` for a session that has this, so a reinstated session
+       * comes back with its history instead of a blank agent in a directory full of
+       * half-finished work. Null for an ordinary adopt, which is a fresh conversation.
+       */
+      claudeSessionId: resumeId || null,
       state: 'idle',
       activity: 'starting…',
       tabs: [{ id: PENDING_TAB, title: 'claude' }],
@@ -698,7 +715,8 @@ class SessionManager extends EventEmitter {
     this._writeHookSettings(session);
     this.sessions.set(id, session);
     this._shareMemories(session);
-    const cmd = this.claudeCmd(session);
+    // `resume` when we were handed a conversation id: this is a reinstate, not a start.
+    const cmd = this.claudeCmd(session, { resume: !!resumeId });
     const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
     if (r.error) {
       session.state = 'stopped';

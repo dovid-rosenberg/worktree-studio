@@ -906,6 +906,15 @@ export interface SourceItem {
   id: string;
   title: string;
   subtitle: string;
+  /**
+   * The task's page, when the adapter has it in hand.
+   *
+   * Every adapter already fetches this — Asana asks for `permalink_url`, `gh issue list`
+   * returns `url` — and it was simply dropped. Carrying it means the picker can ATTACH a
+   * task to an existing feature without a second round trip through `seed()`, which is a
+   * different operation (it starts a session) doing the wrong thing for its side effect.
+   */
+  url?: string;
 }
 
 /** The upstream record a session is opened from, as `seed()` hands it back. */

@@ -70,7 +70,8 @@ const adapter: SourceAdapter = {
        * rather than as unimplemented.
        */
       const term = String(q ?? '').trim();
-      const args = ['issue', 'list', '-P', '30', '-F', 'json'];
+      // `--assignee`, matching asana and github — see the note in github.ts.
+      const args = ['issue', 'list', '--assignee', '@me', '-P', '30', '-F', 'json'];
       if (term) args.push('--search', term);
       const r = await run('glab', args, { cwd: repoPath, env: ENV });
       if (r.code !== 0) throw new Error(r.stderr.trim() || 'glab issue list failed');
@@ -78,14 +79,24 @@ const adapter: SourceAdapter = {
       // `#`, matching the REST branch below and GitLab's own notation. `!` is the MERGE
       // REQUEST sigil — the two branches of one lookup labelled the same issue two
       // different ways, and one of them named the wrong kind of object entirely.
-      return items.map((it) => ({ id: String(it.iid), title: it.title, subtitle: `#${it.iid}` }));
+      return items.map((it) => ({
+        id: String(it.iid),
+        title: it.title,
+        subtitle: `#${it.iid}`,
+        url: it.web_url,
+      }));
     }
     const proj = encodeURIComponent(restTarget(g).project);
     const items = await rest<GitlabIssue[]>(
       cfg,
-      `/projects/${proj}/issues?state=opened&per_page=30${q ? `&search=${encodeURIComponent(String(q))}` : ''}`,
+      `/projects/${proj}/issues?state=opened&scope=assigned_to_me&per_page=30${q ? `&search=${encodeURIComponent(String(q))}` : ''}`,
     );
-    return items.map((it) => ({ id: String(it.iid), title: it.title, subtitle: `#${it.iid}` }));
+    return items.map((it) => ({
+      id: String(it.iid),
+      title: it.title,
+      subtitle: `#${it.iid}`,
+      url: it.web_url,
+    }));
   },
   async seed(cfg, { repoPath, id }) {
     const g = cfgOf(cfg);

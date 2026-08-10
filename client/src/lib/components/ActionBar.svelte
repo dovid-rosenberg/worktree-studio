@@ -28,15 +28,29 @@
   import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
   import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
+  import { orphans } from '$lib/stores/orphans.svelte.js';
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
     deleteFeature, editFeature, editSession, installDeps, openGroup, openSessionRepos,
-    pending, prFeature, promote, restartStack, restartTerminal, runStack, startFeatureSession,
-    stopMainServer, stopStack,
+    pending, prFeature, promote, reinstateOrphan, restartStack, restartTerminal, runStack,
+    startFeatureSession, stopMainServer, stopStack,
   } from '$lib/ops.svelte.js';
 
   const session = $derived(ui.selected);
   const feature = $derived(ui.selectedFeature);
+  /*
+   * A resumable conversation among this feature's worktrees.
+   *
+   * Refreshed when the selection changes rather than on a timer: it can only change when
+   * a session is closed, and answering it costs a `git branch` per repo.
+   */
+  const featureOrphan = $derived(
+    feature ? orphans.forPaths(liveMembers(feature).map((m) => m.path)) : null,
+  );
+  $effect(() => {
+    if (feature && !orphans.loadedAt) void orphans.refresh();
+  });
+
   /** A dev server running from a repo's main checkout — the third kind of rail row. */
   const mainServer = $derived(ui.selectedMainServer);
 
@@ -117,11 +131,24 @@
         <!-- One verb per concept, and colour means STATE not action: the start verb is
              the brand hue like every other action, because green here used to mean both
              "is running" and "start this". -->
-        {#if anyRunning}
-          <button class="btn sm danger" onclick={() => stopStack(target.name)}>Stop stack</button>
-          <button class="btn sm" onclick={() => restartStack(target.name)}>Restart stack</button>
-        {:else if anyStartable}
-          <button class="btn sm primary" onclick={() => runStack(target.name)}>Run stack</button>
+        <!--
+          A CLUSTER, not three loose buttons.
+          Stop and Restart act on the same subject as Run — the dev servers — so they are
+          drawn as one segmented control with a label saying what that subject is. The bar
+          previously mixed full-text verbs ("Run stack") with bare glyphs (✐, 🗑) at the
+          same weight, so nothing indicated which controls belonged together or what any
+          of them acted ON.
+        -->
+        {#if anyRunning || anyStartable}
+          <span class="cluster" role="group" aria-label="Dev servers">
+            <span class="cluster-label">servers</span>
+            {#if anyRunning}
+              <button class="btn sm ghost" title="Stop the dev servers" aria-label="Stop dev servers" onclick={() => stopStack(target.name)}>{'■'}</button>
+              <button class="btn sm ghost" title="Restart the dev servers" aria-label="Restart dev servers" onclick={() => restartStack(target.name)}>{'↻'}</button>
+            {:else if anyStartable}
+              <button class="btn sm primary" title="Start the dev servers" aria-label="Start dev servers" onclick={() => runStack(target.name)}>{'▶︎'}</button>
+            {/if}
+          </span>
         {/if}
 
         <!-- Offered where the problem is visible, rather than letting Run stack half-fail. -->
@@ -167,37 +194,62 @@
              pair is honest here anyway — deactivate IS pause: the process stops, the
              session and its conversation stay. U+FE0E keeps them as text glyphs; both
              have emoji presentations that would arrive full-colour and oversized. -->
-        {#if session.active === false}
-          <button
-            class="btn sm primary"
-            title="Resume — restart the agent and reattach its conversation"
-            aria-label="Resume session"
-            disabled={busy}
-            onclick={() => guard(() => activateSession(session))}
-          >{'▶︎'}</button>
-        {:else}
-          <!-- Restart the TERMINAL, not the agent: for a pane that has stopped redrawing
-               or come back the wrong size after a display change. Beside pause because
-               they are the same kind of thing — a state you get out of — and distinct
-               from Delete, which ends the work. -->
-          <button
-            class="btn sm ghost"
-            title="Restart the terminal — keeps the agent and its conversation"
-            aria-label="Restart terminal"
-            disabled={busy}
-            onclick={() => guard(() => restartTerminal(session))}
-          >{'↺'}</button>
-          <button
-            class="btn sm ghost"
-            title="Deactivate — stop the process but keep the session (resumable)"
-            aria-label="Deactivate session"
-            disabled={busy}
-            onclick={() => guard(() => deactivateSession(session))}
-          >{'⏸︎'}</button>
-        {/if}
+        <!--
+          The AGENT's own cluster, mirroring the servers one above: same shape, same
+          glyphs for the same meanings (▶ start, ■ stop, ↻ restart), a label saying what
+          it acts on. Two clusters that look alike and read differently by their label is
+          the whole point — previously ▶ meant "resume the agent" while "Run stack" meant
+          the servers, in two completely different visual forms.
+        -->
+        <span class="cluster" role="group" aria-label="Agent">
+          <span class="cluster-label">agent</span>
+          {#if session.active === false}
+            <button
+              class="btn sm primary"
+              title="Resume — restart the agent and reattach its conversation"
+              aria-label="Resume agent"
+              disabled={busy}
+              onclick={() => guard(() => activateSession(session))}
+            >{'▶︎'}</button>
+          {:else}
+            <button
+              class="btn sm ghost"
+              title="Pause — stop the process but keep the session and its conversation"
+              aria-label="Pause agent"
+              disabled={busy}
+              onclick={() => guard(() => deactivateSession(session))}
+            >{'⏸︎'}</button>
+            <!-- Restarts the TERMINAL, not the agent: for a pane that has stopped
+                 redrawing or come back the wrong size. Distinct from ↻ in the servers
+                 cluster, which is why each carries its own label and tooltip. -->
+            <button
+              class="btn sm ghost"
+              title="Restart the terminal — keeps the agent and its conversation"
+              aria-label="Restart terminal"
+              disabled={busy}
+              onclick={() => guard(() => restartTerminal(session))}
+            >{'↺'}</button>
+          {/if}
+        </span>
+        <span class="sep" aria-hidden="true"></span>
         <button class="btn sm ghost dangertext" aria-label="Delete session" title="Delete session" onclick={() => closeSession(session)}>🗑</button>
       {:else if feature}
-        <button class="btn sm primary" onclick={() => startFeatureSession(feature)}>Start session</button>
+        <!--
+          A feature with a CONVERSATION on disk offers to resume it, not to start fresh.
+          Closing a session deletes Studio's pointer; the transcript belongs to Claude Code
+          and stays. Starting a blank agent in a directory full of half-finished work is
+          almost never what you want, so the verb changes rather than sitting beside it.
+        -->
+        {#if featureOrphan}
+          <button
+            class="btn sm primary"
+            title="Resume the agent that was working here — its conversation is still on disk"
+            onclick={() => reinstateOrphan(featureOrphan)}
+          >Resume previous agent</button>
+          <button class="btn sm ghost" title="Start a fresh agent instead" onclick={() => startFeatureSession(feature)}>Start fresh</button>
+        {:else}
+          <button class="btn sm primary" onclick={() => startFeatureSession(feature)}>Start session</button>
+        {/if}
         <button class="btn sm" onclick={() => openGroup(feature.name)}>Open in editor</button>
         <!-- "Open PR / MR" said CREATE here and OPEN IN BROWSER on the CI pill — the same four
              words for two different actions. This one creates. -->
@@ -220,6 +272,35 @@
     display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
     flex: none; min-width: 0;
   }
+
+  /*
+   * A cluster is several verbs acting on ONE subject, drawn as one control.
+   *
+   * The bar mixed full-text verbs ("Run stack", "Open in editor") with bare glyphs
+   * (✐, 🗑) at identical weight, so nothing said which buttons belonged together or what
+   * any of them acted on — twelve equal things in a row. Grouping is what makes ▶ mean
+   * "start the servers" in one cluster and "resume the agent" in the next without either
+   * needing to spell it out.
+   */
+  .cluster {
+    display: inline-flex; align-items: center; gap: 2px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 2px 3px 2px 0;
+    background: var(--bg);
+  }
+  .cluster :global(.btn) { border-color: transparent; background: transparent; }
+  .cluster :global(.btn:hover) { border-color: var(--border-strong); }
+  /* The primary sits inside a cluster, so it keeps its fill but not a second border. */
+  .cluster :global(.btn.primary) { background: var(--brand); color: var(--brand-ink); }
+  /* Lowercase and quiet: it names the SUBJECT, and a label competing with the verbs it
+     labels would defeat the grouping it exists to explain. */
+  .cluster-label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+    color: var(--faint); padding: 0 2px 0 8px; user-select: none;
+  }
+
+  /* Before the destructive verb, which belongs to no cluster and should not look like it
+     does. A rule rather than a gap: a gap alone reads as accidental. */
+  .sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border); }
   /* Present even when empty, so selecting something never shifts the layout. */
   .actionbar.idle { color: var(--faint); }
   .hint { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
