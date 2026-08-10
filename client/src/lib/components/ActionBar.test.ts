@@ -148,6 +148,11 @@ describe('ActionBar', () => {
    * alone — so a BE+FE feature opened the BE and silently left the FE behind. A feature
    * is several repos by definition, which makes "open one of them" the wrong default.
    */
+  /*
+   * Open in editor lives in the ⋯ menu now: the bar is split by CONSEQUENCE — reversible
+   * verbs pressed constantly on the left, things that change what the feature is on the
+   * right — and this one is used rarely enough not to earn permanent width.
+   */
   it('opens every repo the session spans, not just the primary one', async () => {
     const s = session({
       repos: [sessionRepo('accept-blue', { primary: true }), sessionRepo('ab-iso-fe')],
@@ -155,16 +160,31 @@ describe('ActionBar', () => {
     give([], [s]);
     ui.select('s1');
     render(ActionBar);
-    // The count is on the button, so a two-repo feature says so before it is clicked.
-    screen.getByText(/Open in editor \(2\)/).click();
+    screen.getByRole('button', { name: 'More actions' }).click();
+    // findBy*, not getBy*: Svelte 5 flushes state on a microtask, so the sheet is not in
+    // the DOM on the line after the click.
+    // The count is on the item, so a two-repo feature says so before it is clicked.
+    (await screen.findByText(/Open in editor \(2\)/)).click();
     expect(ops.openSessionRepos).toHaveBeenCalledWith(s);
   });
 
-  it('does not count-label a single-repo session', () => {
+  it('does not count-label a single-repo session', async () => {
     give([], [session()]);
     ui.select('s1');
     render(ActionBar);
-    expect(screen.getByText('Open in editor')).toBeInTheDocument();
+    screen.getByRole('button', { name: 'More actions' }).click();
+    expect(await screen.findByText('Open in editor')).toBeInTheDocument();
+  });
+
+  it('the destructive verb is in the menu, under a divider — not loose on the bar', async () => {
+    // It used to sit at the end of the row after a thin rule, at the same weight as
+    // everything else. A menu with a separator is where destructive verbs belong.
+    give([], [session()]);
+    ui.select('s1');
+    render(ActionBar);
+    expect(screen.queryByLabelText('Delete session')).not.toBeInTheDocument();
+    screen.getByRole('button', { name: 'More actions' }).click();
+    expect(await screen.findByText('Delete session')).toBeInTheDocument();
   });
 
   /*

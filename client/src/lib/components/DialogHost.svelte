@@ -13,6 +13,8 @@
   import type { DialogLink } from '$lib/stores/dialog.svelte.js';
   import { moveItem, reorderable } from '$lib/actions/reorderable.js';
   import { api } from '$lib/api.js';
+  import { errMessage } from '$lib/errmsg.js';
+  import { world } from '$lib/stores/world.svelte.js';
 
   const entry = $derived(dialogs.current);
   const spec = $derived(entry?.spec ?? null);
@@ -32,23 +34,54 @@
    */
   let tasks = $state<Array<{ title: string; subtitle: string; url: string }>>([]);
   let tasksLoading = $state(false);
+  /**
+   * Why the list is empty, when it is.
+   *
+   * An empty dropdown with no explanation is the worst of both: it looks broken, and the
+   * actual cause — no tracker configured — is a setting the user can fix in a minute.
+   * The first version of this simply rendered nothing.
+   */
+  let tasksNote = $state('');
 
   $effect(() => {
     if (!fields.some((f) => f.pick)) return;
     let alive = true;
     tasksLoading = true;
+    tasksNote = '';
     (async () => {
       try {
-        const srcs = await api('GET', '/api/v1/sources');
-        const withTasks = (srcs || []).filter((s: { id: string }) => s.id !== 'freetext');
-        const all: Array<{ title: string; subtitle: string; url: string }> = [];
-        for (const s of withTasks) {
-          const r = await api('GET', `/api/v1/sources/${encodeURIComponent(s.id)}/items`);
-          for (const it of r.items || []) if (it.url) all.push(it);
+        const srcs: Array<{ id: string; label: string; needsRepo?: boolean }> =
+          (await api('GET', '/api/v1/sources')) || [];
+        // `freetext` is the "just type it" source and has no tasks to list.
+        const trackers = srcs.filter((s) => s.id !== 'freetext');
+        if (!trackers.length) {
+          if (alive) tasksNote = 'No task tracker connected — add one in Settings';
+          return;
         }
-        if (alive) tasks = all;
-      } catch {
-        /* the text field is still there — that is why it stays */
+        /*
+         * A source with `needsRepo` lists issues from a REPO, so it needs one to ask
+         * about. The first version omitted this, so every such source silently answered
+         * with nothing — which is most of them, and is why this list came back empty even
+         * where it should have worked.
+         */
+        const repos = world.repos.map((r) => r.name);
+        const all: Array<{ title: string; subtitle: string; url: string }> = [];
+        for (const s of trackers) {
+          const targets = s.needsRepo ? repos : [''];
+          for (const repo of targets) {
+            const q = repo ? `?repo=${encodeURIComponent(repo)}` : '';
+            const r = await api('GET', `/api/v1/sources/${encodeURIComponent(s.id)}/items${q}`);
+            for (const it of r.items || []) if (it.url) all.push(it);
+          }
+        }
+        if (!alive) return;
+        tasks = all;
+        if (!all.length) {
+          tasksNote = `Nothing assigned to you in ${trackers.map((s) => s.label).join(', ')}`;
+        }
+      } catch (e) {
+        // Named, not swallowed: a bad token is a fixable thing and the commonest cause.
+        if (alive) tasksNote = `Could not load tasks — ${errMessage(e)}`;
       } finally {
         if (alive) tasksLoading = false;
       }
@@ -224,7 +257,7 @@
                       e.currentTarget.selectedIndex = 0;
                     }}
                   >
-                    <option value="">{tasksLoading ? 'Loading…' : f.pick.placeholder || 'Pick…'}</option>
+                    <option value="">{tasksLoading ? 'Loading…' : tasksNote || f.pick.placeholder || 'Pick…'}</option>
                     {#each tasks as t (t.url)}<option value={t.url}>{t.title}{t.subtitle ? ` · ${t.subtitle}` : ''}</option>{/each}
                   </select>
                 {/if}

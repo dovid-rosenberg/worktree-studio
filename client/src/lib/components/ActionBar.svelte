@@ -26,8 +26,10 @@
    * its rail card — the only buttons in the rail — because it could not be selected.
    */
   import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
+  import OverflowMenu from '$lib/components/OverflowMenu.svelte';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
-  import { openApp, webAppsFor } from '$lib/stores/world.svelte.js';
+  // openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
+  import { openApp } from '$lib/stores/world.svelte.js';
   import { orphans } from '$lib/stores/orphans.svelte.js';
   import {
     activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
@@ -67,7 +69,6 @@
   /** Members that cannot start until their dependencies exist. */
   const needDeps = $derived(ms.filter((m) => m.depsMissing));
   const installingDeps = $derived(ms.some((m) => m.depsInstalling));
-  const webApps = $derived(webAppsFor(ms));
   const isPending = $derived(!!target && pending.has(target.name));
 
   /*
@@ -160,9 +161,6 @@
             onclick={() => needDeps.forEach((m) => installDeps({ repo: m.repo, path: m.path }))}
           >{installingDeps ? 'Installing…' : `Install deps (${needDeps.length})`}</button>
         {/if}
-        {#each webApps as web (web.repo)}
-          <button class="btn sm" onclick={() => openApp(web.port)}>Open {web.repo} ↗</button>
-        {/each}
         {#if runTargets.length}
           <RunConfigMenu targets={runTargets} sessionId={session?.id ?? null} />
         {/if}
@@ -171,22 +169,12 @@
       {#if session}
         <!-- Branch on worktreePath itself rather than a derived boolean: a boolean
              tells the compiler nothing about the field being non-null here. -->
-        {#if session.worktreePath}
-          <!-- Bound to a const: the narrowing inside the block does not survive into an
-               arrow function, since `session` could be reassigned before it runs. -->
-          {@const sess = session}
-          <!-- Opens EVERY repo the session spans. It used to pass session.worktreePath —
-               the primary alone — so a BE+FE feature opened half of itself. -->
-          <button
-            class="btn sm"
-            title={sess.repos.length > 1 ? `Open all ${sess.repos.length} repos in the editor` : 'Open in editor'}
-            onclick={() => openSessionRepos(sess)}
-          >Open in editor{sess.repos.length > 1 ? ` (${sess.repos.length})` : ''}</button>
-        {:else}
+        <!-- Promote is the ONE thing that stays on the bar unclustered: before it there is
+             no worktree, so none of the verbs around it apply yet, and it is the only
+             thing to do. -->
+        {#if !session.worktreePath}
           <button class="btn sm primary" disabled={busy} onclick={() => guard(() => promote(session))}>Promote to worktree</button>
         {/if}
-        <button class="btn sm" title="Add another repo to this feature" onclick={() => addRepoToSession(session)}>＋ repo</button>
-        <button class="btn sm ghost" title="Edit name and colour" aria-label="Edit session" onclick={() => editSession(session)}>✐</button>
         <!-- Glyphs, like ✐ and 🗑 beside them, with the name in `aria-label` and the
              tooltip — an icon with no accessible name is a different bug.
              Play/pause rather than the ▷ this app already spends on "Run a config":
@@ -231,8 +219,43 @@
             >{'↺'}</button>
           {/if}
         </span>
-        <span class="sep" aria-hidden="true"></span>
-        <button class="btn sm ghost dangertext" aria-label="Delete session" title="Delete session" onclick={() => closeSession(session)}>🗑</button>
+        <!--
+          THE SPLIT, and the rule the whole bar is arranged by: left of this divider is
+          everything reversible and pressed constantly; right of it is what changes what
+          the feature IS. Losing a dev server costs seconds; losing a session costs a
+          conversation, so they do not belong at the same weight in the same row.
+
+          Open in editor moved in here at the owner's request — used rarely enough not to
+          earn permanent width.
+        -->
+        <span class="split" aria-hidden="true"></span>
+        {@const sess = session}
+        <OverflowMenu>
+          {#snippet children(pick)}
+            {#if sess.worktreePath}
+              <!-- Opens EVERY repo the session spans. It used to pass session.worktreePath
+                   — the primary alone — so a BE+FE feature opened half of itself. -->
+              <button role="menuitem" onclick={() => pick(() => openSessionRepos(sess))}>
+                <span class="g">↗</span> Open in editor{sess.repos.length > 1 ? ` (${sess.repos.length})` : ''}
+              </button>
+            {/if}
+            <button role="menuitem" onclick={() => pick(() => addRepoToSession(sess))}>
+              <span class="g">＋</span> Add a repo
+            </button>
+            <button role="menuitem" onclick={() => pick(() => editSession(sess))}>
+              <span class="g">✐</span> Edit name, colour, links
+            </button>
+            {#if target}
+              <button role="menuitem" onclick={() => pick(() => prFeature(target.name))}>
+                <span class="g">⑂</span> Create PR / MR
+              </button>
+            {/if}
+            <span class="sep"></span>
+            <button role="menuitem" class="danger" onclick={() => pick(() => closeSession(sess))}>
+              <span class="g">🗑</span> Delete session
+            </button>
+          {/snippet}
+        </OverflowMenu>
       {:else if feature}
         <!--
           A feature with a CONVERSATION on disk offers to resume it, not to start fresh.

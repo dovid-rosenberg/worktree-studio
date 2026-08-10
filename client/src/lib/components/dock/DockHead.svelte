@@ -17,7 +17,7 @@
    * acting on the selection.)
    */
   import { labelForSource } from '$lib/stores/ui.svelte.js';
-  import { world } from '$lib/stores/world.svelte.js';
+  import { webAppsFor, world } from '$lib/stores/world.svelte.js';
   import LinkChip from '$lib/components/LinkChip.svelte';
   import ActionBar from '$lib/components/ActionBar.svelte';
 
@@ -49,6 +49,19 @@
   const serverRepos = $derived(world.servers[session.id]?.repos || []);
   const portsFor = (repo: string): number[] =>
     serverRepos.find((r) => r.repo === repo && r.running)?.ports || [];
+
+  /**
+   * The port to open in a browser, for a repo that has one.
+   *
+   * `webAppsFor` is the same judgement the ActionBar used for its "Open <repo> ↗" buttons
+   * — config.webRepos ∩ running-with-a-port — so a chip becomes a link under exactly the
+   * condition that used to produce a button.
+   */
+  const webPorts = $derived(
+    new Map(webAppsFor(serverRepos.map((r) => ({ ...r, running: r.running }))).map((w) => [w.repo, w.port])),
+  );
+  const webPort = (repo: string, ports: number[]): number | null =>
+    ports.length ? (webPorts.get(repo) ?? null) : null;
   const showWtname = $derived(!!wtname && wtname !== session.title.trim());
 
   /** Before promote there is one implicit chip for the primary repo. */
@@ -90,13 +103,35 @@
   <span class="repochips">
     {#each repoChips as r (r.repo)}
       {@const ports = portsFor(r.repo)}
-      <span
-        class="repochip2"
-        class:primary={r.primary}
-        class:up={ports.length > 0}
-        title={r.worktreePath || 'main (not promoted)'}
-      >{r.primary ? '★ ' : ''}{r.repo}{r.worktreePath ? ' ⎇' : ''}{#if ports.length}<span class="ports"
-        >{ports.map((p) => `:${p}`).join(' ')}</span>{/if}</span>
+      {@const web = webPort(r.repo, ports)}
+      <!--
+        A running WEB repo's chip IS the way into the app.
+        It already names the repo and gives the port, which is the whole content of an
+        "Open <repo> ↗" button — so the button does not move here, it stops existing. That
+        matters because those buttons were per-repo and appeared only while a server was
+        up, i.e. they grew the bar in exactly the state where it was busiest.
+
+        Only web repos become links. A backend chip staying inert is information the bar
+        did not carry before: it says which of these you can actually look at.
+      -->
+      {#if web}
+        <a
+          class="repochip2 up link"
+          class:primary={r.primary}
+          href={`http://127.0.0.1:${web}`}
+          target="_blank"
+          rel="noreferrer"
+          title="Open {r.repo} at :{web}"
+        >{r.primary ? '★ ' : ''}{r.repo}{r.worktreePath ? ' ⎇' : ''}<span class="ports">:{web} ↗</span></a>
+      {:else}
+        <span
+          class="repochip2"
+          class:primary={r.primary}
+          class:up={ports.length > 0}
+          title={r.worktreePath || 'main (not promoted)'}
+        >{r.primary ? '★ ' : ''}{r.repo}{r.worktreePath ? ' ⎇' : ''}{#if ports.length}<span class="ports"
+          >{ports.map((p) => `:${p}`).join(' ')}</span>{/if}</span>
+      {/if}
     {/each}
   </span>
 
@@ -120,6 +155,11 @@
   .repochips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   .repochip2 { font-family:var(--mono); font-size:11.5px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:2px 7px; }
   .repochip2.primary { color:var(--brand); border-color:var(--brand); }
+  /* Only a running web repo. The ↗ and the hover are what make a chip read as pressable —
+     a clickable chip is quieter than a button, and this is what pays that back. */
+  a.repochip2.link { text-decoration:none; cursor:pointer; }
+  a.repochip2.link:hover, a.repochip2.link:focus-visible { border-color:var(--brand); color:var(--ink); }
+  a.repochip2.link:hover .ports, a.repochip2.link:focus-visible .ports { color:var(--brand); }
   /* Running: the chip earns the same green the port numbers always wore. */
   .repochip2.up { border-color:var(--done); }
   .ports { color:var(--done); margin-left:6px; }
