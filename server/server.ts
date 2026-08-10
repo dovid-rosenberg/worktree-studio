@@ -475,21 +475,24 @@ async function main() {
   // ---- sources ----
   api.get('/sources', (_req, res) => res.json(sources.enabled(cfg)));
   /*
-   * Asana's workspaces for a token the user has just typed.
+   * Check a token the user has just typed, and report who it belongs to.
    *
-   * Takes the token in the BODY rather than reading config, because it is asked before
-   * the token has been saved — the whole point is to fill in the workspace field so the
-   * save is complete. Nothing is persisted here.
+   * Takes the token in the BODY rather than reading config, because it is asked BEFORE
+   * anything is saved — proving the token works is what the user is doing when they press
+   * Connect. Nothing is persisted here.
    */
-  api.post('/sources/asana/workspaces', async (req, res) => {
+  api.post('/sources/asana/verify', async (req, res) => {
     const token = String(req.body?.token || '').trim();
     if (!token) return res.status(400).json({ ok: false, error: 'a token is required' });
     try {
-      const list = await asana.workspaces({ sources: { asana: { enabled: true, token, workspace: '' } } });
-      res.json({ ok: true, workspaces: list });
+      res.json({ ok: true, ...(await asana.verify(token)) });
     } catch (e) {
-      // Asana answers 401 for a bad token, which is the commonest thing to get wrong.
-      res.status(400).json({ ok: false, error: msg(e) });
+      // Asana answers 401 for a bad token, which is much the commonest thing to get wrong.
+      const m = msg(e);
+      res.status(400).json({
+        ok: false,
+        error: /401/.test(m) ? 'Asana rejected that token' : m,
+      });
     }
   });
   api.get('/sources/:source/items', async (req, res) => {

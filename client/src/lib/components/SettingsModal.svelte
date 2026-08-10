@@ -67,33 +67,70 @@
   let pristine = '';
 
   /*
-   * Asana workspaces for the token currently typed in the box.
+   * Connecting Asana: prove the token, learn who it belongs to, pick a workspace.
    *
-   * Fetched on demand rather than on every keystroke: it is a network call against a
-   * value the user is still typing, and a 401 per character is noise. The button is the
-   * signal that the token is complete.
+   * Checked on a button press rather than on every keystroke — it is a network call
+   * against a value still being typed, and a 401 per character is noise. Pressing Connect
+   * is the signal that the token is complete.
    */
-  let asanaWorkspaces = $state<Array<{ gid: string; name: string }>>([]);
+  let asanaWorkspaces = $state<Array<{ gid: string; name: string; tasks: number }>>([]);
+  let asanaWho = $state('');
   let asanaLoading = $state(false);
   let asanaError = $state('');
 
-  async function loadAsanaWorkspaces() {
+  /** The chosen workspace's NAME — a gid on screen tells a human nothing. */
+  const asanaWorkspaceName = $derived(
+    asanaWorkspaces.find((w) => w.gid === as.workspace)?.name || '',
+  );
+
+  async function connectAsana() {
     asanaLoading = true;
     asanaError = '';
     try {
-      const r = await api('POST', '/api/v1/sources/asana/workspaces', { token: as.token.trim() });
+      const r = await api('POST', '/api/v1/sources/asana/verify', { token: as.token.trim() });
       if (!r.ok) throw new Error(r.error || 'could not reach Asana');
+      asanaWho = r.name || '';
       asanaWorkspaces = r.workspaces || [];
-      // One workspace is the common case, and making someone pick from a list of one is
-      // a step for nothing.
-      if (asanaWorkspaces.length === 1) as.workspace = asanaWorkspaces[0].gid;
-      if (!asanaWorkspaces.length) asanaError = 'that token can see no workspaces';
+      if (!asanaWorkspaces.length) {
+        asanaError = 'that token can see no workspaces';
+        return;
+      }
+      /*
+       * ENABLE IT. This is the whole fix: `enabled` used to be a separate checkbox, so a
+       * correct token and workspace could sit there inert with nothing saying so.
+       * Connecting is the statement of intent, so connecting is what turns it on.
+       *
+       * With one workspace there is nothing to choose, so it completes here; with several
+       * the picker appears and "Use this" finishes it.
+       */
+      if (asanaWorkspaces.length === 1) {
+        as.workspace = asanaWorkspaces[0].gid;
+        as.enabled = true;
+      } else {
+        /*
+         * Several workspaces: pre-select the one with your work in it (verify sorts by
+         * task count) but do NOT auto-enable — with a real choice to make, silently
+         * making it is how you end up connected to the wrong one, which is exactly what
+         * happened here. The user confirms with "Use this".
+         */
+        if (!asanaWorkspaces.some((w) => w.gid === as.workspace)) {
+          as.workspace = asanaWorkspaces[0].gid;
+        }
+      }
     } catch (e) {
       asanaError = errMessage(e);
       asanaWorkspaces = [];
+      asanaWho = '';
     } finally {
       asanaLoading = false;
     }
+  }
+
+  function disconnectAsana() {
+    as = { enabled: false, token: '', workspace: '' };
+    asanaWorkspaces = [];
+    asanaWho = '';
+    asanaError = '';
   }
 
   function snapshot(): string {
@@ -302,39 +339,76 @@
         </div>
       </div>
 
+      <!--
+        A CONNECTION, not three fields and a checkbox.
+        Filling in a token IS the statement "I want this connected" — but `enabled` was a
+        separate tick, so credentials could be saved, correct, and inert, with nothing on
+        screen saying so. That is exactly what happened: a valid token and workspace sat
+        beside `enabled: false` and the picker went on asking GitHub.
+
+        So there is no checkbox. Connect proves the token works, says WHO it belongs to —
+        a tick proves a request succeeded, a name proves it succeeded as you, which is what
+        "assigned to me" actually rests on — and enables the source. Disconnect is the off
+        switch, and it is unambiguous.
+      -->
       <div class="field">
-        <label class="inline"><input type="checkbox" bind:checked={gl.enabled} /> GitLab <span class="hint">{tools.glab ? '— glab CLI available' : '— uses API token'}</span></label>
-        <input class="input" placeholder="https://gitlab.com" bind:value={gl.host} aria-label="GitLab host" />
-        <input class="input" placeholder="group/project (for API mode)" bind:value={gl.project} aria-label="GitLab project" />
-        <input class="input" type="password" placeholder="Personal access token" bind:value={gl.token} aria-label="GitLab token" />
+        <span class="lbl">GitLab <span class="lbl-note">{tools.glab ? '— the glab CLI is available; a token is only needed for API mode' : '— API token'}</span></span>
+        {#if gl.enabled && gl.token}
+          <div class="conn"><span class="ok">✓ connected</span><span class="conn-what">{gl.host || 'gitlab.com'}{gl.project ? ` · ${gl.project}` : ''}</span>
+            <button class="btn ghost xs" onclick={() => { gl.enabled = false; gl.token = ''; }}>Disconnect</button>
+          </div>
+        {:else}
+          <div class="conn-row">
+            <input class="input" placeholder="https://gitlab.com" bind:value={gl.host} aria-label="GitLab host" />
+            <input class="input" placeholder="group/project (API mode)" bind:value={gl.project} aria-label="GitLab project" />
+          </div>
+          <div class="conn-row">
+            <input class="input" type="password" placeholder="Personal access token" bind:value={gl.token} aria-label="GitLab token" />
+            <button class="btn xs" disabled={!gl.token.trim()} onclick={() => (gl.enabled = true)}>Connect</button>
+          </div>
+        {/if}
       </div>
 
       <div class="field">
-        <label class="inline"><input type="checkbox" bind:checked={as.enabled} /> Asana <span class="hint">— API token</span></label>
-        <input class="input" type="password" placeholder="Personal access token" bind:value={as.token} aria-label="Asana token" />
-        <!--
-          The workspace is PICKED, not typed.
-          A "Workspace GID" is a number Asana surfaces nowhere in its own UI — you get it
-          by reading it out of a URL. The token already knows the answer, so asking for it
-          was asking the user to make an API call by hand. The text field stays for anyone
-          who has the id and would rather paste it.
-        -->
-        <div class="wsrow">
-          {#if asanaWorkspaces.length}
-            <select class="select" bind:value={as.workspace} aria-label="Asana workspace">
-              <option value="">Pick a workspace…</option>
-              {#each asanaWorkspaces as w (w.gid)}<option value={w.gid}>{w.name}</option>{/each}
-            </select>
-          {:else}
-            <input class="input" placeholder="Workspace GID" bind:value={as.workspace} aria-label="Asana workspace" />
+        <span class="lbl">Asana <span class="lbl-note">— where your tasks come from</span></span>
+        {#if as.enabled && as.token && as.workspace}
+          <div class="conn">
+            <span class="ok">✓ connected</span>
+            <span class="conn-what">{asanaWho || 'Asana'}{asanaWorkspaceName ? ` · ${asanaWorkspaceName}` : ''}</span>
+            <button class="btn ghost xs" onclick={disconnectAsana}>Disconnect</button>
+          </div>
+        {:else}
+          <div class="conn-row">
+            <input
+              class="input"
+              type="password"
+              placeholder="Personal access token"
+              bind:value={as.token}
+              aria-label="Asana token"
+            />
+            <button class="btn xs" disabled={!as.token.trim() || asanaLoading} onclick={connectAsana}>
+              {asanaLoading ? 'Checking…' : 'Connect'}
+            </button>
+          </div>
+          <span class="hint">Create one at <code>app.asana.com</code> → your photo → My settings → Apps → Personal access tokens</span>
+          {#if asanaWorkspaces.length > 1}
+            <!-- Only when there is a real choice. One workspace is picked automatically,
+                 because making someone choose from a list of one is a step for nothing. -->
+            <div class="conn-row">
+              <select class="select" bind:value={as.workspace} aria-label="Asana workspace">
+                <option value="">Pick a workspace…</option>
+                <!-- The COUNT, not just the name: this account has two workspaces both
+                   called "accept.blue", one with twenty tasks and one with none. The name
+                   alone offers the same word twice and no way to choose. -->
+              {#each asanaWorkspaces as w (w.gid)}
+                <option value={w.gid}>{w.name}{w.tasks >= 0 ? ` — ${w.tasks === 0 ? 'no tasks' : `${w.tasks} task${w.tasks === 1 ? '' : 's'}`} assigned to you` : ''}</option>
+              {/each}
+              </select>
+              <button class="btn xs" disabled={!as.workspace} onclick={() => (as.enabled = true)}>Use this</button>
+            </div>
           {/if}
-          <button
-            class="btn ghost xs"
-            disabled={!as.token.trim() || asanaLoading}
-            onclick={loadAsanaWorkspaces}
-          >{asanaLoading ? 'Checking…' : asanaWorkspaces.length ? 'Recheck' : 'Find workspaces'}</button>
-        </div>
-        {#if asanaError}<span class="hint err">{asanaError}</span>{/if}
+          {#if asanaError}<span class="hint err">{asanaError}</span>{/if}
+        {/if}
       </div>
 
       <div class="field">
@@ -465,7 +539,6 @@
   .foot-note { font-family:var(--mono); font-size:12px; color:var(--faint); }
   .field { display:flex; flex-direction:column; gap:6px; }
   .field label, .field .lbl { font-family:var(--mono); font-size:11.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; }
-  .field label.inline input[type="checkbox"] { vertical-align:middle; margin-right:4px; accent-color:var(--brand); }
   .hint, .lbl-note { text-transform:none; letter-spacing:0; color:var(--faint); }
   .chk { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:12px; color:var(--muted); text-transform:none; letter-spacing:0; }
   .chk input { accent-color:var(--brand); }

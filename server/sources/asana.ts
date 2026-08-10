@@ -40,17 +40,64 @@ async function api<T>(cfg: PartialDeep<Config>, pathAndQuery: string): Promise<T
 }
 
 /**
- * The workspaces a token can see.
+ * Who a token belongs to, and which workspaces it can see — in ONE call.
  *
- * Connecting Asana otherwise means finding a "Workspace GID" — a number with no UI
- * anywhere in Asana that surfaces it, which you get by reading it out of a URL. The token
- * already knows the answer, so asking the user for it is asking them to do an API call by
- * hand. Exported for the settings route rather than being part of SourceAdapter: no other
- * tracker has this shape of ambiguity, so it is not a contract, it is one adapter's helper.
+ * Both halves of "is this connected?" come from `/users/me`. The name is what makes the
+ * answer meaningful to a human: a green tick proves a request succeeded, "David
+ * Rosenberg" proves it succeeded AS YOU, which is the thing actually being asserted when
+ * a picker says "assigned to me".
+ *
+ * The workspace matters because Asana surfaces its GID nowhere in its own UI — you get it
+ * by reading a URL. Asking a user for it is asking them to make an API call by hand.
  */
-export async function workspaces(cfg: PartialDeep<Config>): Promise<Array<{ gid: string; name: string }>> {
-  return api<Array<{ gid: string; name: string }>>(cfg, '/workspaces?opt_fields=name');
+export async function verify(
+  token: string,
+): Promise<{ name: string; workspaces: Array<{ gid: string; name: string; tasks: number }> }> {
+  const cfg = { sources: { asana: { enabled: true, token, workspace: '' } } };
+  const me = await api<{ name?: string; workspaces?: Array<{ gid: string; name: string }> }>(
+    cfg,
+    '/users/me?opt_fields=name,workspaces.name',
+  );
+  const list = (me.workspaces || []).slice(0, MAX_WORKSPACES);
+
+  /*
+   * How many tasks each workspace has ASSIGNED TO YOU.
+   *
+   * Names are not unique. This account has two workspaces both called "accept.blue" — one
+   * holding twenty tasks and one holding none — so a picker showing the name alone offers
+   * the same word twice with no way to choose. Picking the empty one yields a connection
+   * that works perfectly and lists nothing, which is indistinguishable from a broken
+   * integration, and is exactly what happened here.
+   *
+   * A count answers the question actually being asked — "which one has my work?" — rather
+   * than asking someone to decode a gid. One extra request per workspace, bounded, and
+   * only while connecting.
+   */
+  const counted = await Promise.all(
+    list.map(async (w) => {
+      try {
+        const tasks = await api<Array<unknown>>(
+          cfg,
+          `/tasks?assignee=me&workspace=${encodeURIComponent(w.gid)}&completed_since=now&opt_fields=gid&limit=${COUNT_CAP}`,
+        );
+        return { ...w, tasks: tasks.length };
+      } catch {
+        // A workspace that refuses the query is still selectable; -1 means "not known",
+        // which the UI renders as nothing rather than as a confident zero.
+        return { ...w, tasks: -1 };
+      }
+    }),
+  );
+  // Most tasks first: with several workspaces, the one you work in is almost always the
+  // one your work is in.
+  counted.sort((a, b) => b.tasks - a.tasks);
+  return { name: me.name || 'your account', workspaces: counted };
 }
+
+/** Enough to tell workspaces apart; not a page of results. */
+const COUNT_CAP = 50;
+/** A guard on the fan-out above — nobody picks from a list of fifty workspaces anyway. */
+const MAX_WORKSPACES = 12;
 
 const adapter: SourceAdapter = {
   id: 'asana',
