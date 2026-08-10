@@ -430,6 +430,28 @@ export function webAppsFor(list: ServableRow[]): WebApp[] {
   return out;
 }
 
+/**
+ * The URL of a dev server this app is listening on. THE one builder of it.
+ *
+ * `localhost`, never `127.0.0.1`, and the difference is not cosmetic. Vite — and every
+ * other server on a modern Node — binds the loopback interface by family, and on this
+ * machine that means `[::1]` alone:
+ *
+ *     $ lsof -nP -iTCP:3031 -sTCP:LISTEN
+ *     node ... TCP [::1]:3031 (LISTEN)
+ *     $ curl http://127.0.0.1:3031/   → connection refused
+ *     $ curl http://localhost:3031/   → 200
+ *
+ * So a hard-coded IPv4 literal is refused by a server that is running perfectly well.
+ * `localhost` resolves to whichever family bound, which is the only form that works for
+ * both. This mattered because there were TWO builders of this URL that disagreed —
+ * `openApp` said localhost, DockHead's port chip said 127.0.0.1 — and the chip is the one
+ * you actually click, so a running frontend read as dead.
+ */
+export function appUrl(port: number): string {
+  return `http://localhost:${port}`;
+}
+
 export function openApp(port: number): void {
-  window.open(`http://localhost:${port}`, '_blank', 'noopener');
+  window.open(appUrl(port), '_blank', 'noopener');
 }
