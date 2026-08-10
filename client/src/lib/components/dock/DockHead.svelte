@@ -62,7 +62,9 @@
 </script>
 
 <div class="dock-head">
-  <span class="dot {session.state}"></span>
+  <!-- A title and a label: this dot has no accompanying text, so without them the agent's
+       state is conveyed by hue and nothing else. -->
+  <span class="dot {session.state}" role="img" aria-label="Agent is {session.state}" title="The agent is {session.state}"></span>
   <span class="dock-title">{session.title}</span>
   {#if showWtname}<span class="wtname" title="The worktree name — what groups these repos">{wtname}</span>{/if}
   {#if session.sourceUrl}

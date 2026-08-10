@@ -64,7 +64,10 @@
 
     add('＋', 'New session', '⌘N', () => overlays.openIntake());
     add('⌕', 'Search transcripts', '⌘⇧F', () => overlays.openSearch());
-    if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '⌘↵', () => promote(cur));
+    // No shortcut hint: ⌘↵ is not bound to this, and IS bound in the terminal to "new
+    // line without submitting" — so advertising it here promised a key that does nothing
+    // in the palette and something else entirely everywhere it does work.
+    if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '', () => promote(cur));
     if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { ui.goToSession(cur.id); ui.dockView = 'changes'; });
     // Opens the one Insights view already drilled into this session.
     if (cur) add('◔', 'Session insights', '', () => ui.openInsights(cur.id));
@@ -120,16 +123,37 @@
       autocomplete="off"
       placeholder="Jump to a session or run a command…"
       aria-label="Command palette"
+      role="combobox"
+      aria-expanded="true"
+      aria-controls="palette-list"
+      aria-activedescendant={rows.length ? `palette-opt-${hi}` : undefined}
       bind:value={query}
       bind:this={input}
     />
-    <div class="palette-list" bind:this={listEl}>
+    <!--
+      A real listbox, not a stack of divs. Options carry tabindex="-1", not 0: with
+      aria-activedescendant the focus stays in the INPUT — which is what keeps typing
+      working — so options are referenced programmatically and never tabbed to.
+      Focus stays in the input (that is what makes typing work), so the highlighted row
+      has to be announced through aria-activedescendant — without it a screen reader
+      reads the query back and says nothing at all about what Enter is about to run.
+    -->
+    <div class="palette-list" id="palette-list" role="listbox" aria-label="Results" bind:this={listEl}>
       {#if sessionRows.length}<div class="psec">Sessions</div>{/if}
       {#each sessionRows as r, i (r.key)}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="pcmd" class:on={hi === i} onclick={r.run} onmousemove={() => (hi = i)}>
-          <span class="pg">{r.glyph}</span>
-          <span class="dot {r.dot}"></span>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+          class="pcmd"
+          class:on={hi === i}
+          id="palette-opt-{i}"
+          role="option"
+          aria-selected={hi === i}
+          tabindex="-1"
+          onclick={r.run}
+          onmousemove={() => (hi = i)}
+        >
+          <span class="pg" aria-hidden="true">{r.glyph}</span>
+          <span class="dot {r.dot}" role="img" aria-label="{r.dot}"></span>
           <span class="ptitle">{r.title}</span>
           <span class="psub">{r.sub}</span>
         </div>
@@ -138,9 +162,18 @@
       {#if commandRows.length}<div class="psec">Commands</div>{/if}
       {#each commandRows as r, i (r.key)}
         {@const idx = sessionRows.length + i}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="pcmd" class:on={hi === idx} onclick={r.run} onmousemove={() => (hi = idx)}>
-          <span class="pg">{r.glyph}</span>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+          class="pcmd"
+          class:on={hi === idx}
+          id="palette-opt-{idx}"
+          role="option"
+          aria-selected={hi === idx}
+          tabindex="-1"
+          onclick={r.run}
+          onmousemove={() => (hi = idx)}
+        >
+          <span class="pg" aria-hidden="true">{r.glyph}</span>
           <span class="ptitle">{r.title}</span>
           {#if r.sub}<span class="psub">{r.sub}</span>{/if}
         </div>
