@@ -57,7 +57,10 @@ export interface MuxNewTabOptions {
  * ids are always `@N`. A tab still wearing this has never been reconciled, so
  * `#tabAt` falls through to the positional lookup for it and nothing else.
  */
-export const PENDING_TAB = 'pending';
+export /** A session title is drawn on a rail card and rides every state frame. */
+const TITLE_MAX = 200;
+
+const PENDING_TAB = 'pending';
 
 export interface MuxNewTabResult {
   ok: boolean;
@@ -1088,10 +1091,22 @@ class SessionManager extends EventEmitter {
 
   async rename(id: string, title?: string) {
     const s = this.get(id);
-    if (!s || !title?.trim()) return { ok: false, error: 'invalid title' };
-    s.title = title.trim();
+    // Two different failures, told apart. This answered "invalid title" for a session
+    // that does not exist, blaming the one thing the caller got right.
+    if (!s) return { ok: false, error: 'no such session' };
+    const clean = String(title || '').trim();
+    if (!clean) return { ok: false, error: 'a session needs a name' };
+    /*
+     * Capped, as renameTab() three methods above already caps its own input at 40.
+     *
+     * A title has no natural ceiling and rides EVERY session-state frame — which fires on
+     * every Claude hook, i.e. once per agent tool call. A million-character title was
+     * accepted, persisted, and then rebroadcast to every connected client for the rest of
+     * the session's life. 200 is generous for something rendered on a rail card.
+     */
+    s.title = clean.slice(0, TITLE_MAX);
     this._touch(id);
-    return { ok: true };
+    return { ok: true, title: s.title };
   }
 
   // Stop the running process but keep the session (resumable later).

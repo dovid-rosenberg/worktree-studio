@@ -110,7 +110,8 @@ function harness({
     launchOpts: () => ({ env: {}, ports: [] }),
     stop: async (repo: string, p: string) => {
       calls.stopped.push([repo, p]);
-      return { ok: true };
+      // `stillListening` is the whole point of the type: a stop that did not stop.
+      return { ok: true as const, killed: true, stillListening: [] };
     },
     start: async (repo: string, p: string) => {
       calls.started.push([repo, p]);
@@ -277,7 +278,9 @@ test("group/stop stops only running members and frees every member's slot", asyn
   const { app, calls } = harness({ group: FEATURE });
   await serving(app, async (get) => {
     const r = await get('/api/v1/group/stop', post({ group: 'feat-a' }));
-    assert.deepEqual(await r.json(), { ok: true });
+    // Was a hardcoded `{ok: true}`, which is why a server that ignored SIGTERM and kept
+    // its port was reported as stopped. The counts are what make `ok` mean something.
+    assert.deepEqual(await r.json(), { ok: true, stopped: 1, total: 1 });
   });
   assert.deepEqual(calls.stopped, [['api', WT('feat-a')]], 'the stopped member is not re-stopped');
   assert.deepEqual(

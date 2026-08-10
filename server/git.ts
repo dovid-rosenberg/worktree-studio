@@ -133,7 +133,17 @@ async function originHead(repoPath: string): Promise<string> {
 /** The current branch, or 'main' — the shared fallback when `origin/HEAD` is absent. */
 async function guessDefault(repoPath: string): Promise<string> {
   const cur = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  return cur || 'main';
+  /*
+   * `HEAD` is what git says when there is NO branch, not the name of one.
+   *
+   * A detached checkout — during a bisect, or after checking out a tag — made this return
+   * the literal string "HEAD", which then travelled as the review baseline. `review.base()`
+   * resolved it to the current commit, so a branch's own commits diffed against themselves
+   * and the Changes pane showed nothing, with nothing explaining why. Falling through to
+   * 'main' is a guess, but it is a guess about a BRANCH, which is the kind of thing the
+   * caller asked for.
+   */
+  return cur && cur !== 'HEAD' ? cur : 'main';
 }
 
 async function defaultBranch(repoPath: string): Promise<string> {
@@ -189,7 +199,6 @@ async function scan(baseDirs: string[], depth: number): Promise<ScannedRepo[]> {
 
 export {
   scan,
-  describeRepo,
   findRepos,
   walkTree,
   originHead,

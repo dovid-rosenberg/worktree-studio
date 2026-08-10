@@ -60,11 +60,25 @@ const adapter: SourceAdapter = {
   async list(cfg, { repoPath, q }) {
     const g = cfgOf(cfg);
     if (has('glab') && repoPath) {
+      /*
+       * `--search`, which this branch simply never applied.
+       *
+       * `q` was destructured and then unused, so typing in the intake picker filtered
+       * GitHub issues and GitLab-via-REST issues and did NOTHING for GitLab-via-glab —
+       * the branch that runs whenever glab is installed, i.e. the common case. The box
+       * accepted input and returned the same unfiltered 30 issues, which reads as broken
+       * rather than as unimplemented.
+       */
+      const term = String(q ?? '').trim();
       const args = ['issue', 'list', '-P', '30', '-F', 'json'];
+      if (term) args.push('--search', term);
       const r = await run('glab', args, { cwd: repoPath, env: ENV });
       if (r.code !== 0) throw new Error(r.stderr.trim() || 'glab issue list failed');
       const items = JSON.parse(r.stdout || '[]') as GitlabIssue[];
-      return items.map((it) => ({ id: String(it.iid), title: it.title, subtitle: `!${it.iid}` }));
+      // `#`, matching the REST branch below and GitLab's own notation. `!` is the MERGE
+      // REQUEST sigil — the two branches of one lookup labelled the same issue two
+      // different ways, and one of them named the wrong kind of object entirely.
+      return items.map((it) => ({ id: String(it.iid), title: it.title, subtitle: `#${it.iid}` }));
     }
     const proj = encodeURIComponent(restTarget(g).project);
     const items = await rest<GitlabIssue[]>(

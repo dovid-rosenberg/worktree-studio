@@ -228,4 +228,4 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   return { token, denyHost, denyOrigin, denyBrowser, denyToken, browser, authed };
 }
 
-export { loadToken, createGuard, splitHostPort, LOOPBACK };
+export { loadToken, createGuard, splitHostPort };

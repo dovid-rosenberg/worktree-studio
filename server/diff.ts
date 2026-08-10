@@ -392,13 +392,4 @@ function formatFilePatch(
   return `${out.join('\n')}\n`;
 }
 
-export {
-  parsePatch,
-  formatFilePatch,
-  formatHunkHeader,
-  alignRows,
-  splitLines,
-  stripPrefix,
-  unquotePath,
-  normalizeSelection,
-};
+export { parsePatch, formatFilePatch, alignRows, stripPrefix, unquotePath, normalizeSelection };

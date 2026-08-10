@@ -672,4 +672,4 @@ function summarize(rows: UsageRow[]): UsageSummary {
 
 const sqliteAvailable = (): boolean => !!sqlite;
 
-export { TranscriptIndex, summarize, ftsQuery, likePattern, sqliteAvailable };
+export { TranscriptIndex, summarize, ftsQuery, likePattern };
