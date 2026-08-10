@@ -224,6 +224,21 @@ export async function closeTab(s: Session, tab: string) {
   const tabs = s.tabs || [];
   const i = tabs.findIndex((t) => t.id === tab);
   const next = i >= 0 ? tabs[i + 1] || tabs[i - 1] : null;
+  /*
+   * Ask first — this kills a live tmux window and whatever is running in it.
+   *
+   * Reachable from the ✕ and from a MIDDLE-CLICK anywhere on the tab, which is easy to
+   * do by accident with a trackpad, and the pane may be holding a test run, a migration
+   * or a shell you were halfway through. Every other destructive verb in this file
+   * confirms; this one did not, and there is no undo for a killed window.
+   */
+  const title = tabs[i]?.title || 'this tab';
+  const ok = await uiConfirm(`Close “${title}”? Anything running in it is killed.`, {
+    title: 'Close tab',
+    okLabel: 'Close tab',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api('POST', `/api/v1/sessions/${s.id}/close-tab`, { tab });
     if (ui.activeTabId === tab && next) await selectTab(s, next.id);

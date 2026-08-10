@@ -11,6 +11,7 @@
   import Modal from '$lib/components/Modal.svelte';
   import { api } from '$lib/api.js';
   import { world } from '$lib/stores/world.svelte.js';
+  import { uiConfirm } from '$lib/stores/dialog.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
   import { toast } from '$lib/stores/toasts.svelte.js';
   import { notify } from '$lib/stores/notify.svelte.js';
@@ -48,6 +49,50 @@
   // otherwise deleting row 2 of 4 re-seeds the inputs of rows 3 and 4 with each other's
   // values, which is exactly the class of bug this port exists to remove.
   let rowKey = 0;
+
+  /*
+   * DIRTY TRACKING, because closing this form throws the whole thing away.
+   *
+   * It is a large multi-section form — repo roots, dev-server commands, editor commands,
+   * run configurations, feature groups, three API tokens — held entirely in local state
+   * and written only by save(). Escape, or a stray click on the backdrop, called
+   * closeSettings() unconditionally: minutes of typing gone, with no warning and nothing
+   * to undo it with.
+   *
+   * Serialising is enough here and cheaper than tracking each field: the form is small,
+   * this runs on close and on nothing else, and `key` is excluded because it is a
+   * rendering id that changes when rows are added — not an edit the user made.
+   */
+  let pristine = '';
+
+  function snapshot(): string {
+    const rows = <T extends { key: number }>(list: T[]) =>
+      list.map(({ key: _key, ...rest }) => rest);
+    return JSON.stringify({
+      roots: rows(rootRows),
+      start: rows(startRows),
+      editors: rows(editorRows),
+      runs: rows(runRows),
+      groups: rows(groupRows),
+      defaultEditor,
+      gl,
+      as,
+      nt,
+    });
+  }
+
+  /** Close, asking first when there is unsaved work to lose. */
+  async function tryClose() {
+    if (loaded && snapshot() !== pristine) {
+      const ok = await uiConfirm('Discard your unsaved changes to these settings?', {
+        title: 'Unsaved changes',
+        okLabel: 'Discard',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    overlays.closeSettings();
+  }
     let startRows: {key:number, repo:string, cmd:string, ports:string}[] = $state([]);
     let editorRows: {key:number, name:string, open:string, openGroup:string}[] = $state([]);
     let groupRows: {key:number, name:string, members:string}[] = $state([]);
@@ -96,6 +141,9 @@
           members: (g.members || []).join(', '),
         }));
         loaded = true;
+        // The baseline for dirty tracking — taken AFTER the load, so the values the
+        // server sent are not themselves counted as edits.
+        pristine = snapshot();
       } catch (e) {
         if (alive) error = (e as Error).message;
       }
@@ -173,11 +221,11 @@
   }
 </script>
 
-<Modal label="Connections & settings" onclose={() => overlays.closeSettings()}>
+<Modal label="Connections & settings" onclose={tryClose}>
   <div class="modal-head">
     <span>⚙</span><b>Connections &amp; settings</b>
     <span class="spacer"></span>
-    <button class="btn ghost" title="Close" aria-label="Close" onclick={() => overlays.closeSettings()}>✕</button>
+    <button class="btn ghost" title="Close" aria-label="Close" onclick={tryClose}>✕</button>
   </div>
 
   <div class="modal-body">
@@ -344,7 +392,7 @@
   <div class="modal-foot">
     <span class="foot-note">Saved to ~/.config/worktree-studio/config.json</span>
     <span class="spacer"></span>
-    <button class="btn" onclick={() => overlays.closeSettings()}>Close</button>
+    <button class="btn" onclick={tryClose}>Close</button>
     <button class="btn primary" disabled={!loaded || saving} onclick={save}>{saving ? 'Saving…' : 'Save'}</button>
   </div>
 </Modal>
