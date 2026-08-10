@@ -13,7 +13,7 @@
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 import type { Router } from 'express';
 import * as worktree from './worktree.ts';
-import { openEditor, resolveEditor, run, shq } from './util.ts';
+import { openEditor, resolveEditor, shq } from './util.ts';
 import * as startReport from './start-report.ts';
 import type { StartOutcome } from './start-report.ts';
 
