@@ -40,19 +40,37 @@ import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
 import { runStack } from '$lib/ops.svelte.js';
 
+/*
+ * What the app ACTUALLY binds — checked against the handlers, not remembered.
+ *
+ * The previous list carried `⇧↵` twice, and the second row described it as "sent as
+ * ESC+CR" — which is not merely a duplicate but a description of an approach
+ * Terminal.svelte's own comment records as having been tried and specifically NOT
+ * working. It sends LF. Five real bindings were missing, including Escape, which is the
+ * most consequential key in the app.
+ *
+ * Grouped, because a flat list of eleven gives no clue that half of them only do anything
+ * while the terminal has focus.
+ */
 const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
   ['⌘⇧F', 'Search every transcript'],
+  // Genuinely bound (and Ctrl+N works), but Chrome and Safari claim ⌘N at the browser
+  // level and a page cannot preventDefault it — so on macOS this may never reach us.
+  // Kept rather than dropped: the binding is real, and ＋ New session is always there.
   ['⌘N', 'New session'],
   ['⌘\\', 'Toggle Insights'],
-  ['⌥1–9', 'Jump to the Nth rail row'],
-  ['⌘↵', 'New line in the terminal (without submitting)'],
-  ['⇧↵', 'New line in the terminal'],
-  ['⌘←/→', 'Start / end of line in the terminal'],
   ['⌘D', 'Review changes'],
   ['⌘R', 'Run stack'],
-  ['⇧↵', 'New line in the terminal (sent as ESC+CR)'],
+  ['⌥1–9', 'Jump to the Nth rail row — the number is on the card'],
+  ['F2', 'Rename the current terminal tab'],
+  ['Esc', 'Close the topmost overlay, or interrupt the agent when nothing is open'],
   ['?', 'This help'],
+  // Terminal-only: these are handled by the pane and do nothing elsewhere.
+  ['⌘↵ / ⇧↵', 'Terminal: new line without submitting'],
+  ['⌘← / ⌘→', 'Terminal: start / end of line'],
+  ['⌘⌫', 'Terminal: delete to start of line'],
+  ['⌥← / ⌥→', 'Terminal: move by word'],
 ];
 
 export function showShortcuts(): void {

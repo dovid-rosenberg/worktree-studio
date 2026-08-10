@@ -143,6 +143,18 @@
    */
   function onTabKeydown(e: KeyboardEvent, tab: SessionTab) {
     if (e.key === 'F2') { e.preventDefault(); beginRename(tab); return; }
+    /*
+     * Delete/Backspace closes, because the ✕ and a middle-click were the ONLY ways.
+     * Both are pointer-only, so a tab could be reached, renamed and moved between with
+     * the keyboard but never closed with it — the one operation in the strip with no
+     * keyboard path at all. Guarded on tabs.length like onAuxClick: the last tab is the
+     * session itself, and closing it is not what a stray Delete should do.
+     */
+    if ((e.key === 'Delete' || e.key === 'Backspace') && tabs.length > 1) {
+      e.preventDefault();
+      closeTab(session, tab.id);
+      return;
+    }
     const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
     if (!keys.includes(e.key)) return;
     e.preventDefault();
