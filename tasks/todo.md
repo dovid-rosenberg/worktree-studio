@@ -37,12 +37,12 @@ One piece of git plumbing answers both.
 - [x] Tests: fixture repos with real overlapping worktrees; assert the pair math and
       that a clean feature reports nothing.
 
-## Phase 2 — send a failing run to the agent
+## Phase 2 — send a failing run to the agent  ✅ LANDED
 
-- [ ] Button on a failed run in RunsPanel: pipe the log tail into the session's pane
+- [x] Button on a failed run in RunsPanel: pipe the log tail into the session's pane
       via `sendWhenReady` (already exists, already gated on claude being ready).
-- [ ] Include the command, the exit code and the tail — not the whole log.
-- [ ] Only for a session that has an agent; a feature without one has nowhere to send.
+- [x] Include the command, the exit code and the tail — not the whole log.
+- [x] Only for a session that has an agent; a feature without one has nowhere to send.
 
 ## Phase 3 — review queue + how it sits in the rail
 
@@ -83,5 +83,14 @@ Two decisions worth keeping:
 - Measured against `origin/<default>`, not the local base branch: a stale local master
   makes every branch look up to date.
 
-Next: Phase 2 (send a failing run to the agent) is small and independent. Phase 3 still
-carries the one open question — how review rows sit in the rail.
+**Phase 2 landed.** The design turned on one constraint found while building it: tmux's
+`sendText` writes the body literally and presses Enter SEPARATELY, so any newline in the
+message submits it half-written — a pasted stack trace would arrive as fifty
+half-messages. So the handoff is one line pointing at the log file, which is better
+anyway: the agent reads all of the output rather than a guessed tail. The first test
+asserts the message contains no newline, because that is what the whole design rests on.
+
+The session is resolved from the RUN's worktree, server-side. A client naming the target
+would let a stale tab hand a failure to whichever agent it last had selected.
+
+Next: Phase 3 still carries the one open question — how review rows sit in the rail.
