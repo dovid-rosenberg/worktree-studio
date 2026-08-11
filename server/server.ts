@@ -26,7 +26,14 @@ import { attachableWorktrees } from './features.ts';
 import * as runConfigs from './run-configs.ts';
 // isRecord too: this file had a byte-identical copy, docstring included, of a
 // predicate settings.ts already exported — and already imports four symbols from.
-import { coerceEditors, coerceGroups, coerceRunConfigs, coerceStart, isRecord } from './settings.ts';
+import {
+  coerceEditors,
+  coerceGroups,
+  coerceRunConfigs,
+  coerceStart,
+  isRecord,
+  upsertGroup,
+} from './settings.ts';
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
@@ -1141,6 +1148,36 @@ async function main() {
       env: pick.env,
     });
     return res.json({ ok: true, kind, runId: run.id });
+  });
+
+  /*
+   * Group worktrees that drift apart under different names.
+   *
+   * `drift` on the topology payload reports features that look like one piece of work
+   * under two names (see features.ts detectDrift). This is the half that acts on it, and
+   * it is a SINGLE-GROUP write on purpose: the user is answering one question about one
+   * card, and POST /settings — a full replace of the whole map — would let a payload
+   * built from that card delete every group they had made by hand.
+   *
+   * The groups live in Studio's own config.json. They are SEEDED from worktree-dash's
+   * file on first run and never read from it again, so writing here is Studio editing
+   * its own state, not reaching into another tool's.
+   */
+  api.post('/groups', async (req, res) => {
+    const body = isRecord(req.body) ? req.body : {};
+    const name = String(body.name || '').trim();
+    const members = Array.isArray(body.members) ? body.members.map((m) => String(m).trim()).filter(Boolean) : [];
+    // Two members is what a group MEANS — one worktree is a feature on its own and
+    // already groups itself. Saying so beats writing a row that changes nothing.
+    if (!name || members.length < 2) {
+      return res.status(400).json({ ok: false, error: 'name and at least two members are required' });
+    }
+    cfg.groups = upsertGroup(cfg.groups, { name, members });
+    configMod.save(cfg);
+    // The grouping changes the topology (two features become one), so the payload has to
+    // be rebuilt rather than merely re-sent.
+    broadcastTopology();
+    res.json({ ok: true, groups: cfg.groups });
   });
 
   // ---- feature/group orchestration (run whole stack · stop & switch) ----

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { computeFeatures, resolveRef } from '../server/features.ts';
+import { computeFeatures, detectDrift, resolveRef } from '../server/features.ts';
 import { present } from './helpers.ts';
 import type { FeatureMember, Worktree } from '../server/types.ts';
 
@@ -119,4 +119,86 @@ test('a worktree NOT in any group is still its own feature', () => {
   const worktrees = [wt('api', 'solo', 'feature/solo')];
   const { features } = computeFeatures(worktrees, [{ name: 'empty-ish', members: ['api/nope'] }]);
   assert.ok(features.some((f) => f.name === 'solo'));
+});
+
+/*
+ * detectDrift(): worktrees that are obviously the same piece of work, under names that
+ * do not group.
+ *
+ * identity.ts groups a feature by byte-identical worktree basenames across repos. That
+ * convention is load-bearing — Fleet grouping, concurrency slots, multi-repo sessions
+ * and SwiftBar all key off it — which is why "same feature across repos → identical
+ * worktree name" had to be written down as a RULE. When an agent names one side
+ * differently the feature silently ungroups: two half-features, two slots, two sets of
+ * ports for one piece of work, and nothing says anything is wrong.
+ *
+ * The branch is the evidence the names threw away. Detection only — never auto-merge:
+ * grouping is written to another tool's config file, and a guess acted on silently is
+ * how the naming convention became load-bearing in the first place.
+ */
+test('the same branch under two different worktree names is drift', () => {
+  const drift = detectDrift([
+    { name: 'fix-recurring-pm', auto: true, members: [wt('be', 'fix-recurring-pm', 'fix/recurring-pm')] },
+    { name: 'recurring-pm-fix', auto: true, members: [wt('fe', 'recurring-pm-fix', 'fix/recurring-pm')] },
+  ]);
+  assert.equal(drift.length, 1);
+  assert.equal(drift[0]?.branch, 'fix/recurring-pm');
+  assert.deepEqual(drift[0]?.features.sort(), ['fix-recurring-pm', 'recurring-pm-fix']);
+});
+
+// Already grouped is the success case, not a finding. One feature name spanning both
+// repos is precisely what the convention is for.
+test('one feature spanning two repos on one branch is not drift', () => {
+  const drift = detectDrift([
+    {
+      name: 'shared',
+      auto: true,
+      members: [wt('be', 'shared', 'fix/thing'), wt('fe', 'shared', 'fix/thing')],
+    },
+  ]);
+  assert.deepEqual(drift, []);
+});
+
+/*
+ * Two worktrees on one branch inside the SAME repo are not a cross-repo feature that
+ * failed to group — they are two checkouts of one branch, which is a different thing
+ * and not one to suggest merging.
+ */
+test('two names on one branch within a single repo is not drift', () => {
+  const drift = detectDrift([
+    { name: 'a', auto: true, members: [wt('be', 'a', 'fix/thing')] },
+    { name: 'b', auto: true, members: [wt('be', 'b', 'fix/thing')] },
+  ]);
+  assert.deepEqual(drift, []);
+});
+
+// Everything sits on the default branch at some point. Grouping on that would propose
+// merging every unrelated worktree in the repo into one feature.
+test('the default branch is never evidence of anything', () => {
+  const drift = detectDrift(
+    [
+      { name: 'a', auto: true, members: [wt('be', 'a', 'main')] },
+      { name: 'b', auto: true, members: [wt('fe', 'b', 'main')] },
+    ],
+    new Set(['main', 'develop']),
+  );
+  assert.deepEqual(drift, []);
+});
+
+test('a worktree with no branch is not matched against another with no branch', () => {
+  const drift = detectDrift([
+    { name: 'a', auto: true, members: [wt('be', 'a', null)] },
+    { name: 'b', auto: true, members: [wt('fe', 'b', null)] },
+  ]);
+  assert.deepEqual(drift, []);
+});
+
+// A manual group is the user having already answered this question. Proposing it back
+// to them would be the tool arguing with its own configuration.
+test('features already grouped by hand are left out of the evidence', () => {
+  const drift = detectDrift([
+    { name: 'chosen-name', auto: false, members: [wt('be', 'x', 'fix/thing'), wt('fe', 'y', 'fix/thing')] },
+    { name: 'y', auto: true, members: [wt('fe', 'y', 'fix/thing')] },
+  ]);
+  assert.deepEqual(drift, []);
 });

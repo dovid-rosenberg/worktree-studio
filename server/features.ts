@@ -13,7 +13,7 @@
 // behavior (group by the worktree's directory name).
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
-import type { Feature, FeatureMember, GroupConfig, Worktree } from './types.ts';
+import type { Feature, FeatureDrift, FeatureMember, GroupConfig, Worktree } from './types.ts';
 
 /**
  * A feature as this module builds it. `session` is absent because only state.ts
@@ -141,4 +141,60 @@ function attachableWorktrees(
   return out;
 }
 
-export { computeFeatures, resolveRef, attachableWorktrees };
+/**
+ * Features that are obviously one piece of work under names that do not group.
+ *
+ * identity.ts groups by byte-identical worktree basenames across repos, and that
+ * convention is load-bearing: Fleet grouping, concurrency slots, multi-repo sessions and
+ * SwiftBar all key off it. Which is exactly why "same feature across repos → identical
+ * worktree name" had to be written down as a rule for humans and agents to remember.
+ * When one side gets named differently the feature silently splits in two — two slots,
+ * two sets of ports, two cards for one job — and nothing reports it.
+ *
+ * The branch is the evidence the names threw away: worktrees cut for the same work
+ * across repos are put on the same branch, by the same convention, and a branch survives
+ * a renamed directory.
+ *
+ * DETECTION ONLY. Grouping is written to another tool's config file
+ * (`~/.config/worktree-dash/config.json`), and a guess acted on silently is how the
+ * naming convention became load-bearing without anyone deciding it should be.
+ *
+ * @param defaultBranches branch names that prove nothing — every worktree sits on one at
+ *   some point, and grouping on them would propose merging a whole repo into one feature.
+ */
+function detectDrift(features: ComputedFeature[], defaultBranches: Set<string> = new Set()): FeatureDrift[] {
+  const byBranch = new Map<string, Array<{ feature: string; member: Worktree }>>();
+  for (const f of features) {
+    // A manual group is the user having already answered this; proposing it back to them
+    // would be the tool arguing with its own configuration.
+    if (!f.auto) continue;
+    for (const m of f.members) {
+      if (m.missing || !m.branch || defaultBranches.has(m.branch)) continue;
+      const bucket = byBranch.get(m.branch);
+      if (bucket) bucket.push({ feature: f.name, member: m });
+      else byBranch.set(m.branch, [{ feature: f.name, member: m }]);
+    }
+  }
+
+  const drift: FeatureDrift[] = [];
+  for (const [branch, hits] of byBranch) {
+    const names = new Set(hits.map((h) => h.feature));
+    if (names.size < 2) continue; // one name for one branch is the convention working
+    // Two names inside ONE repo are two checkouts of a branch, not a cross-repo feature
+    // that failed to group — a different thing, and not one to suggest merging.
+    if (new Set(hits.map((h) => h.member.repo)).size < 2) continue;
+    drift.push({
+      branch,
+      features: [...names],
+      members: hits.map((h) => ({
+        repo: h.member.repo,
+        wtname: h.member.wtname,
+        path: h.member.path,
+        feature: h.feature,
+      })),
+    });
+  }
+  return drift;
+}
+
+export { computeFeatures, detectDrift, resolveRef, attachableWorktrees };

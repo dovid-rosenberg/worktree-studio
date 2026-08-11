@@ -69,6 +69,7 @@ import type {
   CiRepo,
   EmbeddedSession,
   Feature,
+  FeatureDrift,
   FeatureMember,
   Repo,
   Session,
@@ -89,6 +90,8 @@ export interface WorldView extends WorldFrames {
   servers: SessionServers;
   features: Feature[];
   groups: Feature[];
+  /** Features that look like one piece of work under names that do not group. */
+  drift: FeatureDrift[];
   webRepos: string[];
   baseDirs: string[];
   editors: string[];
@@ -104,6 +107,7 @@ const EMPTY = {
   sources: [] as TopologyPayload['sources'],
   features: [] as Feature[],
   groups: [] as Feature[],
+  drift: [] as FeatureDrift[],
   webRepos: [] as string[],
   baseDirs: [] as string[],
   editors: [] as string[],
@@ -188,6 +192,9 @@ class World {
   }
   get groups(): Feature[] {
     return this.view.groups;
+  }
+  get drift(): FeatureDrift[] {
+    return this.view.drift ?? [];
   }
   get webRepos(): string[] {
     return this.view.webRepos;

@@ -21,6 +21,7 @@ import {
   coerceRunConfigs,
   coercePorts,
   coerceStart,
+  upsertGroup,
 } from '../server/settings.ts';
 
 test('the bare-string form of `start` SURVIVES — the regression that lost two repos', () => {
@@ -99,4 +100,47 @@ test('a body that is not an object leaves nothing behind rather than throwing', 
   assert.deepEqual(coerceEditors([]), {});
   assert.deepEqual(coerceGroups({}), []);
   assert.deepEqual(coerceRunConfigs(7), {});
+});
+
+/*
+ * upsertGroup(): the one write in this file that is NOT a full replace.
+ *
+ * It exists for the drift banner, where the user answers a single question — "these two
+ * are the same feature" — and has said nothing about their other groups. Everything else
+ * here is driven by the settings modal, which owns the whole map; a payload built from
+ * one card must not be allowed to speak for the rest.
+ */
+test('upsertGroup adds a group without disturbing the ones already there', () => {
+  const before = [
+    { name: 'kept', members: ['be/one'] },
+    { name: 'also-kept', members: ['fe/two'] },
+  ];
+  const after = upsertGroup(before, { name: 'new', members: ['be/x', 'fe/y'] });
+  assert.deepEqual(
+    after.map((g) => g.name),
+    ['kept', 'also-kept', 'new'],
+  );
+  assert.deepEqual(after[0]?.members, ['be/one'], 'an existing group is byte-identical afterwards');
+});
+
+// computeFeatures() keys manual groups by name, so two rows sharing one name means one
+// of them silently does not exist. Answering the same question twice must be idempotent.
+test('upsertGroup replaces a group of the same name rather than duplicating it', () => {
+  const once = upsertGroup([], { name: 'feat', members: ['be/x'] });
+  const twice = upsertGroup(once, { name: 'feat', members: ['be/x', 'fe/y'] });
+  assert.equal(twice.length, 1);
+  assert.deepEqual(twice[0]?.members, ['be/x', 'fe/y'], 'the newer answer wins');
+});
+
+test('upsertGroup refuses a group with no name or no members, and changes nothing', () => {
+  const before = [{ name: 'kept', members: ['be/one'] }];
+  assert.deepEqual(upsertGroup(before, { name: '', members: ['be/x'] }), before);
+  assert.deepEqual(upsertGroup(before, { name: 'x', members: [] }), before);
+});
+
+// The same coercion the full-replace path uses — a group arriving from a route body is
+// no more trustworthy than one arriving from the modal.
+test('upsertGroup coerces what it is handed', () => {
+  const out = upsertGroup([], { name: '  spaced  ', members: [' be/x ', ''] } as never);
+  assert.deepEqual(out, [{ name: 'spaced', members: ['be/x'] }]);
 });

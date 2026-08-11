@@ -527,6 +527,19 @@ export const FEATURE_COLORS = [
 
 export type FeatureColor = (typeof FEATURE_COLORS)[number];
 
+/**
+ * Two or more features that look like one piece of work under names that do not group —
+ * see features.ts detectDrift(). Reported, never acted on: the fix is a manual group in
+ * another tool's config file, and that is the user's call.
+ */
+export interface FeatureDrift {
+  /** The shared branch — the evidence the differing names threw away. */
+  branch: string;
+  /** The feature names that would become one. */
+  features: string[];
+  members: Array<{ repo: string; wtname: string; path: string; feature: string }>;
+}
+
 export interface Feature {
   name: string;
   /** false for a manual group from config.groups, true for a derived one. */
@@ -598,6 +611,8 @@ export interface TopologyPayload {
   repos: Repo[];
   features: Feature[];
   groups: Feature[];
+  /** Features that look like one piece of work under names that do not group. */
+  drift: FeatureDrift[];
 }
 
 // ---- session state ----------------------------------------------------------

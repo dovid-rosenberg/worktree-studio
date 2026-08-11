@@ -114,3 +114,26 @@ export function coerceRunConfigs(v: unknown): Record<string, RunConfig[]> {
   }
   return out;
 }
+
+/**
+ * Add (or replace) one manual feature group, without touching the others.
+ *
+ * Everything else in this file is a FULL REPLACE — the settings modal owns the whole
+ * map. This is the opposite, and deliberately so: it exists for the drift banner, where
+ * the user is answering one question ("these two are the same feature") and has said
+ * nothing at all about their other groups. A full replace driven by a payload built from
+ * one card would delete every group the user had made by hand.
+ *
+ * Replace-by-name rather than append-always, so answering the same question twice does
+ * not leave two groups fighting over one name — computeFeatures() keys manual groups by
+ * name and would silently show only one of them.
+ *
+ * Returns a NEW array. The caller assigns it to `cfg.groups` and saves; keeping this
+ * pure is what lets a test enumerate the cases without a config file.
+ */
+export function upsertGroup(groups: GroupConfig[] | undefined, group: GroupConfig): GroupConfig[] {
+  const [clean] = coerceGroups([group]);
+  if (!clean) return coerceGroups(groups); // no name, or no members — nothing to add
+  const rest = coerceGroups(groups).filter((g) => g.name !== clean.name);
+  return [...rest, clean];
+}
