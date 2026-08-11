@@ -39,7 +39,7 @@ SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
   delete. A **⚙ Connections** panel configures GitHub (via `gh`) / GitLab / Asana.
 - **Sessions are real `claude` processes** inside **tmux** (dedicated socket, chrome-free
   config so it reads native). Embedded xterm terminal, multiple tabs addressed by their
-  tmux window id, and a split pane that is its own independent shell in the same worktree.
+  tmux window id.
 - **Baked-in worktrees.** No external `wt` script — creation is native: `git worktree add`
   off the default branch, plus copying the gitignored bits a plain add drops
   (`.idea/runConfigurations/*.xml`, `.env`, `config/*-config.js`).
@@ -48,7 +48,9 @@ SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
   waiting / idle / stopped, pushed live over SSE. Your global settings are untouched.
 - **Resume after shutdown.** A `{ session → id }` registry + `claude --resume`; tmux
   sessions persist and are reattached (tabs reconciled). Restart the app and sessions come back.
-- **Dev servers per worktree** — start / stop / status via `lsof` on configured ports.
+- **Dev servers per worktree** — start / stop / status. Discovery is by `lsof`→cwd for
+  any listening port, not only the configured ones, so a server started by hand outside
+  Studio still shows up on its worktree's row.
 
 ## Requirements
 

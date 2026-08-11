@@ -244,6 +244,10 @@ sets: a manual group appears in both. Use `features` for a complete list, and
 | `pid`        | number \| null  | That process's pid.                                                      |
 | `ports`      | number[]        | Its listening ports, ascending. Ephemeral ports (≥ 49152) and the Studio port itself are excluded. |
 | `canStart`   | boolean         | The repo has a `start` command configured, so `/servers/start` can launch it. |
+| `depsMissing` | boolean        | A `package.json` with no `node_modules` — the start command would die immediately. |
+| `noStartCmd` | boolean         | No `config.start` entry for this repo: the other reason `canStart` is false. |
+| `offSlot`    | number[]        | Listening, but on none of the ports this feature's slot expects — the ports it is on instead. Evidence the slot env was never read. |
+| `sharedModules` | string \| null | The directory `node_modules` really resolves to, when it is a symlink out of the worktree. The worktree is not isolated: every cache inside it, Vite's `.vite/deps` above all, is shared. |
 | `session`    | object \| null  | `{ id, state, activity, muxName }` of the session driving this worktree — a deliberately trimmed view of *Session*. `null` for main checkouts and undriven worktrees. |
 
 ### Feature
@@ -281,7 +285,7 @@ Sessions are persisted verbatim (`sessions.json`) and returned as-is by `GET
 | `pendingRepos`    | object[]        | `{ repo, repoPath }` chosen up front, added at promote time. Emptied afterwards. |
 | `suggestedBranch` | string \| null  | Branch name derived from the seed (`fix/…` for bug-ish wording, else `feature/…`, prefixed with a numeric source id when there is one). |
 | `suggestedName`   | string \| null  | Suggested worktree name.                                                 |
-| `muxName`         | string          | tmux session name. The split pane lives in `<muxName>-split`.            |
+| `muxName`         | string          | tmux session name.                                                       |
 | `claudeSessionId` | string \| null  | Claude's own session id, learned from the `SessionStart` hook; enables `--resume`. |
 | `state`           | string          | `idle` \| `working` \| `waiting` \| `stopped`. `waiting` means Claude wants the human. |
 | `activity`        | string          | Short human-readable status (`"running Bash"`, `"turn done"`, `"deactivated"`). |
@@ -449,20 +453,6 @@ delete the record and its generated settings file. Worktrees are **kept** — us
 `renumber-windows on`, so an index is a slot that is reassigned whenever an earlier
 window closes — an index held across a close names a different terminal. `index` is
 still accepted as a legacy positional form.
-
-The **split pane** is a separate multiplexer session (`<muxName>-split`) in the
-same worktree with its own independent tabs, created on demand. tmux is the
-source of truth for its window list, so these read through rather than from the
-session record:
-
-| Route                                  | Body        | Returns                          |
-| -------------------------------------- | ----------- | -------------------------------- |
-| `GET  /sessions/:id/split/tabs`         | —           | `{ tabs: [{ id, title, active }] }` |
-| `POST /sessions/:id/split/tabs`         | `{ title? }`| `{ ok }`                          |
-| `POST /sessions/:id/split/select-tab`   | `{ index }` | `{ ok }`                          |
-| `POST /sessions/:id/split/close-tab`    | `{ index }` | `{ ok }`                          |
-
-All four `404` for an unknown session.
 
 ### Session dev servers
 
