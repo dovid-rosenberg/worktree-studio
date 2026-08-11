@@ -4,6 +4,7 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
+import { loadSessions, saveSessions } from './session-store.ts';
 import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } from './util.ts';
 import * as status from './status.ts';
 import * as worktree from './worktree.ts';
@@ -265,6 +266,12 @@ class SessionManager extends EventEmitter {
   file: string;
   sessions: Map<string, Session>;
   _adopting: Set<string>;
+  /**
+   * The version sessions.json was in when it was READ — 0 for a file predating the
+   * envelope. Not the version it will be written back as, which is always current;
+   * this records where this install came from.
+   */
+  stateVersion: number;
 
   // `identity` is the shared server/identity.ts resolver (server.ts builds one and
   // hands the same instance to state.ts/servers.ts). A session stores the feature
@@ -285,10 +292,16 @@ class SessionManager extends EventEmitter {
     this.file = path.join(this.stateDir, 'sessions.json');
     this.sessions = new Map();
     this._adopting = new Set(); // worktreePaths with an adopt in flight (dedup guard)
-    // readJsonState, not readJson: a corrupt sessions.json must be preserved rather
-    // than silently replaced by an empty one on the next save — it holds the
-    // claudeSessionId values that tie each session to a live claude conversation.
-    for (const s of readJsonState<Session[]>(this.file, []) || []) this.sessions.set(s.id, s);
+    // Through session-store, which owns the file's SHAPE: an unversioned bare array
+    // (every install predating it) is recognised as version 0 and carried forward, and a
+    // file from a newer Studio is copied aside before our first save can overwrite it.
+    // Corruption is still handled underneath by readJsonState — a corrupt sessions.json
+    // must be preserved rather than silently replaced by an empty one on the next save,
+    // since it holds the claudeSessionId values that tie each session to a live
+    // claude conversation.
+    const loaded = loadSessions(this.file);
+    for (const s of loaded.sessions) this.sessions.set(s.id, s);
+    this.stateVersion = loaded.version;
   }
 
   /** Every session, newest first. */
@@ -299,7 +312,7 @@ class SessionManager extends EventEmitter {
     return this.sessions.get(id);
   }
   _save(): void {
-    writeJson(this.file, this.all());
+    saveSessions(this.file, this.all());
   }
   _touch(id: string): void {
     this._save();
