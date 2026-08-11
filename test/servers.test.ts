@@ -10,6 +10,7 @@ import os from 'os';
 import path from 'path';
 import { Servers, trimLog, LOG_LIMITS } from '../server/servers.ts';
 import { realpath } from '../server/util.ts';
+import { present } from './helpers.ts';
 
 function servers(extra = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-servers-'));
@@ -571,4 +572,39 @@ test('an unparseable package.json does not block the start', () => {
   fs.writeFileSync(path.join(wt, 'package.json'), '{ not json');
   assert.equal(s.depsMissing(wt), false);
   fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * Two worktrees of one feature share a basename — that is what makes them one feature.
+ *
+ * The install log was named `install__${basename}`, so installing both halves of a
+ * multi-repo stack (one click per member, and the UI offers them together) pointed two
+ * concurrent npm runs at the SAME file. Their output interleaved, and either one's
+ * trimLog could truncate the other's. The log is the only place a failed install says
+ * why it failed, and it was the one thing being scrambled.
+ */
+test('two worktrees with the same name install into separate logs', async () => {
+  const s = servers();
+  const feature = 'checkout-v2';
+  const dirs = ['api', 'fe'].map((repo) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `wts-${repo}-`));
+    const wt = path.join(root, '.worktrees', feature);
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(path.join(wt, 'package.json'), JSON.stringify({ name: repo, version: '1.0.0' }));
+    return { root, wt };
+  });
+
+  // Concurrently, because that is how the two halves of a stack are installed.
+  const [a, b] = await Promise.all(dirs.map((d) => s.installDeps(d.wt)));
+  const logA = present(a.log, "the first install's log");
+  const logB = present(b.log, "the second install's log");
+  assert.notEqual(logA, logB, 'one file per worktree, not one per worktree NAME');
+
+  // Each log is about its own install and nothing else — the header start() writes names
+  // the worktree, so a shared file shows up as both paths in one of them.
+  assert.ok(fs.readFileSync(logA, 'utf8').includes(dirs[0].wt));
+  assert.ok(!fs.readFileSync(logA, 'utf8').includes(dirs[1].wt), 'no output from the other install');
+  assert.ok(fs.readFileSync(logB, 'utf8').includes(dirs[1].wt));
+
+  for (const d of dirs) fs.rmSync(d.root, { recursive: true, force: true });
 });

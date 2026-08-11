@@ -318,6 +318,30 @@ test('group/start asks for confirmation before stopping a conflicting worktree',
   assert.deepEqual(calls.stopped, [], 'and nothing is stopped either');
 });
 
+/*
+ * Confirming "stop the conflicts" has to give their slots back before asking for one.
+ *
+ * The stop loop released nothing, so with the slots full, confirming the stop took the
+ * conflicting feature down and THEN failed to allocate — 409 "no free concurrency slot",
+ * one stack stopped, nothing started, and an error describing a state the request had
+ * just created. startAll's own comment promises the opposite: every slot allocated
+ * before anything is launched, so a slot failure spawns nothing.
+ */
+test("group/start frees a stopped conflict's slot before allocating its own", async () => {
+  const conflict = { repo: 'fe', path: '/code/fe/.worktrees/other', running: true };
+  const { app, calls } = harness({ group: FEATURE, conflicts: [conflict] });
+  await serving(app, async (get) => {
+    const r = await get('/api/v1/group/start', post({ group: 'feat-a', stopConflicts: true }));
+    assert.equal(r.status, 200);
+  });
+  assert.deepEqual(calls.stopped, [['fe', '/code/fe/.worktrees/other']], 'the conflict is stopped');
+  assert.ok(
+    calls.released.includes('other'),
+    `the stopped conflict's slot must go back in the pool, released: ${JSON.stringify(calls.released)}`,
+  );
+  assert.deepEqual(calls.started, [['fe', '/code/fe/.worktrees/feat-a']], 'and the feature starts');
+});
+
 test('group/start is a 409 when no concurrency slot is free', async () => {
   const { app, calls } = harness({ group: FEATURE, allocError: 'no free concurrency slot (max 3 running)' });
   await serving(app, async (get) => {

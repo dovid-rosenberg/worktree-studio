@@ -171,6 +171,12 @@ async function main() {
    * the cost of being wrong about it is the whole daemon.
    */
   const fire = (p: Promise<unknown>): void => void p.catch(() => {});
+
+  /** The post-stop world, for stopAll's guarded slot release: refresh, then read. */
+  const liveServers = async () => {
+    await refreshRunning();
+    return runningCache;
+  };
   async function refreshRunning() {
     try {
       runningCache = await servers.discoverRunning();
@@ -831,12 +837,17 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const owned = (s.repos || []).filter(promoted);
-    for (const r of owned) await servers.stop(r.repo, r.worktreePath, seenPorts(r.worktreePath));
-    // Refresh BEFORE releasing: the guard reads what is still listening, so it has to see
-    // the world after the stops. A session's repos can be a strict subset of its feature's
-    // members, so "I stopped mine" is not "the feature is down" — see releaseSlotIfIdle.
-    await refreshRunning();
-    for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), runningCache);
+    /*
+     * stopAll is the mirror of startAll, and this is the sequence it exists for: stop
+     * each target, refresh, then release only the slots nothing still holds. Refreshing
+     * BEFORE releasing is the load-bearing half — the guard reads what is still
+     * listening, and a session's repos can be a strict subset of its feature's members,
+     * so "I stopped mine" is not "the feature is down".
+     */
+    await servers.stopAll(
+      owned.map((r) => ({ repo: r.repo, worktreePath: r.worktreePath, ports: seenPorts(r.worktreePath) })),
+      liveServers,
+    );
     broadcastTopology();
     res.json({ ok: true });
   });
@@ -1242,6 +1253,17 @@ async function main() {
     resolveGroup,
     conflictsFor,
     refreshRunning,
+    /*
+     * Deleting a feature has to reach the caches keyed by its name, not just the config.
+     *
+     * reviewFeed is deliberately absent: it is keyed by REPO, and a repo does not go away
+     * when a feature does. Its prune runs off the sweep, and its forget() stays the
+     * manual "ask this repo again now" hook.
+     */
+    forgetFeature: (name: string) => {
+      taskFeed.forget(name);
+      overlapFeed.forget(name);
+    },
     // A getter, not the Map: refreshRunning() REPLACES runningCache rather than mutating
     // it, so a captured reference would be the pre-refresh map every time.
     running: () => runningCache,

@@ -7,7 +7,8 @@ import assert from 'node:assert';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Runner } from '../server/runner.ts';
+import { KEEP_RUNS, Runner } from '../server/runner.ts';
+import { present } from './helpers.ts';
 
 function runner() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-runner-'));
@@ -214,5 +215,78 @@ test('rerun works on a run whose configuration no longer exists', async () => {
 test('rerunning something unknown is refused, not guessed at', () => {
   const { r, cleanup } = runner();
   assert.equal(r.rerun('r_nope').ok, false);
+  cleanup();
+});
+
+// ---------------------------------------------------------------------------
+// History is bounded by dropping FINISHED runs — never a running one
+//
+// The trim was `this.runs.length = KEEP_RUNS`, which truncates the tail, and the tail
+// is where a long-lived run ends up: sixty short runs push a suite that takes minutes
+// off the end of the list and delete it while it is still executing. Everything
+// downstream then failed silently — stop(id) answered "no such run", #finish returned
+// early on the missing record and never removed the child, and the process carried on
+// with nothing tracking it.
+// ---------------------------------------------------------------------------
+
+/** Fill the history with finished runs, newest last. */
+async function fillHistory(r: Runner, dir: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    const x = r.start({ name: `filler-${i}`, repo: 'api', worktreePath: dir, cmd: 'true' });
+    await settled(r, x.id);
+  }
+}
+
+test('a run that is still going is not evicted by newer ones, and stays killable', async () => {
+  const { r, dir, cleanup } = runner();
+  const sleeper = r.start({ name: 'the-long-suite', repo: 'api', worktreePath: dir, cmd: 'sleep 30' });
+  // One finished run under it, which IS a legitimate eviction candidate.
+  const doomed = r.start({ name: 'oldest-finished', repo: 'api', worktreePath: dir, cmd: 'true' });
+  await settled(r, doomed.id);
+  const doomedLog = doomed.log;
+
+  await fillHistory(r, dir, KEEP_RUNS);
+
+  assert.equal(r.runs.length, KEEP_RUNS, 'history is still bounded');
+  const still = present(r.get(sleeper.id), 'the long-running run');
+  assert.equal(still.status, 'running', 'the oldest record is the running one, and it was kept');
+  assert.equal(r.get(doomed.id), undefined, 'a finished run was evicted in its place');
+  assert.equal(fs.existsSync(doomedLog), false, "the evicted run's log went with its record");
+  assert.ok(fs.existsSync(still.log), 'and the surviving run can still be read');
+
+  // The consequence of losing the record, and the reason this matters: stop() could not
+  // find the run, so the process was never signalled at all.
+  assert.equal(r.stop(sleeper.id).ok, true);
+  await settled(r, sleeper.id);
+  assert.equal(r.get(sleeper.id)?.status, 'stopped');
+  cleanup();
+});
+
+test('the persisted file keeps the running run too — the save had the same truncation', async () => {
+  const { r, dir, cleanup } = runner();
+  const sleeper = r.start({ name: 'survivor', repo: 'api', worktreePath: dir, cmd: 'sleep 30' });
+  await fillHistory(r, dir, KEEP_RUNS);
+
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'runs.json'), 'utf8'));
+  assert.ok(
+    onDisk.runs.some((x: { id: string }) => x.id === sleeper.id),
+    'a run past the cut used to vanish from disk on the next save',
+  );
+  r.stop(sleeper.id);
+  await settled(r, sleeper.id);
+  cleanup();
+});
+
+test('a log with no run left to name it is reaped at load', () => {
+  // Every eviction before this existed left its log in the directory, unreferenced and
+  // unreachable, for the life of the installation.
+  const { r, dir, cleanup } = runner();
+  const stray = path.join(dir, 'runs', 'api-orphan-r_longgone.log');
+  fs.writeFileSync(stray, 'output nobody can reach\n');
+  const kept = r.start({ name: 'kept', repo: 'api', worktreePath: dir, cmd: 'true' });
+
+  const reloaded = new Runner(dir);
+  assert.equal(fs.existsSync(stray), false, 'the orphan is gone');
+  assert.ok(fs.existsSync(present(reloaded.get(kept.id), 'the reloaded run').log), 'a named log is kept');
   cleanup();
 });

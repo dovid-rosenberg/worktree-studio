@@ -160,6 +160,8 @@ interface OrchestratorDeps {
   resolveGroup: (name: string) => Promise<{ group: ResolvedGroup | null; flat: Member[] }>;
   conflictsFor: (member: Member, flat: Member[]) => Member[];
   refreshRunning: () => Promise<unknown>;
+  /** Drop a deleted feature from the pulled feeds that are keyed by feature name. */
+  forgetFeature?: (name: string) => void;
   /** The discovered running map, read AFTER refreshRunning() so slot release can be guarded. */
   running: () => Map<string, { pid: number; ports: number[] }>;
   scheduleBroadcast: () => void;
@@ -190,6 +192,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
     resolveGroup,
     conflictsFor,
     refreshRunning,
+    forgetFeature,
     running,
     scheduleBroadcast,
     rescan,
@@ -226,8 +229,24 @@ function register(app: Router, deps: OrchestratorDeps): void {
       return res.json({ ok: true, needsConfirm: true, conflicts, willStart: toStart, skipped });
     }
     if (stopConflicts) {
+      /*
+       * Stopping a conflict has to FREE ITS SLOT, or the stop is the whole of what happens.
+       *
+       * This stopped the conflicting features and released nothing. With maxSlots 2 and A
+       * and B running, agreeing to stop conflicts so C can start took A down, waited, and
+       * then found both slots still held — startAll answered "no free concurrency slot",
+       * the route returned 409, and the user was left with A stopped, C never started and
+       * an error that named neither. The slots were only reclaimed a sweep later, by
+       * reconcileSlots, long after this request had failed.
+       *
+       * The settle stays where it was and now earns its keep twice: a server that has just
+       * been SIGTERMed can hold its socket for a moment, and asking "is this feature still
+       * listening?" too early answers yes and keeps the slot anyway.
+       */
       for (const c of conflicts) await servers.stop(c.repo, c.path, c.ports);
       await new Promise((r) => setTimeout(r, 1200));
+      await refreshRunning();
+      releaseIdleSlots(conflicts);
     }
     // Key each slot on the member's own feature identity — the one canonical key.
     // Members of a real feature resolve to the same identity → one slot; under the
@@ -247,9 +266,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group }: GroupBody = req.body || {};
     const { group: g } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
-    const running = g.members.filter((m) => m.running);
+    const running_ = g.members.filter((m) => m.running);
     const stops = await Promise.all(
-      running.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path, m.ports)) })),
+      running_.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path, m.ports)) })),
     );
     // Refresh first, then release: the guard reads what is still listening, and this
     // released the slot BEFORE looking — so a member that refused to die still took its
@@ -432,6 +451,16 @@ function register(app: Router, deps: OrchestratorDeps): void {
       }
     }
     if (stripped) saveConfig?.();
+    /*
+     * The in-memory feeds are keyed by feature name too, and nothing ever dropped them.
+     *
+     * reviews.ts and task-status.ts each export a `forget()` documented as the thing
+     * called when a feature is deleted "so the map cannot grow forever". Neither had a
+     * caller anywhere — the config decorations above were cleaned up and the caches were
+     * not, so a deleted feature's ticket status outlived it for as long as the daemon
+     * ran. Unbounded in the slow direction: every feature ever deleted stays resident.
+     */
+    forgetFeature?.(name);
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   });
