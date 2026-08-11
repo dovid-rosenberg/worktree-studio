@@ -242,3 +242,68 @@ test('restore() leaves a deactivated session stopped and does not relaunch it', 
   assert.equal(ensured.length, 0, 'mux.ensure not called for a deactivated session');
   assert.equal(present(m.get('d1'), 'session d1').state, 'stopped');
 });
+
+/*
+ * ATTACHING AN EXISTING SIBLING RECORDS THE BRANCH IT IS ON.
+ *
+ * addRepo's happy path creates the worktree, so the branch it asked for is the branch
+ * that exists. The already-exists path is different: nothing was created, and
+ * `worktree.create()`'s result carries the branch it INTENDED — derived from the
+ * session's own branch. The two differ exactly when the sibling was made outside Studio,
+ * which is the only situation this path ever runs in. A real case: the backend on
+ * `feature/merchant-mfa-totp`, the frontend worktree of the same feature on
+ * `feature/mfa-totp`.
+ *
+ * Recording the intended one is not cosmetic. ci.ts looks a merge request up by
+ * worktree+branch, so the newly attached repo reports "no MR" for a branch that has one —
+ * the very symptom attaching is supposed to cure — and review.base() diffs against a
+ * branch the worktree is not on.
+ */
+test('attaching an existing sibling records the branch on disk, not the one create() wanted', async () => {
+  const m = manager();
+  const repoB = tempRepo('b');
+  // The sibling already exists, on a DIFFERENT branch — made with `wt`, outside Studio.
+  const wtPath = path.join(repoB, '.worktrees', 'shared-feat');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'feature/fe-only', wtPath], { cwd: repoB });
+
+  m.sessions.set(
+    's4',
+    session({
+      id: 's4',
+      feature: 'shared-feat',
+      branch: 'feature/shared-feat',
+      muxName: 'mux4',
+      repos: [
+        sessionRepo({
+          repo: 'a',
+          repoPath: '/tmp/a',
+          worktree: 'shared-feat',
+          worktreePath: '/tmp/a/.worktrees/shared-feat',
+          branch: 'feature/shared-feat',
+          primary: true,
+        }),
+      ],
+    }),
+  );
+
+  const out = await m.addRepo('s4', { repo: 'b', repoPath: repoB });
+  assert.ok(out.ok, `addRepo failed: ${JSON.stringify(out)}`);
+  assert.ok(out.attached, 'the existing worktree was attached, not created');
+
+  const s = present(m.get('s4'), 'session s4');
+  const added = present(
+    s.repos.find((r) => r.repo === 'b'),
+    'the attached repo',
+  );
+  assert.equal(added.worktreePath, wtPath);
+  assert.equal(
+    added.branch,
+    'feature/fe-only',
+    'the branch the worktree is on, not the one addRepo was going to create',
+  );
+  assert.ok(
+    m._sent.some((t) => t === `/add-dir ${wtPath}`),
+    'the live session was granted access',
+  );
+  fs.rmSync(repoB, { recursive: true, force: true });
+});
