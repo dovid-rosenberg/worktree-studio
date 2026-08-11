@@ -77,6 +77,22 @@
    */
   const notable = $derived(!!sess && sess.state !== 'idle' && sess.state !== 'stopped');
 
+  /*
+   * Two facts nothing else in the app can answer, both from server/overlap.ts.
+   *
+   * `shared` is the one worth interrupting for: another feature is changing files this
+   * one changes, which git will not mention until one of them merges. `behind` is the
+   * slower burn — a branch cut weeks ago rebases into an afternoon.
+   *
+   * Both are quiet by design. They are conditions to notice while scanning, not alarms:
+   * a card that shouts about drift every time you look at it stops being read.
+   */
+  const lap = $derived(world.overlapFor(feature.name));
+  const shared = $derived(lap?.collisions.reduce((n, c) => n + c.files.length, 0) || 0);
+  const sharedWith = $derived(lap?.collisions.map((c) => c.feature) || []);
+  /** Only worth saying once it is a real rebase; a branch one commit behind is fine. */
+  const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
+
 </script>
 
 <div style={colorVars(feature.color)} class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
@@ -102,7 +118,7 @@
 
     <!-- Only what is not the default. An idle agent and stopped servers say nothing;
          their absence says it without spending a row of attention on it. -->
-    {#if notable || noDeps || renamed || ms.length > 1 || !sess}
+    {#if notable || noDeps || renamed || ms.length > 1 || !sess || shared || behind}
       <div class="l2">
         {#if sess && notable}
           <span class="pill agent {sess.state}" title="The Claude session driving this feature">{sess.state}</span>
@@ -116,6 +132,15 @@
         {/if}
         {#if renamed}<span class="wtname" title="The worktree name — what groups these repos">{feature.name}</span>{/if}
         {#if ms.length > 1}<span class="nrepos">{ms.length} repos</span>{/if}
+        {#if shared}
+          <span
+            class="pill overlap"
+            title="{shared} file(s) are also being changed by {sharedWith.join(', ')} — git will not mention this until one of you merges"
+          >⚠ {shared} shared</span>
+        {/if}
+        {#if behind}
+          <span class="pill behind" title="This branch is {behind} commit(s) behind its base">behind {behind}</span>
+        {/if}
       </div>
     {/if}
 
@@ -189,6 +214,11 @@
   /* Same amber as deps: both say "configured wrong, not broken", and both are fixed
      by the user rather than by waiting. */
   .pill.nostart { color:var(--waiting); background:var(--waiting-bg); }
+  /* The one pill about somebody ELSE's work, so it is the one that is coloured like a
+     warning rather than like a state. */
+  .pill.overlap { color:var(--del); background:var(--del-bg, transparent); border:1px solid var(--del); }
+  /* Drift is a fact, not a fault — quieter than the collision beside it. */
+  .pill.behind { color:var(--faint); border:1px solid var(--border); }
   .nrepos { font-family:var(--mono); font-size:11px; color:var(--faint); }
 
   .mchip { display:flex; align-items:center; gap:5px; font-family:var(--mono); font-size:11.5px;
