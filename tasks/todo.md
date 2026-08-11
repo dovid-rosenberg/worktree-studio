@@ -57,11 +57,11 @@ have no local worktree, so they are a new kind of rail row.
       reviews into their own run, marked by the same divider device.
 - [x] Selecting a review row: open the MR, or offer to check it out as a worktree.
 
-## Phase 4 — ship readiness
+## Phase 4 — ship readiness  ✅ LANDED
 
-- [ ] One per-feature verdict composing what Phases 1 and 3 already fetch: every
+- [x] One per-feature verdict composing what Phases 1 and 3 already fetch: every
       repo's MR open?, checks green?, approvals?, behind-by, unpushed commits.
-- [ ] Renders where the feature is already named — the dock bar — not a new panel.
+- [x] Renders where the feature is already named — the dock bar — not a new panel.
 
 ## Not doing now
 
@@ -109,4 +109,16 @@ the diff and report findings without changing anything. The worktree is named af
 and never after the branch: a feature is "worktrees sharing a name", so the branch name
 would fold somebody else's merge request into your own feature.
 
-Next: Phase 4 (ship readiness) composes what Phases 1 and 3 already fetch.
+**Phase 4 landed.** `lib/ship.ts` is a pure function over data already on the client, so
+the verdict costs no request and no state. The rule it defends: it never says READY on
+missing data — a forge that declines to report mergeability yields `unknown`, because
+everything visible looks fine and that is exactly when the shortcut is tempting.
+
+Two things had to be added to answer it honestly: the forges' own merge verdicts (already
+in the JSON those calls fetch, so no extra round trip) and a count of commits
+`origin/<branch>` does not have — the blocker no forge can see, since a forge describes
+what it was pushed.
+
+**All four phases are done.** What is left in the original list is Asana write-back, which
+the owner deferred, and the collision half of Phase 1, which was built and then removed at
+their request.
