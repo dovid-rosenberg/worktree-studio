@@ -18,6 +18,7 @@
    */
   import { labelForSource } from '$lib/stores/ui.svelte.js';
   import { appUrl, webAppsFor, world } from '$lib/stores/world.svelte.js';
+  import { shipLabel, shipVerdict } from '$lib/ship.js';
   import LinkChip from '$lib/components/LinkChip.svelte';
   import ActionBar from '$lib/components/ActionBar.svelte';
 
@@ -46,6 +47,16 @@
   const links = $derived(world.linksFor(feature));
   const wtname = $derived(feature?.name || '');
   const lap = $derived(world.overlapFor(feature?.name));
+  /*
+   * CAN THIS GO OUT? — see lib/ship.ts.
+   *
+   * Composed from the two halves already on this client, so it costs nothing. Shown only
+   * once there is something to say: a feature with no merge request anywhere has not
+   * started shipping, and a verdict there would be a red badge on every new branch.
+   */
+  const ship = $derived(shipVerdict(world.ci[session.id] || [], lap));
+  const shipText = $derived(shipLabel(ship));
+  let showShip = $state(false);
   const conflictCount = $derived(lap?.drift.reduce((n, d) => n + d.conflicts.length, 0) || 0);
 
   /*
@@ -109,6 +120,16 @@
     </span>
   {/if}
 
+  {#if shipText}
+    <button
+      class="shipchip {ship.state}"
+      title={ship.state === 'ready'
+        ? 'Every repo has an open, mergeable merge request with green checks'
+        : ship.blockers.map((b) => `${b.repo} ${b.text}`).join('\n')}
+      aria-expanded={showShip}
+      onclick={() => (showShip = !showShip)}
+    >{ship.state === 'ready' ? '✓' : ship.state === 'waiting' ? '◔' : '●'} {shipText}</button>
+  {/if}
   {#if lap && lap.behind >= 5}
     <span class="driftchip" title={lap.drift.map((d) => `${d.repo}: behind ${d.behind}, ahead ${d.ahead}${d.conflicts.length ? ` — ${d.conflicts.length} file(s) will conflict: ${d.conflicts.slice(0, 8).join(', ')}` : ''}`).join('\n')}
       >behind {lap.behind}{#if conflictCount}<span class="willconflict"> · {conflictCount} will conflict</span>{/if}</span>
@@ -152,9 +173,31 @@
   <span class="grow"></span>
   <ActionBar />
 
+  {#if showShip && ship.blockers.length}
+    <!-- Full width under the bar. Each line names a REPO and a sentence, because "3 things
+         to fix" is only useful if the three are one click away. -->
+    <ul class="shiplist">
+      {#each ship.blockers as b (b.repo + b.text)}
+        <li class={b.kind}><b>{b.repo}</b> {b.text}</li>
+      {/each}
+    </ul>
+  {/if}
+
 </div>
 
 <style>
+  /* Three states, three weights. `ready` is the only one that is filled, because it is
+     the only one that is an answer rather than a to-do list. */
+  .shipchip { font-family:var(--mono); font-size:11px; border-radius:6px; padding:2px 8px;
+              cursor:pointer; white-space:nowrap; background:none; border:1px solid var(--border); color:var(--muted); }
+  .shipchip.ready { background:var(--done); border-color:var(--done); color:var(--panel); cursor:default; }
+  .shipchip.blocked { color:var(--del); border-color:var(--del); }
+  .shipchip.waiting { color:var(--waiting); border-color:var(--waiting); }
+  .shiplist { flex-basis:100%; margin:6px 0 0; padding:9px 12px; list-style:none; background:var(--bg);
+              border:1px solid var(--border); border-radius:9px; display:flex; flex-direction:column; gap:4px; }
+  .shiplist li { font-size:12.5px; color:var(--ink); }
+  .shiplist li.waiting { color:var(--muted); }
+  .shiplist li b { font-family:var(--mono); font-size:11.5px; color:var(--faint); margin-right:6px; }
   .driftchip { font-family:var(--mono); font-size:11px; color:var(--faint);
                border:1px solid var(--border); border-radius:6px; padding:2px 7px; white-space:nowrap; }
   .driftchip .willconflict { color:var(--waiting); }

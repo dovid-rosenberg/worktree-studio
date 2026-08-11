@@ -144,6 +144,10 @@ interface GhPr {
   url?: string;
   state?: string;
   statusCheckRollup?: unknown;
+  /** GitHub's own readiness verdict, across two fields. */
+  mergeStateStatus?: string;
+  reviewDecision?: string;
+  isDraft?: boolean;
 }
 
 interface GlPipeline {
@@ -156,19 +160,82 @@ interface GlMr {
   state?: string;
   pipeline?: GlPipeline | null;
   head_pipeline?: GlPipeline | null;
+  /** GitLab's own readiness verdict — already in the JSON this call fetches. */
+  detailed_merge_status?: string;
+  has_conflicts?: boolean;
+  draft?: boolean;
+  work_in_progress?: boolean;
+}
+
+/**
+ * GitLab's `detailed_merge_status`, reduced to the handful of answers worth acting on.
+ *
+ * It has a couple of dozen values and most of them mean "not yet, and you cannot do
+ * anything about it from here". These are the ones that name something YOU would do next.
+ */
+function glBlocked(status: string | undefined, conflicts: boolean | undefined): string {
+  if (conflicts) return 'conflicts';
+  switch (status) {
+    case 'mergeable':
+      return '';
+    case 'broken_status':
+    case 'conflict':
+      return 'conflicts';
+    case 'need_rebase':
+      return 'needs-rebase';
+    case 'not_approved':
+      return 'not-approved';
+    case 'draft_status':
+      return 'draft';
+    case 'ci_must_pass':
+    case 'ci_still_running':
+      return 'checks';
+    // Everything else — discussions open, jira, blocked by another MR — is real but not
+    // something this bar can usefully name, so it reports "not mergeable" and no reason.
+    default:
+      return status ? 'other' : '';
+  }
+}
+
+/** GitHub says the same things across two fields. */
+function ghBlocked(mergeState: string | undefined, review: string | undefined): string {
+  switch (mergeState) {
+    case 'CLEAN':
+    case 'HAS_HOOKS':
+      break;
+    case 'DIRTY':
+      return 'conflicts';
+    case 'BEHIND':
+      return 'needs-rebase';
+    case 'BLOCKED':
+      return review === 'APPROVED' ? 'checks' : 'not-approved';
+    case 'DRAFT':
+      return 'draft';
+    case 'UNSTABLE':
+      return 'checks';
+    default:
+      break;
+  }
+  return review && review !== 'APPROVED' ? 'not-approved' : '';
 }
 
 const github: Provider = {
   id: 'github',
   cli: 'gh',
   async view(branch, cwd, env) {
-    const r = await run('gh', ['pr', 'view', branch, '--json', 'number,url,state,statusCheckRollup'], {
-      cwd,
-      env,
-      timeout: VIEW_TIMEOUT_MS,
-    });
+    const r = await run(
+      'gh',
+      ['pr', 'view', branch, '--json',
+       'number,url,state,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft'],
+      {
+        cwd,
+        env,
+        timeout: VIEW_TIMEOUT_MS,
+      },
+    );
     if (r.code !== 0 || !r.stdout.trim()) return null;
     const j: GhPr = JSON.parse(r.stdout);
+    const blockedBy = j.isDraft ? 'draft' : ghBlocked(j.mergeStateStatus, j.reviewDecision);
     return {
       hasPR: true,
       provider: 'github',
@@ -176,6 +243,8 @@ const github: Provider = {
       url: j.url,
       state: j.state,
       checks: ghChecks(j.statusCheckRollup),
+      mergeable: j.mergeStateStatus ? !blockedBy : null,
+      blockedBy,
     };
   },
   async reviews(cwd, env) {
@@ -223,6 +292,8 @@ const gitlab: Provider = {
     if (r.code !== 0 || !r.stdout.trim()) return null;
     const j: GlMr = JSON.parse(r.stdout);
     const pipe: GlPipeline = j.pipeline || j.head_pipeline || {};
+    const draft = !!(j.draft || j.work_in_progress);
+    const blockedBy = draft ? 'draft' : glBlocked(j.detailed_merge_status, j.has_conflicts);
     return {
       hasPR: true,
       provider: 'gitlab',
@@ -230,6 +301,10 @@ const gitlab: Provider = {
       url: j.web_url,
       state: j.state,
       checks: glChecks(pipe.status),
+      // Null, not false, when the forge did not say: "we do not know" and "no" lead to
+      // different sentences, and only one of them is worth acting on.
+      mergeable: j.detailed_merge_status ? !blockedBy : null,
+      blockedBy,
     };
   },
   async reviews(cwd, env) {

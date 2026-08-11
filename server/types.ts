@@ -651,6 +651,16 @@ export interface CiRepo {
   url?: string;
   state?: string;
   checks?: CiChecks;
+  /** The forge's own verdict on whether this could merge right now. Null when unknown. */
+  mergeable?: boolean | null;
+  /**
+   * Why it cannot, in the forge's vocabulary, normalised to a short slug:
+   * `conflicts` · `needs-rebase` · `not-approved` · `draft` · `checks` · `''`.
+   *
+   * Kept as a slug rather than a sentence because two forges say the same things with
+   * different words, and the client is what turns it into English.
+   */
+  blockedBy?: string;
 }
 
 /**
@@ -667,6 +677,11 @@ export interface Drift {
   ahead: number;
   /** Files this branch changed that the base has ALSO changed since the merge-base. */
   conflicts: string[];
+  /**
+   * Commits `origin/<branch>` does not have — work that exists only on this laptop.
+   * Null when the branch has never been pushed at all, which is a different sentence.
+   */
+  unpushed: number | null;
 }
 
 /**

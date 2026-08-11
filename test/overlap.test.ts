@@ -123,7 +123,7 @@ test('an unchanged answer does not push a frame', async () => {
   const feed = createOverlapFeed({
     read: async () => {
       reads += 1;
-      return { headSha: 'h', baseSha: 'b', changed: ['a-only.js'], behind: 0, ahead: 1, conflicts: [] };
+      return { headSha: 'h', baseSha: 'b', changed: ['a-only.js'], behind: 0, ahead: 1, conflicts: [], unpushed: 0 };
     },
   });
   const f = { name: 'alpha', members: [{ repo: 'r', path: '/w/alpha' }] };
@@ -157,4 +157,38 @@ test('an unreadable worktree contributes nothing rather than a row of zeroes', a
   await feed.refresh([feature('ghost', 'r', gone)], () => 'master');
   assert.equal(feed.snapshot().ghost, undefined, '"no drift" and "unknown" are different answers');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('counts commits the remote does not have, and tells that from never-pushed', async () => {
+  /*
+   * The one blocker a forge cannot see. An MR can be open, green and approved while the
+   * commit that fixes the review comment is still sitting on this laptop — the forge is
+   * describing what it was pushed, which is not what you have.
+   *
+   * Null rather than a number when the branch has no remote counterpart at all: "there is
+   * no branch on the remote" and "the branch is 3 behind yours" are different sentences,
+   * and only the second is a count.
+   */
+  const dir = repo();
+  const a = branchWith(dir, 'alpha', ['a-only.js']);
+
+  const feed = createOverlapFeed();
+  await feed.refresh([feature('alpha', 'r', a)], () => 'master');
+  assert.equal(feed.snapshot().alpha.drift[0].unpushed, null, 'never pushed');
+
+  // Give it a remote counterpart, one commit behind the branch.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-remote-'));
+  git(bare, 'init', '-q', '--bare');
+  git(a, 'remote', 'add', 'origin', bare);
+  git(a, 'push', '-q', 'origin', 'feature/alpha');
+  fs.writeFileSync(path.join(a, 'a-only.js'), '// local only\n');
+  git(a, 'add', '.');
+  git(a, 'commit', '-qm', 'not pushed');
+
+  const feed2 = createOverlapFeed();
+  await feed2.refresh([feature('alpha', 'r', a)], () => 'master');
+  assert.equal(feed2.snapshot().alpha.drift[0].unpushed, 1);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(bare, { recursive: true, force: true });
 });
