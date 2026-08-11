@@ -56,6 +56,23 @@
     cursorBlink: true,
     scrollback: 8000,
     allowProposedApi: true,
+    /*
+     * ⌥+drag selects text, instead of the pane eating the drag.
+     *
+     * tmux.conf sets `mouse on`, which turns on mouse tracking, and a terminal with
+     * tracking on forwards every drag to the application instead of making a local
+     * selection. tmux is then the one doing the highlighting — into its own paste
+     * buffer, which is not the system clipboard — so dragging in a Studio pane
+     * produced nothing ⌘C could copy. There was no way to reach a real selection at
+     * all, because the modifier that bypasses tracking is this option, and it was
+     * not set.
+     *
+     * Chosen over turning `mouse off`: that would take scroll and click-to-focus-pane
+     * with it. Chosen over a tmux `copy-pipe pbcopy` binding, which copies without a
+     * modifier but only what tmux's copy-mode can see — one pane, no scrollback the
+     * browser is holding, and nothing the mouse never entered.
+     */
+    macOptionClickForcesSelection: true,
   };
 
   let host = $state<HTMLElement|null>(null);
