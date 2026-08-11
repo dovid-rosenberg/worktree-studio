@@ -1,3 +1,4 @@
+
 // The wire contract, derived from the code that builds it.
 //
 // Four consumers read these shapes and none of them share a process with the
@@ -659,6 +660,38 @@ export interface CiRepo {
 export type CiSnapshot = Record<string, CiRepo[]>;
 
 /** The `ci` half. Note the extra nesting: the payload wraps the map in `ci`. */
+/** Another feature changing files this one also changes, inside one repo. */
+export interface Collision {
+  feature: string;
+  repo: string;
+  files: string[];
+}
+
+/** One repo's drift for one feature: how far from the base, and what will fight a rebase. */
+export interface Drift {
+  repo: string;
+  behind: number;
+  ahead: number;
+  /** Files this branch changed that the base has ALSO changed since the merge-base. */
+  conflicts: string[];
+}
+
+/**
+ * What else is touching this feature's files, and how far it has drifted.
+ *
+ * Declared here rather than in server/overlap.ts because this file is the wire contract
+ * and the client reads it from here — the producer imports the shape, not the other way
+ * round, which also keeps overlap.ts's `.ts` import specifiers out of the client's
+ * typecheck.
+ */
+export interface FeatureOverlap {
+  /** The WORST repo, not an average: one stale half of a feature is a stale feature. */
+  behind: number;
+  ahead: number;
+  drift: Drift[];
+  collisions: Collision[];
+}
+
 export interface CiPayload {
   ci: CiSnapshot;
   /**
@@ -670,6 +703,13 @@ export interface CiPayload {
    * tracker every time you save a file.
    */
   taskStatus?: Record<string, TaskStatus>;
+  /**
+   * featureName → what else is changing its files, and how far it has drifted.
+   *
+   * Same frame, same reasoning as taskStatus: pulled on a cadence, changing on the order
+   * of commits rather than of file saves. See server/overlap.ts.
+   */
+  overlap?: Record<string, FeatureOverlap>;
 }
 
 // ---- the assembled payload --------------------------------------------------

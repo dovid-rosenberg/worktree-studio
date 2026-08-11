@@ -63,6 +63,7 @@ import type { Link } from '../../../../server/links';
  * boundary drags in no module graph, and `import type` is erased before Vite sees it.
  */
 import type {
+  FeatureOverlap,
   CiPayload,
   CiRepo,
   EmbeddedSession,
@@ -234,6 +235,17 @@ class World {
    * than embedded. `assemble()` is the server's own module, so both sides cannot drift.
    */
   /** featureName → its ticket's workflow status, when a tracker could tell us. */
+  /**
+   * featureName → what else is changing its files, and how far it has drifted.
+   * Computed by server/overlap.ts and carried on the `ci` frame — see CiPayload.
+   */
+  get overlap(): Record<string, FeatureOverlap> {
+    return this.view.overlap || {};
+  }
+  /** One feature's answer, or null when the sweep has not reached it. */
+  overlapFor(name: string | null | undefined): FeatureOverlap | null {
+    return name ? this.overlap[name] || null : null;
+  }
   get taskStatus(): Record<string, { label: string; done: boolean }> {
     return this.view.taskStatus || {};
   }

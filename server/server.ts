@@ -16,6 +16,7 @@ import { createBroadcast } from './broadcast.ts';
 import { createForge } from './forge.ts';
 import { createCiFeed } from './ci.ts';
 import { createTaskStatusFeed } from './task-status.ts';
+import { createOverlapFeed } from './overlap.ts';
 import * as orchestrator from './orchestrator.ts';
 import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
@@ -115,6 +116,9 @@ async function main() {
     // `gh pr view` would answer, so this is the CI feed's main trigger. Fire and
     // forget: the feed debounces, floors and gates it, and nothing here waits.
     ciFeed.poke({ force: true });
+    // The same trigger, for the same reason: a rescan means refs moved, and refs moving
+    // is the only thing that can change an overlap or a drift count.
+    void refreshOverlap();
   });
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
@@ -202,10 +206,45 @@ async function main() {
     if (await taskFeed.refresh(feats)) bus.schedule({ ci: true });
   };
 
+  /*
+   * Which features are changing the same files, and how far each has drifted.
+   *
+   * Rides the `ci` frame for the same reason taskStatus does: it is pulled rather than
+   * pushed, it costs a handful of git reads per worktree, and it changes on the order of
+   * commits — not on the order of file saves, which is what the topology tracks. The feed
+   * caches on (head sha, base sha), so a sweep where nothing has been committed costs one
+   * `rev-parse` per worktree and no diffs at all.
+   */
+  const overlapFeed = createOverlapFeed();
+  const refreshOverlap = async () => {
+    const t = topology();
+    const bases = new Map(t.repos.map((r) => [r.name, r.defaultBranch || 'master']));
+    const feats = [...t.features, ...t.groups].map((f) => ({
+      name: f.name,
+      members: (f.members || [])
+        .filter((m): m is Extract<typeof m, { path: string }> => !!m && !('missing' in m && m.missing))
+        // A main checkout is not somebody's branch work, and it is the base everything
+        // else is measured against — including it would compare master with itself.
+        .filter((m) => !m.isMain && !!m.path)
+        .map((m) => ({ repo: m.repo, path: m.path, branch: m.branch })),
+    }));
+    const baseFor = (repo: string) => {
+      const b = bases.get(repo) || 'master';
+      // Measured against the REMOTE tip: the local base branch in a worktree checkout is
+      // whatever it was last pulled to, so drift would read as zero on a stale main.
+      return `origin/${b}`;
+    };
+    if (await overlapFeed.refresh(feats, baseFor)) bus.schedule({ ci: true });
+  };
+
   const bus = createBroadcast({
     topology,
     sessionState,
-    ci: () => ({ ...ciFeed.snapshot(), taskStatus: taskFeed.snapshot() }),
+    ci: () => ({
+      ...ciFeed.snapshot(),
+      taskStatus: taskFeed.snapshot(),
+      overlap: overlapFeed.snapshot(),
+    }),
   });
   // A run starting or finishing is a real state change and a rare one — unlike the hook
   // stream, this cannot flood the fan-out.
@@ -284,6 +323,7 @@ async function main() {
     // Same reason, and equally cheap: with no ticket configured, or nothing stale, this
     // is a filter over a small object and no request at all.
     void refreshTaskStatus();
+    void refreshOverlap();
     const hb = setInterval(() => {
       try {
         res.write(':hb\n\n');
@@ -804,6 +844,9 @@ async function main() {
     if (out.ok) {
       broadcastTopology();
       ciFeed.poke({ force: true });
+    // The same trigger, for the same reason: a rescan means refs moved, and refs moving
+    // is the only thing that can change an overlap or a drift count.
+    void refreshOverlap();
     }
     res.json(out);
   });
