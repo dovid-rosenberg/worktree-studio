@@ -87,23 +87,22 @@ describe('AppHead summary', () => {
     expect(screen.queryByText(/mux:/)).not.toBeInTheDocument();
   });
 
-  it('offers Insights, and no Overview — that view was the rail drawn wide', () => {
-    render(AppHead);
-    expect(screen.getByRole('button', { name: /Insights/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Overview/ })).not.toBeInTheDocument();
-  });
-
-  it('keeps Insights findable by name after losing its visible word to the rail width', () => {
+  it('hands Insights to the ⋮ menu rather than spending head width on it', () => {
     /*
-     * The button reads `◔` and nothing else. A glyph is not a name, so dropping the
-     * aria-label while shortening the button would leave a control that no assistive
-     * technology — and no new user — can identify. Asserted separately from the test above
-     * because that one would still pass on a `title` alone in some engines.
+     * A 212px column cannot hold a wordmark, a root switcher and three buttons, and of
+     * those the root switcher earns the space: which body of work you are looking at is
+     * worth naming on screen all day. Insights is one destination among the menu's
+     * actions — AppMenu.test.ts pins that it arrived, including its ⌘\ label, so the
+     * two tests together say it moved rather than went.
      */
     render(AppHead);
-    const insights = screen.getByRole('button', { name: 'Insights' });
-    expect(insights).toHaveAttribute('aria-pressed', 'false');
-    expect(insights.textContent?.trim()).toBe('◔');
+    expect(screen.queryByRole('button', { name: /Insights/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Menu')).toBeInTheDocument();
+  });
+
+  it('never brings back Overview — that view was the rail drawn wide', () => {
+    render(AppHead);
+    expect(screen.queryByRole('button', { name: /Overview/ })).not.toBeInTheDocument();
   });
 
   it('shows NO waiting button while nothing is waiting', () => {

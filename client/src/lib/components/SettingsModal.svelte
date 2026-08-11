@@ -9,6 +9,7 @@
    * saved.
    */
   import Modal from '$lib/components/Modal.svelte';
+  import DirPicker from '$lib/components/DirPicker.svelte';
   import { api } from '$lib/api.js';
   import { world } from '$lib/stores/world.svelte.js';
   import { uiConfirm } from '$lib/stores/dialog.svelte.js';
@@ -30,6 +31,14 @@
    * order. Every other list in this modal is rows; this one was the odd one out.
    */
   let rootRows: {key:number, path:string}[] = $state([]);
+  /*
+   * Which root row has the folder picker open, by row KEY not index.
+   *
+   * The rows are draggable and removable, so an index identifies a different row a moment
+   * later — the same reason every row here is keyed by `key` in its `{#each}`.
+   */
+  let picking = $state<number | null>(null);
+  const pickingRow = $derived(picking === null ? null : rootRows.find((r) => r.key === picking) || null);
   /**
    * Hand-written run configurations, per repo.
    *
@@ -390,6 +399,15 @@
           >
             <span class="grip" title="Drag to reorder" aria-hidden="true">⠿</span>
             <input bind:value={row.path} placeholder="~/code" aria-label="Repo root" />
+            <!-- Browsing beats typing here because the judgement is not "is this path
+                 spelled right" but "does this folder CONTAIN repos" — which a text field
+                 cannot answer and the picker states outright. -->
+            <button
+              class="btn ghost xs"
+              title="Browse for a folder"
+              aria-label="Browse for a folder"
+              onclick={() => (picking = row.key)}
+            >…</button>
             <button class="btn ghost xs" title="Move up" aria-label="Move up" disabled={i === 0} onclick={() => (rootRows = nudge(rootRows, i, -1))}>↑</button>
             <button class="btn ghost xs" title="Move down" aria-label="Move down" disabled={i === rootRows.length - 1} onclick={() => (rootRows = nudge(rootRows, i, 1))}>↓</button>
             <button class="btn ghost xs" title="Remove" aria-label="Remove" onclick={() => (rootRows = rootRows.filter((r) => r.key !== row.key))}>✕</button>
@@ -397,6 +415,20 @@
         {/each}
         <button class="btn ghost xs add" onclick={() => (rootRows = [...rootRows, { key: ++rowKey, path: '' }])}>＋ add root</button>
       </div>
+
+      {#if pickingRow}
+        <!-- Opens where that row already points, so editing an existing root lands you in
+             it rather than back at the home directory. -->
+        <DirPicker
+          start={pickingRow.path}
+          onclose={() => (picking = null)}
+          onpick={(p) => {
+            const hit = rootRows.find((r) => r.key === picking);
+            if (hit) hit.path = p;
+            picking = null;
+          }}
+        />
+      {/if}
 
       <div class="setsec">
         <span class="lbl">Feature groups <span class="lbl-note">— only for worktrees whose names do NOT match</span></span>

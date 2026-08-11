@@ -13,6 +13,7 @@
    */
   import { theme, toggleTheme } from '$lib/theme.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
+  import { ui } from '$lib/stores/ui.svelte.js';
   import { showShortcuts } from '$lib/shortcuts.svelte.js';
 
   let { onstopall, onrestartall, anyRunning = false }: {
@@ -68,6 +69,21 @@
   {#if open}
     <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
     <div class="sheet" role="menu" tabindex="-1">
+      <!--
+        Insights leads, because it is a DESTINATION and everything under it is an action.
+        It was a permanent `◔` button in the head; the root switcher took that space, and
+        of the two, which body of work you are looking at is the thing worth naming on
+        screen all day. `⌘\` still opens it without coming through here.
+      -->
+      <button
+        role="menuitem"
+        class:on={ui.dockView === 'usage'}
+        onclick={() => pick(() => ui.toggleUsage())}
+      >
+        <span class="g">◔</span> Insights
+        <span class="sc">⌘\</span>
+      </button>
+      <div class="sep" role="separator"></div>
       <button role="menuitem" onclick={() => pick(() => overlays.togglePalette())}>
         <span class="g">⌘K</span> Command palette
       </button>
@@ -117,6 +133,9 @@
     text-align: left; cursor: pointer; white-space: nowrap;
   }
   .sheet button:hover { background: var(--elevated); }
+  /* The one item here that has a STATE — it is a view you are either in or not. */
+  .sheet button.on { color: var(--brand); }
+  .sheet .sc { margin-left: auto; padding-left: 14px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
   .sheet button.danger { color: var(--del); }
   /* Fixed-width gutter so the labels line up whatever the glyph's width. */
   .sheet .g {
