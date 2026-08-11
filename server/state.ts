@@ -10,7 +10,7 @@
 // the topology half only when the shape actually changes. buildState() merges
 // them for the callers that want the whole world at once: GET /state, SwiftBar,
 // Alfred, resolveGroup.
-import { computeFeatures } from './features.ts';
+import { computeFeatures, detectDrift } from './features.ts';
 import { SHIPPED_PROVIDERS } from './links.ts';
 import type { ComputedFeature } from './features.ts';
 import type { CiSession } from './ci.ts';
@@ -252,6 +252,13 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       repos: reposOut,
       features: features.map(withSession),
       groups: groups.map(withSession),
+      // Features that look like one piece of work under names that did not group. The
+      // repos' own default branches are excluded, or every worktree sitting on main
+      // would read as evidence of the same feature.
+      drift: detectDrift(
+        features,
+        new Set(repos().map((r) => r.defaultBranch).filter(Boolean)),
+      ),
     };
   }
 

@@ -13,7 +13,7 @@
 
 import { api } from '$lib/api.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
-import type { Feature, PinnedLink, Session } from '../../../server/types';
+import type { Feature, FeatureDrift, PinnedLink, Session } from '../../../server/types';
 import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
@@ -783,6 +783,28 @@ export async function stopMainServer(w: { repo: string; path: string }): Promise
   try {
     await api('POST', '/api/v1/servers/stop', { repo: w.repo, worktreePath: w.path });
     toast(`Stopped ${w.repo}`);
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
+}
+
+/**
+ * Accept a drift finding: make the two half-features one manual group.
+ *
+ * The name is asked for rather than derived. Studio can tell that these worktrees are
+ * one piece of work — they share a branch — but it cannot tell which of the two names
+ * you meant, and picking one silently is how the naming convention became load-bearing
+ * without anyone deciding it should be. The first name is offered as the default.
+ */
+export async function groupDrift(d: FeatureDrift) {
+  const name = await uiPrompt('Group these worktrees as one feature', d.features[0] || '');
+  if (!name) return;
+  try {
+    await api('POST', '/api/v1/groups', {
+      name,
+      members: d.members.map((m) => `${m.repo}/${m.wtname}`),
+    });
+    toast(`Grouped as “${name}”`);
   } catch (e) {
     toast(errMessage(e), true);
   }

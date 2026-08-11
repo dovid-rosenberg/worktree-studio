@@ -440,7 +440,17 @@ const repoIn = (name: string, baseDir: string) => ({
   name,
   repo: name,
   path: `${baseDir}/${name}`,
-  worktrees: [{ repo: name, wtname: name, path: `${baseDir}/${name}`, isMain: true, baseDir, running: false, ports: [] }],
+  worktrees: [
+    {
+      repo: name,
+      wtname: name,
+      path: `${baseDir}/${name}`,
+      isMain: true,
+      baseDir,
+      running: false,
+      ports: [],
+    },
+  ],
 });
 
 function twoRoots() {
@@ -640,5 +650,63 @@ describe('reviews in the rail', () => {
     // A quiet week has to look exactly like the rail looked before any of this existed.
     give({ features: [feature('mfa', [member('accept-blue')])] });
     expect(ui.reviewsAt).toBe(-1);
+  });
+});
+
+/*
+ * Dismissing a drift finding.
+ *
+ * detectDrift() reports the same pair for as long as both worktrees exist, so a banner
+ * with no way to disagree restates itself on every topology frame — forever, for a pair
+ * you keep apart on purpose. The key is the branch AND the feature names, so dismissing
+ * means "not these two" rather than "never mention this branch".
+ */
+describe('drift dismissal', () => {
+  const d = (branch: string, features: string[]) => ({ branch, features });
+
+  /*
+   * These run in the `logic` project, which is node with no DOM — so `localStorage` is
+   * the store's own dependency, not the environment's. Stubbed rather than avoided,
+   * because "the dismissal survives a reload" is half of what makes the feature worth
+   * having, and the store's try/catch would swallow a real breakage silently.
+   */
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+    };
+    ui.driftDismissed = new Set();
+  });
+
+  it('shows a finding until it is waved off', () => {
+    const finding = d('fix/thing', ['a', 'b']);
+    expect(ui.driftVisible(finding)).toBe(true);
+    ui.dismissDrift(finding);
+    expect(ui.driftVisible(finding)).toBe(false);
+  });
+
+  it('does not silence a different pair on the same branch', () => {
+    ui.dismissDrift(d('fix/thing', ['a', 'b']));
+    expect(ui.driftVisible(d('fix/thing', ['a', 'c']))).toBe(true);
+  });
+
+  // A third worktree joining the pair is a new claim, and worth asking about again.
+  it('asks again when the finding grows', () => {
+    ui.dismissDrift(d('fix/thing', ['a', 'b']));
+    expect(ui.driftVisible(d('fix/thing', ['a', 'b', 'c']))).toBe(true);
+  });
+
+  // The names arrive in whatever order detectDrift's Set iterated, which is not stable
+  // across frames — so the key sorts them, or a dismissal survives exactly one render.
+  it('is not fooled by the order the names arrive in', () => {
+    ui.dismissDrift(d('fix/thing', ['a', 'b']));
+    expect(ui.driftVisible(d('fix/thing', ['b', 'a']))).toBe(false);
+  });
+
+  it('survives a reload', () => {
+    ui.dismissDrift(d('fix/thing', ['a', 'b']));
+    expect(JSON.parse(store.get('wts-drift-dismissed') || '[]')).toEqual(['fix/thing|a|b']);
   });
 });
