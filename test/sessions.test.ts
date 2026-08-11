@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { SessionManager } from '../server/sessions.ts';
+import { loadSessions } from '../server/session-store.ts';
 import { shq } from '../server/util.ts';
 import { CONFIG_DIR } from '../server/config.ts';
 import type { Session, Worktree } from '../server/types.ts';
@@ -842,7 +843,10 @@ test('restore() carries on past a session it cannot relaunch, and still saves', 
   );
   assert.equal(got(m, 'c').activity, 'restarted');
   // _save() must still run, or the on-disk state keeps claiming everything is fine.
-  const saved: Session[] = JSON.parse(fs.readFileSync(m.file, 'utf8'));
+  // Read through loadSessions rather than JSON.parse: the file is a versioned envelope
+  // now, and a test that reaches past the module owning that shape would break on the
+  // next migration for no reason of its own.
+  const saved: Session[] = loadSessions(m.file).sessions;
   const savedBy = (id: string) =>
     present(
       saved.find((x) => x.id === id),
