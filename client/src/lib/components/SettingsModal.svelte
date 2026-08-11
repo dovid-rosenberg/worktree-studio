@@ -83,7 +83,15 @@
   ] as const;
 
   /** Not persisted: which panel you were last on is not a preference, it is where you were. */
-  let tab = $state<(typeof SECTIONS)[number]['id']>('repos');
+  type SectionId = (typeof SECTIONS)[number]['id'];
+  const isSection = (s: string | null): s is SectionId => SECTIONS.some((x) => x.id === s);
+  /*
+   * A caller may name the panel it needs — "Asana is not connected" opens Connections
+   * rather than the default and a hunt. Read once, at construction: the modal is created
+   * when it opens, so this IS "on open", and making it an effect would yank the panel back
+   * under anyone who then clicked elsewhere in the sidebar.
+   */
+  let tab = $state<SectionId>(isSection(overlays.settingsSection) ? overlays.settingsSection : 'repos');
 
   /*
    * Connecting Asana: prove the token, learn who it belongs to, pick a workspace.

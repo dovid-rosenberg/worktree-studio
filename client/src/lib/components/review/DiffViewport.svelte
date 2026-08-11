@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Item } from './model';
+  import type { Block, Item } from './model';
   /*
    * The windowed diff surface: one scroll container for the whole detail view — every
    * file header, group label, hunk header and diff row of every file in the selected
@@ -22,6 +22,7 @@
    * TRADE-OFF, stated plainly: off-screen rows are not in the DOM, so the browser's own
    * Ctrl-F cannot find them. That is why `n`/`p`/`[`/`]` navigation and the cursor exist.
    */
+  import { tick } from 'svelte';
   import { buildItems, indexAt, navigable, statusInfo, H } from './model.js';
   import { activatable } from '$lib/actions/activatable.js';
   import { trapFocus } from '$lib/actions/trapFocus.js';
@@ -99,6 +100,63 @@
 
   function onScroll() {
     if (scroller) scrollTop = scroller.scrollTop;
+  }
+
+  /*
+   * WHICH FILE EACH ROW BELONGS TO — item index → index of that file's header row.
+   *
+   * Built once per model, not searched per scroll event: scrolling fires many times a
+   * second and walking backwards to the nearest header would be O(rows) each time, on a
+   * list that reaches tens of thousands of rows in a large diff.
+   *
+   * A gap keeps the file above it. It is 9px of separator, and blanking the header for
+   * those nine pixels makes it flicker once per file on a fast scroll.
+   */
+  const fileOf = $derived.by(() => {
+    const out = new Int32Array(items.length);
+    let cur = -1;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].k === 'file') cur = i;
+      out[i] = cur;
+    }
+    return out;
+  });
+
+  /**
+   * The file header to pin at the top edge, or -1 for none.
+   *
+   * The rows are ABSOLUTELY POSITIONED inside a fixed-height canvas — that is what makes
+   * the viewport virtual — and `position: sticky` does nothing to an absolutely positioned
+   * element. So the pinned header is not the real row behaving differently; it is a copy
+   * drawn over the scroller, from the same snippet, so the two cannot drift apart.
+   *
+   * Shown only once the real row has passed above the top edge. While it is still on
+   * screen it draws itself, and pinning as well would print the same header twice.
+   */
+  const pinned = $derived.by((): { i: number; b: Block } | null => {
+    if (!items.length || !scrollTop) return null;
+    const i = Math.min(indexAt(model.offsets, scrollTop, items.length), items.length - 1);
+    const f = fileOf[i] ?? -1;
+    if (f < 0 || model.offsets[f] >= scrollTop) return null;
+    // `fileOf` only ever points at a 'file' item, but the narrowing has to be written for
+    // the compiler — `Item` is a union and a gap carries no block.
+    const it = items[f];
+    return it.k === 'gap' ? null : { i: f, b: it.b };
+  });
+
+  /**
+   * Collapse/expand from the PINNED header.
+   *
+   * Identical to the real row's toggle, plus a reveal: the row you pressed is off-screen
+   * above, so collapsing it would drop you into the middle of some later file with no
+   * indication of what just happened. `await tick()` because the offsets are rebuilt from
+   * the new block list, and revealing against the old ones lands in the wrong place.
+   */
+  async function togglePinned(i: number, file: string) {
+    cursor = i;
+    ontoggle(file);
+    await tick();
+    reveal(i);
   }
 
   /** Publish a bar's scrollLeft to the column it drives. @param {'l'|'r'} which */
@@ -355,7 +413,83 @@
   const rowCls = (it: Item) => (it.k === 'row' ? it.type : '');
 </script>
 
+<!--
+  ONE file header, rendered in two places: at its own offset inside the canvas, and
+  pinned over the top edge once that offset has scrolled past.
+
+  A snippet rather than two copies of the markup, because the two would drift — this
+  header carries the collapse caret, the status letter, the rename note, the +/− counts
+  and, while staging, two buttons, and a change to any of them has to reach both.
+-->
+{#snippet headBody(b: Block)}
+  {@const st = statusInfo(b.status)}
+  <span class="tw" aria-hidden="true">{b.collapsed ? '▸' : '▾'}</span>
+  <span class="st {st.cls}" title={st.label}>{st.letter}</span>
+  <span class="nm">{b.file}</span>
+  {#if b.rename}<span class="ren" title="probable rename">{b.rename}</span>{/if}
+  <span class="fstat">
+    {#if b.added}<span class="add">+{b.added}</span>{/if}
+    {#if b.deleted}<span class="del">−{b.deleted}</span>{/if}
+  </span>
+{/snippet}
+
+{#snippet fileHead(b: Block, i: number, isPinned: boolean)}
+  {#if isPinned}
+    <!--
+      Mouse-only, deliberately. The pinned strip lives inside an `aria-hidden` container,
+      and a FOCUSABLE element inside an aria-hidden subtree is its own accessibility
+      defect — you can tab to something a screen reader has been told does not exist. So
+      this one does not take `use:activatable` (which sets tabindex="0"), and the buttons
+      below carry tabindex="-1". Nothing is lost: `[` and `]` already jump file headers,
+      which is the keyboard's version of what this strip does for the eye.
+    -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <span
+      class="filehd"
+      class:collapsed={b.collapsed}
+      onclick={() => togglePinned(i, b.file)}
+      title={b.collapsed ? 'Expand' : 'Collapse'}
+    >{@render headBody(b)}</span>
+  {:else}
+    <span
+      class="filehd"
+      class:collapsed={b.collapsed}
+      use:activatable={() => { cursor = i; ontoggle(b.file); }}
+      title={b.collapsed ? 'Expand' : 'Collapse'}
+    >{@render headBody(b)}</span>
+  {/if}
+  {#if stageable}
+    {@const un = b.groups.find((g) => g.side === 'unstaged')}
+    {@const st2 = b.groups.find((g) => g.side === 'staged')}
+    <span class="fileacts">
+      <button
+        class="btn xs" tabindex={isPinned ? -1 : 0} disabled={!un || !un.hunks.length || b.busy}
+        onclick={() => { cursor = i; if (un) onapply({ op: 'stage', file: b.file, ...selectionOf(un) }); }}
+        title="Stage every hunk in this file (file-level staging)"
+      >Stage file</button>
+      <button
+        class="btn xs" tabindex={isPinned ? -1 : 0} disabled={!st2 || !st2.hunks.length || b.busy}
+        onclick={() => { cursor = i; if (st2) onapply({ op: 'unstage', file: b.file, ...selectionOf(st2) }); }}
+        title="Unstage every hunk in this file"
+      >Unstage file</button>
+    </span>
+  {/if}
+{/snippet}
+
 <div class="viewport-shell">
+  <!--
+    The file you are currently inside, held at the top edge.
+    Outside the scroller, not inside it: the rows are absolutely positioned so that CSS
+    `sticky` cannot reach them, and `aria-hidden` because the real row is still in the
+    document — a screen reader that met both would hear every filename twice.
+  -->
+  {#if pinned}
+    <div class="fileline pinned" aria-hidden="true">
+      <div class="stick">{@render fileHead(pinned.b, pinned.i, true)}</div>
+    </div>
+  {/if}
+
   <!--
     The scroller is a focusable, keyboard-driven surface, which the a11y rules flag
     because `group` is not an interactive role. The alternatives are worse here:
@@ -394,46 +528,13 @@
         {#if it.k === 'gap'}
           <div class="gap" style="top:{model.offsets[i]}px"></div>
         {:else if it.k === 'file'}
-          {@const st = statusInfo(it.b.status)}
           <div
             class="fileline"
             class:cursor={i === cursor}
             style="top:{model.offsets[i]}px"
             aria-current={i === cursor ? 'true' : undefined}
           >
-            <div class="stick">
-              <span
-                class="filehd"
-                class:collapsed={it.b.collapsed}
-                use:activatable={() => { cursor = i; ontoggle(it.b.file); }}
-                title={it.b.collapsed ? 'Expand' : 'Collapse'}
-              >
-                <span class="tw" aria-hidden="true">{it.b.collapsed ? '▸' : '▾'}</span>
-                <span class="st {st.cls}" title={st.label}>{st.letter}</span>
-                <span class="nm">{it.b.file}</span>
-                {#if it.b.rename}<span class="ren" title="probable rename">{it.b.rename}</span>{/if}
-                <span class="fstat">
-                  {#if it.b.added}<span class="add">+{it.b.added}</span>{/if}
-                  {#if it.b.deleted}<span class="del">−{it.b.deleted}</span>{/if}
-                </span>
-              </span>
-              {#if stageable}
-                {@const un = it.b.groups.find((g) => g.side === 'unstaged')}
-                {@const st2 = it.b.groups.find((g) => g.side === 'staged')}
-                <span class="fileacts">
-                  <button
-                    class="btn xs" disabled={!un || !un.hunks.length || it.b.busy}
-                    onclick={() => { cursor = i; if (un) onapply({ op: 'stage', file: it.b.file, ...selectionOf(un) }); }}
-                    title="Stage every hunk in this file (file-level staging)"
-                  >Stage file</button>
-                  <button
-                    class="btn xs" disabled={!st2 || !st2.hunks.length || it.b.busy}
-                    onclick={() => { cursor = i; if (st2) onapply({ op: 'unstage', file: it.b.file, ...selectionOf(st2) }); }}
-                    title="Unstage every hunk in this file"
-                  >Unstage file</button>
-                </span>
-              {/if}
-            </div>
+            <div class="stick">{@render fileHead(it.b, i, false)}</div>
           </div>
         {:else if it.k === 'note'}
           <div class="noteline {it.note.tone}" class:cursor={i === cursor} style="top:{model.offsets[i]}px" aria-current={i === cursor ? 'true' : undefined}>
@@ -614,6 +715,18 @@
   .stick { position:sticky; left:0; display:flex; align-items:center; gap:9px; width:max-content; max-width:100%; padding:0 14px; height:100%; }
 
   .fileline { height:34px; background:var(--panel); border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
+  /*
+   * The pinned copy. `top:0` over the scroller rather than in it, and a shadow so it
+   * reads as being ABOVE the diff rather than as one more row that happens to be there —
+   * without it the eye cannot tell the held header from the file boundary just under it.
+   *
+   * `.stick` inside it is `position:sticky; left:0`, which is inert here (this element
+   * does not scroll) and harmless: it keeps the two renderings byte-identical.
+   */
+  .pinned {
+    position:absolute; top:0; left:0; right:0; z-index:4;
+    border-top:0; box-shadow:0 4px 10px -4px rgb(0 0 0 / .28);
+  }
   .filehd { display:flex; align-items:center; gap:9px; font-size:12.5px; cursor:pointer; border-radius:5px; padding:2px 4px; min-width:0; }
   .filehd:hover { background:var(--elevated); }
   .filehd .tw { color:var(--faint); font-size:10px; width:9px; }

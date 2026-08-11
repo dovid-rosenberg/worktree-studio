@@ -3,6 +3,11 @@
    * New-session intake. One dialog, several pluggable sources: free text, a GitHub /
    * GitLab issue, an Asana task. A source that is not configured is shown disabled
    * rather than hidden, so the absence is legible instead of mysterious.
+   *
+   * A DISABLED TAB IS A BUTTON, not a dead end. It used to be an inert `<span>` whose
+   * tooltip read "Not configured — see Connections & settings" — a sentence naming a place
+   * without going there, on a control that looks pressable and does nothing. It now opens
+   * Settings on the Connections panel, which is the only thing anyone wanted from it.
    */
   import Modal from '$lib/components/Modal.svelte';
   import { activatable } from '$lib/actions/activatable.js';
@@ -107,7 +112,12 @@
     {#each KNOWN as t (t.id)}
       {@const dis = !enabled.has(t.id)}
       {#if dis}
-        <span class="srctab" data-disabled="true" title="Not configured — see Connections & settings">{t.label}</span>
+        <span
+          class="srctab"
+          data-disabled="true"
+          title="{t.label} is not connected yet — open Connections to set it up"
+          use:activatable={() => overlays.openSettings('conn')}
+        >{t.label} <span class="needs" aria-hidden="true">＋</span></span>
       {:else}
         <span class="srctab" class:on={source === t.id} use:activatable={() => pickSource(t.id)}>{t.label}</span>
       {/if}
@@ -184,7 +194,12 @@
   .srctabs { display:flex; gap:4px; padding:12px 16px 0; flex-wrap:wrap; }
   .srctab { font-size:13.5px; font-weight:600; color:var(--muted); padding:7px 13px; border-radius:9px 9px 0 0; border:1px solid transparent; border-bottom:none; cursor:pointer; }
   .srctab.on { color:var(--ink); background:var(--elevated); border-color:var(--border); }
-  .srctab[data-disabled="true"] { opacity:.4; cursor:not-allowed; }
+  /* Quieter than a live tab, but not `not-allowed` and not .4 opacity — it IS allowed,
+     it just does something different: it takes you to where you connect this source.
+     A ＋ says so, and hovering brings it up to full strength. */
+  .srctab[data-disabled="true"] { opacity:.62; font-weight:500; }
+  .srctab[data-disabled="true"]:hover { opacity:1; color:var(--ink); }
+  .srctab .needs { color:var(--brand); font-size:11px; }
   .modal-body { padding:16px; background:var(--elevated); border-top:1px solid var(--border); display:flex; flex-direction:column; gap:14px; overflow-y:auto; }
   .modal-foot { display:flex; align-items:center; gap:10px; padding:13px 16px; border-top:1px solid var(--border); }
   .foot-note { font-family:var(--mono); font-size:12px; color:var(--faint); }

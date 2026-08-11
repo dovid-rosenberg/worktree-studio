@@ -28,11 +28,22 @@ class Overlays {
   closeIntake(): void {
     this.intake = false;
   }
-  openSettings(): void {
+  /**
+   * The settings panel to open on, for a caller that already knows which one it means.
+   *
+   * Null means "wherever it was", which is the right default for the ⋮ menu and ⌘,. It is
+   * set by the surfaces that opened Settings to fix ONE named thing — "Asana is not
+   * connected" should not land you on a sidebar and leave you to find it.
+   */
+  settingsSection = $state<string | null>(null);
+
+  openSettings(section: string | null = null): void {
+    this.settingsSection = section;
     this.settings = true;
   }
   closeSettings(): void {
     this.settings = false;
+    this.settingsSection = null;
   }
   togglePalette(): void {
     this.palette = !this.palette;
