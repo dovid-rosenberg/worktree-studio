@@ -639,6 +639,42 @@ class Servers {
   }
 
   /**
+   * The directory this worktree's `node_modules` really resolves to, when that is not
+   * inside the worktree — else null.
+   *
+   * The cheap answer to the problem depsMissing() describes: instead of installing,
+   * symlink the main checkout's node_modules in. Dependencies resolve, the dev server
+   * starts, depsMissing() is correctly false — and the worktree is no longer isolated
+   * in the one place tools actually write. Everything that caches inside node_modules
+   * now shares one directory: two Vite servers take turns re-optimising
+   * `node_modules/.vite/deps` over each other and full-reload the browser to recover,
+   * and an `npm install` on this branch rewrites the tree every other worktree of the
+   * repo is running against.
+   *
+   * Reported rather than inferred, because nothing else can see it. Every symptom
+   * appears in a different worktree than the cause, and the only local evidence is an
+   * lstat that no part of a normal session performs.
+   *
+   * Resolved before comparing: `ln -s ../../node_modules` is the form these actually
+   * take. A link that lands back inside the worktree isolates as well as a real
+   * directory and is not flagged, and a dangling one resolves to nothing — that is
+   * depsMissing()'s story, and naming a target that is not there would explain nothing.
+   */
+  sharedModules(worktreePath: string): string | null {
+    try {
+      const link = path.join(worktreePath, 'node_modules');
+      if (!fs.lstatSync(link).isSymbolicLink()) return null;
+      if (!fs.existsSync(link)) return null; // dangling
+      const target = realpath(link);
+      const here = realpath(worktreePath);
+      return target === here || target.startsWith(here + path.sep) ? null : target;
+    } catch {
+      // No node_modules, or a path we cannot stat. Neither is a claim this can make.
+      return null;
+    }
+  }
+
+  /**
    * Whether this worktree is missing the dependencies its start command needs.
    *
    * A worktree created by `git worktree add` has the repo's files and none of its
@@ -718,6 +754,7 @@ class Servers {
     | 'noStartCmd'
     | 'gone'
     | 'offSlot'
+    | 'sharedModules'
   > {
     const hit = running.get(realpath(worktree.path));
     /*
@@ -755,6 +792,9 @@ class Servers {
        */
       noStartCmd: !configured,
       offSlot: this.offSlotPorts(worktree, hit),
+      // Not a reason canStart is false: a shared node_modules starts perfectly well.
+      // It is the reason two worktrees that each look fine interfere with each other.
+      sharedModules: gone ? null : this.sharedModules(worktree.path),
     };
   }
 
@@ -992,9 +1032,30 @@ class Servers {
     return sc ? sc.ports : [];
   }
 
+  /**
+   * Stop this worktree's dev server.
+   *
+   * `alsoPorts` is where the server has been OBSERVED listening, which is not always
+   * where its slot says it should be. The sweep below derived its whole port list from
+   * the slot, so a server that drifted onto another slot's ports — started outside
+   * Studio, or by a start command that ignored the slot env — was unreachable by the
+   * only thing that owns it. stop() probed the slot, found nothing, reported success,
+   * and left the process holding ports that belong to a different feature: its API
+   * answered that feature's frontend from the wrong branch, and a restart produced two
+   * servers for one worktree rather than replacing one.
+   *
+   * The caller supplies them because the caller already has them — `decorate()` reports
+   * exactly this as `offSlot`, and the route handlers hold the running map it came
+   * from. Passing them in keeps stop() targeted; discovering them here would mean a
+   * full lsof scan on every stop, including the group verbs that call it in a loop.
+   *
+   * Ownership is still proven per port before anything is signalled: a caller's list
+   * can be a scan old, and by now the port may belong to somebody else entirely.
+   */
   async stop(
     repo: string,
     worktreePath: string,
+    alsoPorts: number[] = [],
   ): Promise<{ ok: true; killed: boolean; stillListening: number[] }> {
     let killed = false;
     const t = this.tracked[worktreePath];
@@ -1024,10 +1085,14 @@ class Servers {
         `[wt-studio] refusing to signal pid ${t.pid} for ${worktreePath}: it is no longer the process Studio started (pid reused). Dropping the stale record.`,
       );
     }
-    // Also free any listener still holding one of this worktree's known ports —
-    // a targeted per-port lookup rather than a full lsof-all-sockets discovery scan.
+    // Also free any listener still holding one of this worktree's ports — where the slot
+    // says it should be, plus wherever it has actually been seen. A targeted per-port
+    // lookup either way, not a full lsof-all-sockets discovery scan. Deduped: each entry
+    // costs a lookup, and a drifted server is usually reported on some of its slot ports
+    // as well as the strays.
+    const sweep = [...new Set([...this._portsFor(repo, worktreePath), ...alsoPorts])];
     const mine = realpath(worktreePath);
-    for (const p of this._portsFor(repo, worktreePath)) {
+    for (const p of sweep) {
       const pid = await this.portPid(p);
       if (!pid || (t && pid === t.pid)) continue;
       /*
@@ -1065,14 +1130,26 @@ class Servers {
      * One re-check after a short settle, then SIGKILL what is left. A caller that asked
      * for a stop is entitled to know whether it happened.
      */
-    const ports = this._portsFor(repo, worktreePath);
-    if (!killed || !ports.length) return { ok: true, killed, stillListening: [] };
+    if (!killed || !sweep.length) return { ok: true, killed, stillListening: [] };
 
     await new Promise((r) => setTimeout(r, 600));
     const stubborn: number[] = [];
-    for (const p of ports) {
+    // The same list the SIGTERM pass used: a drifted server that declines a polite stop
+    // has to be escalated on the port it is actually holding, or `stillListening` says
+    // nothing is left while the squatted port is still bound.
+    for (const p of sweep) {
       const pid = await this.portPid(p);
       if (!pid) continue;
+      /*
+       * Re-prove ownership before the SIGKILL, exactly as the SIGTERM pass does.
+       *
+       * Six hundred milliseconds ago this port belonged to our server. It may have died
+       * in the meantime and something else may have taken the port — which is precisely
+       * what happens when a neighbouring feature is starting up into the slot this
+       * server was squatting. SIGKILL is not survivable and not a request.
+       */
+      const info = await this._resolvePid(String(pid));
+      if (!info || realpath(info.top) !== mine) continue;
       try {
         process.kill(pid, 'SIGKILL');
       } catch {
@@ -1085,7 +1162,18 @@ class Servers {
     return { ok: true, killed, stillListening: stubborn };
   }
 
-  async restart(repo: string, worktreePath: string, opts: Partial<LaunchOpts> = {}): Promise<StartResult> {
+  /**
+   * `alsoPorts` for the same reason stop() takes it, and this is where its absence hurt
+   * most: a restart whose stop cannot reach the old server does not replace it, it adds
+   * a second one. The new process takes the slot's ports, the old one keeps the ports it
+   * drifted onto, and both answer.
+   */
+  async restart(
+    repo: string,
+    worktreePath: string,
+    opts: Partial<LaunchOpts> = {},
+    alsoPorts: number[] = [],
+  ): Promise<StartResult> {
     // A restart is a window with nothing listening by design — the stop, the 800 ms
     // settle, and then start()'s own poll. The guard has to span the whole thing or
     // a sweep landing in the gap reclaims the slot the restart intends to reuse.
@@ -1093,7 +1181,7 @@ class Servers {
     const feature = this.featureFor(worktreePath);
     this._beginStart(feature);
     try {
-      await this.stop(repo, worktreePath);
+      await this.stop(repo, worktreePath, alsoPorts);
       await new Promise((r) => setTimeout(r, 800));
       return await this.start(repo, worktreePath, opts);
     } finally {

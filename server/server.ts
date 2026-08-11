@@ -149,6 +149,15 @@ async function main() {
   // every SSE broadcast (which fires per Claude hook → per tool call).
   let runningCache = new Map();
   let runningSig = '';
+  /**
+   * Where a worktree's server was last seen listening, for servers.stop().
+   *
+   * Not the same question as "which ports should it be on": a server started outside
+   * Studio, or by a start command that ignored the slot env, binds somewhere else
+   * entirely, and stop()'s sweep would never look there. Discovery already knows —
+   * this is the one line that tells stop() what it knows.
+   */
+  const seenPorts = (worktreePath: string): number[] => runningCache.get(realpath(worktreePath))?.ports ?? [];
   async function refreshRunning() {
     try {
       runningCache = await servers.discoverRunning();
@@ -802,7 +811,7 @@ async function main() {
     const s = manager.get(req.params.id);
     if (!s) return res.status(404).json({ error: 'no such session' });
     const owned = (s.repos || []).filter(promoted);
-    for (const r of owned) await servers.stop(r.repo, r.worktreePath);
+    for (const r of owned) await servers.stop(r.repo, r.worktreePath, seenPorts(r.worktreePath));
     // Refresh BEFORE releasing: the guard reads what is still listening, so it has to see
     // the world after the stops. A session's repos can be a strict subset of its feature's
     // members, so "I stopped mine" is not "the feature is down" — see releaseSlotIfIdle.
@@ -818,7 +827,7 @@ async function main() {
     // running server is orphaned and its concurrency slot leaks.
     const s = manager.get(req.params.id);
     const owned: PromotedRepo[] = s ? (s.repos || []).filter(promoted) : [];
-    for (const r of owned) await servers.stop(r.repo, r.worktreePath);
+    for (const r of owned) await servers.stop(r.repo, r.worktreePath, seenPorts(r.worktreePath));
     const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
     if (owned.length) {
       await refreshRunning(); // the guard below reads the post-stop world
@@ -1028,7 +1037,7 @@ async function main() {
     if (!repo || !worktreePath) {
       return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
     }
-    const out = await servers.stop(repo, worktreePath);
+    const out = await servers.stop(repo, worktreePath, seenPorts(worktreePath));
     await refreshRunning();
     // This route already had the right rule; it is now the shared one (releaseSlotIfIdle).
     servers.releaseSlotIfIdle(servers.featureFor(worktreePath), runningCache);
@@ -1044,7 +1053,12 @@ async function main() {
     const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    const out = await servers.restart(repo, worktreePath, servers.launchOpts(repo, feature));
+    const out = await servers.restart(
+      repo,
+      worktreePath,
+      servers.launchOpts(repo, feature),
+      seenPorts(worktreePath),
+    );
     await refreshRunning();
     broadcastTopology();
     res.json(out);

@@ -155,6 +155,16 @@
                 : undefined}
             >{m.ports.map((p: number) => ':' + p).join(' ')}</span>
           {/if}
+          <!-- Shared node_modules: a symlink out of the worktree, so this row is not
+               isolated from the other worktrees of its repo. Marked whether or not a
+               server is up — the damage (a shared Vite dep cache, an install that
+               rewrites everyone's tree) is not conditional on this one running. -->
+          {#if m.sharedModules}
+            <span
+              class="shared"
+              title="node_modules is a symlink to {m.sharedModules} — this worktree shares its dependency tree and every cache inside it (Vite's .vite/deps above all). Replace it with a real install."
+            >⇄deps</span>
+          {/if}
         </span>
       {/each}
     </div>
@@ -232,6 +242,9 @@
   .mchip .p { color:var(--done); flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* Same ports, different claim: these are the ones it should NOT be on. */
   .mchip .p.offslot { color:var(--warn, var(--working)); text-decoration:underline dotted; }
+  /* Not a port and not a state — a property of the checkout, so it sits apart from
+     both and holds its width rather than competing with the branch for space. */
+  .mchip .shared { color:var(--warn, var(--working)); flex:none; cursor:help; }
 
   .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
   .badge.slot { color:var(--working); background:var(--working-bg); }

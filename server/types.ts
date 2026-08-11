@@ -1,4 +1,3 @@
-
 // The wire contract, derived from the code that builds it.
 //
 // Four consumers read these shapes and none of them share a process with the
@@ -460,6 +459,15 @@ export interface Worktree {
    * merely discovered.
    */
   offSlot?: number[];
+  /**
+   * The directory `node_modules` really resolves to, when it is a symlink out of the
+   * worktree — else null. The worktree is not isolated: everything that caches inside
+   * node_modules (Vite's `.vite/deps` above all) is shared with whatever else runs
+   * against that directory, and an install here rewrites their tree too.
+   *
+   * A warning, not a blocker — `canStart` stays true, because it does start.
+   */
+  sharedModules?: string | null;
 }
 
 /**

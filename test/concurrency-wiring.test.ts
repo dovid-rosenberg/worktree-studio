@@ -436,6 +436,52 @@ test('orphan cleanup: stop() drops the tracked entry and releaseSlot frees the f
   assert.equal(s.slots.has('feat-a'), false, 'concurrency slot released (not leaked)');
 });
 
+/*
+ * A server that DRIFTED off its slot can still be stopped.
+ *
+ * The sweep derived its port list from the slot the worktree is supposed to be on, so a
+ * server sitting on some other slot's ports was unreachable by the only thing that owns
+ * it: stop() probed 1231-1999, found nothing, and reported success while the process
+ * went on holding 1431-1439 — the ports the feature that DOES hold that slot needs.
+ * Observed live: a restart then produced two backends for one worktree, the newer one on
+ * the right ports and the older one squatting a neighbour's, answering its API calls
+ * from the wrong branch.
+ *
+ * decorate() already knows where a server really is — that is what `offSlot` reports —
+ * so the caller passes those ports in rather than stop() running a discovery scan of its
+ * own. Where it should be, plus where it is.
+ */
+test('stop() sweeps the ports a drifted server is actually on, not only its slot', async () => {
+  const s = servers();
+  s.alive = () => false;
+  const probed: number[] = [];
+  s.portPid = async (p: number) => {
+    probed.push(p);
+    return null;
+  };
+  s.allocSlotFor('feat-a'); // slot 0 → 1231…1999
+  // What discovery saw: slot 2's ports, held by a server whose cwd is this worktree.
+  await s.stop('accept-blue', '/repo/.worktrees/feat-a', [1431, 1439]);
+  assert.ok(probed.includes(1439), 'the port it drifted onto is swept');
+  assert.ok(probed.includes(1231), "and the slot's own ports still are");
+});
+
+test('drifted ports are swept once, even when they overlap the slot', async () => {
+  const s = servers();
+  s.alive = () => false;
+  const probed: number[] = [];
+  s.portPid = async (p: number) => {
+    probed.push(p);
+    return null;
+  };
+  s.allocSlotFor('feat-a');
+  // A server on SOME of its slot ports and one stray: the overlap must not double-probe,
+  // because each probe is an lsof and the sweep runs on every stop.
+  await s.stop('accept-blue', '/repo/.worktrees/feat-a', [1231, 1239, 4000]);
+  assert.equal(new Set(probed).size, probed.length, 'no port probed twice');
+  assert.ok(probed.includes(4000));
+});
+
 test("stop() targets only the worktree's known ports (no full discovery scan)", async () => {
   const s = servers();
   s.alive = () => false;
