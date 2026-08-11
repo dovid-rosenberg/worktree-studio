@@ -130,20 +130,26 @@ async function originHead(repoPath: string): Promise<string> {
   return git(repoPath, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
 }
 
+/**
+ * The branch a checkout is actually on, or null when it is detached.
+ *
+ * `HEAD` is what git says when there is NO branch, not the name of one. A detached
+ * checkout — during a bisect, or after checking out a tag — returns the literal string
+ * "HEAD", and every caller that took it at face value carried it somewhere it did real
+ * damage: `review.base()` resolved it to the current commit, so a branch's own commits
+ * diffed against themselves and the Changes pane showed nothing, explaining nothing.
+ * Null is the honest answer, and it makes each caller state its own fallback.
+ */
+async function currentBranch(repoPath: string): Promise<string | null> {
+  const cur = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  return cur && cur !== 'HEAD' ? cur : null;
+}
+
 /** The current branch, or 'main' — the shared fallback when `origin/HEAD` is absent. */
 async function guessDefault(repoPath: string): Promise<string> {
-  const cur = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  /*
-   * `HEAD` is what git says when there is NO branch, not the name of one.
-   *
-   * A detached checkout — during a bisect, or after checking out a tag — made this return
-   * the literal string "HEAD", which then travelled as the review baseline. `review.base()`
-   * resolved it to the current commit, so a branch's own commits diffed against themselves
-   * and the Changes pane showed nothing, with nothing explaining why. Falling through to
-   * 'main' is a guess, but it is a guess about a BRANCH, which is the kind of thing the
-   * caller asked for.
-   */
-  return cur && cur !== 'HEAD' ? cur : 'main';
+  // 'main' is a guess, but it is a guess about a BRANCH, which is the kind of thing the
+  // caller asked for.
+  return (await currentBranch(repoPath)) ?? 'main';
 }
 
 async function defaultBranch(repoPath: string): Promise<string> {
@@ -201,6 +207,7 @@ export {
   scan,
   findRepos,
   walkTree,
+  currentBranch,
   originHead,
   defaultBranch,
   defaultBase,

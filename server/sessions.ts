@@ -16,7 +16,7 @@ import type { WorktreeCreateResult } from './worktree.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Identity, IdentityInput } from './identity.ts';
 import type { Config, PartialDeep, Session, SourceSeed, SessionTab } from './types.ts';
-import { originHead } from './git.ts';
+import { currentBranch, originHead } from './git.ts';
 const { worktreeCopyOpts } = worktree;
 
 // ---- the collaborators, typed by what this file asks of them ----------------
@@ -497,11 +497,27 @@ class SessionManager extends EventEmitter {
     if (!res.ok) {
       // the repo already has this feature's worktree → attach it instead of failing
       if (/already exists/i.test(res.error || '') && res.path) {
+        /*
+         * THE BRANCH IT IS ON, not the branch we were going to create.
+         *
+         * `res.branch` is what create() *intended* — derived from the session's own branch
+         * — and on this path it never happened, because the worktree was already there.
+         * The two differ whenever the sibling was made outside Studio: a feature can be
+         * `feature/merchant-mfa-totp` in the backend and `feature/mfa-totp` in the
+         * frontend, which is exactly the case that reaches this code.
+         *
+         * Recording the wrong one is not cosmetic. `ci.ts` looks a merge request up by
+         * worktree+branch, so the attached repo would report "no MR" for a branch that has
+         * one — the very bug attaching is meant to cure — and `review.base()` would diff
+         * against a branch this worktree is not on. Null (detached) falls back to what
+         * create() said, since a detached worktree has no better answer to offer.
+         */
+        const onDisk = await currentBranch(res.path);
         const a = await this.attachRepo(id, {
           repo,
           repoPath,
           worktreePath: res.path,
-          branch: res.branch,
+          branch: onDisk ?? res.branch,
           wtname: res.name,
         });
         return a.ok
