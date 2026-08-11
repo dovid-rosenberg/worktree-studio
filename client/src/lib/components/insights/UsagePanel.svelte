@@ -1,126 +1,128 @@
 <script lang="ts">
-  // Fleet telemetry: what every Studio session has cost, rolled up by feature.
-  //
-  // One request answers the whole view (/transcripts/usage returns per-session, per-
-  // feature and grand totals in one shot), so this holds one payload and never fans out.
-  //
-  // Layout follows the data's job rather than habit:
-  //   · the total is ONE hero figure, not a bar chart of one bar;
-  //   · the KPI row is stat tiles, because four headline numbers are not a chart;
-  //   · "where did it go" is an emphasis ranking, one flat gray with the selection in
-  //     the brand hue — the rows are nominal, so shading them by size would say nothing;
-  //   · volume-vs-cost lives in the per-session detail, where TokenMix can show both
-  //     scales side by side instead of letting cache reads impersonate spend.
-  import './viz.css';
-  import { fleetUsage, transcriptStatus, reindex } from './api.js';
-  import CostRanking from './CostRanking.svelte';
-  import SessionUsage from './SessionUsage.svelte';
-  import EstimateNote from './EstimateNote.svelte';
-  import IndexStatus from './IndexStatus.svelte';
-  import { usd, compactTokens, exactTokens, totalTokens, pct, share, writeMultiplier } from './format.js';
+// Fleet telemetry: what every Studio session has cost, rolled up by feature.
+//
+// One request answers the whole view (/transcripts/usage returns per-session, per-
+// feature and grand totals in one shot), so this holds one payload and never fans out.
+//
+// Layout follows the data's job rather than habit:
+//   · the total is ONE hero figure, not a bar chart of one bar;
+//   · the KPI row is stat tiles, because four headline numbers are not a chart;
+//   · "where did it go" is an emphasis ranking, one flat gray with the selection in
+//     the brand hue — the rows are nominal, so shading them by size would say nothing;
+//   · volume-vs-cost lives in the per-session detail, where TokenMix can show both
+//     scales side by side instead of letting cache reads impersonate spend.
+import './viz.css';
+import { fleetUsage, transcriptStatus, reindex } from './api.js';
+import CostRanking from './CostRanking.svelte';
+import SessionUsage from './SessionUsage.svelte';
+import EstimateNote from './EstimateNote.svelte';
+import IndexStatus from './IndexStatus.svelte';
+import { usd, compactTokens, exactTokens, totalTokens, pct, share, writeMultiplier } from './format.js';
 
-  /** @type {{ sessionId?: string|null, onselect?: (id: string) => void }} */
-  let { sessionId = null, onselect = () => {} } = $props();
+/** @type {{ sessionId?: string|null, onselect?: (id: string) => void }} */
+let { sessionId = null, onselect = () => {} } = $props();
 
-  import type { FleetUsage } from './types';
-  import { errMessage } from '$lib/errmsg.js';
-    let data: FleetUsage|null = $state(null);
-    let status: import('./types.js').TranscriptStatus|null = $state(null);
-  let loading = $state(true);
-    let error: string|null = $state(null);
-  let busy = $state(false);
+import type { FleetUsage } from './types';
+import { errMessage } from '$lib/errmsg.js';
+let data: FleetUsage | null = $state(null);
+let status: import('./types.js').TranscriptStatus | null = $state(null);
+let loading = $state(true);
+let error: string | null = $state(null);
+let busy = $state(false);
 
-  let group = $state<'feature'|'session'>('feature');
-  // Deliberately the INITIAL value only: the prop seeds which row opens, after which
-  // the selection belongs to the user. A derived would yank them back to the shell's
-  // session every time it changed.
-  // svelte-ignore state_referenced_locally
-    let picked: string|null = $state(sessionId);
+let group = $state<'feature' | 'session'>('feature');
+// Deliberately the INITIAL value only: the prop seeds which row opens, after which
+// the selection belongs to the user. A derived would yank them back to the shell's
+// session every time it changed.
+// svelte-ignore state_referenced_locally
+let picked: string | null = $state(sessionId);
 
-  // Plain `let`, deliberately NOT $state: `load()` runs inside an $effect, so reading a
-  // reactive value in its synchronous prologue would make the effect depend on it —
-  // and since load() also writes `data`, that dependency is an infinite refetch loop.
-  let everLoaded = false;
+// Plain `let`, deliberately NOT $state: `load()` runs inside an $effect, so reading a
+// reactive value in its synchronous prologue would make the effect depend on it —
+// and since load() also writes `data`, that dependency is an infinite refetch loop.
+let everLoaded = false;
 
-  async function load(refresh = false) {
-    busy = refresh;
-    if (!everLoaded) loading = true;
-    error = null;
-    try {
-      const [u, s] = await Promise.all([fleetUsage({ refresh }), transcriptStatus()]);
-      data = u;
-      status = s;
-      // Land on the biggest spender so the view has a subject on first paint, and so
-      // the emphasis in the ranking always means the same thing as the selection.
-      if (!picked) picked = u.sessions.find((x) => (x.costUsd || 0) > 0)?.session?.id ?? u.sessions[0]?.session?.id ?? null;
-    } catch (e) {
-      error = errMessage(e);
-    } finally {
-      everLoaded = true;
-      loading = false;
-      busy = false;
-    }
+async function load(refresh = false) {
+  busy = refresh;
+  if (!everLoaded) loading = true;
+  error = null;
+  try {
+    const [u, s] = await Promise.all([fleetUsage({ refresh }), transcriptStatus()]);
+    data = u;
+    status = s;
+    // Land on the biggest spender so the view has a subject on first paint, and so
+    // the emphasis in the ranking always means the same thing as the selection.
+    if (!picked)
+      picked =
+        u.sessions.find((x) => (x.costUsd || 0) > 0)?.session?.id ?? u.sessions[0]?.session?.id ?? null;
+  } catch (e) {
+    error = errMessage(e);
+  } finally {
+    everLoaded = true;
+    loading = false;
+    busy = false;
   }
+}
 
-  // Mount only. Nothing reactive is read in load()'s synchronous prologue, so this
-  // effect has no dependencies and cannot re-run.
-  $effect(() => { load(); });
+// Mount only. Nothing reactive is read in load()'s synchronous prologue, so this
+// effect has no dependencies and cannot re-run.
+$effect(() => {
+  load();
+});
 
-  // `$derived.by` rather than `$derived` throughout, and not for style: `data` is
-  // declared as `$state(null)`, so TypeScript's control-flow analysis narrows it to
-  // exactly `null` for every read in this same scope and the whole payload types as
-  // `never`. A closure is a function boundary, which resets the narrowing to the
-  // declared type. Same reason the markup below can read `data?.pricing` directly.
-  const sessions = $derived.by(() => data?.sessions ?? []);
-  const features = $derived.by(() => data?.features ?? []);
-  const totals = $derived.by(() => data?.totals ?? null);
-  const selected = $derived.by(() => sessions.find((s) => s.session?.id === picked) ?? null);
+// `$derived.by` rather than `$derived` throughout, and not for style: `data` is
+// declared as `$state(null)`, so TypeScript's control-flow analysis narrows it to
+// exactly `null` for every read in this same scope and the whole payload types as
+// `never`. A closure is a function boundary, which resets the narrowing to the
+// declared type. Same reason the markup below can read `data?.pricing` directly.
+const sessions = $derived.by(() => data?.sessions ?? []);
+const features = $derived.by(() => data?.features ?? []);
+const totals = $derived.by(() => data?.totals ?? null);
+const selected = $derived.by(() => sessions.find((s) => s.session?.id === picked) ?? null);
 
-  const indexedCount = $derived.by(() => sessions.filter((s) => s.indexed !== false).length);
+const indexedCount = $derived.by(() => sessions.filter((s) => s.indexed !== false).length);
 
-  const featureRows = $derived.by(() =>
-    features.map((f) => ({
-      key: f.feature,
-      label: f.feature,
-      sub: `${f.sessions} session${f.sessions === 1 ? '' : 's'}`,
-      costUsd: f.costUsd,
-      usage: f,
-      // A feature is "not indexed" only when nothing under it is.
-      indexed: sessions.some((s) => (s.session?.feature || s.session?.id) === f.feature && s.indexed !== false),
-      unpriced: f.unpricedModels,
-    })),
-  );
+const featureRows = $derived.by(() =>
+  features.map((f) => ({
+    key: f.feature,
+    label: f.feature,
+    sub: `${f.sessions} session${f.sessions === 1 ? '' : 's'}`,
+    costUsd: f.costUsd,
+    usage: f,
+    // A feature is "not indexed" only when nothing under it is.
+    indexed: sessions.some((s) => (s.session?.feature || s.session?.id) === f.feature && s.indexed !== false),
+    unpriced: f.unpricedModels,
+  })),
+);
 
-  const sessionRows = $derived.by(() =>
-    sessions.map((s) => ({
-      key: s.session?.id ?? '',
-      label: s.session?.title ?? s.session?.id ?? '—',
-      sub: [s.session?.repo, s.session?.branch].filter(Boolean).join(' · '),
-      costUsd: s.costUsd,
-      usage: s,
-      indexed: s.indexed,
-      unpriced: s.unpricedModels,
-    })),
-  );
+const sessionRows = $derived.by(() =>
+  sessions.map((s) => ({
+    key: s.session?.id ?? '',
+    label: s.session?.title ?? s.session?.id ?? '—',
+    sub: [s.session?.repo, s.session?.branch].filter(Boolean).join(' · '),
+    costUsd: s.costUsd,
+    usage: s,
+    indexed: s.indexed,
+    unpriced: s.unpricedModels,
+  })),
+);
 
-  /** @param {string} key */
-  function selectRow(key: string) {
-    if (group === 'session') {
-      picked = key;
-    } else {
-      // A feature row selects the costliest session under it — the detail pane only
-      // knows how to render a session, and that is the one worth looking at.
-      const under = sessions.filter((s) => (s.session?.feature || s.session?.id) === key);
-      picked = under[0]?.session?.id ?? picked;
-    }
-    if (picked) onselect(picked);
+/** @param {string} key */
+function selectRow(key: string) {
+  if (group === 'session') {
+    picked = key;
+  } else {
+    // A feature row selects the costliest session under it — the detail pane only
+    // knows how to render a session, and that is the one worth looking at.
+    const under = sessions.filter((s) => (s.session?.feature || s.session?.id) === key);
+    picked = under[0]?.session?.id ?? picked;
   }
+  if (picked) onselect(picked);
+}
 
-  const selectedKey = $derived(
-    group === 'session'
-      ? picked
-      : (selected?.session?.feature || selected?.session?.id || null),
-  );
+const selectedKey = $derived(
+  group === 'session' ? picked : selected?.session?.feature || selected?.session?.id || null,
+);
 </script>
 
 <section class="usage" aria-label="Token and cost telemetry">

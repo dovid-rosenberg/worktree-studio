@@ -257,7 +257,11 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       // would read as evidence of the same feature.
       splitFeatures: detectSplitFeatures(
         features,
-        new Set(repos().map((r) => r.defaultBranch).filter(Boolean)),
+        new Set(
+          repos()
+            .map((r) => r.defaultBranch)
+            .filter(Boolean),
+        ),
       ),
     };
   }

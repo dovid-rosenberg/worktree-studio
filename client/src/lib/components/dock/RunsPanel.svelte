@@ -1,167 +1,185 @@
 <script lang="ts">
-  /*
-   * Runs: what a finite command did, rather than a pane you have to read.
-   *
-   * A task used to open a tmux tab, which shows you raw ANSI in a window competing with
-   * the agent's tabs and answers none of the questions you actually have — did it pass,
-   * how long did it take, what did the last one say. Those are the columns here.
-   *
-   * The LIST is pushed: `runs` rides the session-state frame, and a run only changes it by
-   * starting or finishing, so the status and duration update themselves. The OUTPUT is
-   * pulled: a byte-offset tail like LogsPanel's, because streaming every run's stdout over
-   * the SSE fan-out would put a test suite's console on the same channel as agent state.
-   *
-   * ▷ Run… IS PART OF THIS PANEL. It was in the action bar, one bar and one tab away from
-   * everything it produces, so starting a test meant pressing a control in one place and
-   * then going somewhere else to find out what it did. Here the tab is the whole activity:
-   * pick a configuration, watch it run, read what it said.
-   */
-  import { api } from '$lib/api.js';
-  import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
-  import { toast } from '$lib/stores/toasts.svelte.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { ui } from '$lib/stores/ui.svelte.js';
-  import type { Run, Session } from '../../../../../server/types';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * Runs: what a finite command did, rather than a pane you have to read.
+ *
+ * A task used to open a tmux tab, which shows you raw ANSI in a window competing with
+ * the agent's tabs and answers none of the questions you actually have — did it pass,
+ * how long did it take, what did the last one say. Those are the columns here.
+ *
+ * The LIST is pushed: `runs` rides the session-state frame, and a run only changes it by
+ * starting or finishing, so the status and duration update themselves. The OUTPUT is
+ * pulled: a byte-offset tail like LogsPanel's, because streaming every run's stdout over
+ * the SSE fan-out would put a test suite's console on the same channel as agent state.
+ *
+ * ▷ Run… IS PART OF THIS PANEL. It was in the action bar, one bar and one tab away from
+ * everything it produces, so starting a test meant pressing a control in one place and
+ * then going somewhere else to find out what it did. Here the tab is the whole activity:
+ * pick a configuration, watch it run, read what it said.
+ */
+import { api } from '$lib/api.js';
+import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
+import { toast } from '$lib/stores/toasts.svelte.js';
+import { world } from '$lib/stores/world.svelte.js';
+import { ui } from '$lib/stores/ui.svelte.js';
+import type { Run, Session } from '../../../../../server/types';
+import { errMessage } from '$lib/errmsg.js';
 
-  let { session }: { session: Session } = $props();
+let { session }: { session: Session } = $props();
 
-  /** Every worktree this session owns — a feature spans repos, and so do its runs. */
-  const paths = $derived(
-    new Set(
-      [session.worktreePath, ...(session.repos || []).map((r) => r.worktreePath)].filter(
-        (p): p is string => !!p,
-      ),
+/** Every worktree this session owns — a feature spans repos, and so do its runs. */
+const paths = $derived(
+  new Set(
+    [session.worktreePath, ...(session.repos || []).map((r) => r.worktreePath)].filter(
+      (p): p is string => !!p,
     ),
-  );
+  ),
+);
 
-  const runs = $derived((world.view.runs || []).filter((r) => paths.has(r.worktreePath)));
+const runs = $derived((world.view.runs || []).filter((r) => paths.has(r.worktreePath)));
 
-  /*
-   * Every worktree ▷ Run… reads configurations from — one per repo of the session.
-   *
-   * The same set `paths` is built from, but carrying the repo name each path belongs to,
-   * because the menu heads its groups by repo when a feature spans more than one. A menu
-   * showing the primary alone can only reach half of a BE+FE feature's tests.
-   */
-  const runTargets = $derived([
-    ...(session.worktreePath ? [{ repo: session.repoName, path: session.worktreePath }] : []),
-    ...(session.repos || [])
-      .filter((r) => r.worktreePath && r.worktreePath !== session.worktreePath)
-      .map((r) => ({ repo: r.repo, path: r.worktreePath as string })),
-  ]);
+/*
+ * Every worktree ▷ Run… reads configurations from — one per repo of the session.
+ *
+ * The same set `paths` is built from, but carrying the repo name each path belongs to,
+ * because the menu heads its groups by repo when a feature spans more than one. A menu
+ * showing the primary alone can only reach half of a BE+FE feature's tests.
+ */
+const runTargets = $derived([
+  ...(session.worktreePath ? [{ repo: session.repoName, path: session.worktreePath }] : []),
+  ...(session.repos || [])
+    .filter((r) => r.worktreePath && r.worktreePath !== session.worktreePath)
+    .map((r) => ({ repo: r.repo, path: r.worktreePath as string })),
+]);
 
-  let selectedId = $state('');
-  /** The selected run, falling back to the newest so the panel is never blank. */
-  const selected = $derived(runs.find((r) => r.id === selectedId) || runs[0] || null);
+let selectedId = $state('');
+/** The selected run, falling back to the newest so the panel is never blank. */
+const selected = $derived(runs.find((r) => r.id === selectedId) || runs[0] || null);
 
-  let body = $state<HTMLElement | null>(null);
-  let text = $state('');
-  let follow = $state(true);
+let body = $state<HTMLElement | null>(null);
+let text = $state('');
+let follow = $state(true);
 
-  const fmt = (r: Run): string => {
-    const end = r.endedAt ?? Date.now();
-    const s = Math.max(0, end - r.startedAt) / 1000;
-    return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-  };
+const fmt = (r: Run): string => {
+  const end = r.endedAt ?? Date.now();
+  const s = Math.max(0, end - r.startedAt) / 1000;
+  return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+};
 
-  const when = (t: number): string => new Date(t).toLocaleTimeString();
+const when = (t: number): string => new Date(t).toLocaleTimeString();
 
-  /*
-   * Byte-offset tail, self-scheduling.
-   *
-   * A setTimeout chain rather than setInterval: a slow response must not stack requests
-   * behind it. Re-armed only while the run is going — a finished run's log is final, so
-   * polling it forever would be a request per second for a file that cannot change.
-   */
-  $effect(() => {
-    const run = selected;
-    if (!run) { text = ''; return; }
-
-    let alive = true;
-    let offset: number | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+/*
+ * Byte-offset tail, self-scheduling.
+ *
+ * A setTimeout chain rather than setInterval: a slow response must not stack requests
+ * behind it. Re-armed only while the run is going — a finished run's log is final, so
+ * polling it forever would be a request per second for a file that cannot change.
+ */
+$effect(() => {
+  const run = selected;
+  if (!run) {
     text = '';
+    return;
+  }
 
-    const tick = async () => {
+  let alive = true;
+  let offset: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  text = '';
+
+  const tick = async () => {
+    if (!alive) return;
+    try {
+      const q = offset === undefined ? '' : `?offset=${offset}`;
+      const res = await api('GET', `/api/v1/runs/${run.id}/log${q}`);
       if (!alive) return;
-      try {
-        const q = offset === undefined ? '' : `?offset=${offset}`;
-        const res = await api('GET', `/api/v1/runs/${run.id}/log${q}`);
-        if (!alive) return;
-        if (res.text) {
-          const near = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-          text += res.text;
-          offset = res.offset;
-          if (follow && near) queueMicrotask(() => { if (body) body.scrollTop = body.scrollHeight; });
-        } else if (offset === undefined) {
-          offset = res.offset;
-        }
-      } catch { /* a log read must not take the panel with it */ }
-      // The run object is a NEW one on every frame, so re-read it from the live list
-      // rather than trusting the copy this effect closed over.
-      const live = (world.view.runs || []).find((r) => r.id === run.id);
-      if (alive && live?.status === 'running') timer = setTimeout(tick, 900);
-    };
-    tick();
-
-    return () => { alive = false; if (timer) clearTimeout(timer); };
-  });
-
-  async function stop(r: Run) {
-    try { await api('POST', `/api/v1/runs/${r.id}/stop`, {}); }
-    catch (e) { toast(errMessage(e), true); }
-  }
-
-  async function rerun(r: Run) {
-    try {
-      const res = await api('POST', `/api/v1/runs/${r.id}/rerun`, {});
-      // Follow the new one: you pressed rerun to watch it, not to keep reading the old
-      // output. The list is newest-first, so it is already at the top.
-      if (res.ok && res.run?.id) selectedId = res.run.id;
-      else if (!res.ok) toast(res.error || 'Could not rerun', true);
-    } catch (e) { toast(errMessage(e), true); }
-  }
-
-  /*
-   * Hand this run to the agent.
-   *
-   * The daemon resolves WHICH agent from the run's worktree — a run belongs to a
-   * worktree and exactly one session owns one, so naming the target from here would let a
-   * stale tab send a failure to whichever agent it last had selected.
-   *
-   * `skipped` is not a failure: the agent exists but was not listening (still booting, or
-   * mid-turn). Saying so is the difference between "try again in a second" and "this
-   * button is broken".
-   */
-  let handing = $state('');
-  async function toAgent(r: Run) {
-    handing = r.id;
-    try {
-      const res = await api('POST', `/api/v1/runs/${r.id}/to-agent`, {});
-      if (res.ok) {
-        toast(`Sent “${r.name}” to the agent`);
-        // Go and watch it, since that is why you pressed the button.
-        ui.setDockView('term');
-      } else if (res.skipped) {
-        toast('The agent is not ready yet — try again in a moment', true);
-      } else {
-        toast(res.error || 'Could not reach the agent', true);
+      if (res.text) {
+        const near = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+        text += res.text;
+        offset = res.offset;
+        if (follow && near)
+          queueMicrotask(() => {
+            if (body) body.scrollTop = body.scrollHeight;
+          });
+      } else if (offset === undefined) {
+        offset = res.offset;
       }
-    } catch (e) {
-      toast(errMessage(e), true);
-    } finally {
-      handing = '';
+    } catch {
+      /* a log read must not take the panel with it */
     }
-  }
+    // The run object is a NEW one on every frame, so re-read it from the live list
+    // rather than trusting the copy this effect closed over.
+    const live = (world.view.runs || []).find((r) => r.id === run.id);
+    if (alive && live?.status === 'running') timer = setTimeout(tick, 900);
+  };
+  tick();
 
-  async function forget(r: Run) {
-    try {
-      const res = await api('DELETE', `/api/v1/runs/${r.id}`);
-      if (!res.ok) toast(res.error || 'Could not remove that run', true);
-      else if (selectedId === r.id) selectedId = '';
-    } catch (e) { toast(errMessage(e), true); }
+  return () => {
+    alive = false;
+    if (timer) clearTimeout(timer);
+  };
+});
+
+async function stop(r: Run) {
+  try {
+    await api('POST', `/api/v1/runs/${r.id}/stop`, {});
+  } catch (e) {
+    toast(errMessage(e), true);
   }
+}
+
+async function rerun(r: Run) {
+  try {
+    const res = await api('POST', `/api/v1/runs/${r.id}/rerun`, {});
+    // Follow the new one: you pressed rerun to watch it, not to keep reading the old
+    // output. The list is newest-first, so it is already at the top.
+    if (res.ok && res.run?.id) selectedId = res.run.id;
+    else if (!res.ok) toast(res.error || 'Could not rerun', true);
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
+}
+
+/*
+ * Hand this run to the agent.
+ *
+ * The daemon resolves WHICH agent from the run's worktree — a run belongs to a
+ * worktree and exactly one session owns one, so naming the target from here would let a
+ * stale tab send a failure to whichever agent it last had selected.
+ *
+ * `skipped` is not a failure: the agent exists but was not listening (still booting, or
+ * mid-turn). Saying so is the difference between "try again in a second" and "this
+ * button is broken".
+ */
+let handing = $state('');
+async function toAgent(r: Run) {
+  handing = r.id;
+  try {
+    const res = await api('POST', `/api/v1/runs/${r.id}/to-agent`, {});
+    if (res.ok) {
+      toast(`Sent “${r.name}” to the agent`);
+      // Go and watch it, since that is why you pressed the button.
+      ui.setDockView('term');
+    } else if (res.skipped) {
+      toast('The agent is not ready yet — try again in a moment', true);
+    } else {
+      toast(res.error || 'Could not reach the agent', true);
+    }
+  } catch (e) {
+    toast(errMessage(e), true);
+  } finally {
+    handing = '';
+  }
+}
+
+async function forget(r: Run) {
+  try {
+    const res = await api('DELETE', `/api/v1/runs/${r.id}`);
+    if (!res.ok) toast(res.error || 'Could not remove that run', true);
+    else if (selectedId === r.id) selectedId = '';
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
+}
 </script>
 
 <!-- The panel's own bar: the verb that fills it, above what it fills. Present whether or

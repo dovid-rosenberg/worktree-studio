@@ -69,11 +69,7 @@ export interface OverlapFeed {
  * no such base — because a feature we cannot measure must contribute nothing rather than
  * a row of zeroes that reads as "up to date".
  */
-async function measure(
-  cache: Map<string, Entry>,
-  wt: string,
-  base: string,
-): Promise<Entry | null> {
+async function measure(cache: Map<string, Entry>, wt: string, base: string): Promise<Entry | null> {
   const headSha = await git(wt, ['rev-parse', 'HEAD']);
   if (!headSha) return null;
   // The base is read in the WORKTREE, so it resolves through that worktree's own remotes
@@ -116,20 +112,19 @@ async function measure(
   return entry;
 }
 
-export function createOverlapFeed(deps: {
-  /** Injected so tests drive the contract without spawning git. */
-  read?: typeof measure;
-} = {}): OverlapFeed {
+export function createOverlapFeed(
+  deps: {
+    /** Injected so tests drive the contract without spawning git. */
+    read?: typeof measure;
+  } = {},
+): OverlapFeed {
   const read = deps.read || measure;
   const cache = new Map<string, Entry>();
   let snap: OverlapSnapshot = {};
   let sig = '{}';
   let running = false;
 
-  async function refresh(
-    features: OverlapFeature[],
-    baseFor: (repo: string) => string,
-  ): Promise<boolean> {
+  async function refresh(features: OverlapFeature[], baseFor: (repo: string) => string): Promise<boolean> {
     // One sweep at a time. These are git reads over every worktree, and two overlapping
     // sweeps would double that for an answer neither of them would produce sooner.
     if (running) return false;

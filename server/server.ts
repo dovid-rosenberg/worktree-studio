@@ -191,16 +191,17 @@ async function main() {
 
   // The state payload lives in state.ts; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
-  const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } = createState({
-    cfg,
-    manager,
-    servers,
-    mux,
-    identity,
-    repos: () => repos,
-    running: () => runningCache,
-    runs: () => runner.runs,
-  });
+  const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } =
+    createState({
+      cfg,
+      manager,
+      servers,
+      mux,
+      identity,
+      repos: () => repos,
+      running: () => runningCache,
+      runs: () => runner.runs,
+    });
 
   // ---- SSE live state ----
   // Two named event types with very different rates (see broadcast.ts).
@@ -949,9 +950,9 @@ async function main() {
     if (out.ok) {
       broadcastTopology();
       ciFeed.poke({ force: true });
-    // The same trigger, for the same reason: a rescan means refs moved, and refs moving
-    // is the only thing that can change an overlap or a drift count.
-    void refreshOverlap();
+      // The same trigger, for the same reason: a rescan means refs moved, and refs moving
+      // is the only thing that can change an overlap or a drift count.
+      void refreshOverlap();
     }
     res.json(out);
   });
@@ -1195,7 +1196,9 @@ async function main() {
   api.post('/groups', async (req, res) => {
     const body = isRecord(req.body) ? req.body : {};
     const name = String(body.name || '').trim();
-    const members = Array.isArray(body.members) ? body.members.map((m) => String(m).trim()).filter(Boolean) : [];
+    const members = Array.isArray(body.members)
+      ? body.members.map((m) => String(m).trim()).filter(Boolean)
+      : [];
     // Two members is what a group MEANS — one worktree is a feature on its own and
     // already groups itself. Saying so beats writing a row that changes nothing.
     if (!name || members.length < 2) {

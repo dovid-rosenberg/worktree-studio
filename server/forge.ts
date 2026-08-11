@@ -225,8 +225,13 @@ const github: Provider = {
   async view(branch, cwd, env) {
     const r = await run(
       'gh',
-      ['pr', 'view', branch, '--json',
-       'number,url,state,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft'],
+      [
+        'pr',
+        'view',
+        branch,
+        '--json',
+        'number,url,state,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft',
+      ],
       {
         cwd,
         env,
@@ -250,14 +255,30 @@ const github: Provider = {
   async reviews(cwd, env) {
     const r = await run(
       'gh',
-      ['pr', 'list', '--search', 'review-requested:@me', '--state', 'open', '--limit', '50',
-       '--json', 'number,title,url,author,isDraft,headRefName,baseRefName,updatedAt'],
+      [
+        'pr',
+        'list',
+        '--search',
+        'review-requested:@me',
+        '--state',
+        'open',
+        '--limit',
+        '50',
+        '--json',
+        'number,title,url,author,isDraft,headRefName,baseRefName,updatedAt',
+      ],
       { cwd, env, timeout: VIEW_TIMEOUT_MS },
     );
     if (r.code !== 0 || !r.stdout.trim()) return [];
     const rows = JSON.parse(r.stdout) as Array<{
-      number: number; title: string; url: string; isDraft?: boolean;
-      author?: { login?: string }; headRefName?: string; baseRefName?: string; updatedAt?: string;
+      number: number;
+      title: string;
+      url: string;
+      isDraft?: boolean;
+      author?: { login?: string };
+      headRefName?: string;
+      baseRefName?: string;
+      updatedAt?: string;
     }>;
     return rows.map((j) => ({
       provider: 'github',
@@ -315,8 +336,14 @@ const gitlab: Provider = {
     });
     if (r.code !== 0 || !r.stdout.trim()) return [];
     const rows = JSON.parse(r.stdout) as Array<{
-      iid: number; title?: string; web_url?: string; draft?: boolean; work_in_progress?: boolean;
-      source_branch?: string; target_branch?: string; updated_at?: string;
+      iid: number;
+      title?: string;
+      web_url?: string;
+      draft?: boolean;
+      work_in_progress?: boolean;
+      source_branch?: string;
+      target_branch?: string;
+      updated_at?: string;
       author?: { username?: string };
     }>;
     return rows.map((j) => ({

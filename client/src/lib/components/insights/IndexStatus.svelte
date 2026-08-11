@@ -1,51 +1,55 @@
 <script lang="ts">
-  // What the search index is currently capable of, said plainly.
-  //
-  // Search runs over a corpus that is still being appended to, and the index behind it
-  // has three genuinely different capability levels (sqlite-fts5 / sqlite-like /
-  // file-scan) plus a cold state where it is simply empty. Every one of those changes
-  // what an empty result MEANS, so none of them may be silent.
-  import { exactTokens } from './format.js';
+// What the search index is currently capable of, said plainly.
+//
+// Search runs over a corpus that is still being appended to, and the index behind it
+// has three genuinely different capability levels (sqlite-fts5 / sqlite-like /
+// file-scan) plus a cold state where it is simply empty. Every one of those changes
+// what an empty result MEANS, so none of them may be silent.
+import { exactTokens } from './format.js';
 
-  /**
-   * @type {{
-   *   status?: import('./types.js').TranscriptStatus|null,
-   *   busy?: boolean,
-   *   error?: string|null,
-   *   onreindex?: ((opts: { session?: string|null, full?: boolean }) => void)|null,
-   *   compact?: boolean,
-   * }}
-   */
-  let {
-    status = null,
-    busy = false,
-    error = null,
-    onreindex = null,
-    /** Footer mode: one quiet line. Otherwise a banner, but only when something is wrong. */
-    compact = false,
-  } = $props();
+/**
+ * @type {{
+ *   status?: import('./types.js').TranscriptStatus|null,
+ *   busy?: boolean,
+ *   error?: string|null,
+ *   onreindex?: ((opts: { session?: string|null, full?: boolean }) => void)|null,
+ *   compact?: boolean,
+ * }}
+ */
+let {
+  status = null,
+  busy = false,
+  error = null,
+  onreindex = null,
+  /** Footer mode: one quiet line. Otherwise a banner, but only when something is wrong. */
+  compact = false,
+} = $props();
 
-  const cold = $derived(!!status?.ready && !status.messages);
-  const degraded = $derived(!!status && (!status.ready || status.fts5 === false));
-  const level = $derived(!status ? null : !status.ready ? 'warn' : cold ? 'cold' : degraded ? 'warn' : 'ok');
+const cold = $derived(!!status?.ready && !status.messages);
+const degraded = $derived(!!status && (!status.ready || status.fts5 === false));
+const level = $derived(!status ? null : !status.ready ? 'warn' : cold ? 'cold' : degraded ? 'warn' : 'ok');
 
-  const backendLabel = $derived(
-    !status ? '' :
-    status.backend === 'sqlite-fts5' ? 'full-text index' :
-    status.backend === 'sqlite-like' ? 'substring index (no FTS5)' :
-    'file scan (no index)',
-  );
+const backendLabel = $derived(
+  !status
+    ? ''
+    : status.backend === 'sqlite-fts5'
+      ? 'full-text index'
+      : status.backend === 'sqlite-like'
+        ? 'substring index (no FTS5)'
+        : 'file scan (no index)',
+);
 
-  const message = $derived(
-    !status ? '' :
-    !status.ready
+const message = $derived(
+  !status
+    ? ''
+    : !status.ready
       ? `No search index: ${status.error || 'sqlite unavailable'}. Every query falls back to scanning transcript files — slower, substring-only, and it cannot rank by relevance.`
       : cold
         ? 'The index is empty. Sessions are indexed when Claude finishes a turn, so a freshly started daemon has nothing to search yet.'
         : status.fts5 === false
           ? 'FTS5 is not available in this sqlite build. Queries fall back to substring matching: no ranking, no stemming, and multi-word queries match literally.'
           : '',
-  );
+);
 </script>
 
 {#if status && compact}

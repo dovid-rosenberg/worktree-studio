@@ -626,10 +626,38 @@ describe('reviews in the rail', () => {
     give({
       baseDirs: ['/w', '/p'],
       repos: [
-        { name: 'accept-blue', repo: 'accept-blue', path: '/w/accept-blue',
-          worktrees: [{ repo: 'accept-blue', wtname: 'accept-blue', path: '/w/accept-blue', isMain: true, baseDir: '/w', running: false, ports: [] }] },
-        { name: 'studio', repo: 'studio', path: '/p/studio',
-          worktrees: [{ repo: 'studio', wtname: 'studio', path: '/p/studio', isMain: true, baseDir: '/p', running: false, ports: [] }] },
+        {
+          name: 'accept-blue',
+          repo: 'accept-blue',
+          path: '/w/accept-blue',
+          worktrees: [
+            {
+              repo: 'accept-blue',
+              wtname: 'accept-blue',
+              path: '/w/accept-blue',
+              isMain: true,
+              baseDir: '/w',
+              running: false,
+              ports: [],
+            },
+          ],
+        },
+        {
+          name: 'studio',
+          repo: 'studio',
+          path: '/p/studio',
+          worktrees: [
+            {
+              repo: 'studio',
+              wtname: 'studio',
+              path: '/p/studio',
+              isMain: true,
+              baseDir: '/p',
+              running: false,
+              ports: [],
+            },
+          ],
+        },
       ],
       reviews: [review({ repo: 'accept-blue' }), review({ repo: 'studio', number: 7 })],
     });
@@ -640,7 +668,9 @@ describe('reviews in the rail', () => {
   });
 
   it('selects a review by repo and number, so two repos cannot collide', () => {
-    give({ reviews: [review({ repo: 'accept-blue', number: 5 }), review({ repo: 'merchant-v3', number: 5 })] });
+    give({
+      reviews: [review({ repo: 'accept-blue', number: 5 }), review({ repo: 'merchant-v3', number: 5 })],
+    });
     ui.selectReview(review({ repo: 'merchant-v3', number: 5 }) as never);
     expect(ui.selectedReview?.repo).toBe('merchant-v3');
     expect(ui.key).toBe('r:merchant-v3!5');

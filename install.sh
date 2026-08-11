@@ -21,6 +21,13 @@ done
 echo "→ npm install (builds node-pty, fixes spawn-helper, builds the client)"
 npm install
 
+# The pre-push hook that runs what CI runs. Tracked in .githooks/ rather than
+# .git/hooks/ so it survives a clone; this line is what actually arms it. Without
+# it the repo's own checks are unreachable locally, which is how CI came to run red
+# for twelve consecutive pushes without anyone noticing.
+git config core.hooksPath .githooks
+echo "→ armed pre-push hook (npm run verify). Bypass once with: git push --no-verify"
+
 # SwiftBar plugin symlink (if SwiftBar's plugin dir exists)
 SB="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
 [ -n "$SB" ] || SB="$HOME/.swiftbar/plugins"

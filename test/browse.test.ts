@@ -108,7 +108,9 @@ test('a symlink to a file is not offered as a folder', () => {
   // A broken link resolves to nothing and must not appear either.
   fs.symlinkSync(path.join(root, 'gone'), path.join(root, 'link-broken'));
 
-  const names = browse(root).entries.map((e) => e.name).sort();
+  const names = browse(root)
+    .entries.map((e) => e.name)
+    .sort();
   assert.deepEqual(names, ['link-to-dir', 'real-dir']);
   fs.rmSync(root, { recursive: true, force: true });
 });

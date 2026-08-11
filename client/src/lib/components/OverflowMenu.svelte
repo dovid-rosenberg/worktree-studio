@@ -1,53 +1,53 @@
 <script lang="ts">
-  /*
-   * The `⋯` menu on the action bar.
-   *
-   * A second menu shell rather than a reuse of AppMenu: that one is a fixed list of
-   * app-level commands, this one takes whatever the caller puts in it. What IS shared is
-   * the behaviour worth getting right once — dismiss on an outside click, dismiss on
-   * Escape WITHOUT letting Escape reach the global handler (which reads a bare Escape as
-   * "interrupt the agent" and sends it to the pty), and closing before the action runs so
-   * a dialog does not open behind an open menu.
-   *
-   * Right-aligned, because it lives at the right-hand end of the bar and a left-aligned
-   * sheet would hang off the window.
-   */
-  import type { Snippet } from 'svelte';
+/*
+ * The `⋯` menu on the action bar.
+ *
+ * A second menu shell rather than a reuse of AppMenu: that one is a fixed list of
+ * app-level commands, this one takes whatever the caller puts in it. What IS shared is
+ * the behaviour worth getting right once — dismiss on an outside click, dismiss on
+ * Escape WITHOUT letting Escape reach the global handler (which reads a bare Escape as
+ * "interrupt the agent" and sends it to the pty), and closing before the action runs so
+ * a dialog does not open behind an open menu.
+ *
+ * Right-aligned, because it lives at the right-hand end of the bar and a left-aligned
+ * sheet would hang off the window.
+ */
+import type { Snippet } from 'svelte';
 
-  /** The snippet is handed `pick`, which closes the menu and then runs its argument. */
-  type Pick = (fn: () => void) => void;
+/** The snippet is handed `pick`, which closes the menu and then runs its argument. */
+type Pick = (fn: () => void) => void;
 
-  let { children, label = 'More actions' }: { children: Snippet<[Pick]>; label?: string } = $props();
+let { children, label = 'More actions' }: { children: Snippet<[Pick]>; label?: string } = $props();
 
-  let open = $state(false);
-  let root = $state<HTMLElement | null>(null);
+let open = $state(false);
+let root = $state<HTMLElement | null>(null);
 
-  /** Close first, then act — a dialog must not appear behind a menu that is still up. */
-  function pick(fn: () => void) {
-    open = false;
-    fn();
-  }
+/** Close first, then act — a dialog must not appear behind a menu that is still up. */
+function pick(fn: () => void) {
+  open = false;
+  fn();
+}
 
-  $effect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (root && e.target instanceof Node && !root.contains(e.target)) open = false;
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        open = false;
-      }
-    };
-    // Capture phase: the global shortcut handler is on document too, and it would send a
-    // bare Escape to the terminal before this saw it.
-    document.addEventListener('click', onDocClick, true);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('click', onDocClick, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  });
+$effect(() => {
+  if (!open) return;
+  const onDocClick = (e: MouseEvent) => {
+    if (root && e.target instanceof Node && !root.contains(e.target)) open = false;
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      open = false;
+    }
+  };
+  // Capture phase: the global shortcut handler is on document too, and it would send a
+  // bare Escape to the terminal before this saw it.
+  document.addEventListener('click', onDocClick, true);
+  document.addEventListener('keydown', onKey, true);
+  return () => {
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('keydown', onKey, true);
+  };
+});
 </script>
 
 <div class="ovf" bind:this={root}>

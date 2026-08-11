@@ -1,7 +1,7 @@
 <script lang="ts">
-  /* Bottom-right toast stack. Keyed by id so an expiring toast doesn't renumber the
+/* Bottom-right toast stack. Keyed by id so an expiring toast doesn't renumber the
      rest and restart their fade. */
-  import { toasts } from '$lib/stores/toasts.svelte.js';
+import { toasts } from '$lib/stores/toasts.svelte.js';
 </script>
 
 <div class="toast-stack" aria-live="polite" aria-atomic="false">

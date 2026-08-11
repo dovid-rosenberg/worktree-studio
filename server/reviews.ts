@@ -60,8 +60,7 @@ export function createReviewFeed({ list, now = () => Date.now() }: ReviewDeps): 
   let sig = '[]';
   let running = false;
 
-  const fresh = (e: Entry | undefined): boolean =>
-    !!e && now() - e.at < (e.error ? ERROR_TTL_MS : TTL_MS);
+  const fresh = (e: Entry | undefined): boolean => !!e && now() - e.at < (e.error ? ERROR_TTL_MS : TTL_MS);
 
   function snapshot(): ReviewItem[] {
     const out: ReviewItem[] = [];
@@ -74,9 +73,7 @@ export function createReviewFeed({ list, now = () => Date.now() }: ReviewDeps): 
      * that has been sitting for a week is still worth seeing.
      */
     return out.sort(
-      (a, b) =>
-        Number(a.draft) - Number(b.draft) ||
-        String(b.updatedAt).localeCompare(String(a.updatedAt)),
+      (a, b) => Number(a.draft) - Number(b.draft) || String(b.updatedAt).localeCompare(String(a.updatedAt)),
     );
   }
 

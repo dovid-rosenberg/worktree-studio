@@ -143,7 +143,10 @@ test('backfill() on a worktree that lacks nothing reports nothing, and is safe t
     fetch: false,
     copyPatterns: ['.env', 'config/*-config.ts'],
   });
-  const opts = { copyPatterns: ['.env', 'config/*-config.ts'], copyAlways: ['.idea/runConfigurations/*.xml'] };
+  const opts = {
+    copyPatterns: ['.env', 'config/*-config.ts'],
+    copyAlways: ['.idea/runConfigurations/*.xml'],
+  };
   const first = await worktree.backfill(repo, res.path, opts);
   assert.deepEqual(first, { runConfigs: 0, files: 0 }, 'create() already brought everything');
   assert.deepEqual(await worktree.backfill(repo, res.path, opts), { runConfigs: 0, files: 0 }, 'idempotent');

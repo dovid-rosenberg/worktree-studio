@@ -1,135 +1,153 @@
 <script lang="ts">
-  /*
-   * The ▷ Run menu: this worktree's editor run configurations.
-   *
-   * IT LIVES IN THE RUNS TAB, above the history and output it produces. It used to sit in
-   * the action bar, so pressing it moved you to a different part of the window to see what
-   * happened — and the bar had no room to say how many configurations there were or where
-   * they were read from, which is why "Run (config)" read as a button that ran something
-   * rather than one that opens a list. (RunsPanel mounts it for a session; ActionBar still
-   * mounts it for a feature with no session, which has no Runs tab to put it in.)
-   *
-   * FETCHED ON OPEN, not carried in the topology payload. The payload is broadcast on
-   * every git rescan, and putting a per-worktree directory scan on that path would cost a
-   * handful of stats per worktree per broadcast for a list that is only read when this
-   * menu is open. It is also why the list is always current: it is read at the moment you
-   * ask for it.
-   *
-   * Two kinds, and the difference is visible because it decides where the thing goes:
-   *   ▸ server — tracked like a dev server. Ports, logs, and Stop stack reaches it.
-   *   ⌗ task   — a terminal tab you watch. Needs a session, since a tab needs a tmux
-   *              session to live in.
-   */
-  import { api } from '$lib/api.js';
-  import { ui } from '$lib/stores/ui.svelte.js';
-  import { toast } from '$lib/stores/toasts.svelte.js';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * The ▷ Run menu: this worktree's editor run configurations.
+ *
+ * IT LIVES IN THE RUNS TAB, above the history and output it produces. It used to sit in
+ * the action bar, so pressing it moved you to a different part of the window to see what
+ * happened — and the bar had no room to say how many configurations there were or where
+ * they were read from, which is why "Run (config)" read as a button that ran something
+ * rather than one that opens a list. (RunsPanel mounts it for a session; ActionBar still
+ * mounts it for a feature with no session, which has no Runs tab to put it in.)
+ *
+ * FETCHED ON OPEN, not carried in the topology payload. The payload is broadcast on
+ * every git rescan, and putting a per-worktree directory scan on that path would cost a
+ * handful of stats per worktree per broadcast for a list that is only read when this
+ * menu is open. It is also why the list is always current: it is read at the moment you
+ * ask for it.
+ *
+ * Two kinds, and the difference is visible because it decides where the thing goes:
+ *   ▸ server — tracked like a dev server. Ports, logs, and Stop stack reaches it.
+ *   ⌗ task   — a terminal tab you watch. Needs a session, since a tab needs a tmux
+ *              session to live in.
+ */
+import { api } from '$lib/api.js';
+import { ui } from '$lib/stores/ui.svelte.js';
+import { toast } from '$lib/stores/toasts.svelte.js';
+import { errMessage } from '$lib/errmsg.js';
 
-  /** One repo of the feature: which repo, and the worktree to read its configs from. */
-  export interface Target { repo: string; path: string }
+/** One repo of the feature: which repo, and the worktree to read its configs from. */
+export interface Target {
+  repo: string;
+  path: string;
+}
 
-  /*
-   * No `sessionId`. It was threaded from the ActionBar into the POST body and
-   * `/run-configs/run` never read it — a finite command becomes a Run, which needs a
-   * worktree and nothing else ("It also needed a session to exist, which a feature may
-   * not have", server.ts).
-   */
-  let { targets }: { targets: Target[] } = $props();
+/*
+ * No `sessionId`. It was threaded from the ActionBar into the POST body and
+ * `/run-configs/run` never read it — a finite command becomes a Run, which needs a
+ * worktree and nothing else ("It also needed a session to exist, which a feature may
+ * not have", server.ts).
+ */
+let { targets }: { targets: Target[] } = $props();
 
-  interface Cfg { name: string; cmd: string; kind: string; source: string; file?: string }
-  interface Group { repo: string; path: string; configs: Cfg[] }
+interface Cfg {
+  name: string;
+  cmd: string;
+  kind: string;
+  source: string;
+  file?: string;
+}
+interface Group {
+  repo: string;
+  path: string;
+  configs: Cfg[];
+}
 
-  let open = $state(false);
-  let loading = $state(false);
-  let error = $state('');
-  let groups = $state<Group[]>([]);
-  let root = $state<HTMLElement | null>(null);
-  let running = $state('');
+let open = $state(false);
+let loading = $state(false);
+let error = $state('');
+let groups = $state<Group[]>([]);
+let root = $state<HTMLElement | null>(null);
+let running = $state('');
 
-  const total = $derived(groups.reduce((n, g) => n + g.configs.length, 0));
+const total = $derived(groups.reduce((n, g) => n + g.configs.length, 0));
 
-  /**
-   * Read every repo of the feature, concurrently.
-   *
-   * One repo's configs is half a BE+FE feature. A repo whose read fails contributes an
-   * empty group rather than failing the menu — one unreadable worktree should not hide
-   * the others' configs.
-   */
-  async function load() {
-    loading = true;
-    error = '';
-    try {
-      groups = await Promise.all(
-        targets.map(async (t) => {
-          const q = `?repo=${encodeURIComponent(t.repo)}&worktreePath=${encodeURIComponent(t.path)}`;
-          try {
-            const r = await api('GET', `/api/v1/run-configs${q}`);
-            return { repo: t.repo, path: t.path, configs: (r.configs || []) as Cfg[] };
-          } catch {
-            return { repo: t.repo, path: t.path, configs: [] as Cfg[] };
-          }
-        }),
-      );
-    } catch (e) {
-      error = errMessage(e);
-    } finally {
-      loading = false;
+/**
+ * Read every repo of the feature, concurrently.
+ *
+ * One repo's configs is half a BE+FE feature. A repo whose read fails contributes an
+ * empty group rather than failing the menu — one unreadable worktree should not hide
+ * the others' configs.
+ */
+async function load() {
+  loading = true;
+  error = '';
+  try {
+    groups = await Promise.all(
+      targets.map(async (t) => {
+        const q = `?repo=${encodeURIComponent(t.repo)}&worktreePath=${encodeURIComponent(t.path)}`;
+        try {
+          const r = await api('GET', `/api/v1/run-configs${q}`);
+          return { repo: t.repo, path: t.path, configs: (r.configs || []) as Cfg[] };
+        } catch {
+          return { repo: t.repo, path: t.path, configs: [] as Cfg[] };
+        }
+      }),
+    );
+  } catch (e) {
+    error = errMessage(e);
+  } finally {
+    loading = false;
+  }
+}
+
+function toggle() {
+  open = !open;
+  // Re-read every time it opens: the file on disk is the truth, and you may have just
+  // edited it in your editor.
+  if (open) load();
+}
+
+async function run(g: Group, c: Cfg) {
+  running = `${g.repo}:${c.name}`;
+  try {
+    const r = await api('POST', '/api/v1/run-configs/run', {
+      repo: g.repo,
+      worktreePath: g.path,
+      name: c.name,
+    });
+    if (!r.ok) {
+      toast(r.error || `Could not run “${c.name}”`, true);
+    } else if (c.kind === 'server') {
+      // A server's outcome is its ports and its log, neither of which is in Runs.
+      toast(`Started “${c.name}”`);
+    } else {
+      /*
+       * Go to where the output is. You clicked run to watch something happen, and
+       * leaving you on the terminal means the one thing you asked for is the one thing
+       * you cannot see — the panel is where the status, the duration and the output are.
+       */
+      ui.setDockView('runs');
     }
+  } catch (e) {
+    toast(errMessage(e), true);
+  } finally {
+    running = '';
+    open = false;
   }
+}
 
-  function toggle() {
-    open = !open;
-    // Re-read every time it opens: the file on disk is the truth, and you may have just
-    // edited it in your editor.
-    if (open) load();
-  }
-
-  async function run(g: Group, c: Cfg) {
-    running = `${g.repo}:${c.name}`;
-    try {
-      const r = await api('POST', '/api/v1/run-configs/run', {
-        repo: g.repo, worktreePath: g.path, name: c.name,
-      });
-      if (!r.ok) {
-        toast(r.error || `Could not run “${c.name}”`, true);
-      } else if (c.kind === 'server') {
-        // A server's outcome is its ports and its log, neither of which is in Runs.
-        toast(`Started “${c.name}”`);
-      } else {
-        /*
-         * Go to where the output is. You clicked run to watch something happen, and
-         * leaving you on the terminal means the one thing you asked for is the one thing
-         * you cannot see — the panel is where the status, the duration and the output are.
-         */
-        ui.setDockView('runs');
-      }
-    } catch (e) {
-      toast(errMessage(e), true);
-    } finally {
-      running = '';
+// Bound only while open — a permanent document listener for a menu that is almost
+// always shut is a cost paid on every click in the app.
+$effect(() => {
+  if (!open) return;
+  const onDocClick = (e: MouseEvent) => {
+    if (root && e.target instanceof Node && !root.contains(e.target)) open = false;
+  };
+  const onKey = (e: KeyboardEvent) => {
+    // Stop it reaching the global handler, which reads a bare Escape as "interrupt the
+    // agent" and sends it to the pty.
+    if (e.key === 'Escape') {
+      e.stopPropagation();
       open = false;
     }
-  }
-
-  // Bound only while open — a permanent document listener for a menu that is almost
-  // always shut is a cost paid on every click in the app.
-  $effect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (root && e.target instanceof Node && !root.contains(e.target)) open = false;
-    };
-    const onKey = (e: KeyboardEvent) => {
-      // Stop it reaching the global handler, which reads a bare Escape as "interrupt the
-      // agent" and sends it to the pty.
-      if (e.key === 'Escape') { e.stopPropagation(); open = false; }
-    };
-    document.addEventListener('click', onDocClick, true);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('click', onDocClick, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  });
+  };
+  document.addEventListener('click', onDocClick, true);
+  document.addEventListener('keydown', onKey, true);
+  return () => {
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('keydown', onKey, true);
+  };
+});
 </script>
 
 <div class="runmenu" bind:this={root}>

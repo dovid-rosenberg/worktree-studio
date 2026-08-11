@@ -86,14 +86,15 @@ describe('RunsPanel', () => {
     render(RunsPanel, {
       props: {
         session: session({
-          repos: [
-            sessionRepo('accept-blue', { primary: true }),
-            sessionRepo('merchant-v3'),
-          ],
+          repos: [sessionRepo('accept-blue', { primary: true }), sessionRepo('merchant-v3')],
         }),
       },
     });
-    expect(targetsPassed().map((t) => t.repo).sort()).toEqual(['accept-blue', 'merchant-v3']);
+    expect(
+      targetsPassed()
+        .map((t) => t.repo)
+        .sort(),
+    ).toEqual(['accept-blue', 'merchant-v3']);
   });
 
   it('names each worktree once when the primary also appears in repos[]', () => {
@@ -120,12 +121,33 @@ describe('RunsPanel', () => {
      * too, but a button you can press and that always fails is its own defect.
      */
     world.sessionHalf = {
-      sessions: [], servers: {},
+      sessions: [],
+      servers: {},
       runs: [
-        { id: 'r-bad', name: 'Unit tests', repo: 'accept-blue', worktreePath: '/accept-blue/wt',
-          cmd: 'npm test', status: 'failed', startedAt: 1, endedAt: 2, exitCode: 1, log: '/l' },
-        { id: 'r-ok', name: 'Lint', repo: 'accept-blue', worktreePath: '/accept-blue/wt',
-          cmd: 'npm run lint', status: 'passed', startedAt: 1, endedAt: 2, exitCode: 0, log: '/l' },
+        {
+          id: 'r-bad',
+          name: 'Unit tests',
+          repo: 'accept-blue',
+          worktreePath: '/accept-blue/wt',
+          cmd: 'npm test',
+          status: 'failed',
+          startedAt: 1,
+          endedAt: 2,
+          exitCode: 1,
+          log: '/l',
+        },
+        {
+          id: 'r-ok',
+          name: 'Lint',
+          repo: 'accept-blue',
+          worktreePath: '/accept-blue/wt',
+          cmd: 'npm run lint',
+          status: 'passed',
+          startedAt: 1,
+          endedAt: 2,
+          exitCode: 0,
+          log: '/l',
+        },
       ],
     } as never;
 
@@ -141,9 +163,22 @@ describe('RunsPanel', () => {
      * failure to whichever agent it last had selected.
      */
     world.sessionHalf = {
-      sessions: [], servers: {},
-      runs: [{ id: 'r-bad', name: 'Unit tests', repo: 'accept-blue', worktreePath: '/accept-blue/wt',
-               cmd: 'npm test', status: 'failed', startedAt: 1, endedAt: 2, exitCode: 1, log: '/l' }],
+      sessions: [],
+      servers: {},
+      runs: [
+        {
+          id: 'r-bad',
+          name: 'Unit tests',
+          repo: 'accept-blue',
+          worktreePath: '/accept-blue/wt',
+          cmd: 'npm test',
+          status: 'failed',
+          startedAt: 1,
+          endedAt: 2,
+          exitCode: 1,
+          log: '/l',
+        },
+      ],
     } as never;
     apiMock.mockResolvedValue({ ok: true });
 

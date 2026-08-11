@@ -14,13 +14,16 @@
     "start": "node server/server.ts",
     "build": "node bin/build-client.ts",
     "typecheck": "tsc --noEmit && npm --prefix client run check",
-    "test": "npm run typecheck && node --test test/*.test.ts && npm --prefix client test",
+    "test": "npm run typecheck && node --test 'test/**/*.test.ts' && npm --prefix client test",
+    "test:server": "node --test 'test/**/*.test.ts'",
     "fix-pty": "node bin/fix-pty.ts",
     "postinstall": "node bin/fix-pty.ts && node bin/build-client.ts",
     "lint": "biome lint",
     "format": "biome format --write",
     "check": "npm run lint && npm run typecheck",
-    "format:check": "biome format"
+    "format:check": "biome format",
+    "verify": "npm run lint && npm run format:check && npm test",
+    "hooks:install": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.10.0",

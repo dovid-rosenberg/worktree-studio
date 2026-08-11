@@ -1,36 +1,36 @@
 <script lang="ts">
-  // One search result. The row itself is the jump target; the session chip inside it
-  // is a second, narrower action (scope the search to that session) — which is exactly
-  // the nested-control case `activatable`'s `e.target === node` guard exists for, and
-  // why the row is a div-with-action rather than a <button> that can't legally contain
-  // another button.
-  import { activatable } from '$lib/actions/activatable.js';
-  import { segments } from './snippet.js';
-  import { ago, stamp, shortModel } from './format.js';
+// One search result. The row itself is the jump target; the session chip inside it
+// is a second, narrower action (scope the search to that session) — which is exactly
+// the nested-control case `activatable`'s `e.target === node` guard exists for, and
+// why the row is a div-with-action rather than a <button> that can't legally contain
+// another button.
+import { activatable } from '$lib/actions/activatable.js';
+import { segments } from './snippet.js';
+import { ago, stamp, shortModel } from './format.js';
 
-  /**
-   * @type {{
-   *   hit: import('./types.js').Hit,
-   *   terms?: string[],
-   *   showSession?: boolean,
-   *   selected?: boolean,
-   *   onopen?: (hit: import('./types.js').Hit) => void,
-   *   onscope?: ((sessionId: string) => void)|null,
-   * }}
-   */
-  let {
-    hit,
-    terms = [],
-    /** Hide the session line when the whole list is already scoped to one session. */
-    showSession = true,
-    selected = false,
-    onopen = () => {},
-    onscope = null,
-  } = $props();
+/**
+ * @type {{
+ *   hit: import('./types.js').Hit,
+ *   terms?: string[],
+ *   showSession?: boolean,
+ *   selected?: boolean,
+ *   onopen?: (hit: import('./types.js').Hit) => void,
+ *   onscope?: ((sessionId: string) => void)|null,
+ * }}
+ */
+let {
+  hit,
+  terms = [],
+  /** Hide the session line when the whole list is already scoped to one session. */
+  showSession = true,
+  selected = false,
+  onopen = () => {},
+  onscope = null,
+} = $props();
 
-  const parts = $derived(segments(hit.snippet, terms));
-  const session = $derived(hit.session || null);
-  const when = $derived(Number.isFinite(hit.tsMs) ? hit.tsMs : Date.parse(hit.ts || ''));
+const parts = $derived(segments(hit.snippet, terms));
+const session = $derived(hit.session || null);
+const when = $derived(Number.isFinite(hit.tsMs) ? hit.tsMs : Date.parse(hit.ts || ''));
 </script>
 
 <div

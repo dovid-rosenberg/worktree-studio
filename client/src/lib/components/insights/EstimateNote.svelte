@@ -1,47 +1,47 @@
 <script lang="ts">
-  // The cost disclosure.
-  //
-  // Every cost figure in Studio is derived: Claude Code transcripts record tokens and
-  // no billing, so the dollars come from a hand-maintained price table that goes stale
-  // (server/pricing.js says so in its own header). The server flags this on every
-  // payload with costIsEstimate: true.
-  //
-  // Placement is the whole design decision. Buried in a tooltip it may as well not
-  // exist — a reader who never hovers walks away believing a billed number. Shouted in
-  // a red banner it becomes chrome to scroll past, and it isn't an error. So: a plain
-  // line under the figure it qualifies, in muted ink, with the price-table date visible
-  // because staleness is the actual failure mode; the mechanics fold away behind a
-  // <details> for anyone who wants them.
+// The cost disclosure.
+//
+// Every cost figure in Studio is derived: Claude Code transcripts record tokens and
+// no billing, so the dollars come from a hand-maintained price table that goes stale
+// (server/pricing.js says so in its own header). The server flags this on every
+// payload with costIsEstimate: true.
+//
+// Placement is the whole design decision. Buried in a tooltip it may as well not
+// exist — a reader who never hovers walks away believing a billed number. Shouted in
+// a red banner it becomes chrome to scroll past, and it isn't an error. So: a plain
+// line under the figure it qualifies, in muted ink, with the price-table date visible
+// because staleness is the actual failure mode; the mechanics fold away behind a
+// <details> for anyone who wants them.
+/**
+ * @type {{
+ *   pricing?: import('./types.js').PricingBlock|null,
+ *   unpricedModels?: string[],
+ *   compact?: boolean,
+ *   line?: boolean,
+ * }}
+ */
+let {
+  pricing = null,
+  unpricedModels = [],
+  compact = false,
   /**
-   * @type {{
-   *   pricing?: import('./types.js').PricingBlock|null,
-   *   unpricedModels?: string[],
-   *   compact?: boolean,
-   *   line?: boolean,
-   * }}
+   * Drop the estimate sentence but keep the unpriced-model callout. For a detail pane
+   * nested under a view that already carries the disclosure — repeating it two lines
+   * down turns it into wallpaper, which is the failure mode this component exists to
+   * avoid. The unpriced list is never suppressed: it is per-session data, not a caveat.
    */
-  let {
-    pricing = null,
-    unpricedModels = [],
-    compact = false,
-    /**
-     * Drop the estimate sentence but keep the unpriced-model callout. For a detail pane
-     * nested under a view that already carries the disclosure — repeating it two lines
-     * down turns it into wallpaper, which is the failure mode this component exists to
-     * avoid. The unpriced list is never suppressed: it is per-session data, not a caveat.
-     */
-    line = true,
-  } = $props();
+  line = true,
+} = $props();
 
-  const verified = $derived(pricing?.verifiedAt || null);
-  const stale = $derived.by(() => {
-    if (!verified) return false;
-    const t = Date.parse(verified);
-    if (!Number.isFinite(t)) return false;
-    // Anthropic ships models faster than this table gets edited; a quarter is the point
-    // at which "verified" stops being a reassurance.
-    return Date.now() - t > 90 * 86400e3;
-  });
+const verified = $derived(pricing?.verifiedAt || null);
+const stale = $derived.by(() => {
+  if (!verified) return false;
+  const t = Date.parse(verified);
+  if (!Number.isFinite(t)) return false;
+  // Anthropic ships models faster than this table gets edited; a quarter is the point
+  // at which "verified" stops being a reassurance.
+  return Date.now() - t > 90 * 86400e3;
+});
 </script>
 
 <div class="est" class:compact>

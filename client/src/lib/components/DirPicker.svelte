@@ -1,65 +1,73 @@
 <script lang="ts">
-  /*
-   * Pick a folder on the machine the daemon runs on.
-   *
-   * A browser cannot do this. `<input type="file" webkitdirectory>` uploads a directory's
-   * contents and hands back relative names; `showDirectoryPicker()` returns a handle with
-   * no path on it. Both answer "which files" when the question is "which path" — so the
-   * daemon lists directories (server/browse.ts) and this walks that listing.
-   *
-   * IT SHOWS WHICH CHILDREN ARE REPOS, which is the whole judgement being made. A base
-   * directory is not a folder you like, it is a folder whose descendants are git
-   * checkouts, and the difference between `~/code` and `~/code/worktree-studio` is
-   * invisible until something says "12 repos in here" versus "this IS a repo". Typing a
-   * path into a text field gave no feedback at all until you saved and the rail either
-   * filled or did not.
-   */
-  import Modal from '$lib/components/Modal.svelte';
-  import { api } from '$lib/api.js';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * Pick a folder on the machine the daemon runs on.
+ *
+ * A browser cannot do this. `<input type="file" webkitdirectory>` uploads a directory's
+ * contents and hands back relative names; `showDirectoryPicker()` returns a handle with
+ * no path on it. Both answer "which files" when the question is "which path" — so the
+ * daemon lists directories (server/browse.ts) and this walks that listing.
+ *
+ * IT SHOWS WHICH CHILDREN ARE REPOS, which is the whole judgement being made. A base
+ * directory is not a folder you like, it is a folder whose descendants are git
+ * checkouts, and the difference between `~/code` and `~/code/worktree-studio` is
+ * invisible until something says "12 repos in here" versus "this IS a repo". Typing a
+ * path into a text field gave no feedback at all until you saved and the rail either
+ * filled or did not.
+ */
+import Modal from '$lib/components/Modal.svelte';
+import { api } from '$lib/api.js';
+import { errMessage } from '$lib/errmsg.js';
 
-  let { start = '', onpick, onclose }: {
-    /** Where to open. Empty starts at the home directory, which the server decides. */
-    start?: string;
-    onpick: (path: string) => void;
-    onclose: () => void;
-  } = $props();
+let {
+  start = '',
+  onpick,
+  onclose,
+}: {
+  /** Where to open. Empty starts at the home directory, which the server decides. */
+  start?: string;
+  onpick: (path: string) => void;
+  onclose: () => void;
+} = $props();
 
-  interface Entry { name: string; path: string; repo: boolean }
+interface Entry {
+  name: string;
+  path: string;
+  repo: boolean;
+}
 
-  let cwd = $state('');
-  let parent = $state<string | null>(null);
-  let entries = $state<Entry[]>([]);
-  let repoCount = $state(0);
-  let loading = $state(true);
-  let error = $state('');
-  /** The path typed into the crumb bar — kept separate so editing it does not navigate. */
-  let typed = $state('');
+let cwd = $state('');
+let parent = $state<string | null>(null);
+let entries = $state<Entry[]>([]);
+let repoCount = $state(0);
+let loading = $state(true);
+let error = $state('');
+/** The path typed into the crumb bar — kept separate so editing it does not navigate. */
+let typed = $state('');
 
-  async function load(p: string) {
-    loading = true;
-    error = '';
-    try {
-      const r = await api('GET', `/api/v1/fs/dirs?path=${encodeURIComponent(p)}`);
-      cwd = r.path || '';
-      typed = cwd;
-      parent = r.parent ?? null;
-      entries = r.entries || [];
-      repoCount = r.repoCount || 0;
-      // The server answers with the home directory when a path is unreadable rather than
-      // going blank — so this is a note about where you are, not a dead end.
-      if (r.error) error = r.error;
-    } catch (e) {
-      error = errMessage(e);
-    } finally {
-      loading = false;
-    }
+async function load(p: string) {
+  loading = true;
+  error = '';
+  try {
+    const r = await api('GET', `/api/v1/fs/dirs?path=${encodeURIComponent(p)}`);
+    cwd = r.path || '';
+    typed = cwd;
+    parent = r.parent ?? null;
+    entries = r.entries || [];
+    repoCount = r.repoCount || 0;
+    // The server answers with the home directory when a path is unreadable rather than
+    // going blank — so this is a note about where you are, not a dead end.
+    if (r.error) error = r.error;
+  } catch (e) {
+    error = errMessage(e);
+  } finally {
+    loading = false;
   }
+}
 
-  // `start` is read once, on open: this modal is created when it is shown, so that IS
-  // "on open", and reacting to it would yank the listing back while someone browses.
-  // svelte-ignore state_referenced_locally
-  load(start);
+// `start` is read once, on open: this modal is created when it is shown, so that IS
+// "on open", and reacting to it would yank the listing back while someone browses.
+// svelte-ignore state_referenced_locally
+load(start);
 </script>
 
 <Modal label="Choose a folder" onclose={onclose}>

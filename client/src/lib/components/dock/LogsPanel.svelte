@@ -1,106 +1,118 @@
 <script lang="ts">
-  import type { Session, SessionServerRepo } from '../../../../../server/types';
-  /*
-   * Live dev-server tail. `GET /api/servers/logs?worktreePath=&offset=` returns the
-   * bytes after `offset`, so this is a byte-offset poll rather than a stream.
-   *
-   * Two details carried over from app.js because they are easy to get wrong:
-   *  - a self-scheduling setTimeout, never setInterval, so a slow response cannot
-   *    overlap the next request and double-append;
-   *  - the trailing partial line is buffered, so a line split across two polls renders
-   *    as one line instead of two.
-   */
-  import { api } from '$lib/api.js';
-  import { world } from '$lib/stores/world.svelte.js';
+import type { Session, SessionServerRepo } from '../../../../../server/types';
+/*
+ * Live dev-server tail. `GET /api/servers/logs?worktreePath=&offset=` returns the
+ * bytes after `offset`, so this is a byte-offset poll rather than a stream.
+ *
+ * Two details carried over from app.js because they are easy to get wrong:
+ *  - a self-scheduling setTimeout, never setInterval, so a slow response cannot
+ *    overlap the next request and double-append;
+ *  - the trailing partial line is buffered, so a line split across two polls renders
+ *    as one line instead of two.
+ */
+import { api } from '$lib/api.js';
+import { world } from '$lib/stores/world.svelte.js';
 
-  let { session }: { session: Session } = $props();
+let { session }: { session: Session } = $props();
 
-  const MAX_LOG_LINES = 2000;
+const MAX_LOG_LINES = 2000;
 
-  /** Every repo of this session's shared workspace owns a per-worktree log file. */
-  const repos = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
-  let selectedPath = $state('');
-  let follow = $state(true);
-    let lines: {id:number, text:string, cls:string, partial:boolean}[] = $state([]);
-  let tailing = $state(false);
-  let body = $state<HTMLElement|null>(null);
+/** Every repo of this session's shared workspace owns a per-worktree log file. */
+const repos = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
+let selectedPath = $state('');
+let follow = $state(true);
+let lines: { id: number; text: string; cls: string; partial: boolean }[] = $state([]);
+let tailing = $state(false);
+let body = $state<HTMLElement | null>(null);
 
-  let lineId = 0;
-  /** Byte offset already consumed for the current worktree. */
-  let offset = (undefined as number|undefined);
-  /** Trailing incomplete line, prepended to the next chunk. */
-  let partial = '';
+let lineId = 0;
+/** Byte offset already consumed for the current worktree. */
+let offset = undefined as number | undefined;
+/** Trailing incomplete line, prepended to the next chunk. */
+let partial = '';
 
-  // Prefer the last selection if it is still a repo of this session, else a running
-  // server, else the first — the same fallback order the old panel used.
-  $effect(() => {
-    const list = repos;
-    if (list.some((r) => r.worktreePath === selectedPath)) return;
-    const pick = list.find((r) => r.running) || list[0];
-    selectedPath = pick ? pick.worktreePath : '';
-  });
+// Prefer the last selection if it is still a repo of this session, else a running
+// server, else the first — the same fallback order the old panel used.
+$effect(() => {
+  const list = repos;
+  if (list.some((r) => r.worktreePath === selectedPath)) return;
+  const pick = list.find((r) => r.running) || list[0];
+  selectedPath = pick ? pick.worktreePath : '';
+});
 
-  $effect(() => {
-    const path = selectedPath;
-    lines = [];
-    offset = undefined;
-    partial = '';
-    if (!path) { tailing = false; return; }
-    let alive = true;
-    /** @type {ReturnType<typeof setTimeout>|undefined} */
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    tailing = true;
-    const tick = async () => {
-      const el = body;
-      try {
-        const near = el ? el.scrollHeight - el.scrollTop - el.clientHeight < 60 : true;
-        const q = offset === undefined ? '' : `&offset=${offset}`;
-        const res = await api('GET', `/api/v1/servers/logs?worktreePath=${encodeURIComponent(path)}${q}`);
-        if (!alive) return;
-        offset = res.offset;
-        if (res.text) {
-          append(res.text);
-          if (follow && near) queueMicrotask(() => { if (body) body.scrollTop = body.scrollHeight; });
-        }
-      } catch { /* transient network/parse error — keep polling */ }
-      if (alive) timer = setTimeout(tick, 1500);
-    };
-    tick();
-    return () => { alive = false; clearTimeout(timer); tailing = false; };
-  });
-
-  /** @param {string} chunk */
-  function append(chunk: string) {
-    const combined = partial + chunk;
-    const parts = combined.split('\n');
-    partial = parts.pop() ?? '';
-    const next = lines.filter((l) => !l.partial);
-    for (const raw of parts) next.push({ id: ++lineId, ...classify(raw), partial: false });
-    if (partial) next.push({ id: ++lineId, ...classify(partial), partial: true });
-    // Cap unbounded growth: keep only the most recent MAX_LOG_LINES.
-    lines = next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
+$effect(() => {
+  const path = selectedPath;
+  lines = [];
+  offset = undefined;
+  partial = '';
+  if (!path) {
+    tailing = false;
+    return;
   }
+  let alive = true;
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  tailing = true;
+  const tick = async () => {
+    const el = body;
+    try {
+      const near = el ? el.scrollHeight - el.scrollTop - el.clientHeight < 60 : true;
+      const q = offset === undefined ? '' : `&offset=${offset}`;
+      const res = await api('GET', `/api/v1/servers/logs?worktreePath=${encodeURIComponent(path)}${q}`);
+      if (!alive) return;
+      offset = res.offset;
+      if (res.text) {
+        append(res.text);
+        if (follow && near)
+          queueMicrotask(() => {
+            if (body) body.scrollTop = body.scrollHeight;
+          });
+      }
+    } catch {
+      /* transient network/parse error — keep polling */
+    }
+    if (alive) timer = setTimeout(tick, 1500);
+  };
+  tick();
+  return () => {
+    alive = false;
+    clearTimeout(timer);
+    tailing = false;
+  };
+});
 
-  /** Light level colouring, matching the old regexes exactly. @param {string} raw */
-  function classify(raw: string) {
-    let cls = '';
-    if (/(error|fatal|exception|failed|✗|\bECONN)/i.test(raw)) cls = 'e';
-    else if (/(warn|deprecated)/i.test(raw)) cls = 'w';
-    else if (/(ready|listening|compiled|success|✓)/i.test(raw)) cls = 'ok';
-    return { text: raw, cls };
-  }
+/** @param {string} chunk */
+function append(chunk: string) {
+  const combined = partial + chunk;
+  const parts = combined.split('\n');
+  partial = parts.pop() ?? '';
+  const next = lines.filter((l) => !l.partial);
+  for (const raw of parts) next.push({ id: ++lineId, ...classify(raw), partial: false });
+  if (partial) next.push({ id: ++lineId, ...classify(partial), partial: true });
+  // Cap unbounded growth: keep only the most recent MAX_LOG_LINES.
+  lines = next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
+}
 
-  /** @param {any} r */
-  function optionLabel(r: SessionServerRepo) {
-    const ports = (r.ports && r.ports.length) ? ' ' + r.ports.map((p: number) => ':' + p).join(' ') : '';
-    return `${r.repo}${ports}${r.running ? '' : ' (stopped)'}`;
-  }
+/** Light level colouring, matching the old regexes exactly. @param {string} raw */
+function classify(raw: string) {
+  let cls = '';
+  if (/(error|fatal|exception|failed|✗|\bECONN)/i.test(raw)) cls = 'e';
+  else if (/(warn|deprecated)/i.test(raw)) cls = 'w';
+  else if (/(ready|listening|compiled|success|✓)/i.test(raw)) cls = 'ok';
+  return { text: raw, cls };
+}
 
-  /** Leading timestamp is dimmed; everything else is plain text. @param {string} t */
-  function splitTs(t: string) {
-    const m = t.match(/^\s*(\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?)/);
-    return m ? { ts: m[1], rest: t.slice(m[0].length) } : { ts: '', rest: t };
-  }
+/** @param {any} r */
+function optionLabel(r: SessionServerRepo) {
+  const ports = r.ports && r.ports.length ? ' ' + r.ports.map((p: number) => ':' + p).join(' ') : '';
+  return `${r.repo}${ports}${r.running ? '' : ' (stopped)'}`;
+}
+
+/** Leading timestamp is dimmed; everything else is plain text. @param {string} t */
+function splitTs(t: string) {
+  const m = t.match(/^\s*(\d{1,2}:\d{2}:\d{2}(?:[.,]\d+)?)/);
+  return m ? { ts: m[1], rest: t.slice(m[0].length) } : { ts: '', rest: t };
+}
 </script>
 
 <div class="logs">

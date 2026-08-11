@@ -560,29 +560,27 @@ class UI {
   reviewRows = $derived<RailRow[]>(
     world.reviews
       .filter((r) => this.#repoInScope(r.repo))
-      .map((r): RailRow => ({
-        kind: 'review',
-        key: selectionKey({ kind: 'review', id: `${r.repo}!${r.number}` }),
-        name: r.title,
-        review: r,
-        // Never "active": that word means a live agent or a running server, and a review
-        // has neither. Sorting it as active would put somebody else's MR above your own
-        // waiting agent.
-        active: false,
-      })),
+      .map(
+        (r): RailRow => ({
+          kind: 'review',
+          key: selectionKey({ kind: 'review', id: `${r.repo}!${r.number}` }),
+          name: r.title,
+          review: r,
+          // Never "active": that word means a live agent or a running server, and a review
+          // has neither. Sorting it as active would put somebody else's MR above your own
+          // waiting agent.
+          active: false,
+        }),
+      ),
   );
 
   /** Index of the first review row, or -1 when none — where the second divider goes. */
-  reviewsAt = $derived(
-    this.reviewRows.length ? this.railRows.length - this.reviewRows.length : -1,
-  );
+  reviewsAt = $derived(this.reviewRows.length ? this.railRows.length - this.reviewRows.length : -1);
 
   /** The selected review, or null. */
   selectedReview = $derived(
     this.selection?.kind === 'review'
-      ? world.reviews.find(
-          (r) => `${r.repo}!${r.number}` === (this.selection as { id: string }).id,
-        ) || null
+      ? world.reviews.find((r) => `${r.repo}!${r.number}` === (this.selection as { id: string }).id) || null
       : null,
   );
 
@@ -632,7 +630,8 @@ class UI {
         kind: r.kind === 'session' ? ('session' as const) : ('feature' as const),
         // A review owns no session either, but it IS selectable, so it keeps its place in
         // the ⌥-digit order — a hole here would shift every digit below it.
-        id: r.kind === 'session' ? r.session.id : r.kind === 'feature' ? (r.feature.session?.id ?? null) : null,
+        id:
+          r.kind === 'session' ? r.session.id : r.kind === 'feature' ? (r.feature.session?.id ?? null) : null,
         name: r.name,
       })),
   );

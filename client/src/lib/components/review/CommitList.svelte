@@ -1,68 +1,68 @@
 <script lang="ts">
-  import type { Commit } from './api';
-  /*
-   * Left column: every uncommitted entry (one per repo with working changes) pinned at
-   * the top, then each repo's commits newest first under a repo header. Order matches
-   * public/app.js's renderCommitList so the two UIs read the same during the port.
-   *
-   * Keyboard model is a vertical toolbar with a roving tabindex: Tab enters the list once
-   * and leaves it once, ↑/↓ move between rows. A branch with forty commits would otherwise
-   * be forty tab stops between the diff pane and everything after it.
-   */
-  let {
-    /** @type {import('./api.js').RepoCommits[]} */
-    repos = [],
-    /** @type {{ repo:string, sha:string }|null} */
-    sel = null,
-    /** @type {(repo:string, sha:string) => void} */
-    onselect = () => {},
-  } = $props();
+import type { Commit } from './api';
+/*
+ * Left column: every uncommitted entry (one per repo with working changes) pinned at
+ * the top, then each repo's commits newest first under a repo header. Order matches
+ * public/app.js's renderCommitList so the two UIs read the same during the port.
+ *
+ * Keyboard model is a vertical toolbar with a roving tabindex: Tab enters the list once
+ * and leaves it once, ↑/↓ move between rows. A branch with forty commits would otherwise
+ * be forty tab stops between the diff pane and everything after it.
+ */
+let {
+  /** @type {import('./api.js').RepoCommits[]} */
+  repos = [],
+  /** @type {{ repo:string, sha:string }|null} */
+  sel = null,
+  /** @type {(repo:string, sha:string) => void} */
+  onselect = () => {},
+} = $props();
 
-  let list = $state<HTMLElement|null>(null);
+let list = $state<HTMLElement | null>(null);
 
-
-  type Entry =
-    | { t: 'hd'; key: string; label: string }
-    | { t: 'unc'; key: string; repo: string; u: { fileCount: number; added: number; deleted: number } }
-    | { t: 'commit'; key: string; repo: string; c: Commit };
-  const rendered = $derived.by(() => {
-        const out: Entry[] = [];
-    const withUnc = repos.filter((r) => r.uncommitted && r.uncommitted.fileCount > 0);
-    if (withUnc.length) {
-      out.push({ t: 'hd', key: 'hd:unc', label: 'Uncommitted' });
-      for (const r of withUnc) out.push({ t: 'unc', key: `${r.repo}\u0000uncommitted`, repo: r.repo, u: r.uncommitted });
-    }
-    for (const r of repos) {
-      if (!(r.commits && r.commits.length)) continue;
-      out.push({ t: 'hd', key: `hd:${r.repo}`, label: `⎇ ${r.repo}` });
-      for (const c of r.commits) out.push({ t: 'commit', key: `${r.repo}\u0000${c.sha}`, repo: r.repo, c });
-    }
-    return out;
-  });
-
-  // NOTE the `\u0000` escapes: the separator is a real NUL at runtime (nothing in a
-  // repo name or a sha can collide with it), written as an escape so the source file
-  // stays plain text. A literal NUL byte in a .svelte file makes git classify it as
-  // binary, and this very panel would then render the file's own history as
-  // "Binary file — no textual diff".
-  const rows = $derived(rendered.filter((e) => e.t !== 'hd'));
-  const selKey = $derived(sel ? `${sel.repo}\u0000${sel.sha}` : '');
-  /** The one row in the tab order. Falls back to the first row so the list is always
-   *  reachable, even before anything is selected. */
-  const tabKey = $derived(rows.some((r) => r.key === selKey) ? selKey : (rows[0] ? rows[0].key : ''));
-  const empty = $derived(rows.length === 0);
-  const anyUnc = $derived(rendered.some((e) => e.t === 'unc'));
-
-  /** ↑/↓ walk the rendered rows in DOM order, which is exactly the visual order. */
-  function onKeydown(e: KeyboardEvent) {
-    if (!list || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
-    const els = /** @type {HTMLElement[]} */ ([...list.querySelectorAll<HTMLElement>('button.crow')]);
-    const i = els.indexOf((document.activeElement as HTMLElement));
-    const next = els[(i < 0 ? 0 : i + (e.key === 'ArrowDown' ? 1 : -1))];
-    if (!next) return;
-    e.preventDefault();
-    next.focus();
+type Entry =
+  | { t: 'hd'; key: string; label: string }
+  | { t: 'unc'; key: string; repo: string; u: { fileCount: number; added: number; deleted: number } }
+  | { t: 'commit'; key: string; repo: string; c: Commit };
+const rendered = $derived.by(() => {
+  const out: Entry[] = [];
+  const withUnc = repos.filter((r) => r.uncommitted && r.uncommitted.fileCount > 0);
+  if (withUnc.length) {
+    out.push({ t: 'hd', key: 'hd:unc', label: 'Uncommitted' });
+    for (const r of withUnc)
+      out.push({ t: 'unc', key: `${r.repo}\u0000uncommitted`, repo: r.repo, u: r.uncommitted });
   }
+  for (const r of repos) {
+    if (!(r.commits && r.commits.length)) continue;
+    out.push({ t: 'hd', key: `hd:${r.repo}`, label: `⎇ ${r.repo}` });
+    for (const c of r.commits) out.push({ t: 'commit', key: `${r.repo}\u0000${c.sha}`, repo: r.repo, c });
+  }
+  return out;
+});
+
+// NOTE the `\u0000` escapes: the separator is a real NUL at runtime (nothing in a
+// repo name or a sha can collide with it), written as an escape so the source file
+// stays plain text. A literal NUL byte in a .svelte file makes git classify it as
+// binary, and this very panel would then render the file's own history as
+// "Binary file — no textual diff".
+const rows = $derived(rendered.filter((e) => e.t !== 'hd'));
+const selKey = $derived(sel ? `${sel.repo}\u0000${sel.sha}` : '');
+/** The one row in the tab order. Falls back to the first row so the list is always
+ *  reachable, even before anything is selected. */
+const tabKey = $derived(rows.some((r) => r.key === selKey) ? selKey : rows[0] ? rows[0].key : '');
+const empty = $derived(rows.length === 0);
+const anyUnc = $derived(rendered.some((e) => e.t === 'unc'));
+
+/** ↑/↓ walk the rendered rows in DOM order, which is exactly the visual order. */
+function onKeydown(e: KeyboardEvent) {
+  if (!list || (e.key !== 'ArrowDown' && e.key !== 'ArrowUp')) return;
+  const els = /** @type {HTMLElement[]} */ ([...list.querySelectorAll<HTMLElement>('button.crow')]);
+  const i = els.indexOf(document.activeElement as HTMLElement);
+  const next = els[i < 0 ? 0 : i + (e.key === 'ArrowDown' ? 1 : -1)];
+  if (!next) return;
+  e.preventDefault();
+  next.focus();
+}
 </script>
 
 <div

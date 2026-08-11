@@ -1,223 +1,276 @@
 <script lang="ts">
-  // Transcript search.
-  //
-  // Three things shape this component more than anything else:
-  //
-  //  1. The corpus is live. Sessions append while you type, and the index only catches
-  //     up on a Stop hook — so results carry an "as of" honesty line, and a scoped
-  //     search leans on the server re-indexing that session before answering.
-  //  2. FTS5's MATCH is a query language. `ftsTerms` mirrors the server's tokenizer so
-  //     the panel can show what will actually be matched, and can tell the difference
-  //     between "no results" and "your query reduced to nothing".
-  //  3. `total` from the API is the length of the returned page, not a corpus count.
-  //     A full page therefore reads "first N", never "N results" — the difference
-  //     matters when you are deciding whether to narrow a query.
-  import { searchTranscripts, listSessions, transcriptStatus, reindex, ftsTerms, highlightTerms } from './api.js';
-  import SearchHit from './SearchHit.svelte';
-  import IndexStatus from './IndexStatus.svelte';
+// Transcript search.
+//
+// Three things shape this component more than anything else:
+//
+//  1. The corpus is live. Sessions append while you type, and the index only catches
+//     up on a Stop hook — so results carry an "as of" honesty line, and a scoped
+//     search leans on the server re-indexing that session before answering.
+//  2. FTS5's MATCH is a query language. `ftsTerms` mirrors the server's tokenizer so
+//     the panel can show what will actually be matched, and can tell the difference
+//     between "no results" and "your query reduced to nothing".
+//  3. `total` from the API is the length of the returned page, not a corpus count.
+//     A full page therefore reads "first N", never "N results" — the difference
+//     matters when you are deciding whether to narrow a query.
+import {
+  searchTranscripts,
+  listSessions,
+  transcriptStatus,
+  reindex,
+  ftsTerms,
+  highlightTerms,
+} from './api.js';
+import SearchHit from './SearchHit.svelte';
+import IndexStatus from './IndexStatus.svelte';
 
-  import type { Hit, StateSession } from './types';
-  import { errMessage, isAbort } from '$lib/errmsg.js';
+import type { Hit, StateSession } from './types';
+import { errMessage, isAbort } from '$lib/errmsg.js';
 
-  /**
-   * @type {{
-   *   sessionId?: string|null,
-   *   sessions?: StateSession[]|null,
-   *   autofocus?: boolean,
-   *   limit?: number,
-   *   onopen?: (hit: Hit) => void,
-   *   onclose?: (() => void)|null,
-   * }}
-   */
-  let {
-    /** Lock the panel to one session (mounted inside a session view). */
-    sessionId = null,
-    /** The shell owns session state; pass it in to avoid a second /api/state fetch. */
-    sessions = null,
-    autofocus = true,
-    limit = 30,
-    /** Called with the hit the user chose — the shell decides what "open" means. */
-    onopen = () => {},
-    /** Called when the user asks to leave (Escape on an empty query). */
-    onclose = null,
-  }: {
-    sessionId?: string | null;
-    sessions?: StateSession[] | null;
-    autofocus?: boolean;
-    limit?: number;
-    onopen?: (hit: Hit) => void;
-    onclose?: (() => void) | null;
-  } = $props();
+/**
+ * @type {{
+ *   sessionId?: string|null,
+ *   sessions?: StateSession[]|null,
+ *   autofocus?: boolean,
+ *   limit?: number,
+ *   onopen?: (hit: Hit) => void,
+ *   onclose?: (() => void)|null,
+ * }}
+ */
+let {
+  /** Lock the panel to one session (mounted inside a session view). */
+  sessionId = null,
+  /** The shell owns session state; pass it in to avoid a second /api/state fetch. */
+  sessions = null,
+  autofocus = true,
+  limit = 30,
+  /** Called with the hit the user chose — the shell decides what "open" means. */
+  onopen = () => {},
+  /** Called when the user asks to leave (Escape on an empty query). */
+  onclose = null,
+}: {
+  sessionId?: string | null;
+  sessions?: StateSession[] | null;
+  autofocus?: boolean;
+  limit?: number;
+  onopen?: (hit: Hit) => void;
+  onclose?: (() => void) | null;
+} = $props();
 
-  let q = $state('');
-  // Deliberately the INITIAL value: `scope` is user-owned state after mount, and a
-  // derived would fight the scope picker on every keystroke.
-  // svelte-ignore state_referenced_locally
-  let scope = $state(sessionId || '');
-  let role = $state('');
-  let order = $state('rank');
+let q = $state('');
+// Deliberately the INITIAL value: `scope` is user-owned state after mount, and a
+// derived would fight the scope picker on every keystroke.
+// svelte-ignore state_referenced_locally
+let scope = $state(sessionId || '');
+let role = $state('');
+let order = $state('rank');
 
-    let hits: Hit[] = $state([]);
-    let backend: string|null = $state(null);
-  let loading = $state(false);
-    let error: string|null = $state(null);
-  let ran = $state(false);
-  let ranQuery = $state('');
-  let ranAt = $state(0);
-  let selected = $state(-1);
+let hits: Hit[] = $state([]);
+let backend: string | null = $state(null);
+let loading = $state(false);
+let error: string | null = $state(null);
+let ran = $state(false);
+let ranQuery = $state('');
+let ranAt = $state(0);
+let selected = $state(-1);
 
-    let ownSessions: StateSession[] = $state([]);
-    let status: import('./types.js').TranscriptStatus|null = $state(null);
-    let statusError: string|null = $state(null);
-  let indexing = $state(false);
+let ownSessions: StateSession[] = $state([]);
+let status: import('./types.js').TranscriptStatus | null = $state(null);
+let statusError: string | null = $state(null);
+let indexing = $state(false);
 
-    let inputEl: HTMLInputElement|null = $state(null);
-    let listEl: HTMLElement|null = $state(null);
+let inputEl: HTMLInputElement | null = $state(null);
+let listEl: HTMLElement | null = $state(null);
 
-  const locked = $derived(!!sessionId);
-  const sessionList = $derived(sessions ?? ownSessions);
-  const terms = $derived(ftsTerms(q));
-  // Input that survives the tokenizer as nothing at all: a lone quote, `***`, `--`.
-  // The server answers these with an empty list and no explanation.
-  const degenerate = $derived(q.trim().length > 0 && terms.length === 0);
-  const capped = $derived(hits.length >= limit);
-  const scopedSession = $derived(sessionList.find((s) => s.id === scope) || null);
+const locked = $derived(!!sessionId);
+const sessionList = $derived(sessions ?? ownSessions);
+const terms = $derived(ftsTerms(q));
+// Input that survives the tokenizer as nothing at all: a lone quote, `***`, `--`.
+// The server answers these with an empty list and no explanation.
+const degenerate = $derived(q.trim().length > 0 && terms.length === 0);
+const capped = $derived(hits.length >= limit);
+const scopedSession = $derived(sessionList.find((s) => s.id === scope) || null);
 
-  /** @type {ReturnType<typeof setTimeout>|undefined} */
-  let timer: ReturnType<typeof setTimeout> | undefined;
-    let ctrl: AbortController|null = null;
-  let seq = 0;
+/** @type {ReturnType<typeof setTimeout>|undefined} */
+let timer: ReturnType<typeof setTimeout> | undefined;
+let ctrl: AbortController | null = null;
+let seq = 0;
 
-  /** @param {unknown} e */
+/** @param {unknown} e */
 
-  async function refreshStatus() {
-    try { status = await transcriptStatus(); } catch (e) { statusError = errMessage(e); }
+async function refreshStatus() {
+  try {
+    status = await transcriptStatus();
+  } catch (e) {
+    statusError = errMessage(e);
   }
+}
 
-  $effect(() => {
-    refreshStatus();
-    if (!sessions) listSessions().then((s) => { ownSessions = s; }).catch(() => {});
-  });
+$effect(() => {
+  refreshStatus();
+  if (!sessions)
+    listSessions()
+      .then((s) => {
+        ownSessions = s;
+      })
+      .catch(() => {});
+});
 
-  $effect(() => {
-    if (autofocus && inputEl) inputEl.focus();
-  });
+$effect(() => {
+  if (autofocus && inputEl) inputEl.focus();
+});
 
-  // Debounced auto-search. Reading the four inputs here is what makes this the
-  // dependency list; `run()` fires from a timer, so its own reads are untracked and
-  // cannot feed back into this effect.
-  $effect(() => {
-    q; scope; role; order;
-    clearTimeout(timer);
-    timer = setTimeout(run, 180);
-    return () => clearTimeout(timer);
-  });
+// Debounced auto-search. Reading the four inputs here is what makes this the
+// dependency list; `run()` fires from a timer, so its own reads are untracked and
+// cannot feed back into this effect.
+$effect(() => {
+  q;
+  scope;
+  role;
+  order;
+  clearTimeout(timer);
+  timer = setTimeout(run, 180);
+  return () => clearTimeout(timer);
+});
 
-  async function run() {
-    clearTimeout(timer);
-    const query = q.trim();
-    // Abort rather than ignore: a slow query for "m" is wasted work once "migration"
-    // is typed, and letting it land would repaint the list with the wrong results.
-    ctrl?.abort();
-    ctrl = null;
+async function run() {
+  clearTimeout(timer);
+  const query = q.trim();
+  // Abort rather than ignore: a slow query for "m" is wasted work once "migration"
+  // is typed, and letting it land would repaint the list with the wrong results.
+  ctrl?.abort();
+  ctrl = null;
 
-    if (!query || ftsTerms(query).length === 0) {
-      seq++;
-      hits = []; ran = !!query; ranQuery = query; loading = false; error = null; selected = -1;
-      return;
-    }
-
-    ctrl = new AbortController();
-    const my = ++seq;
-    loading = true;
+  if (!query || ftsTerms(query).length === 0) {
+    seq++;
+    hits = [];
+    ran = !!query;
+    ranQuery = query;
+    loading = false;
     error = null;
-    try {
-      const res = await searchTranscripts(
-        { q: query, session: scope || null, role: role || null, order, limit },
-        ctrl.signal,
-      );
-      if (my !== seq) return;
-      hits = Array.isArray(res.hits) ? res.hits : [];
-      backend = res.backend || null;
-      ran = true;
-      ranQuery = query;
-      ranAt = Date.now();
-      selected = -1;
-    } catch (e) {
-      if (isAbort(e)) return;
-      if (my !== seq) return;
-      error = errMessage(e);
-      hits = [];
-      ran = true;
-      ranQuery = query;
-    } finally {
-      if (my === seq) loading = false;
-    }
+    selected = -1;
+    return;
   }
 
-  /** @param {{ session?: string|null, full?: boolean }} opts */
-  async function doReindex(opts: { session?: string | null; full?: boolean }) {
-    indexing = true;
-    statusError = null;
-    try {
-      await reindex(opts);
-      await refreshStatus();
-      if (q.trim()) await run();
-    } catch (e) {
-      statusError = errMessage(e);
-    } finally {
-      indexing = false;
-    }
+  ctrl = new AbortController();
+  const my = ++seq;
+  loading = true;
+  error = null;
+  try {
+    const res = await searchTranscripts(
+      { q: query, session: scope || null, role: role || null, order, limit },
+      ctrl.signal,
+    );
+    if (my !== seq) return;
+    hits = Array.isArray(res.hits) ? res.hits : [];
+    backend = res.backend || null;
+    ran = true;
+    ranQuery = query;
+    ranAt = Date.now();
+    selected = -1;
+  } catch (e) {
+    if (isAbort(e)) return;
+    if (my !== seq) return;
+    error = errMessage(e);
+    hits = [];
+    ran = true;
+    ranQuery = query;
+  } finally {
+    if (my === seq) loading = false;
   }
+}
 
-  // ---- keyboard ----
-  // Every hit is a real tab stop (activatable sets tabindex=0), so Tab reaches any
-  // result. Arrows are the fast path on top of that, not a replacement for it.
-  const hitEls = () => (listEl ? /** @type {HTMLElement[]} */ ([...listEl.querySelectorAll<HTMLElement>('[data-hit]')]) : []);
-
-  /** @param {number} i */
-  function focusHit(i: number) {
-    const els = hitEls();
-    if (!els.length) return false;
-    const n = Math.max(0, Math.min(els.length - 1, i));
-    selected = n;
-    els[n].focus();
-    return true;
+/** @param {{ session?: string|null, full?: boolean }} opts */
+async function doReindex(opts: { session?: string | null; full?: boolean }) {
+  indexing = true;
+  statusError = null;
+  try {
+    await reindex(opts);
+    await refreshStatus();
+    if (q.trim()) await run();
+  } catch (e) {
+    statusError = errMessage(e);
+  } finally {
+    indexing = false;
   }
+}
 
-  /** @param {KeyboardEvent} e */
-  function onInputKey(e: KeyboardEvent) {
-    if (e.key === 'ArrowDown') { if (focusHit(0)) e.preventDefault(); return; }
-    if (e.key === 'Enter') {
+// ---- keyboard ----
+// Every hit is a real tab stop (activatable sets tabindex=0), so Tab reaches any
+// result. Arrows are the fast path on top of that, not a replacement for it.
+const hitEls = () =>
+  listEl ? /** @type {HTMLElement[]} */ ([...listEl.querySelectorAll<HTMLElement>('[data-hit]')]) : [];
+
+/** @param {number} i */
+function focusHit(i: number) {
+  const els = hitEls();
+  if (!els.length) return false;
+  const n = Math.max(0, Math.min(els.length - 1, i));
+  selected = n;
+  els[n].focus();
+  return true;
+}
+
+/** @param {KeyboardEvent} e */
+function onInputKey(e: KeyboardEvent) {
+  if (e.key === 'ArrowDown') {
+    if (focusHit(0)) e.preventDefault();
+    return;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (hits.length && !loading) onopen(hits[0]);
+    else run();
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (q) {
+      q = '';
       e.preventDefault();
-      if (hits.length && !loading) onopen(hits[0]);
-      else run();
-      return;
-    }
-    if (e.key === 'Escape') {
-      if (q) { q = ''; e.preventDefault(); e.stopPropagation(); }
-      else if (onclose) { onclose(); e.preventDefault(); e.stopPropagation(); }
+      e.stopPropagation();
+    } else if (onclose) {
+      onclose();
+      e.preventDefault();
+      e.stopPropagation();
     }
   }
+}
 
-  /** @param {KeyboardEvent} e */
-  function onListKey(e: KeyboardEvent) {
-    const els = hitEls();
-    if (!els.length) return;
-    const at = els.indexOf((document.activeElement as HTMLElement));
-    switch (e.key) {
-      case 'ArrowDown': e.preventDefault(); focusHit(at + 1); break;
-      case 'ArrowUp':
-        e.preventDefault();
-        if (at <= 0) { selected = -1; inputEl?.focus(); } else focusHit(at - 1);
-        break;
-      case 'Home': e.preventDefault(); focusHit(0); break;
-      case 'End': e.preventDefault(); focusHit(els.length - 1); break;
-      // Consumed here, so an enclosing overlay does not also read it as "close me".
-      case 'Escape': e.preventDefault(); e.stopPropagation(); selected = -1; inputEl?.focus(); break;
-      default: break;
-    }
+/** @param {KeyboardEvent} e */
+function onListKey(e: KeyboardEvent) {
+  const els = hitEls();
+  if (!els.length) return;
+  const at = els.indexOf(document.activeElement as HTMLElement);
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault();
+      focusHit(at + 1);
+      break;
+    case 'ArrowUp':
+      e.preventDefault();
+      if (at <= 0) {
+        selected = -1;
+        inputEl?.focus();
+      } else focusHit(at - 1);
+      break;
+    case 'Home':
+      e.preventDefault();
+      focusHit(0);
+      break;
+    case 'End':
+      e.preventDefault();
+      focusHit(els.length - 1);
+      break;
+    // Consumed here, so an enclosing overlay does not also read it as "close me".
+    case 'Escape':
+      e.preventDefault();
+      e.stopPropagation();
+      selected = -1;
+      inputEl?.focus();
+      break;
+    default:
+      break;
   }
+}
 </script>
 
 <section class="search" aria-label="Transcript search">

@@ -1,92 +1,89 @@
 <script lang="ts">
-  import type { Feature } from '../../../../../server/types';
-  /*
-   * One FEATURE in the rail — the unit the rail is keyed on.
-   *
-   * The card is a pure readout: name, state, member chips. It carries no buttons at all,
-   * and its height therefore never changes.
-   *
-   * TWO SIGNALS, NOT SIX. It used to carry a state dot, an `agent · <state>` pill with a
-   * SECOND dot encoding the same value eight pixels away, a `⇅ servers · stopped` pill, a
-   * dot per member repo, a merged badge, a slot badge and a green left edge — about six
-   * glyphs a card, so seven cards meant scanning forty to find the one waiting agent.
-   *
-   * The merged mark moved rather than went: it sat in the card's CORNER, driven by
-   * `some(merged)`, so on a four-repo feature it could mean one of four and a half-landed
-   * feature read as done. It now sits next to the branch it is about.
-   *
-   * Now: the dot is agent state, the green left edge is "dev servers up", and everything
-   * else appears only when it is NOT the default. `servers · stopped` and `agent · idle`
-   * were the two most common labels on screen and both said nothing was happening —
-   * absence says that for free, and it lets `waiting` stand out instead of queue up. That is the point. The earlier
-   * version revealed quick actions on hover, which grew the card and reflowed every row
-   * beneath it — so moving the pointer down the rail made the list jump under the cursor
-   * and the row you were aiming at moved before you clicked. Every action that used to
-   * live here (including the ⋯ menu's) is now in the bottom ActionBar, which is always
-   * present and cannot shift anything.
-   */
-  import { colorVars } from '$lib/featureColor.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+import type { Feature } from '../../../../../server/types';
+/*
+ * One FEATURE in the rail — the unit the rail is keyed on.
+ *
+ * The card is a pure readout: name, state, member chips. It carries no buttons at all,
+ * and its height therefore never changes.
+ *
+ * TWO SIGNALS, NOT SIX. It used to carry a state dot, an `agent · <state>` pill with a
+ * SECOND dot encoding the same value eight pixels away, a `⇅ servers · stopped` pill, a
+ * dot per member repo, a merged badge, a slot badge and a green left edge — about six
+ * glyphs a card, so seven cards meant scanning forty to find the one waiting agent.
+ *
+ * The merged mark moved rather than went: it sat in the card's CORNER, driven by
+ * `some(merged)`, so on a four-repo feature it could mean one of four and a half-landed
+ * feature read as done. It now sits next to the branch it is about.
+ *
+ * Now: the dot is agent state, the green left edge is "dev servers up", and everything
+ * else appears only when it is NOT the default. `servers · stopped` and `agent · idle`
+ * were the two most common labels on screen and both said nothing was happening —
+ * absence says that for free, and it lets `waiting` stand out instead of queue up. That is the point. The earlier
+ * version revealed quick actions on hover, which grew the card and reflowed every row
+ * beneath it — so moving the pointer down the rail made the list jump under the cursor
+ * and the row you were aiming at moved before you clicked. Every action that used to
+ * live here (including the ⋯ menu's) is now in the bottom ActionBar, which is always
+ * present and cannot shift anything.
+ */
+import { colorVars } from '$lib/featureColor.js';
+import { world } from '$lib/stores/world.svelte.js';
+import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
 
-  let { feature }: { feature: Feature } = $props();
+let { feature }: { feature: Feature } = $props();
 
-  const ms = $derived(liveMembers(feature));
-  const anyRunning = $derived(ms.some((m) => m.running));
-  const sess = $derived(feature.session); // one session per feature
+const ms = $derived(liveMembers(feature));
+const anyRunning = $derived(ms.some((m) => m.running));
+const sess = $derived(feature.session); // one session per feature
 
-  /*
-   * What you called it wins over what the directory is called.
-   *
-   * `feature.name` is the WORKTREE name — the identity that groups repos, which cannot
-   * change without moving directories. Renaming a session sets `session.title`, and this
-   * card showed only `feature.name`, so a rename saved to disk and changed nothing here.
-   * A title that still equals the worktree name is the default and adds nothing, so the
-   * second line appears only once they have actually diverged.
-   */
-  const digit = $derived(ui.railDigits.get(`f:${feature.name}`));
-  /*
-   * repo → its MR tag, for the member rows.
-   *
-   * On the row rather than the card, because a merge request is a fact about ONE repo's
-   * branch. Not a link: the rail is a pure readout with no controls, and that rule is
-   * worth more than saving a click — the absence on a row is the useful part anyway.
-   */
-  const prTags = $derived(
-    new Map(
-      world
-        .linksFor(feature)
-        .filter((l) => l.kind === 'pr' && !l.empty && l.repo)
-        .map((l) => [l.repo as string, l.label.split(' ').pop() || '']),
-    ),
-  );
-  const label = $derived(sess?.title?.trim() || feature.name);
-  const renamed = $derived(label !== feature.name);
-  /** Members whose start command cannot succeed — no node_modules in the worktree. */
-  const noDeps = $derived(ms.filter((m) => m.depsMissing).length);
-  const noStart = $derived(ms.filter((m) => m.noStartCmd).length);
+/*
+ * What you called it wins over what the directory is called.
+ *
+ * `feature.name` is the WORKTREE name — the identity that groups repos, which cannot
+ * change without moving directories. Renaming a session sets `session.title`, and this
+ * card showed only `feature.name`, so a rename saved to disk and changed nothing here.
+ * A title that still equals the worktree name is the default and adds nothing, so the
+ * second line appears only once they have actually diverged.
+ */
+const digit = $derived(ui.railDigits.get(`f:${feature.name}`));
+/*
+ * repo → its MR tag, for the member rows.
+ *
+ * On the row rather than the card, because a merge request is a fact about ONE repo's
+ * branch. Not a link: the rail is a pure readout with no controls, and that rule is
+ * worth more than saving a click — the absence on a row is the useful part anyway.
+ */
+const prTags = $derived(
+  new Map(
+    world
+      .linksFor(feature)
+      .filter((l) => l.kind === 'pr' && !l.empty && l.repo)
+      .map((l) => [l.repo as string, l.label.split(' ').pop() || '']),
+  ),
+);
+const label = $derived(sess?.title?.trim() || feature.name);
+const renamed = $derived(label !== feature.name);
+/** Members whose start command cannot succeed — no node_modules in the worktree. */
+const noDeps = $derived(ms.filter((m) => m.depsMissing).length);
+const noStart = $derived(ms.filter((m) => m.noStartCmd).length);
 
-  const selected = $derived(
-    sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name,
-  );
+const selected = $derived(sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name);
 
-  /**
-   * An agent state worth a label. `idle` is the resting state and `stopped` is covered
-   * by the dimmed dot, so neither earns a pill — only working/waiting do, which is what
-   * makes `waiting` findable.
-   */
-  const notable = $derived(!!sess && sess.state !== 'idle' && sess.state !== 'stopped');
+/**
+ * An agent state worth a label. `idle` is the resting state and `stopped` is covered
+ * by the dimmed dot, so neither earns a pill — only working/waiting do, which is what
+ * makes `waiting` findable.
+ */
+const notable = $derived(!!sess && sess.state !== 'idle' && sess.state !== 'stopped');
 
-  /*
-   * How far this branch has drifted from its base — server/overlap.ts.
-   *
-   * Quiet by design, and only past a threshold: it is a condition to notice while
-   * scanning, not an alarm. A card that shouts every time you look at it stops being read,
-   * and a branch one commit behind is simply fine.
-   */
-  const lap = $derived(world.overlapFor(feature.name));
-  const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
-
+/*
+ * How far this branch has drifted from its base — server/overlap.ts.
+ *
+ * Quiet by design, and only past a threshold: it is a condition to notice while
+ * scanning, not an alarm. A card that shouts every time you look at it stops being read,
+ * and a branch one commit behind is simply fine.
+ */
+const lap = $derived(world.overlapFor(feature.name));
+const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 </script>
 
 <div style={colorVars(feature.color)} class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">

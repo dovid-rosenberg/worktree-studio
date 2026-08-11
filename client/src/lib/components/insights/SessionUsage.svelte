@@ -1,65 +1,81 @@
 <script lang="ts">
-  // One session's telemetry: cost, the token mix, and the per-model breakdown.
-  //
-  // Usable two ways — handed a payload by the fleet view (no fetch), or given a session
-  // id and left to fetch its own. The second is what a session-scoped mount in the shell
-  // will want; the first is what keeps the fleet view from issuing N requests for data
-  // /transcripts/usage already returned.
-  import { sessionUsage } from './api.js';
-  import TokenMix from './TokenMix.svelte';
-  import EstimateNote from './EstimateNote.svelte';
-  import { usd, compactTokens, exactTokens, totalTokens, shortModel, span, stamp, pct, share } from './format.js';
-  import type { ModelUsage } from './types';
-  import { errMessage, isAbort } from '$lib/errmsg.js';
+// One session's telemetry: cost, the token mix, and the per-model breakdown.
+//
+// Usable two ways — handed a payload by the fleet view (no fetch), or given a session
+// id and left to fetch its own. The second is what a session-scoped mount in the shell
+// will want; the first is what keeps the fleet view from issuing N requests for data
+// /transcripts/usage already returned.
+import { sessionUsage } from './api.js';
+import TokenMix from './TokenMix.svelte';
+import EstimateNote from './EstimateNote.svelte';
+import {
+  usd,
+  compactTokens,
+  exactTokens,
+  totalTokens,
+  shortModel,
+  span,
+  stamp,
+  pct,
+  share,
+} from './format.js';
+import type { ModelUsage } from './types';
+import { errMessage, isAbort } from '$lib/errmsg.js';
 
-  /**
-   * @type {{
-   *   usage?: import('./types.js').Usage|null,
-   *   sessionId?: string|null,
-   *   pricing?: import('./types.js').PricingBlock|null,
-   *   title?: string|null,
-   *   estimateLine?: boolean,
-   * }}
-   */
-  let { usage = null, sessionId = null, pricing = null, title = null, estimateLine = true } = $props();
+/**
+ * @type {{
+ *   usage?: import('./types.js').Usage|null,
+ *   sessionId?: string|null,
+ *   pricing?: import('./types.js').PricingBlock|null,
+ *   title?: string|null,
+ *   estimateLine?: boolean,
+ * }}
+ */
+let { usage = null, sessionId = null, pricing = null, title = null, estimateLine = true } = $props();
 
-    let fetched: import('./types.js').Usage|null = $state(null);
-  let loading = $state(false);
-    let error: string|null = $state(null);
+let fetched: import('./types.js').Usage | null = $state(null);
+let loading = $state(false);
+let error: string | null = $state(null);
 
-  $effect(() => {
-    if (usage || !sessionId) return;
-    const id = sessionId;
-    const ctrl = new AbortController();
-    loading = true;
-    error = null;
-    sessionUsage(id, ctrl.signal)
-      .then((u) => { fetched = u; })
-      .catch((e) => { if (!isAbort(e)) error = errMessage(e); })
-      .finally(() => { loading = false; });
-    return () => ctrl.abort();
-  });
+$effect(() => {
+  if (usage || !sessionId) return;
+  const id = sessionId;
+  const ctrl = new AbortController();
+  loading = true;
+  error = null;
+  sessionUsage(id, ctrl.signal)
+    .then((u) => {
+      fetched = u;
+    })
+    .catch((e) => {
+      if (!isAbort(e)) error = errMessage(e);
+    })
+    .finally(() => {
+      loading = false;
+    });
+  return () => ctrl.abort();
+});
 
-  const u = $derived(usage || fetched);
-  const models = $derived(u?.byModel ?? []);
-  const unpriced = $derived(u?.unpricedModels ?? []);
-  const heading = $derived(title || u?.session?.title || sessionId || 'Session');
-  const turns = $derived(u?.messages ?? u?.assistantMessages ?? 0);
+const u = $derived(usage || fetched);
+const models = $derived(u?.byModel ?? []);
+const unpriced = $derived(u?.unpricedModels ?? []);
+const heading = $derived(title || u?.session?.title || sessionId || 'Session');
+const turns = $derived(u?.messages ?? u?.assistantMessages ?? 0);
 
-  // `priced:false` covers two different situations and they must not render alike.
-  // A model the price table simply lacks is a GAP — it is in unpricedModels and its
-  // tokens are missing from every total. `<synthetic>` is different: Claude Code emits
-  // those lines locally for interrupts and API errors, they carry an all-zero usage
-  // block, and the server deliberately keeps them out of unpricedModels. Calling that
-  // "unpriced" would invent a hole in the numbers that doesn't exist.
-  /** @param {import('./types.js').ModelUsage} m */
-  const costCell = (m: ModelUsage) => {
-    if (m.priced) return { text: usd(m.costUsd) ?? '—', kind: 'ok' };
-    if (unpriced.includes(m.model ?? 'unknown')) return { text: 'unpriced', kind: 'gap' };
-    return { text: 'not billed', kind: 'none' };
-  };
+// `priced:false` covers two different situations and they must not render alike.
+// A model the price table simply lacks is a GAP — it is in unpricedModels and its
+// tokens are missing from every total. `<synthetic>` is different: Claude Code emits
+// those lines locally for interrupts and API errors, they carry an all-zero usage
+// block, and the server deliberately keeps them out of unpricedModels. Calling that
+// "unpriced" would invent a hole in the numbers that doesn't exist.
+/** @param {import('./types.js').ModelUsage} m */
+const costCell = (m: ModelUsage) => {
+  if (m.priced) return { text: usd(m.costUsd) ?? '—', kind: 'ok' };
+  if (unpriced.includes(m.model ?? 'unknown')) return { text: 'unpriced', kind: 'gap' };
+  return { text: 'not billed', kind: 'none' };
+};
 
-  const totalCost = $derived(u?.costUsd ?? null);
+const totalCost = $derived(u?.costUsd ?? null);
 </script>
 
 <section class="su" aria-label={`Token and cost telemetry for ${heading}`}>

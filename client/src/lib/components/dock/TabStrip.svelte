@@ -1,181 +1,188 @@
 <script lang="ts">
-  /*
-   * The dock's tab strip.
-   *
-   * TWO GROUPS, deliberately not one row of look-alikes. The left group is terminal
-   * tabs: real multiplexer windows, each a live process you can rename and close. The
-   * right group is DOM panels (Changes / Logs / Insights) — views of the same session
-   * that own no process and cannot be closed. They used to sit in a single undifferentiated
-   * `role="tablist"`, so a ✕ on one meant "kill a shell" and on the next meant nothing,
-   * and `＋`/`⊟ Split` were non-tab children of a tablist, which is invalid ARIA.
-   *
-   * TABS ARE ADDRESSED BY WINDOW ID, never by position. tmux runs with
-   * `renumber-windows on`: closing a window renumbers every later one, so an index held
-   * across a close names a different terminal. The `{#each}` is keyed on the id for the
-   * same reason — keyed by position, closing a middle tab made Svelte reuse the DOM node
-   * of one tab for the contents of another, carrying focus and the close handler with it.
-   *
-   * Keyboard: the group is one tab stop with a roving tabindex (←/→, Home/End), which is
-   * the tablist pattern. Previously every tab was its own tab stop, so Tab walked through
-   * all of them before reaching the terminal.
-   */
-  import { ui } from '$lib/stores/ui.svelte.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { addTab, closeTab, renameTab, selectTab } from '$lib/ops.svelte.js';
-  import type { Session, SessionTab } from '../../../../../server/types';
+/*
+ * The dock's tab strip.
+ *
+ * TWO GROUPS, deliberately not one row of look-alikes. The left group is terminal
+ * tabs: real multiplexer windows, each a live process you can rename and close. The
+ * right group is DOM panels (Changes / Logs / Insights) — views of the same session
+ * that own no process and cannot be closed. They used to sit in a single undifferentiated
+ * `role="tablist"`, so a ✕ on one meant "kill a shell" and on the next meant nothing,
+ * and `＋`/`⊟ Split` were non-tab children of a tablist, which is invalid ARIA.
+ *
+ * TABS ARE ADDRESSED BY WINDOW ID, never by position. tmux runs with
+ * `renumber-windows on`: closing a window renumbers every later one, so an index held
+ * across a close names a different terminal. The `{#each}` is keyed on the id for the
+ * same reason — keyed by position, closing a middle tab made Svelte reuse the DOM node
+ * of one tab for the contents of another, carrying focus and the close handler with it.
+ *
+ * Keyboard: the group is one tab stop with a roving tabindex (←/→, Home/End), which is
+ * the tablist pattern. Previously every tab was its own tab stop, so Tab walked through
+ * all of them before reaching the terminal.
+ */
+import { ui } from '$lib/stores/ui.svelte.js';
+import { world } from '$lib/stores/world.svelte.js';
+import { addTab, closeTab, renameTab, selectTab } from '$lib/ops.svelte.js';
+import type { Session, SessionTab } from '../../../../../server/types';
 
-  let {
-    session,
-    /** Uncommitted-file count for the ✎ Changes badge; 0 hides it. */
-    changesCount = 0,
-  }: { session: Session; changesCount?: number } = $props();
+let {
+  session,
+  /** Uncommitted-file count for the ✎ Changes badge; 0 hides it. */
+  changesCount = 0,
+}: { session: Session; changesCount?: number } = $props();
 
-  const tabs = $derived<SessionTab[]>(
-    session.tabs && session.tabs.length ? session.tabs : [{ id: '0', title: 'claude' }],
+const tabs = $derived<SessionTab[]>(
+  session.tabs && session.tabs.length ? session.tabs : [{ id: '0', title: 'claude' }],
+);
+const promoted = $derived(!!session.worktreePath);
+
+/*
+ * The tab the AGENT runs in — where the status dot belongs.
+ *
+ * The dot used to be on EVERY tab, showing the session's state on the selected one and
+ * a hardcoded `idle` on all the others. So a session that was working looked idle from
+ * any tab but its own, which is backwards: the tab you are not looking at is exactly
+ * where you need to be told the agent wants you. It also stated one fact N times, and
+ * disagreed with itself N-1 of them.
+ *
+ * The state is ONE fact about the agent, so it goes on the agent's tab. The server
+ * records which that is (Session.agentTabId); the fallbacks cover sessions created
+ * before it did — a tab still titled `claude`, else the first, which is where a session
+ * is launched.
+ */
+const agentTabId = $derived(
+  session.agentTabId || tabs.find((t) => t.title === 'claude')?.id || tabs[0]?.id || '',
+);
+
+/** Every run belonging to a worktree this session owns — see RunsPanel. */
+const myRuns = $derived.by(() => {
+  const paths = new Set(
+    [session.worktreePath, ...(session.repos || []).map((r) => r.worktreePath)].filter(Boolean),
   );
-  const promoted = $derived(!!session.worktreePath);
+  return (world.view.runs || []).filter((r) => paths.has(r.worktreePath));
+});
 
-  /*
-   * The tab the AGENT runs in — where the status dot belongs.
-   *
-   * The dot used to be on EVERY tab, showing the session's state on the selected one and
-   * a hardcoded `idle` on all the others. So a session that was working looked idle from
-   * any tab but its own, which is backwards: the tab you are not looking at is exactly
-   * where you need to be told the agent wants you. It also stated one fact N times, and
-   * disagreed with itself N-1 of them.
-   *
-   * The state is ONE fact about the agent, so it goes on the agent's tab. The server
-   * records which that is (Session.agentTabId); the fallbacks cover sessions created
-   * before it did — a tab still titled `claude`, else the first, which is where a session
-   * is launched.
-   */
-  const agentTabId = $derived(
-    session.agentTabId || tabs.find((t) => t.title === 'claude')?.id || tabs[0]?.id || '',
-  );
+const activeRuns = $derived(myRuns.filter((r) => r.status === 'running').length);
 
-  /** Every run belonging to a worktree this session owns — see RunsPanel. */
-  const myRuns = $derived.by(() => {
-    const paths = new Set(
-      [session.worktreePath, ...(session.repos || []).map((r) => r.worktreePath)].filter(Boolean),
-    );
-    return (world.view.runs || []).filter((r) => paths.has(r.worktreePath));
-  });
+/*
+ * What the Runs tab says when nothing is running.
+ *
+ * A count that vanishes the moment a run ends tells you a test suite finished but not
+ * whether it PASSED — which is the only thing you wanted to know, and would send you
+ * into the panel to find out. So the badge outlives the run: it carries the newest
+ * finished run's outcome until something else runs.
+ *
+ * Only a failure is worth a mark. A green badge on every tab forever is noise, and
+ * "nothing is shouting" already reads as fine.
+ */
+const lastFailed = $derived(
+  activeRuns === 0 && myRuns.find((r) => r.status !== 'running')?.status === 'failed',
+);
 
-  const activeRuns = $derived(myRuns.filter((r) => r.status === 'running').length);
+/**
+ * Which tab the MULTIPLEXER has selected. tmux owns this, and it is what the terminal
+ * is actually showing.
+ */
+const muxActive = $derived(tabs.find((t) => t.active)?.id ?? '');
 
-  /*
-   * What the Runs tab says when nothing is running.
-   *
-   * A count that vanishes the moment a run ends tells you a test suite finished but not
-   * whether it PASSED — which is the only thing you wanted to know, and would send you
-   * into the panel to find out. So the badge outlives the run: it carries the newest
-   * finished run's outcome until something else runs.
-   *
-   * Only a failure is worth a mark. A green badge on every tab forever is noise, and
-   * "nothing is shouting" already reads as fine.
-   */
-  const lastFailed = $derived(
-    activeRuns === 0 && myRuns.find((r) => r.status !== 'running')?.status === 'failed',
-  );
+/**
+ * The selected tab, resolved against tabs that actually exist. If the stored id is
+ * gone — closed here, or killed in tmux directly — fall back to whatever the
+ * multiplexer says, then to the first tab, rather than highlighting nothing while a
+ * pane is still on screen.
+ */
+const activeId = $derived(
+  tabs.some((t) => t.id === ui.activeTabId) ? ui.activeTabId : muxActive || tabs[0]?.id || '',
+);
 
-  /**
-   * Which tab the MULTIPLEXER has selected. tmux owns this, and it is what the terminal
-   * is actually showing.
-   */
-  const muxActive = $derived(tabs.find((t) => t.active)?.id ?? '');
+/*
+ * FOLLOW THE MULTIPLEXER.
+ *
+ * `ui.activeTabId` is a local intent — set optimistically on click so the highlight
+ * moves before the round-trip. But tmux changes the current window for reasons the
+ * client never initiated: `new-window` selects what it creates, so the ＋ button, a run
+ * configuration, and anything typed into tmux directly all move it. Nothing reconciled
+ * the two, so the strip kept pointing at the tab you were on while the terminal showed
+ * the new one — reported twice, from two different features, because it was never one
+ * feature's bug.
+ *
+ * Mirroring on CHANGE, not on every frame: a click sets `activeTabId` and posts
+ * select-tab, the server answers with the same value, and this sees no change. Only a
+ * selection the client did not make moves it.
+ */
+let lastMuxActive = $state('');
+$effect(() => {
+  const next = muxActive;
+  if (!next || next === lastMuxActive) return;
+  lastMuxActive = next;
+  if (ui.activeTabId !== next) ui.activeTabId = next;
+});
 
-  /**
-   * The selected tab, resolved against tabs that actually exist. If the stored id is
-   * gone — closed here, or killed in tmux directly — fall back to whatever the
-   * multiplexer says, then to the first tab, rather than highlighting nothing while a
-   * pane is still on screen.
-   */
-  const activeId = $derived(
-    tabs.some((t) => t.id === ui.activeTabId)
-      ? ui.activeTabId
-      : (muxActive || tabs[0]?.id || ''),
-  );
+let renaming = $state<string | null>(null);
+let draft = $state('');
+let strip = $state<HTMLElement | null>(null);
 
-  /*
-   * FOLLOW THE MULTIPLEXER.
-   *
-   * `ui.activeTabId` is a local intent — set optimistically on click so the highlight
-   * moves before the round-trip. But tmux changes the current window for reasons the
-   * client never initiated: `new-window` selects what it creates, so the ＋ button, a run
-   * configuration, and anything typed into tmux directly all move it. Nothing reconciled
-   * the two, so the strip kept pointing at the tab you were on while the terminal showed
-   * the new one — reported twice, from two different features, because it was never one
-   * feature's bug.
-   *
-   * Mirroring on CHANGE, not on every frame: a click sets `activeTabId` and posts
-   * select-tab, the server answers with the same value, and this sees no change. Only a
-   * selection the client did not make moves it.
-   */
-  let lastMuxActive = $state('');
-  $effect(() => {
-    const next = muxActive;
-    if (!next || next === lastMuxActive) return;
-    lastMuxActive = next;
-    if (ui.activeTabId !== next) ui.activeTabId = next;
-  });
+function beginRename(t: SessionTab) {
+  renaming = t.id;
+  draft = t.title;
+}
 
-  let renaming = $state<string | null>(null);
-  let draft = $state('');
-  let strip = $state<HTMLElement | null>(null);
+async function commitRename(t: SessionTab) {
+  const next = draft.trim();
+  renaming = null;
+  if (next && next !== t.title) await renameTab(session, t.id, next);
+}
 
-  function beginRename(t: SessionTab) {
-    renaming = t.id;
-    draft = t.title;
-  }
-
-  async function commitRename(t: SessionTab) {
-    const next = draft.trim();
-    renaming = null;
-    if (next && next !== t.title) await renameTab(session, t.id, next);
-  }
-
-  /**
-   * Roving focus across the terminal tabs — the tablist keyboard contract.
-   *
-   * Bound to each TAB, not to the tablist container: with a roving tabindex the focus
-   * is always on a tab, so that is where the key arrives. Putting it on the container
-   * would mean giving the container a tabindex it has no business having.
-   */
-  function onTabKeydown(e: KeyboardEvent, tab: SessionTab) {
-    if (e.key === 'F2') { e.preventDefault(); beginRename(tab); return; }
-    /*
-     * Delete/Backspace closes, because the ✕ and a middle-click were the ONLY ways.
-     * Both are pointer-only, so a tab could be reached, renamed and moved between with
-     * the keyboard but never closed with it — the one operation in the strip with no
-     * keyboard path at all. Guarded on tabs.length like onAuxClick: the last tab is the
-     * session itself, and closing it is not what a stray Delete should do.
-     */
-    if ((e.key === 'Delete' || e.key === 'Backspace') && tabs.length > 1) {
-      e.preventDefault();
-      closeTab(session, tab.id);
-      return;
-    }
-    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
-    if (!keys.includes(e.key)) return;
+/**
+ * Roving focus across the terminal tabs — the tablist keyboard contract.
+ *
+ * Bound to each TAB, not to the tablist container: with a roving tabindex the focus
+ * is always on a tab, so that is where the key arrives. Putting it on the container
+ * would mean giving the container a tabindex it has no business having.
+ */
+function onTabKeydown(e: KeyboardEvent, tab: SessionTab) {
+  if (e.key === 'F2') {
     e.preventDefault();
-    const i = tabs.findIndex((t) => t.id === activeId);
-    const last = tabs.length - 1;
-    const to = e.key === 'ArrowLeft' ? Math.max(0, i - 1)
-      : e.key === 'ArrowRight' ? Math.min(last, i + 1)
-      : e.key === 'Home' ? 0 : last;
-    const t = tabs[to];
-    if (t) {
-      selectTab(session, t.id);
-      queueMicrotask(() => strip?.querySelector<HTMLElement>(`[data-tab="${t.id}"]`)?.focus());
-    }
+    beginRename(tab);
+    return;
   }
-
-  /** Middle-click closes, as it does in every terminal and browser. */
-  function onAuxClick(e: MouseEvent, t: SessionTab) {
-    if (e.button !== 1 || tabs.length <= 1) return;
+  /*
+   * Delete/Backspace closes, because the ✕ and a middle-click were the ONLY ways.
+   * Both are pointer-only, so a tab could be reached, renamed and moved between with
+   * the keyboard but never closed with it — the one operation in the strip with no
+   * keyboard path at all. Guarded on tabs.length like onAuxClick: the last tab is the
+   * session itself, and closing it is not what a stray Delete should do.
+   */
+  if ((e.key === 'Delete' || e.key === 'Backspace') && tabs.length > 1) {
     e.preventDefault();
-    closeTab(session, t.id);
+    closeTab(session, tab.id);
+    return;
   }
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  if (!keys.includes(e.key)) return;
+  e.preventDefault();
+  const i = tabs.findIndex((t) => t.id === activeId);
+  const last = tabs.length - 1;
+  const to =
+    e.key === 'ArrowLeft'
+      ? Math.max(0, i - 1)
+      : e.key === 'ArrowRight'
+        ? Math.min(last, i + 1)
+        : e.key === 'Home'
+          ? 0
+          : last;
+  const t = tabs[to];
+  if (t) {
+    selectTab(session, t.id);
+    queueMicrotask(() => strip?.querySelector<HTMLElement>(`[data-tab="${t.id}"]`)?.focus());
+  }
+}
+
+/** Middle-click closes, as it does in every terminal and browser. */
+function onAuxClick(e: MouseEvent, t: SessionTab) {
+  if (e.button !== 1 || tabs.length <= 1) return;
+  e.preventDefault();
+  closeTab(session, t.id);
+}
 </script>
 
 <div class="tabstrip">

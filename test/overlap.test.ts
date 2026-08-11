@@ -15,8 +15,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { createOverlapFeed } from '../server/overlap.ts';
 
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
 function repo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-overlap-'));
@@ -101,7 +100,15 @@ test('reports the WORST repo when a feature spans several', async () => {
 
   const feed = createOverlapFeed();
   await feed.refresh(
-    [{ name: 'alpha', members: [{ repo: 'one', path: a1 }, { repo: 'two', path: a2 }] }],
+    [
+      {
+        name: 'alpha',
+        members: [
+          { repo: 'one', path: a1 },
+          { repo: 'two', path: a2 },
+        ],
+      },
+    ],
     () => 'master',
   );
   const s = feed.snapshot().alpha;
@@ -123,7 +130,15 @@ test('an unchanged answer does not push a frame', async () => {
   const feed = createOverlapFeed({
     read: async () => {
       reads += 1;
-      return { headSha: 'h', baseSha: 'b', changed: ['a-only.js'], behind: 0, ahead: 1, conflicts: [], unpushed: 0 };
+      return {
+        headSha: 'h',
+        baseSha: 'b',
+        changed: ['a-only.js'],
+        behind: 0,
+        ahead: 1,
+        conflicts: [],
+        unpushed: 0,
+      };
     },
   });
   const f = { name: 'alpha', members: [{ repo: 'r', path: '/w/alpha' }] };

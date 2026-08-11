@@ -1,135 +1,141 @@
 <script lang="ts">
-  /*
-   * Renders the queued uiDialog/uiConfirm/uiPrompt (see stores/dialog.svelte.js).
-   *
-   * Enter submits unless the dialog contains a <select> — a select swallows Enter for
-   * its own option choice, and app.js made the same exception. Escape resolves null;
-   * it is handled here rather than globally because a dialog outranks every other
-   * overlay and can be opened from inside one.
-   */
-  import Modal from '$lib/components/Modal.svelte';
-  import { COLOR_LABELS, FEATURE_COLORS, colorVars } from '$lib/featureColor.js';
-  import { dialogs } from '$lib/stores/dialog.svelte.js';
-  import type { DialogLink } from '$lib/stores/dialog.svelte.js';
-  import { moveItem, reorderable } from '$lib/actions/reorderable.js';
-  import { api } from '$lib/api.js';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * Renders the queued uiDialog/uiConfirm/uiPrompt (see stores/dialog.svelte.js).
+ *
+ * Enter submits unless the dialog contains a <select> — a select swallows Enter for
+ * its own option choice, and app.js made the same exception. Escape resolves null;
+ * it is handled here rather than globally because a dialog outranks every other
+ * overlay and can be opened from inside one.
+ */
+import Modal from '$lib/components/Modal.svelte';
+import { COLOR_LABELS, FEATURE_COLORS, colorVars } from '$lib/featureColor.js';
+import { dialogs } from '$lib/stores/dialog.svelte.js';
+import type { DialogLink } from '$lib/stores/dialog.svelte.js';
+import { moveItem, reorderable } from '$lib/actions/reorderable.js';
+import { api } from '$lib/api.js';
+import { errMessage } from '$lib/errmsg.js';
 
-  const entry = $derived(dialogs.current);
-  const spec = $derived(entry?.spec ?? null);
-  const fields = $derived(spec?.fields ?? []);
+const entry = $derived(dialogs.current);
+const spec = $derived(entry?.spec ?? null);
+const fields = $derived(spec?.fields ?? []);
 
-  /** Field values, re-seeded whenever a different dialog reaches the head of the queue. */
-  let values = $state<any[]>([]);
-  /** Monotonic row identity for the `links` field — see DialogLink.key. */
-  let linkKey = 0;
+/** Field values, re-seeded whenever a different dialog reaches the head of the queue. */
+let values = $state<any[]>([]);
+/** Monotonic row identity for the `links` field — see DialogLink.key. */
+let linkKey = 0;
 
-  /*
-   * Assigned tasks for a `pick` field, fetched when a dialog that wants them opens.
-   *
-   * Here rather than in the caller so opening the editor never waits on a tracker: the
-   * field renders immediately and the options fill in. A failure is silent — the text
-   * field is still there, which is the whole point of keeping it.
-   */
-  let tasks = $state<Array<{ title: string; subtitle: string; url: string }>>([]);
-  let tasksLoading = $state(false);
-  /**
-   * Why the list is empty, when it is.
-   *
-   * An empty dropdown with no explanation is the worst of both: it looks broken, and the
-   * actual cause — no tracker configured — is a setting the user can fix in a minute.
-   * The first version of this simply rendered nothing.
-   */
-  let tasksNote = $state('');
+/*
+ * Assigned tasks for a `pick` field, fetched when a dialog that wants them opens.
+ *
+ * Here rather than in the caller so opening the editor never waits on a tracker: the
+ * field renders immediately and the options fill in. A failure is silent — the text
+ * field is still there, which is the whole point of keeping it.
+ */
+let tasks = $state<Array<{ title: string; subtitle: string; url: string }>>([]);
+let tasksLoading = $state(false);
+/**
+ * Why the list is empty, when it is.
+ *
+ * An empty dropdown with no explanation is the worst of both: it looks broken, and the
+ * actual cause — no tracker configured — is a setting the user can fix in a minute.
+ * The first version of this simply rendered nothing.
+ */
+let tasksNote = $state('');
 
-  $effect(() => {
-    if (!fields.some((f) => f.pick)) return;
-    let alive = true;
-    tasksLoading = true;
-    tasksNote = '';
-    (async () => {
-      try {
-        const srcs: Array<{ id: string; label: string; needsRepo?: boolean }> =
-          (await api('GET', '/api/v1/sources')) || [];
-        // `freetext` is the "just type it" source and has no tasks to list.
-        const trackers = srcs.filter((s) => s.id !== 'freetext');
-        if (!trackers.length) {
-          if (alive) tasksNote = 'No task tracker connected — add one in Settings';
-          return;
-        }
-        /*
-         * A source with `needsRepo` lists issues FROM a repo, so it needs one to ask
-         * about — and only the repos this feature actually spans. Omitting it entirely
-         * made every such source answer with nothing; fanning out over every repo you own
-         * made it twelve subprocesses for one dropdown.
-         */
-        const repos = fields.find((f) => f.pick)?.pick?.repos || [];
-        const all: Array<{ title: string; subtitle: string; url: string }> = [];
-        for (const s of trackers) {
-          // A repo-scoped source with no repo to ask about is skipped, not guessed at.
-          const targets = s.needsRepo ? repos : [''];
-          if (!targets.length) continue;
-          for (const repo of targets) {
-            const q = repo ? `?repo=${encodeURIComponent(repo)}` : '';
-            const r = await api('GET', `/api/v1/sources/${encodeURIComponent(s.id)}/items${q}`);
-            for (const it of r.items || []) if (it.url) all.push(it);
-          }
-        }
-        if (!alive) return;
-        tasks = all;
-        if (!all.length) {
-          tasksNote = `Nothing assigned to you in ${trackers.map((s) => s.label).join(', ')}`;
-        }
-      } catch (e) {
-        // Named, not swallowed: a bad token is a fixable thing and the commonest cause.
-        if (alive) tasksNote = `Could not load tasks — ${errMessage(e)}`;
-      } finally {
-        if (alive) tasksLoading = false;
+$effect(() => {
+  if (!fields.some((f) => f.pick)) return;
+  let alive = true;
+  tasksLoading = true;
+  tasksNote = '';
+  (async () => {
+    try {
+      const srcs: Array<{ id: string; label: string; needsRepo?: boolean }> =
+        (await api('GET', '/api/v1/sources')) || [];
+      // `freetext` is the "just type it" source and has no tasks to list.
+      const trackers = srcs.filter((s) => s.id !== 'freetext');
+      if (!trackers.length) {
+        if (alive) tasksNote = 'No task tracker connected — add one in Settings';
+        return;
       }
-    })();
-    return () => {
-      alive = false;
-    };
+      /*
+       * A source with `needsRepo` lists issues FROM a repo, so it needs one to ask
+       * about — and only the repos this feature actually spans. Omitting it entirely
+       * made every such source answer with nothing; fanning out over every repo you own
+       * made it twelve subprocesses for one dropdown.
+       */
+      const repos = fields.find((f) => f.pick)?.pick?.repos || [];
+      const all: Array<{ title: string; subtitle: string; url: string }> = [];
+      for (const s of trackers) {
+        // A repo-scoped source with no repo to ask about is skipped, not guessed at.
+        const targets = s.needsRepo ? repos : [''];
+        if (!targets.length) continue;
+        for (const repo of targets) {
+          const q = repo ? `?repo=${encodeURIComponent(repo)}` : '';
+          const r = await api('GET', `/api/v1/sources/${encodeURIComponent(s.id)}/items${q}`);
+          for (const it of r.items || []) if (it.url) all.push(it);
+        }
+      }
+      if (!alive) return;
+      tasks = all;
+      if (!all.length) {
+        tasksNote = `Nothing assigned to you in ${trackers.map((s) => s.label).join(', ')}`;
+      }
+    } catch (e) {
+      // Named, not swallowed: a bad token is a fixable thing and the commonest cause.
+      if (alive) tasksNote = `Could not load tasks — ${errMessage(e)}`;
+    } finally {
+      if (alive) tasksLoading = false;
+    }
+  })();
+  return () => {
+    alive = false;
+  };
+});
+
+/** Keyboard equivalent of a drag, as SettingsModal does it: dragging serves a mouse only. */
+function nudge(i: number, rows: DialogLink[], by: number): DialogLink[] {
+  return moveItem(rows, i, Math.max(0, Math.min(rows.length - 1, i + by)));
+}
+let root = $state<HTMLElement | null>(null);
+
+$effect(() => {
+  const id = entry?.id;
+  if (id == null) return;
+  values = fields.map((f) => (f.type === 'checkbox' ? !!f.value : (f.value ?? '')));
+  // Focus the first field, else the confirm button — the same target app.js chose.
+  // The nodes only exist after this render, so defer by a microtask.
+  queueMicrotask(() => {
+    const el = /** @type {HTMLElement|null} */ (
+      root?.querySelector<HTMLElement>('.dlgf') || root?.querySelector<HTMLElement>('.dlg-ok')
+    );
+    el?.focus();
+    if (el instanceof HTMLInputElement && el.type !== 'checkbox') el.select();
   });
+});
 
-  /** Keyboard equivalent of a drag, as SettingsModal does it: dragging serves a mouse only. */
-  function nudge(i: number, rows: DialogLink[], by: number): DialogLink[] {
-    return moveItem(rows, i, Math.max(0, Math.min(rows.length - 1, i + by)));
-  }
-  let root = $state<HTMLElement|null>(null);
+function submit() {
+  if (!entry) return;
+  dialogs.close(entry.id, fields.length ? [...values] : true);
+}
+function cancel() {
+  if (!entry) return;
+  dialogs.close(entry.id, null);
+}
 
-  $effect(() => {
-    const id = entry?.id;
-    if (id == null) return;
-    values = fields.map((f) => (f.type === 'checkbox' ? !!f.value : (f.value ?? '')));
-    // Focus the first field, else the confirm button — the same target app.js chose.
-    // The nodes only exist after this render, so defer by a microtask.
-    queueMicrotask(() => {
-      const el = /** @type {HTMLElement|null} */ (root?.querySelector<HTMLElement>('.dlgf') || root?.querySelector<HTMLElement>('.dlg-ok'));
-      el?.focus();
-      if (el instanceof HTMLInputElement && el.type !== 'checkbox') el.select();
-    });
-  });
-
-  function submit() {
-    if (!entry) return;
-    dialogs.close(entry.id, fields.length ? [...values] : true);
+/** @param {KeyboardEvent} e */
+function onKeydown(e: KeyboardEvent) {
+  if (!entry) return;
+  if (e.key === 'Escape') {
+    e.stopPropagation();
+    cancel();
+    return;
   }
-  function cancel() {
-    if (!entry) return;
-    dialogs.close(entry.id, null);
-  }
-
-  /** @param {KeyboardEvent} e */
-  function onKeydown(e: KeyboardEvent) {
-    if (!entry) return;
-    if (e.key === 'Escape') { e.stopPropagation(); cancel(); return; }
-    if (e.key !== 'Enter') return;
-    if (fields.some((f) => f.type === 'select')) return;
-    if (e.target instanceof HTMLTextAreaElement) return;
-    e.preventDefault();
-    submit();
-  }
+  if (e.key !== 'Enter') return;
+  if (fields.some((f) => f.type === 'select')) return;
+  if (e.target instanceof HTMLTextAreaElement) return;
+  e.preventDefault();
+  submit();
+}
 </script>
 
 {#if entry && spec}

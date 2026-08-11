@@ -1,89 +1,90 @@
 <script lang="ts">
-  /*
-   * The ⌘K command palette: fuzzy-ish filter over every session, then the commands that
-   * apply to the current selection.
-   *
-   * The ⌘1–9 hints come from the rail's display order, not from the session array, so
-   * "⌘3" in the palette and the third card in the rail are always the same session.
-   */
-  import Modal from '$lib/components/Modal.svelte';
-  import { ui } from '$lib/stores/ui.svelte.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { overlays } from '$lib/stores/overlays.svelte.js';
-  import { showShortcuts } from '$lib/shortcuts.svelte.js';
-  import { activateSession, deactivateSession, promote, runStack } from '$lib/ops.svelte.js';
+/*
+ * The ⌘K command palette: fuzzy-ish filter over every session, then the commands that
+ * apply to the current selection.
+ *
+ * The ⌘1–9 hints come from the rail's display order, not from the session array, so
+ * "⌘3" in the palette and the third card in the rail are always the same session.
+ */
+import Modal from '$lib/components/Modal.svelte';
+import { ui } from '$lib/stores/ui.svelte.js';
+import { world } from '$lib/stores/world.svelte.js';
+import { overlays } from '$lib/stores/overlays.svelte.js';
+import { showShortcuts } from '$lib/shortcuts.svelte.js';
+import { activateSession, deactivateSession, promote, runStack } from '$lib/ops.svelte.js';
 
-  let query = $state('');
-  let hi = $state(0);
-  let input = $state<HTMLInputElement|null>(null);
-  let listEl = $state<HTMLElement|null>(null);
+let query = $state('');
+let hi = $state(0);
+let input = $state<HTMLInputElement | null>(null);
+let listEl = $state<HTMLElement | null>(null);
 
-  const q = $derived(query.trim().toLowerCase());
+const q = $derived(query.trim().toLowerCase());
 
-  /*
-   * Everything the rail can select, not just what has a session.
-   *
-   * This listed `world.sessions`, so a feature with no agent — the case the rail was
-   * re-keyed around making visible — was absent: you could SEE it on the left, ⌥N could
-   * select it, and typing its name into ⌘K answered "No matches". Two ways to switch
-   * with different reachable sets means you learn to trust neither. Sourcing from
-   * railRows makes the palette's set the rail's set by construction.
-   */
-  const sessionRows = $derived(
-    ui.railRows
-      // Reviews are listed separately below: they have no session, no state and no repo
-      // count, so every field this map reads would have to be faked for them.
-      .filter((r) => r.kind !== 'mainserver' && r.kind !== 'review')
-      .map((r) => {
-        const sess = r.kind === 'session' ? r.session : r.feature.session;
-        const state = sess?.state || 'idle';
-        const repo = r.kind === 'session' ? r.session.repoName : `${r.feature.members.length} repo(s)`;
-        const digit = ui.railDigits.get(r.key);
-        return {
-          key: r.key,
-          hay: `${r.name} ${repo} ${state}`.toLowerCase(),
-          glyph: r.kind === 'feature' ? '⌗' : r.session.worktreePath ? '⎇' : '✦',
-          dot: state,
-          title: r.kind === 'session' ? r.session.title : r.name,
-          // ⌥, not ⌘: shortcuts.svelte.ts binds altKey + Digit1-9 (⌘-digit belongs to the
-          // browser's tab switcher). The palette advertised a key that did nothing.
-          sub: `${repo} · ${state}${digit ? ` · ⌥${digit}` : ''}`,
-          run: () => {
-            overlays.closePalette();
-            if (r.kind === 'session') ui.goToSession(r.session.id);
-            else ui.selectFeature(r.feature);
-          },
-        };
-      })
-      .filter((row) => !q || row.hay.includes(q)),
-  );
+/*
+ * Everything the rail can select, not just what has a session.
+ *
+ * This listed `world.sessions`, so a feature with no agent — the case the rail was
+ * re-keyed around making visible — was absent: you could SEE it on the left, ⌥N could
+ * select it, and typing its name into ⌘K answered "No matches". Two ways to switch
+ * with different reachable sets means you learn to trust neither. Sourcing from
+ * railRows makes the palette's set the rail's set by construction.
+ */
+const sessionRows = $derived(
+  ui.railRows
+    // Reviews are listed separately below: they have no session, no state and no repo
+    // count, so every field this map reads would have to be faked for them.
+    .filter((r) => r.kind !== 'mainserver' && r.kind !== 'review')
+    .map((r) => {
+      const sess = r.kind === 'session' ? r.session : r.feature.session;
+      const state = sess?.state || 'idle';
+      const repo = r.kind === 'session' ? r.session.repoName : `${r.feature.members.length} repo(s)`;
+      const digit = ui.railDigits.get(r.key);
+      return {
+        key: r.key,
+        hay: `${r.name} ${repo} ${state}`.toLowerCase(),
+        glyph: r.kind === 'feature' ? '⌗' : r.session.worktreePath ? '⎇' : '✦',
+        dot: state,
+        title: r.kind === 'session' ? r.session.title : r.name,
+        // ⌥, not ⌘: shortcuts.svelte.ts binds altKey + Digit1-9 (⌘-digit belongs to the
+        // browser's tab switcher). The palette advertised a key that did nothing.
+        sub: `${repo} · ${state}${digit ? ` · ⌥${digit}` : ''}`,
+        run: () => {
+          overlays.closePalette();
+          if (r.kind === 'session') ui.goToSession(r.session.id);
+          else ui.selectFeature(r.feature);
+        },
+      };
+    })
+    .filter((row) => !q || row.hay.includes(q)),
+);
 
-  /** Merge requests awaiting your review — reachable by keyboard like everything else. */
-  const reviewRows = $derived(
-    ui.reviewRows
-      .filter((r) => r.kind === 'review')
-      .map((r) => {
-        const item = r.kind === 'review' ? r.review : null;
-        const digit = ui.railDigits.get(r.key);
-        return {
-          key: r.key,
-          hay: `${r.name} ${item?.repo ?? ''} ${item?.author ?? ''} review`.toLowerCase(),
-          glyph: '◇',
-          dot: 'idle',
-          title: r.name,
-          sub: `${item?.repo ?? ''} · !${item?.number ?? ''}${item?.draft ? ' · draft' : ''}${digit ? ` · ⌥${digit}` : ''}`,
-          run: () => {
-            overlays.closePalette();
-            if (item) ui.selectReview(item);
-          },
-        };
-      })
-      .filter((row) => !q || row.hay.includes(q)),
-  );
+/** Merge requests awaiting your review — reachable by keyboard like everything else. */
+const reviewRows = $derived(
+  ui.reviewRows
+    .filter((r) => r.kind === 'review')
+    .map((r) => {
+      const item = r.kind === 'review' ? r.review : null;
+      const digit = ui.railDigits.get(r.key);
+      return {
+        key: r.key,
+        hay: `${r.name} ${item?.repo ?? ''} ${item?.author ?? ''} review`.toLowerCase(),
+        glyph: '◇',
+        dot: 'idle',
+        title: r.name,
+        sub: `${item?.repo ?? ''} · !${item?.number ?? ''}${item?.draft ? ' · draft' : ''}${digit ? ` · ⌥${digit}` : ''}`,
+        run: () => {
+          overlays.closePalette();
+          if (item) ui.selectReview(item);
+        },
+      };
+    })
+    .filter((row) => !q || row.hay.includes(q)),
+);
 
-  const commandRows = $derived((() => {
+const commandRows = $derived(
+  (() => {
     const cur = ui.selected;
-        const cmds: {key:string, glyph:string, title:string, sub:string, run:()=>void}[] = [];
+    const cmds: { key: string; glyph: string; title: string; sub: string; run: () => void }[] = [];
     const add = (glyph: string, title: string, sub: string, run: () => void) =>
       cmds.push({ key: `c:${title}`, glyph, title, sub, run });
 
@@ -93,7 +94,11 @@
     // line without submitting" — so advertising it here promised a key that does nothing
     // in the palette and something else entirely everywhere it does work.
     if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '', () => promote(cur));
-    if (cur && cur.worktreePath) add('✎', 'Review changes', '⌘D', () => { ui.goToSession(cur.id); ui.dockView = 'changes'; });
+    if (cur && cur.worktreePath)
+      add('✎', 'Review changes', '⌘D', () => {
+        ui.goToSession(cur.id);
+        ui.dockView = 'changes';
+      });
     // Opens the one Insights view already drilled into this session.
     if (cur) add('◔', 'Session insights', '', () => ui.openInsights(cur.id));
     // Was labelled 'Run stack' while calling startSessionServers — the other verb.
@@ -108,35 +113,50 @@
 
     return cmds
       .filter((c) => !q || c.title.toLowerCase().includes(q))
-      .map((c) => ({ ...c, dot: '', run: () => { overlays.closePalette(); c.run(); } }));
-  })());
+      .map((c) => ({
+        ...c,
+        dot: '',
+        run: () => {
+          overlays.closePalette();
+          c.run();
+        },
+      }));
+  })(),
+);
 
-  const rows = $derived([...sessionRows, ...reviewRows, ...commandRows]);
+const rows = $derived([...sessionRows, ...reviewRows, ...commandRows]);
 
-  // Any change to the result set puts the highlight back on the first row, so typing
-  // never leaves it pointing at a row that scrolled out from under it.
-  $effect(() => {
-    void rows.length;
-    hi = 0;
-  });
+// Any change to the result set puts the highlight back on the first row, so typing
+// never leaves it pointing at a row that scrolled out from under it.
+$effect(() => {
+  void rows.length;
+  hi = 0;
+});
 
-  $effect(() => {
-    queueMicrotask(() => input?.focus());
-  });
+$effect(() => {
+  queueMicrotask(() => input?.focus());
+});
 
-  /** @param {number} d */
-  function move(d: number) {
-    if (!rows.length) return;
-    hi = (hi + d + rows.length) % rows.length;
-    listEl?.querySelectorAll<HTMLElement>('.pcmd')[hi]?.scrollIntoView({ block: 'nearest' });
+/** @param {number} d */
+function move(d: number) {
+  if (!rows.length) return;
+  hi = (hi + d + rows.length) % rows.length;
+  listEl?.querySelectorAll<HTMLElement>('.pcmd')[hi]?.scrollIntoView({ block: 'nearest' });
+}
+
+/** @param {KeyboardEvent} e */
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    move(1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    move(-1);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    rows[hi]?.run();
   }
-
-  /** @param {KeyboardEvent} e */
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
-    else if (e.key === 'Enter') { e.preventDefault(); rows[hi]?.run(); }
-  }
+}
 </script>
 
 <Modal backdropClass="top" panelClass="palette" label="Command palette" onclose={() => overlays.closePalette()}>

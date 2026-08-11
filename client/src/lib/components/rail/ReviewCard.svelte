@@ -1,39 +1,40 @@
 <script lang="ts">
-  /*
-   * A merge request waiting on YOU.
-   *
-   * SAME GRAMMAR AS A FEATURE CARD — a mark, a name, then a line of facts — because the
-   * rail is one list and a row that invents its own layout reads as a different app. What
-   * differs is the mark and the colour: a diamond rather than a state dot, and the "done"
-   * hue rather than the feature's own, because the one thing you must not confuse is
-   * whose work this is.
-   *
-   * A review has no agent, no dev server and no worktree, so there is no state to show —
-   * only who wrote it, how old it is, and whether it is a draft.
-   */
-  import type { ReviewItem } from '../../../../../server/types';
-  import { ui } from '$lib/stores/ui.svelte.js';
+/*
+ * A merge request waiting on YOU.
+ *
+ * SAME GRAMMAR AS A FEATURE CARD — a mark, a name, then a line of facts — because the
+ * rail is one list and a row that invents its own layout reads as a different app. What
+ * differs is the mark and the colour: a diamond rather than a state dot, and the "done"
+ * hue rather than the feature's own, because the one thing you must not confuse is
+ * whose work this is.
+ *
+ * A review has no agent, no dev server and no worktree, so there is no state to show —
+ * only who wrote it, how old it is, and whether it is a draft.
+ */
+import type { ReviewItem } from '../../../../../server/types';
+import { ui } from '$lib/stores/ui.svelte.js';
 
-  let { review }: { review: ReviewItem } = $props();
+let { review }: { review: ReviewItem } = $props();
 
-  const selected = $derived(ui.selection?.kind === 'review'
-    && ui.selection.id === `${review.repo}!${review.number}`);
+const selected = $derived(
+  ui.selection?.kind === 'review' && ui.selection.id === `${review.repo}!${review.number}`,
+);
 
-  /**
-   * Age, in the coarsest unit that is still true.
-   *
-   * A review's age is the whole argument for looking at it, and "5d" says that where a
-   * timestamp does not. Hours below a day, because a morning's MR and last week's are
-   * different asks.
-   */
-  const age = $derived.by(() => {
-    const t = Date.parse(review.updatedAt || '');
-    if (!Number.isFinite(t)) return '';
-    const h = Math.floor((Date.now() - t) / 3_600_000);
-    if (h < 1) return 'just now';
-    if (h < 24) return `${h}h`;
-    return `${Math.floor(h / 24)}d`;
-  });
+/**
+ * Age, in the coarsest unit that is still true.
+ *
+ * A review's age is the whole argument for looking at it, and "5d" says that where a
+ * timestamp does not. Hours below a day, because a morning's MR and last week's are
+ * different asks.
+ */
+const age = $derived.by(() => {
+  const t = Date.parse(review.updatedAt || '');
+  if (!Number.isFinite(t)) return '';
+  const h = Math.floor((Date.now() - t) / 3_600_000);
+  if (h < 1) return 'just now';
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+});
 </script>
 
 <div class="rcard" class:sel={selected} class:draft={review.draft} role="listitem">

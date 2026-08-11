@@ -1,80 +1,102 @@
 <script lang="ts">
-  // Volume vs. billed weight, for one usage record.
-  //
-  // ── why this exists ──────────────────────────────────────────────────────────
-  // The naive chart here is a bar per token class. On real data that chart is one
-  // enormous cache-read bar and three invisible stubs, and every reader takes away
-  // "cache reads are where the money goes". They are not. Cache reads bill at a TENTH
-  // of the input rate while 1-hour cache writes bill at DOUBLE it, so a class's share
-  // of the tokens and its share of the bill differ by up to twentyfold.
-  //
-  // So the chart shows both, on the same 0-100% axis, as two stacked bars of the same
-  // three classes: the boundaries move between the bars, and that movement IS the
-  // point. Both quantities are shares of their own total, so one axis is honest — this
-  // is not a dual scale.
-  //
-  // What "billed weight" is: each class restated in input-rate-equivalent tokens
-  // (x1, x1.25, x2, x0.1). See format.js — it is exactly proportional to the dollars
-  // each class contributed, for every model, without the client knowing any rate.
-  //
-  // Output is deliberately absent from both bars. It bills on a separate output rate
-  // whose ratio to the input rate is a per-model price, not a structural multiplier, so
-  // there is no honest way to put it on this scale. It is reported underneath instead.
-  import './viz.css';
-  import {
-    compactTokens, exactTokens, pct, share, usd,
-    volumeByClass, weightByClass, writeMultiplier,
-  } from './format.js';
-  import { billingMultipliers } from './pricing.svelte.js';
+// Volume vs. billed weight, for one usage record.
+//
+// ── why this exists ──────────────────────────────────────────────────────────
+// The naive chart here is a bar per token class. On real data that chart is one
+// enormous cache-read bar and three invisible stubs, and every reader takes away
+// "cache reads are where the money goes". They are not. Cache reads bill at a TENTH
+// of the input rate while 1-hour cache writes bill at DOUBLE it, so a class's share
+// of the tokens and its share of the bill differ by up to twentyfold.
+//
+// So the chart shows both, on the same 0-100% axis, as two stacked bars of the same
+// three classes: the boundaries move between the bars, and that movement IS the
+// point. Both quantities are shares of their own total, so one axis is honest — this
+// is not a dual scale.
+//
+// What "billed weight" is: each class restated in input-rate-equivalent tokens
+// (x1, x1.25, x2, x0.1). See format.js — it is exactly proportional to the dollars
+// each class contributed, for every model, without the client knowing any rate.
+//
+// Output is deliberately absent from both bars. It bills on a separate output rate
+// whose ratio to the input rate is a per-model price, not a structural multiplier, so
+// there is no honest way to put it on this scale. It is reported underneath instead.
+import './viz.css';
+import {
+  compactTokens,
+  exactTokens,
+  pct,
+  share,
+  usd,
+  volumeByClass,
+  weightByClass,
+  writeMultiplier,
+} from './format.js';
+import { billingMultipliers } from './pricing.svelte.js';
 
-    let { usage = null, dense = false }: { usage: import('./types.js').Usage|null, dense?: boolean } = $props();
+let { usage = null, dense = false }: { usage: import('./types.js').Usage | null; dense?: boolean } = $props();
 
-  const vol = $derived(volumeByClass(usage));
-  const wt = $derived(weightByClass(usage));
-  const volTotal = $derived(vol.input + vol.cacheWrite + vol.cacheRead);
-  const wtTotal = $derived(wt.input + wt.cacheWrite + wt.cacheRead);
-  const writeMult = $derived(writeMultiplier(usage));
-  const output = $derived(usage?.output || 0);
+const vol = $derived(volumeByClass(usage));
+const wt = $derived(weightByClass(usage));
+const volTotal = $derived(vol.input + vol.cacheWrite + vol.cacheRead);
+const wtTotal = $derived(wt.input + wt.cacheWrite + wt.cacheRead);
+const writeMult = $derived(writeMultiplier(usage));
+const output = $derived(usage?.output || 0);
 
-  // Written out rather than mapped over a key list: the slot each class gets is a fixed
-  // assignment by ENTITY (blue=input, orange=cache write, aqua=cache read) and must
-  // never be derived from position, rank or a loop index.
-  const rows = $derived([
-    {
-      key: 'input', label: 'Input', slot: 's1', mult: billingMultipliers.input,
-      tokens: vol.input, weight: wt.input,
-      volShare: share(vol.input, volTotal), wtShare: share(wt.input, wtTotal),
-    },
-    {
-      key: 'cacheWrite', label: 'Cache write', slot: 's2', mult: writeMult,
-      tokens: vol.cacheWrite, weight: wt.cacheWrite,
-      volShare: share(vol.cacheWrite, volTotal), wtShare: share(wt.cacheWrite, wtTotal),
-    },
-    {
-      key: 'cacheRead', label: 'Cache read', slot: 's3', mult: billingMultipliers.cacheRead,
-      tokens: vol.cacheRead, weight: wt.cacheRead,
-      volShare: share(vol.cacheRead, volTotal), wtShare: share(wt.cacheRead, wtTotal),
-    },
-  ]);
+// Written out rather than mapped over a key list: the slot each class gets is a fixed
+// assignment by ENTITY (blue=input, orange=cache write, aqua=cache read) and must
+// never be derived from position, rank or a loop index.
+const rows = $derived([
+  {
+    key: 'input',
+    label: 'Input',
+    slot: 's1',
+    mult: billingMultipliers.input,
+    tokens: vol.input,
+    weight: wt.input,
+    volShare: share(vol.input, volTotal),
+    wtShare: share(wt.input, wtTotal),
+  },
+  {
+    key: 'cacheWrite',
+    label: 'Cache write',
+    slot: 's2',
+    mult: writeMult,
+    tokens: vol.cacheWrite,
+    weight: wt.cacheWrite,
+    volShare: share(vol.cacheWrite, volTotal),
+    wtShare: share(wt.cacheWrite, wtTotal),
+  },
+  {
+    key: 'cacheRead',
+    label: 'Cache read',
+    slot: 's3',
+    mult: billingMultipliers.cacheRead,
+    tokens: vol.cacheRead,
+    weight: wt.cacheRead,
+    volShare: share(vol.cacheRead, volTotal),
+    wtShare: share(wt.cacheRead, wtTotal),
+  },
+]);
 
-  // The largest gap between a class's two shares — the sentence the chart is making,
-  // stated in words so it doesn't depend on the reader decoding the bars.
-  const headline = $derived.by(() => {
-    if (!volTotal || !wtTotal) return null;
-    let best = null;
-    for (const r of rows) {
-      const delta = r.wtShare - r.volShare;
-      if (!best || Math.abs(delta) > Math.abs(best.delta)) best = { ...r, delta };
-    }
-    return best && Math.abs(best.delta) >= 5 ? best : null;
-  });
+// The largest gap between a class's two shares — the sentence the chart is making,
+// stated in words so it doesn't depend on the reader decoding the bars.
+const headline = $derived.by(() => {
+  if (!volTotal || !wtTotal) return null;
+  let best = null;
+  for (const r of rows) {
+    const delta = r.wtShare - r.volShare;
+    if (!best || Math.abs(delta) > Math.abs(best.delta)) best = { ...r, delta };
+  }
+  return best && Math.abs(best.delta) >= 5 ? best : null;
+});
 
-  // A nonzero class must not render as nothing — 0.02% is 0.2px on a 1000px bar. The
-  // floor is visual only; every exact figure is in the table below, which is also the
-  // relief the light-mode palette WARN requires.
-  const MIN_SEG = 3;
-  /** @param {number} v @param {number} total */
-  const segStyle = (v: number, total: number) => (v > 0 ? `flex: 1 1 ${share(v, total)}%; min-width: ${MIN_SEG}px;` : 'display:none;');
+// A nonzero class must not render as nothing — 0.02% is 0.2px on a 1000px bar. The
+// floor is visual only; every exact figure is in the table below, which is also the
+// relief the light-mode palette WARN requires.
+const MIN_SEG = 3;
+/** @param {number} v @param {number} total */
+const segStyle = (v: number, total: number) =>
+  v > 0 ? `flex: 1 1 ${share(v, total)}%; min-width: ${MIN_SEG}px;` : 'display:none;';
 </script>
 
 {#if !volTotal}

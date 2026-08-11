@@ -1,35 +1,33 @@
 <script lang="ts">
-  import type { Session } from '../../../../../server/types';
-  /*
-   * One UNPROMOTED session in the rail — an agent with no worktree, and therefore no
-   * feature to sit under. Promoted sessions are drawn by FeatureCard instead, since the
-   * rail is keyed on features now.
-   *
-   * Like FeatureCard, this is a fixed-height readout with no buttons: Promote, Resume and
-   * Delete all live in the bottom ActionBar. Hover-revealed actions used to grow the card
-   * and reflow the rows below it, which made the list move under the pointer.
-   *
-   * The whole point of the port lives here: this card is rendered once per session and
-   * then *updated in place* as frames arrive. app.js rebuilt the entire rail with
-   * `rail.innerHTML = ''` on every SSE tick — i.e. several times a second while a
-   * session is working — which destroyed focus, scroll position and any open menu.
-   */
-  import { ui, labelForSource } from '$lib/stores/ui.svelte.js';
-  import { world } from '$lib/stores/world.svelte.js';
+import type { Session } from '../../../../../server/types';
+/*
+ * One UNPROMOTED session in the rail — an agent with no worktree, and therefore no
+ * feature to sit under. Promoted sessions are drawn by FeatureCard instead, since the
+ * rail is keyed on features now.
+ *
+ * Like FeatureCard, this is a fixed-height readout with no buttons: Promote, Resume and
+ * Delete all live in the bottom ActionBar. Hover-revealed actions used to grow the card
+ * and reflow the rows below it, which made the list move under the pointer.
+ *
+ * The whole point of the port lives here: this card is rendered once per session and
+ * then *updated in place* as frames arrive. app.js rebuilt the entire rail with
+ * `rail.innerHTML = ''` on every SSE tick — i.e. several times a second while a
+ * session is working — which destroyed focus, scroll position and any open menu.
+ */
+import { ui, labelForSource } from '$lib/stores/ui.svelte.js';
+import { world } from '$lib/stores/world.svelte.js';
 
-  let { session }: { session: Session } = $props();
+let { session }: { session: Session } = $props();
 
-  /** The ⌥ digit that selects this row — see ui.railDigits for why it is shown. */
-  const digit = $derived(ui.railDigits.get(`s:${session.id}`));
+/** The ⌥ digit that selects this row — see ui.railDigits for why it is shown. */
+const digit = $derived(ui.railDigits.get(`s:${session.id}`));
 
-  const stopped = $derived(session.state === 'stopped');
-  const srv = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
-  const running = $derived(srv.filter((r) => r.running));
-  const ports = $derived(running.flatMap((r) => r.ports || []));
-  const selected = $derived(ui.selectedId === session.id);
-  const reps = $derived(
-    session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }],
-  );
+const stopped = $derived(session.state === 'stopped');
+const srv = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
+const running = $derived(srv.filter((r) => r.running));
+const ports = $derived(running.flatMap((r) => r.ports || []));
+const selected = $derived(ui.selectedId === session.id);
+const reps = $derived(session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }]);
 </script>
 
 <div class="scard" class:sel={selected} class:running={running.length > 0} class:stoppedrow={stopped} role="listitem">

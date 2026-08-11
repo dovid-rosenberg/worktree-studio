@@ -1,22 +1,22 @@
 <script lang="ts">
-  import type { Worktree } from '../../../../../server/types';
-  /*
-   * A dev server running from a repo's MAIN checkout. Not a worktree, so not a feature,
-   * so it appears in no other list — this row exists so it is not a mystery port.
-   *
-   * The `repo:port` label is deliberate and matches Fleet's server sections: with several
-   * of these up, a bare `:5271` does not say whose it is.
-   *
-   * It used to carry Open ↗ and Stop — the ONLY buttons in the rail, an exception to the
-   * rule stated in Rail.svelte, and it existed only because this row could not be
-   * selected so the ActionBar had nothing to act on. It is a selection now and the verbs
-   * are at the bottom with every other verb.
-   */
-  import { ui } from '$lib/stores/ui.svelte.js';
+import type { Worktree } from '../../../../../server/types';
+/*
+ * A dev server running from a repo's MAIN checkout. Not a worktree, so not a feature,
+ * so it appears in no other list — this row exists so it is not a mystery port.
+ *
+ * The `repo:port` label is deliberate and matches Fleet's server sections: with several
+ * of these up, a bare `:5271` does not say whose it is.
+ *
+ * It used to carry Open ↗ and Stop — the ONLY buttons in the rail, an exception to the
+ * rule stated in Rail.svelte, and it existed only because this row could not be
+ * selected so the ActionBar had nothing to act on. It is a selection now and the verbs
+ * are at the bottom with every other verb.
+ */
+import { ui } from '$lib/stores/ui.svelte.js';
 
-  let { worktree }: { worktree: Worktree } = $props();
+let { worktree }: { worktree: Worktree } = $props();
 
-  const selected = $derived(ui.selection?.kind === 'mainserver' && ui.selection.path === worktree.path);
+const selected = $derived(ui.selection?.kind === 'mainserver' && ui.selection.path === worktree.path);
 </script>
 
 <div class="mcard" role="listitem" class:on={selected}>

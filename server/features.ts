@@ -162,7 +162,10 @@ function attachableWorktrees(
  * @param defaultBranches branch names that prove nothing — every worktree sits on one at
  *   some point, and grouping on them would propose merging a whole repo into one feature.
  */
-function detectSplitFeatures(features: ComputedFeature[], defaultBranches: Set<string> = new Set()): SplitFeature[] {
+function detectSplitFeatures(
+  features: ComputedFeature[],
+  defaultBranches: Set<string> = new Set(),
+): SplitFeature[] {
   const byBranch = new Map<string, Array<{ feature: string; member: Worktree }>>();
   for (const f of features) {
     // A manual group is the user having already answered this; proposing it back to them

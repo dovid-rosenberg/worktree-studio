@@ -38,7 +38,11 @@ export interface AdoptReport {
 export interface AdopterDeps {
   cfg: PartialDeep<Config> | null | undefined;
   /** Injectable for tests; defaults to the real copy step. */
-  backfill?: (repoPath: string, dest: string, opts: Partial<worktreeMod.WorktreeCopyOpts>) => Promise<CopyCounts>;
+  backfill?: (
+    repoPath: string,
+    dest: string,
+    opts: Partial<worktreeMod.WorktreeCopyOpts>,
+  ) => Promise<CopyCounts>;
 }
 
 /**

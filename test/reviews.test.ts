@@ -49,12 +49,20 @@ test('puts drafts last and the freshest first', async () => {
     ],
   });
   await feed.refresh([repo('r')]);
-  assert.deepEqual(feed.snapshot().map((i) => i.number), [3, 2, 1]);
+  assert.deepEqual(
+    feed.snapshot().map((i) => i.number),
+    [3, 2, 1],
+  );
 });
 
 test('does not ask again while the answer is fresh', async () => {
   let calls = 0;
-  const feed = createReviewFeed({ list: async () => { calls += 1; return [item()]; } });
+  const feed = createReviewFeed({
+    list: async () => {
+      calls += 1;
+      return [item()];
+    },
+  });
   await feed.refresh([repo('r')]);
   await feed.refresh([repo('r')]);
   assert.equal(calls, 1, 'a subprocess per repo is not free');
@@ -69,7 +77,10 @@ test('remembers a failure, so an outage is not hammered', async () => {
   let calls = 0;
   let now = 1_000_000;
   const feed = createReviewFeed({
-    list: async () => { calls += 1; throw new Error('glab: 401'); },
+    list: async () => {
+      calls += 1;
+      throw new Error('glab: 401');
+    },
     now: () => now,
   });
   await feed.refresh([repo('r')]);
@@ -90,7 +101,13 @@ test('treats "no CLI could answer" as a failure, not as an empty queue', async (
   // the truth. Collapsing them would retry a quiet repo forever, or never retry a broken one.
   let calls = 0;
   let now = 1_000_000;
-  const feed = createReviewFeed({ list: async () => { calls += 1; return null; }, now: () => now });
+  const feed = createReviewFeed({
+    list: async () => {
+      calls += 1;
+      return null;
+    },
+    now: () => now,
+  });
   await feed.refresh([repo('r')]);
   now += 6 * 60 * 1000;
   await feed.refresh([repo('r')]);

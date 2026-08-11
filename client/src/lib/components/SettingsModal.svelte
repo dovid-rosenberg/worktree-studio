@@ -1,336 +1,356 @@
 <script lang="ts">
-  /*
-   * Connections & settings. Reads GET /api/settings on open and writes the whole form
-   * back with POST /api/settings on save.
-   *
-   * Note the server treats `start`, `editors` and `groups` as FULL REPLACEMENTS: a row
-   * deleted here is deleted on disk. Rows without the fields that make them meaningful
-   * are dropped by the server, and dropped here too so the two agree about what was
-   * saved.
-   */
-  import Modal from '$lib/components/Modal.svelte';
-  import DirPicker from '$lib/components/DirPicker.svelte';
-  import { api } from '$lib/api.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { uiConfirm } from '$lib/stores/dialog.svelte.js';
-  import { overlays } from '$lib/stores/overlays.svelte.js';
-  import { toast } from '$lib/stores/toasts.svelte.js';
-  import { notify } from '$lib/stores/notify.svelte.js';
-  import { moveItem, reorderable } from '$lib/actions/reorderable.js';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * Connections & settings. Reads GET /api/settings on open and writes the whole form
+ * back with POST /api/settings on save.
+ *
+ * Note the server treats `start`, `editors` and `groups` as FULL REPLACEMENTS: a row
+ * deleted here is deleted on disk. Rows without the fields that make them meaningful
+ * are dropped by the server, and dropped here too so the two agree about what was
+ * saved.
+ */
+import Modal from '$lib/components/Modal.svelte';
+import DirPicker from '$lib/components/DirPicker.svelte';
+import { api } from '$lib/api.js';
+import { world } from '$lib/stores/world.svelte.js';
+import { uiConfirm } from '$lib/stores/dialog.svelte.js';
+import { overlays } from '$lib/stores/overlays.svelte.js';
+import { toast } from '$lib/stores/toasts.svelte.js';
+import { notify } from '$lib/stores/notify.svelte.js';
+import { moveItem, reorderable } from '$lib/actions/reorderable.js';
+import { errMessage } from '$lib/errmsg.js';
 
-  let loaded = $state(false);
-  let saving = $state(false);
-  let error = $state('');
+let loaded = $state(false);
+let saving = $state(false);
+let error = $state('');
 
-  /*
-   * Repo roots as ROWS, not a textarea.
-   *
-   * A textarea makes the list look like prose: no add/remove affordance, no per-entry
-   * validation, no way to reorder — and order matters, because the roots are scanned in
-   * order. Every other list in this modal is rows; this one was the odd one out.
-   */
-  let rootRows: {key:number, path:string}[] = $state([]);
-  /*
-   * Which root row has the folder picker open, by row KEY not index.
-   *
-   * The rows are draggable and removable, so an index identifies a different row a moment
-   * later — the same reason every row here is keyed by `key` in its `{#each}`.
-   */
-  let picking = $state<number | null>(null);
-  const pickingRow = $derived(picking === null ? null : rootRows.find((r) => r.key === picking) || null);
-  /**
-   * Hand-written run configurations, per repo.
-   *
-   * The MANUAL half. Studio discovers your editor's configs live from each worktree, so
-   * these are only for what no editor config expresses — and they were hand-edit-only,
-   * needing a JSON edit and a daemon restart.
-   */
-  let runRows: {key:number, repo:string, name:string, cmd:string, kind:string}[] = $state([]);
-  /** Which editor "Open in editor" uses. The server has always accepted it; nothing sent it. */
-  let defaultEditor = $state('');
-  let tools = $state({ gh: false, glab: false });
-  let githubAuthed = $state(false);
-  let gl = $state({ enabled: false, host: 'https://gitlab.com', project: '', token: '' });
-  let as = $state({ enabled: false, token: '', workspace: '' });
-  let nt = $state({ waiting: true, sound: true, idle: false });
+/*
+ * Repo roots as ROWS, not a textarea.
+ *
+ * A textarea makes the list look like prose: no add/remove affordance, no per-entry
+ * validation, no way to reorder — and order matters, because the roots are scanned in
+ * order. Every other list in this modal is rows; this one was the odd one out.
+ */
+let rootRows: { key: number; path: string }[] = $state([]);
+/*
+ * Which root row has the folder picker open, by row KEY not index.
+ *
+ * The rows are draggable and removable, so an index identifies a different row a moment
+ * later — the same reason every row here is keyed by `key` in its `{#each}`.
+ */
+let picking = $state<number | null>(null);
+const pickingRow = $derived(picking === null ? null : rootRows.find((r) => r.key === picking) || null);
+/**
+ * Hand-written run configurations, per repo.
+ *
+ * The MANUAL half. Studio discovers your editor's configs live from each worktree, so
+ * these are only for what no editor config expresses — and they were hand-edit-only,
+ * needing a JSON edit and a daemon restart.
+ */
+let runRows: { key: number; repo: string; name: string; cmd: string; kind: string }[] = $state([]);
+/** Which editor "Open in editor" uses. The server has always accepted it; nothing sent it. */
+let defaultEditor = $state('');
+let tools = $state({ gh: false, glab: false });
+let githubAuthed = $state(false);
+let gl = $state({ enabled: false, host: 'https://gitlab.com', project: '', token: '' });
+let as = $state({ enabled: false, token: '', workspace: '' });
+let nt = $state({ waiting: true, sound: true, idle: false });
 
-  // Editable row lists. Each row carries a stable `key` so `{#each}` can be keyed —
-  // otherwise deleting row 2 of 4 re-seeds the inputs of rows 3 and 4 with each other's
-  // values, which is exactly the class of bug this port exists to remove.
-  let rowKey = 0;
+// Editable row lists. Each row carries a stable `key` so `{#each}` can be keyed —
+// otherwise deleting row 2 of 4 re-seeds the inputs of rows 3 and 4 with each other's
+// values, which is exactly the class of bug this port exists to remove.
+let rowKey = 0;
 
-  /*
-   * DIRTY TRACKING, because closing this form throws the whole thing away.
-   *
-   * It is a large multi-section form — repo roots, dev-server commands, editor commands,
-   * run configurations, feature groups, three API tokens — held entirely in local state
-   * and written only by save(). Escape, or a stray click on the backdrop, called
-   * closeSettings() unconditionally: minutes of typing gone, with no warning and nothing
-   * to undo it with.
-   *
-   * Serialising is enough here and cheaper than tracking each field: the form is small,
-   * this runs on close and on nothing else, and `key` is excluded because it is a
-   * rendering id that changes when rows are added — not an edit the user made.
-   */
-  let pristine = '';
+/*
+ * DIRTY TRACKING, because closing this form throws the whole thing away.
+ *
+ * It is a large multi-section form — repo roots, dev-server commands, editor commands,
+ * run configurations, feature groups, three API tokens — held entirely in local state
+ * and written only by save(). Escape, or a stray click on the backdrop, called
+ * closeSettings() unconditionally: minutes of typing gone, with no warning and nothing
+ * to undo it with.
+ *
+ * Serialising is enough here and cheaper than tracking each field: the form is small,
+ * this runs on close and on nothing else, and `key` is excluded because it is a
+ * rendering id that changes when rows are added — not an edit the user made.
+ */
+let pristine = '';
 
-  /**
-   * The five panels, and which of three groups each belongs to.
-   *
-   * Ordered by how often you come here for them, not alphabetically. The GROUP is what a
-   * flat tab strip could not express: repos, dev servers and editors are all about your
-   * code; the trackers and forges are somebody else's server; notifications are Studio
-   * itself.
-   */
-  const SECTIONS = [
-    { id: 'repos', label: 'Repos & groups', glyph: '◧', group: 'code' },
-    { id: 'servers', label: 'Dev servers', glyph: '▶', group: 'code' },
-    { id: 'editors', label: 'Editors', glyph: '↗', group: 'code' },
-    { id: 'conn', label: 'Connections', glyph: '◎', group: 'out' },
-    { id: 'notify', label: 'Notifications', glyph: '◔', group: 'app' },
-  ] as const;
+/**
+ * The five panels, and which of three groups each belongs to.
+ *
+ * Ordered by how often you come here for them, not alphabetically. The GROUP is what a
+ * flat tab strip could not express: repos, dev servers and editors are all about your
+ * code; the trackers and forges are somebody else's server; notifications are Studio
+ * itself.
+ */
+const SECTIONS = [
+  { id: 'repos', label: 'Repos & groups', glyph: '◧', group: 'code' },
+  { id: 'servers', label: 'Dev servers', glyph: '▶', group: 'code' },
+  { id: 'editors', label: 'Editors', glyph: '↗', group: 'code' },
+  { id: 'conn', label: 'Connections', glyph: '◎', group: 'out' },
+  { id: 'notify', label: 'Notifications', glyph: '◔', group: 'app' },
+] as const;
 
-  /** Not persisted: which panel you were last on is not a preference, it is where you were. */
-  type SectionId = (typeof SECTIONS)[number]['id'];
-  const isSection = (s: string | null): s is SectionId => SECTIONS.some((x) => x.id === s);
-  /*
-   * A caller may name the panel it needs — "Asana is not connected" opens Connections
-   * rather than the default and a hunt. Read once, at construction: the modal is created
-   * when it opens, so this IS "on open", and making it an effect would yank the panel back
-   * under anyone who then clicked elsewhere in the sidebar.
-   */
-  let tab = $state<SectionId>(isSection(overlays.settingsSection) ? overlays.settingsSection : 'repos');
+/** Not persisted: which panel you were last on is not a preference, it is where you were. */
+type SectionId = (typeof SECTIONS)[number]['id'];
+const isSection = (s: string | null): s is SectionId => SECTIONS.some((x) => x.id === s);
+/*
+ * A caller may name the panel it needs — "Asana is not connected" opens Connections
+ * rather than the default and a hunt. Read once, at construction: the modal is created
+ * when it opens, so this IS "on open", and making it an effect would yank the panel back
+ * under anyone who then clicked elsewhere in the sidebar.
+ */
+let tab = $state<SectionId>(isSection(overlays.settingsSection) ? overlays.settingsSection : 'repos');
 
-  /*
-   * Connecting Asana: prove the token, learn who it belongs to, pick a workspace.
-   *
-   * Checked on a button press rather than on every keystroke — it is a network call
-   * against a value still being typed, and a 401 per character is noise. Pressing Connect
-   * is the signal that the token is complete.
-   */
-  let asanaWorkspaces = $state<Array<{ gid: string; name: string; tasks: number }>>([]);
-  let asanaWho = $state('');
-  let asanaLoading = $state(false);
-  let asanaError = $state('');
+/*
+ * Connecting Asana: prove the token, learn who it belongs to, pick a workspace.
+ *
+ * Checked on a button press rather than on every keystroke — it is a network call
+ * against a value still being typed, and a 401 per character is noise. Pressing Connect
+ * is the signal that the token is complete.
+ */
+let asanaWorkspaces = $state<Array<{ gid: string; name: string; tasks: number }>>([]);
+let asanaWho = $state('');
+let asanaLoading = $state(false);
+let asanaError = $state('');
 
-  /** The chosen workspace's NAME — a gid on screen tells a human nothing. */
-  const asanaWorkspaceName = $derived(
-    asanaWorkspaces.find((w) => w.gid === as.workspace)?.name || '',
-  );
+/** The chosen workspace's NAME — a gid on screen tells a human nothing. */
+const asanaWorkspaceName = $derived(asanaWorkspaces.find((w) => w.gid === as.workspace)?.name || '');
 
-  async function connectAsana() {
-    asanaLoading = true;
-    asanaError = '';
-    try {
-      const r = await api('POST', '/api/v1/sources/asana/verify', { token: as.token.trim() });
-      if (!r.ok) throw new Error(r.error || 'could not reach Asana');
-      asanaWho = r.name || '';
-      asanaWorkspaces = r.workspaces || [];
-      if (!asanaWorkspaces.length) {
-        asanaError = 'that token can see no workspaces';
-        return;
-      }
-      /*
-       * ENABLE IT. This is the whole fix: `enabled` used to be a separate checkbox, so a
-       * correct token and workspace could sit there inert with nothing saying so.
-       * Connecting is the statement of intent, so connecting is what turns it on.
-       *
-       * With one workspace there is nothing to choose, so it completes here; with several
-       * the picker appears and "Use this" finishes it.
-       */
-      if (asanaWorkspaces.length === 1) {
-        as.workspace = asanaWorkspaces[0].gid;
-        as.enabled = true;
-      } else {
-        /*
-         * Several workspaces: pre-select the one with your work in it (verify sorts by
-         * task count) but do NOT auto-enable — with a real choice to make, silently
-         * making it is how you end up connected to the wrong one, which is exactly what
-         * happened here. The user confirms with "Use this".
-         */
-        if (!asanaWorkspaces.some((w) => w.gid === as.workspace)) {
-          as.workspace = asanaWorkspaces[0].gid;
-        }
-      }
-    } catch (e) {
-      asanaError = errMessage(e);
-      asanaWorkspaces = [];
-      asanaWho = '';
-    } finally {
-      asanaLoading = false;
+async function connectAsana() {
+  asanaLoading = true;
+  asanaError = '';
+  try {
+    const r = await api('POST', '/api/v1/sources/asana/verify', { token: as.token.trim() });
+    if (!r.ok) throw new Error(r.error || 'could not reach Asana');
+    asanaWho = r.name || '';
+    asanaWorkspaces = r.workspaces || [];
+    if (!asanaWorkspaces.length) {
+      asanaError = 'that token can see no workspaces';
+      return;
     }
-  }
-
-  function disconnectAsana() {
-    as = { enabled: false, token: '', workspace: '' };
+    /*
+     * ENABLE IT. This is the whole fix: `enabled` used to be a separate checkbox, so a
+     * correct token and workspace could sit there inert with nothing saying so.
+     * Connecting is the statement of intent, so connecting is what turns it on.
+     *
+     * With one workspace there is nothing to choose, so it completes here; with several
+     * the picker appears and "Use this" finishes it.
+     */
+    if (asanaWorkspaces.length === 1) {
+      as.workspace = asanaWorkspaces[0].gid;
+      as.enabled = true;
+    } else {
+      /*
+       * Several workspaces: pre-select the one with your work in it (verify sorts by
+       * task count) but do NOT auto-enable — with a real choice to make, silently
+       * making it is how you end up connected to the wrong one, which is exactly what
+       * happened here. The user confirms with "Use this".
+       */
+      if (!asanaWorkspaces.some((w) => w.gid === as.workspace)) {
+        as.workspace = asanaWorkspaces[0].gid;
+      }
+    }
+  } catch (e) {
+    asanaError = errMessage(e);
     asanaWorkspaces = [];
     asanaWho = '';
-    asanaError = '';
+  } finally {
+    asanaLoading = false;
   }
+}
 
-  function snapshot(): string {
-    const rows = <T extends { key: number }>(list: T[]) =>
-      list.map(({ key: _key, ...rest }) => rest);
-    return JSON.stringify({
-      roots: rows(rootRows),
-      start: rows(startRows),
-      editors: rows(editorRows),
-      runs: rows(runRows),
-      groups: rows(groupRows),
-      defaultEditor,
-      gl,
-      as,
-      nt,
+function disconnectAsana() {
+  as = { enabled: false, token: '', workspace: '' };
+  asanaWorkspaces = [];
+  asanaWho = '';
+  asanaError = '';
+}
+
+function snapshot(): string {
+  const rows = <T extends { key: number }>(list: T[]) => list.map(({ key: _key, ...rest }) => rest);
+  return JSON.stringify({
+    roots: rows(rootRows),
+    start: rows(startRows),
+    editors: rows(editorRows),
+    runs: rows(runRows),
+    groups: rows(groupRows),
+    defaultEditor,
+    gl,
+    as,
+    nt,
+  });
+}
+
+/** Close, asking first when there is unsaved work to lose. */
+async function tryClose() {
+  if (loaded && snapshot() !== pristine) {
+    const ok = await uiConfirm('Discard your unsaved changes to these settings?', {
+      title: 'Unsaved changes',
+      okLabel: 'Discard',
+      danger: true,
     });
+    if (!ok) return;
   }
+  overlays.closeSettings();
+}
+let startRows: { key: number; repo: string; cmd: string; ports: string }[] = $state([]);
+let editorRows: { key: number; name: string; open: string; openGroup: string }[] = $state([]);
+let groupRows: { key: number; name: string; members: string }[] = $state([]);
 
-  /** Close, asking first when there is unsaved work to lose. */
-  async function tryClose() {
-    if (loaded && snapshot() !== pristine) {
-      const ok = await uiConfirm('Discard your unsaved changes to these settings?', {
-        title: 'Unsaved changes',
-        okLabel: 'Discard',
-        danger: true,
-      });
-      if (!ok) return;
-    }
-    overlays.closeSettings();
-  }
-    let startRows: {key:number, repo:string, cmd:string, ports:string}[] = $state([]);
-    let editorRows: {key:number, name:string, open:string, openGroup:string}[] = $state([]);
-    let groupRows: {key:number, name:string, members:string}[] = $state([]);
-
-  $effect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const d = await api('GET', '/api/v1/settings');
-        if (!alive) return;
-        const src = d.sources || {};
-        rootRows = (d.baseDirs || []).map((path: string) => ({ key: ++rowKey, path }));
-        runRows = Object.entries(d.runConfigs || {}).flatMap(([repo, list]) =>
-          ((list || []) as { name?: string; cmd?: string; kind?: string }[]).map((c) => ({
-            key: ++rowKey, repo, name: c.name || '', cmd: c.cmd || '', kind: c.kind === 'server' ? 'server' : 'task',
-          })),
-        );
-        defaultEditor = d.defaultEditor || '';
-        tools = d.tools || { gh: false, glab: false };
-        githubAuthed = !!d.githubAuthed;
-        gl = { enabled: false, host: 'https://gitlab.com', project: '', token: '', ...(src.gitlab || {}) };
-        as = { enabled: false, token: '', workspace: '', ...(src.asana || {}) };
-        nt = { waiting: true, sound: true, idle: false, ...(d.notify || {}) };
-        notify.prefs = { ...notify.prefs, ...nt }; // keep the live prefs in step with disk
-        /*
-         * `start` has two shapes on disk: `{ cmd, ports }` and the bare string form,
-         * `"repo": "npm start"`. Reading only the first put an EMPTY command in the row,
-         * and an empty command is dropped on save — so opening this modal and pressing
-         * Save deleted every string-form entry without saying anything.
-         */
-        startRows = Object.entries(d.start || {}).map(([repo, v]) => ({
+$effect(() => {
+  let alive = true;
+  (async () => {
+    try {
+      const d = await api('GET', '/api/v1/settings');
+      if (!alive) return;
+      const src = d.sources || {};
+      rootRows = (d.baseDirs || []).map((path: string) => ({ key: ++rowKey, path }));
+      runRows = Object.entries(d.runConfigs || {}).flatMap(([repo, list]) =>
+        ((list || []) as { name?: string; cmd?: string; kind?: string }[]).map((c) => ({
           key: ++rowKey,
           repo,
-          cmd: typeof v === 'string' ? v : (v as { cmd?: string })?.cmd || '',
-          ports: (typeof v === 'string' ? [] : (v as { ports?: number[] })?.ports || []).join(' '),
-        }));
-        editorRows = Object.entries(d.editors || {}).map(([name, v]) => ({
-          key: ++rowKey,
-          name,
-          open: (v && (v as any).open) || '',
-          openGroup: (v && (v as any).openGroup) || '',
-        }));
-        groupRows = (d.groups || []).map((g: { name?: string; members?: string[] }) => ({
-          key: ++rowKey,
-          name: g.name || '',
-          members: (g.members || []).join(', '),
-        }));
-        loaded = true;
-        // The baseline for dirty tracking — taken AFTER the load, so the values the
-        // server sent are not themselves counted as edits.
-        pristine = snapshot();
-      } catch (e) {
-        if (alive) error = errMessage(e);
-      }
-    })();
-    return () => { alive = false; };
-  });
-
-  async function save() {
-    if (saving) return;
-    saving = true;
-        const start: Record<string, {cmd:string, ports:number[]}> = {};
-    for (const r of startRows) {
-      const repo = r.repo.trim();
-      const cmd = r.cmd.trim();
-      if (!repo || !cmd) continue;
-      start[repo] = {
-        cmd,
-        ports: r.ports.split(/[\s,]+/).map((x) => parseInt(x, 10)).filter((n) => Number.isInteger(n) && n > 0),
-      };
-    }
-        const editors: Record<string, {open:string, openGroup?:string}> = {};
-    for (const r of editorRows) {
-      const name = r.name.trim();
-      const open = r.open.trim();
-      if (!name || !open) continue;
-      editors[name] = r.openGroup ? { open, openGroup: r.openGroup } : { open };
-    }
-    const groups = groupRows
-      .map((r) => ({ name: r.name.trim(), members: r.members.split(',').map((s) => s.trim()).filter(Boolean) }))
-      .filter((g) => g.name && g.members.length);
-
-    notify.prefs = { ...notify.prefs, ...nt };
-    try {
-      const saved = await api('POST', '/api/v1/settings', {
-        sources: {
-          gitlab: { enabled: gl.enabled, host: gl.host.trim(), project: gl.project.trim(), token: gl.token.trim() },
-          asana: { enabled: as.enabled, token: as.token.trim(), workspace: as.workspace.trim() },
-        },
-        baseDirs: rootRows.map((r) => r.path.trim()).filter(Boolean),
-        // Grouped back into { repo: [config] }, which is the shape on disk. A row missing
-        // the fields that make it runnable is dropped, exactly as the server would.
-        runConfigs: runRows.reduce<Record<string, { name: string; cmd: string; kind: string }[]>>((acc, r) => {
-          const repo = r.repo.trim();
-          const name = r.name.trim();
-          const cmd = r.cmd.trim();
-          if (!repo || !name || !cmd) return acc;
-          (acc[repo] ||= []).push({ name, cmd, kind: r.kind });
-          return acc;
-        }, {}),
-        // Only send a name that still exists, or the server would pin "Open in editor"
-        // to an editor the user just deleted.
-        defaultEditor: editors[defaultEditor] ? defaultEditor : Object.keys(editors)[0] || '',
-        notify: nt,
-        start,
-        editors,
-        groups,
-      });
-      overlays.closeSettings();
+          name: c.name || '',
+          cmd: c.cmd || '',
+          kind: c.kind === 'server' ? 'server' : 'task',
+        })),
+      );
+      defaultEditor = d.defaultEditor || '';
+      tools = d.tools || { gh: false, glab: false };
+      githubAuthed = !!d.githubAuthed;
+      gl = { enabled: false, host: 'https://gitlab.com', project: '', token: '', ...(src.gitlab || {}) };
+      as = { enabled: false, token: '', workspace: '', ...(src.asana || {}) };
+      nt = { waiting: true, sound: true, idle: false, ...(d.notify || {}) };
+      notify.prefs = { ...notify.prefs, ...nt }; // keep the live prefs in step with disk
       /*
-       * Report a folder that does not exist. The save really did succeed — the path may
-       * be on an unmounted volume — but the scan will find nothing there and the rail
-       * will empty, and previously nothing connected those two facts to the typo that
-       * caused them.
+       * `start` has two shapes on disk: `{ cmd, ports }` and the bare string form,
+       * `"repo": "npm start"`. Reading only the first put an EMPTY command in the row,
+       * and an empty command is dropped on save — so opening this modal and pressing
+       * Save deleted every string-form entry without saying anything.
        */
-      const warnings: string[] = saved?.warnings || [];
-      if (warnings.length) toast(warnings.join(' · '), true);
-      else toast('Settings saved');
-    } catch (e) { toast(errMessage(e), true); }
-    finally { saving = false; }
-  }
+      startRows = Object.entries(d.start || {}).map(([repo, v]) => ({
+        key: ++rowKey,
+        repo,
+        cmd: typeof v === 'string' ? v : (v as { cmd?: string })?.cmd || '',
+        ports: (typeof v === 'string' ? [] : (v as { ports?: number[] })?.ports || []).join(' '),
+      }));
+      editorRows = Object.entries(d.editors || {}).map(([name, v]) => ({
+        key: ++rowKey,
+        name,
+        open: (v && (v as any).open) || '',
+        openGroup: (v && (v as any).openGroup) || '',
+      }));
+      groupRows = (d.groups || []).map((g: { name?: string; members?: string[] }) => ({
+        key: ++rowKey,
+        name: g.name || '',
+        members: (g.members || []).join(', '),
+      }));
+      loaded = true;
+      // The baseline for dirty tracking — taken AFTER the load, so the values the
+      // server sent are not themselves counted as edits.
+      pristine = snapshot();
+    } catch (e) {
+      if (alive) error = errMessage(e);
+    }
+  })();
+  return () => {
+    alive = false;
+  };
+});
 
-  /**
-   * Reorder helper shared by every list.
-   *
-   * Takes and returns the array rather than mutating in place: `$state` arrays reassign
-   * to notify, and a helper that spliced would update the data without redrawing.
-   */
-  const move = <T,>(list: T[], from: number, to: number): T[] => moveItem(list, from, to);
-
-  /** Keyboard equivalent of a drag — dragging serves a mouse and nothing else. */
-  function nudge<T>(list: T[], i: number, by: number): T[] {
-    return moveItem(list, i, Math.max(0, Math.min(list.length - 1, i + by)));
+async function save() {
+  if (saving) return;
+  saving = true;
+  const start: Record<string, { cmd: string; ports: number[] }> = {};
+  for (const r of startRows) {
+    const repo = r.repo.trim();
+    const cmd = r.cmd.trim();
+    if (!repo || !cmd) continue;
+    start[repo] = {
+      cmd,
+      ports: r.ports
+        .split(/[\s,]+/)
+        .map((x) => parseInt(x, 10))
+        .filter((n) => Number.isInteger(n) && n > 0),
+    };
   }
+  const editors: Record<string, { open: string; openGroup?: string }> = {};
+  for (const r of editorRows) {
+    const name = r.name.trim();
+    const open = r.open.trim();
+    if (!name || !open) continue;
+    editors[name] = r.openGroup ? { open, openGroup: r.openGroup } : { open };
+  }
+  const groups = groupRows
+    .map((r) => ({
+      name: r.name.trim(),
+      members: r.members
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    }))
+    .filter((g) => g.name && g.members.length);
+
+  notify.prefs = { ...notify.prefs, ...nt };
+  try {
+    const saved = await api('POST', '/api/v1/settings', {
+      sources: {
+        gitlab: {
+          enabled: gl.enabled,
+          host: gl.host.trim(),
+          project: gl.project.trim(),
+          token: gl.token.trim(),
+        },
+        asana: { enabled: as.enabled, token: as.token.trim(), workspace: as.workspace.trim() },
+      },
+      baseDirs: rootRows.map((r) => r.path.trim()).filter(Boolean),
+      // Grouped back into { repo: [config] }, which is the shape on disk. A row missing
+      // the fields that make it runnable is dropped, exactly as the server would.
+      runConfigs: runRows.reduce<Record<string, { name: string; cmd: string; kind: string }[]>>((acc, r) => {
+        const repo = r.repo.trim();
+        const name = r.name.trim();
+        const cmd = r.cmd.trim();
+        if (!repo || !name || !cmd) return acc;
+        (acc[repo] ||= []).push({ name, cmd, kind: r.kind });
+        return acc;
+      }, {}),
+      // Only send a name that still exists, or the server would pin "Open in editor"
+      // to an editor the user just deleted.
+      defaultEditor: editors[defaultEditor] ? defaultEditor : Object.keys(editors)[0] || '',
+      notify: nt,
+      start,
+      editors,
+      groups,
+    });
+    overlays.closeSettings();
+    /*
+     * Report a folder that does not exist. The save really did succeed — the path may
+     * be on an unmounted volume — but the scan will find nothing there and the rail
+     * will empty, and previously nothing connected those two facts to the typo that
+     * caused them.
+     */
+    const warnings: string[] = saved?.warnings || [];
+    if (warnings.length) toast(warnings.join(' · '), true);
+    else toast('Settings saved');
+  } catch (e) {
+    toast(errMessage(e), true);
+  } finally {
+    saving = false;
+  }
+}
+
+/**
+ * Reorder helper shared by every list.
+ *
+ * Takes and returns the array rather than mutating in place: `$state` arrays reassign
+ * to notify, and a helper that spliced would update the data without redrawing.
+ */
+const move = <T,>(list: T[], from: number, to: number): T[] => moveItem(list, from, to);
+
+/** Keyboard equivalent of a drag — dragging serves a mouse and nothing else. */
+function nudge<T>(list: T[], i: number, by: number): T[] {
+  return moveItem(list, i, Math.max(0, Math.min(list.length - 1, i + by)));
+}
 </script>
 
 <Modal panelClass="settings" label="Settings" onclose={tryClose}>

@@ -1,0 +1,31 @@
+# Two package.json files, two ecosystems entries — the client is a separate npm
+# project with its own lockfile, and an updater pointed only at the root would never
+# see the toolchain that actually carried the advisories.
+#
+# Monthly, not weekly: this is a single-maintainer local tool, and a PR queue nobody
+# reads is the same as no updates at all. Grouped so a month's patches arrive as one
+# reviewable change rather than nine.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      server-deps:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /client
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      client-deps:
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

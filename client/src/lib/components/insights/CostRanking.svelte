@@ -1,46 +1,49 @@
 <script lang="ts">
-  import type { Tokens } from './types';
-  // "Where did the money go" — one row per feature or per session, ranked by cost.
-  //
-  // Form: emphasis, not categorical. There is one measure here and the rows are nominal
-  // (features, sessions), so shading each bar by its own size would double-encode the
-  // length and burn the only free channel on information the bar already carries. Every
-  // bar is one flat de-emphasis gray and the SELECTED row wears the brand hue — which
-  // also makes the emphasis carry the selection state instead of inventing a second cue.
-  //
-  // This is dollars, straight from the server, at the only granularities it actually
-  // prices. Nothing here is derived, and nothing is a token count wearing a dollar sign.
-  import './viz.css';
-  import { activatable } from '$lib/actions/activatable.js';
-  import { usd, compactTokens, exactTokens, totalTokens } from './format.js';
+import type { Tokens } from './types';
+// "Where did the money go" — one row per feature or per session, ranked by cost.
+//
+// Form: emphasis, not categorical. There is one measure here and the rows are nominal
+// (features, sessions), so shading each bar by its own size would double-encode the
+// length and burn the only free channel on information the bar already carries. Every
+// bar is one flat de-emphasis gray and the SELECTED row wears the brand hue — which
+// also makes the emphasis carry the selection state instead of inventing a second cue.
+//
+// This is dollars, straight from the server, at the only granularities it actually
+// prices. Nothing here is derived, and nothing is a token count wearing a dollar sign.
+import './viz.css';
+import { activatable } from '$lib/actions/activatable.js';
+import { usd, compactTokens, exactTokens, totalTokens } from './format.js';
 
-  /** One ranked row: a feature or a session, with the usage the bar is drawn from. */
-  export interface RankRow {
-    key: string;
-    label: string;
-    sub?: string;
-    costUsd: number | null;
-    /** Usage rows come from either the session or the feature rollup, so both carry
-     *  the token counts plus an optional message count. */
-    usage: Tokens & { costUsd?: number | null; messages?: number };
-    indexed?: boolean;
-    unpriced?: string[];
-  }
+/** One ranked row: a feature or a session, with the usage the bar is drawn from. */
+export interface RankRow {
+  key: string;
+  label: string;
+  sub?: string;
+  costUsd: number | null;
+  /** Usage rows come from either the session or the feature rollup, so both carry
+   *  the token counts plus an optional message count. */
+  usage: Tokens & { costUsd?: number | null; messages?: number };
+  indexed?: boolean;
+  unpriced?: string[];
+}
 
-  let {
-    rows = [], selected = null, onselect = () => {}, emptyLabel = 'Nothing indexed yet.',
-  }: {
-    rows?: RankRow[];
-    selected?: string | null;
-    onselect?: (key: string) => void;
-    emptyLabel?: string;
-  } = $props();
+let {
+  rows = [],
+  selected = null,
+  onselect = () => {},
+  emptyLabel = 'Nothing indexed yet.',
+}: {
+  rows?: RankRow[];
+  selected?: string | null;
+  onselect?: (key: string) => void;
+  emptyLabel?: string;
+} = $props();
 
-  const max = $derived(Math.max(0, ...rows.map((r) => r.costUsd || 0)));
-  const total = $derived(rows.reduce((a, r) => a + (r.costUsd || 0), 0));
-  // With nothing selected the top spender carries the emphasis, so the chart still has
-  // a subject on first paint.
-  const emphasised = $derived(selected || rows.find((r) => (r.costUsd || 0) > 0)?.key || null);
+const max = $derived(Math.max(0, ...rows.map((r) => r.costUsd || 0)));
+const total = $derived(rows.reduce((a, r) => a + (r.costUsd || 0), 0));
+// With nothing selected the top spender carries the emphasis, so the chart still has
+// a subject on first paint.
+const emphasised = $derived(selected || rows.find((r) => (r.costUsd || 0) > 0)?.key || null);
 </script>
 
 {#if !rows.length}

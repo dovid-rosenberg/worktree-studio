@@ -1,101 +1,118 @@
 <script lang="ts">
-  /*
-   * The action bar: every action for whatever is selected, pinned along the bottom of
-   * the screen.
-   *
-   * It replaces the hover-reveal quick actions the rail cards used to carry. Those
-   * expanded the card on hover, which reflowed every row below it — so moving the mouse
-   * down the rail made the list jump under the cursor, and the row you were aiming at
-   * moved before you clicked it. A fixed bar cannot do that: it occupies the same space
-   * whether or not anything is selected, and the rail stays geometrically still.
-   *
-   * It handles both selection kinds, because both need the same verbs. A feature with no
-   * agent simply has fewer of them.
-   *
-   * ONE VERB FOR STARTING DEV SERVERS. This used to show `Run servers` / `Stop servers`
-   * beside `Run stack` / `Stop stack` for a promoted session. They target the SAME
-   * worktrees — a session's repos are its feature's members — so the pair read as two
-   * different capabilities and were one. The stack verbs win because they do strictly
-   * more: `/group/start` detects a port conflict with another feature and offers to stop
-   * and switch, where the session route just 409s. The ServerBar kept a duplicate pair
-   * (`Run all` / `Stop all`) for a while; it is a readout now and these are the only
-   * server verbs on screen.
-   *
-   * THREE selection kinds, one bar: a session, a sessionless feature, and a dev server
-   * running from a repo's main checkout. The last used to carry its own buttons inside
-   * its rail card — the only buttons in the rail — because it could not be selected.
-   */
-  import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
-  import OverflowMenu from '$lib/components/OverflowMenu.svelte';
-  import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
-  // openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
-  import { openApp } from '$lib/stores/world.svelte.js';
-  import { orphans } from '$lib/stores/orphans.svelte.js';
-  import {
-    activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
-    deleteFeature, editFeature, editSession, installDeps, openGroup, openSessionRepos,
-    pending, prFeature, promote, reinstateOrphan, restartStack, restartTerminal, runStack,
-    startFeatureSession, stopMainServer, stopStack,
-  } from '$lib/ops.svelte.js';
+/*
+ * The action bar: every action for whatever is selected, pinned along the bottom of
+ * the screen.
+ *
+ * It replaces the hover-reveal quick actions the rail cards used to carry. Those
+ * expanded the card on hover, which reflowed every row below it — so moving the mouse
+ * down the rail made the list jump under the cursor, and the row you were aiming at
+ * moved before you clicked it. A fixed bar cannot do that: it occupies the same space
+ * whether or not anything is selected, and the rail stays geometrically still.
+ *
+ * It handles both selection kinds, because both need the same verbs. A feature with no
+ * agent simply has fewer of them.
+ *
+ * ONE VERB FOR STARTING DEV SERVERS. This used to show `Run servers` / `Stop servers`
+ * beside `Run stack` / `Stop stack` for a promoted session. They target the SAME
+ * worktrees — a session's repos are its feature's members — so the pair read as two
+ * different capabilities and were one. The stack verbs win because they do strictly
+ * more: `/group/start` detects a port conflict with another feature and offers to stop
+ * and switch, where the session route just 409s. The ServerBar kept a duplicate pair
+ * (`Run all` / `Stop all`) for a while; it is a readout now and these are the only
+ * server verbs on screen.
+ *
+ * THREE selection kinds, one bar: a session, a sessionless feature, and a dev server
+ * running from a repo's main checkout. The last used to carry its own buttons inside
+ * its rail card — the only buttons in the rail — because it could not be selected.
+ */
+import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
+import OverflowMenu from '$lib/components/OverflowMenu.svelte';
+import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+// openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
+import { openApp } from '$lib/stores/world.svelte.js';
+import { orphans } from '$lib/stores/orphans.svelte.js';
+import {
+  activateSession,
+  addRepoToSession,
+  closeFeature,
+  closeSession,
+  deactivateSession,
+  deleteFeature,
+  editFeature,
+  editSession,
+  installDeps,
+  openGroup,
+  openSessionRepos,
+  pending,
+  prFeature,
+  promote,
+  reinstateOrphan,
+  restartStack,
+  restartTerminal,
+  runStack,
+  startFeatureSession,
+  stopMainServer,
+  stopStack,
+} from '$lib/ops.svelte.js';
 
-  const session = $derived(ui.selected);
-  const feature = $derived(ui.selectedFeature);
-  /*
-   * A resumable conversation among this feature's worktrees.
-   *
-   * Refreshed when the selection changes rather than on a timer: it can only change when
-   * a session is closed, and answering it costs a `git branch` per repo.
-   */
-  const featureOrphan = $derived(
-    feature ? orphans.forPaths(liveMembers(feature).map((m) => m.path)) : null,
-  );
-  $effect(() => {
-    if (feature && !orphans.loadedAt) void orphans.refresh();
-  });
+const session = $derived(ui.selected);
+const feature = $derived(ui.selectedFeature);
+/*
+ * A resumable conversation among this feature's worktrees.
+ *
+ * Refreshed when the selection changes rather than on a timer: it can only change when
+ * a session is closed, and answering it costs a `git branch` per repo.
+ */
+const featureOrphan = $derived(feature ? orphans.forPaths(liveMembers(feature).map((m) => m.path)) : null);
+$effect(() => {
+  if (feature && !orphans.loadedAt) void orphans.refresh();
+});
 
-  /** A dev server running from a repo's main checkout — the third kind of rail row. */
-  const mainServer = $derived(ui.selectedMainServer);
+/** A dev server running from a repo's main checkout — the third kind of rail row. */
+const mainServer = $derived(ui.selectedMainServer);
 
-  /** The feature a selected SESSION belongs to, so stack verbs work from either side. */
-  const sessionFeature = $derived(
-    session && session.feature
-      ? (ui.visibleFeatures.find((f) => f.name === session.feature) || null)
-      : null,
-  );
-  const target = $derived(feature || sessionFeature);
-  const ms = $derived(target ? liveMembers(target) : []);
-  const anyRunning = $derived(ms.some((m) => m.running));
-  const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
-  /** Members that cannot start until their dependencies exist. */
-  const needDeps = $derived(ms.filter((m) => m.depsMissing));
-  const installingDeps = $derived(ms.some((m) => m.depsInstalling));
-  const isPending = $derived(!!target && pending.has(target.name));
+/** The feature a selected SESSION belongs to, so stack verbs work from either side. */
+const sessionFeature = $derived(
+  session && session.feature ? ui.visibleFeatures.find((f) => f.name === session.feature) || null : null,
+);
+const target = $derived(feature || sessionFeature);
+const ms = $derived(target ? liveMembers(target) : []);
+const anyRunning = $derived(ms.some((m) => m.running));
+const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
+/** Members that cannot start until their dependencies exist. */
+const needDeps = $derived(ms.filter((m) => m.depsMissing));
+const installingDeps = $derived(ms.some((m) => m.depsInstalling));
+const isPending = $derived(!!target && pending.has(target.name));
 
-  /*
-   * EVERY worktree the ▷ Run… menu reads configs from — one per repo of the feature.
-   *
-   * ONLY FOR A FEATURE WITH NO SESSION. A session's copy moved into the Runs tab, beside
-   * the history and output a run produces; a sessionless feature has no such tab, and a
-   * run needs only a worktree, so this stays as its way in rather than the capability
-   * disappearing with the tab it does not have.
-   */
-  const runTargets = $derived(ms.map((m) => ({ repo: m.repo, path: m.path })));
+/*
+ * EVERY worktree the ▷ Run… menu reads configs from — one per repo of the feature.
+ *
+ * ONLY FOR A FEATURE WITH NO SESSION. A session's copy moved into the Runs tab, beside
+ * the history and output a run produces; a sessionless feature has no such tab, and a
+ * run needs only a worktree, so this stays as its way in rather than the capability
+ * disappearing with the tab it does not have.
+ */
+const runTargets = $derived(ms.map((m) => ({ repo: m.repo, path: m.path })));
 
-  /*
-   * No identity block here.
-   *
-   * The bar used to open with the selection's name, repo and branch — which DockHead
-   * already shows for a session, and FeaturePane's own heading shows for a feature. Three
-   * readouts of one selection (rail card, dock header, this) stacked down the screen is
-   * what made every glance cost a second look. The bar is buttons now: the top says WHAT
-   * you are looking at, the bottom DOES something to it.
-   */
-  let busy = $state(false);
-  /** @param {() => Promise<any>} fn */
-  async function guard(fn: () => Promise<unknown>) {
-    busy = true;
-    try { await fn(); } finally { busy = false; }
+/*
+ * No identity block here.
+ *
+ * The bar used to open with the selection's name, repo and branch — which DockHead
+ * already shows for a session, and FeaturePane's own heading shows for a feature. Three
+ * readouts of one selection (rail card, dock header, this) stacked down the screen is
+ * what made every glance cost a second look. The bar is buttons now: the top says WHAT
+ * you are looking at, the bottom DOES something to it.
+ */
+let busy = $state(false);
+/** @param {() => Promise<any>} fn */
+async function guard(fn: () => Promise<unknown>) {
+  busy = true;
+  try {
+    await fn();
+  } finally {
+    busy = false;
   }
+}
 </script>
 
 <div class="actionbar" class:idle={!session && !feature && !mainServer}>
