@@ -219,6 +219,20 @@ test('an unforced poke leaves the cache alone', async () => {
   assert.equal(forge.invalidations, 0, 'a subscriber arriving is not evidence that anything changed');
 });
 
+test('a forge whose invalidate() throws cannot fail the commit that poked it', async () => {
+  // poke() is called synchronously from the rescan handler and from POST /commit, so this
+  // is the one part of the feed that could throw into a caller rather than into the feed.
+  // A cache that will not clear is a stale pill, not a failed commit.
+  const forge = fakeForge({ '/w/a': OPEN_PR });
+  forge.invalidate = () => {
+    throw new Error('cache is wedged');
+  };
+  const { feed: f, frames } = feed({ forge });
+  assert.doesNotThrow(() => f.poke({ force: true }));
+  await waitFor(() => frames.length === 1, { label: 'the sweep to happen anyway' });
+  f.stop();
+});
+
 test('a storm of triggers is floored at minSweepMs — no more often than polling already cost', async () => {
   const forge = fakeForge({ '/w/a': OPEN_PR });
   const { feed: f } = feed({ forge, intervals: { ...FAST, minSweepMs: 300 } });

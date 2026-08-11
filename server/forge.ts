@@ -10,6 +10,7 @@
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
 import { CHILD_ENV, run, has } from './util.ts';
+import { createPolledCache } from './polled-cache.ts';
 import type { CiChecks, CiRepo, ReviewItem, SessionRepo } from './types.ts';
 import type { Router } from 'express';
 
@@ -73,7 +74,7 @@ function cliEnv(cfg?: ForgeConfig): NodeJS.ProcessEnv {
 // gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
 // on the client any more (server/ci.ts pushes instead), but the cache still bounds
 // what a burst of triggers plus an on-demand GET /sessions/:id/ci can cost, and it
-// is what makes the two paths share one answer. Value: { at, data }.
+// is what makes the two paths share one answer.
 const CI_TTL = 20000;
 
 // A lookup is a network round-trip through somebody else's CLI, and both of them
@@ -505,7 +506,22 @@ function createForge({
   const forgeEnv = cliEnv(cfg);
   const installed = providers.filter(isInstalled);
   const installedSet = new Set(installed); // membership test for failure attribution
-  const ciCache = new Map<string, { at: number; data: CiRepo }>();
+  // The same TTL/one-answer-per-key cache the pulled feeds use (see polled-cache.ts).
+  // errorTtlMs is CI_TTL as well, deliberately: a lookup that blew up cost exactly as much
+  // as one that worked, so it is worth remembering exactly as long.
+  const ciCache = createPolledCache<string, CiRepo, { entry: CiEntry; env: NodeJS.ProcessEnv }>({
+    ttlMs: CI_TTL,
+    errorTtlMs: CI_TTL,
+    key: ({ entry }) => `${entry.worktreePath}\n${entry.branch}`,
+    load: async ({ entry, env }) => {
+      for (const p of installed) {
+        const found = await p.view(entry.branch as string, entry.worktreePath as string, env);
+        if (found) return { repo: entry.repo, ...found };
+      }
+      return { repo: entry.repo, hasPR: false };
+    },
+    onError: ({ entry }) => ({ repo: entry.repo, hasPR: false }),
+  });
 
   // Drop every cached answer. Called when something is known to have changed the
   // truth (a new commit, a push, a PR just opened) — without it a refresh triggered
@@ -519,23 +535,9 @@ function createForge({
   async function ciForRepo(entry: CiEntry, env: NodeJS.ProcessEnv = forgeEnv): Promise<CiRepo> {
     const { repo, worktreePath, branch } = entry;
     if (!worktreePath || !branch) return { repo, hasPR: false };
-    const key = `${worktreePath}\n${branch}`;
-    const hit = ciCache.get(key);
-    if (hit && Date.now() - hit.at < CI_TTL) return { ...hit.data, repo };
-    let data: CiRepo = { repo, hasPR: false };
-    try {
-      for (const p of installed) {
-        const found = await p.view(branch, worktreePath, env);
-        if (found) {
-          data = { repo, ...found };
-          break;
-        }
-      }
-    } catch {
-      data = { repo, hasPR: false };
-    }
-    ciCache.set(key, { at: Date.now(), data });
-    return { ...data, repo };
+    // `repo` is re-stamped on the way out: two sessions can share a worktree+branch under
+    // different repo names, and the cached answer belongs to the pair, not to the name.
+    return { ...(await ciCache.fetch({ entry, env })).value, repo };
   }
 
   // Which of several failures to report when nothing could be opened.

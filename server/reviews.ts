@@ -11,24 +11,20 @@
  * reviewer being added is a human action measured in minutes. So a long TTL, one sweep at
  * a time, and — the part that is easy to leave out — a FAILURE IS REMEMBERED as a failure,
  * so a forge that is down or a token that has expired does not mean a dozen doomed
- * subprocesses every sweep for the rest of the day.
+ * subprocesses every sweep for the rest of the day. All four of those rules now live in
+ * polled-cache.ts; what stays here is the `gh`/`glab` call and the shape of the answer.
  *
  * "@me" is resolved by the CLI from whichever credential it is using. Studio never learns
  * or stores who you are on a forge, and swapping a token changes the answer without
  * changing a line of config here.
  */
+import { createPolledCache } from './polled-cache.ts';
 import type { ReviewItem } from './types.ts';
 
 /** A reviewer being added is a human action; minutes-stale is fine. */
 const TTL_MS = 5 * 60 * 1000;
 /** Long enough that an outage costs a handful of processes an hour, not hundreds. */
 const ERROR_TTL_MS = 15 * 60 * 1000;
-
-interface Entry {
-  at: number;
-  items: ReviewItem[];
-  error?: string;
-}
 
 /** One repo to ask about — its name, and the checkout to ask from. */
 export interface ReviewRepo {
@@ -39,7 +35,11 @@ export interface ReviewRepo {
 export interface ReviewFeed {
   /** The current answer, flattened across repos — synchronous, for folding into a frame. */
   snapshot(): ReviewItem[];
-  /** Refresh anything stale. Safe to call often; does nothing when nothing is due. */
+  /**
+   * Refresh anything stale. Safe to call often; does nothing when nothing is due, and
+   * NEVER REJECTS — the callers `void` it, and crash.ts makes an unhandled rejection
+   * fatal. Returns whether the answer moved, i.e. whether a frame is worth sending.
+   */
   refresh(repos: ReviewRepo[]): Promise<boolean>;
   /** Drop a repo's cache — used when a lookup should be retried now rather than at TTL. */
   forget(repo: string): void;
@@ -56,15 +56,29 @@ export interface ReviewDeps {
 }
 
 export function createReviewFeed({ list, now = () => Date.now() }: ReviewDeps): ReviewFeed {
-  const cache = new Map<string, Entry>();
-  let sig = '[]';
-  let running = false;
-
-  const fresh = (e: Entry | undefined): boolean => !!e && now() - e.at < (e.error ? ERROR_TTL_MS : TTL_MS);
+  const cache = createPolledCache<string, ReviewItem[], ReviewRepo>({
+    ttlMs: TTL_MS,
+    errorTtlMs: ERROR_TTL_MS,
+    now,
+    key: (r) => r.name,
+    load: async (r) => {
+      const items = await list(r.path);
+      // `null` and `[]` are different facts. Null means no provider could answer at all,
+      // and only that is worth retrying slowly — collapsing them would either retry a
+      // quiet repo forever or never retry a broken one. Thrown, so it lands on the error
+      // TTL like any other failure.
+      if (items === null) throw new Error('no forge CLI could answer');
+      // The CLI answers per checkout and cannot know the repo's name here, so the sweep
+      // is what stamps it — see ReviewItem.repo.
+      return items.map((i) => ({ ...i, repo: r.name }));
+    },
+    onError: () => [],
+    blank: [],
+  });
 
   function snapshot(): ReviewItem[] {
     const out: ReviewItem[] = [];
-    for (const e of cache.values()) out.push(...e.items);
+    for (const [, e] of cache.entries()) out.push(...e.value);
     /*
      * Newest first, drafts last.
      *
@@ -78,43 +92,16 @@ export function createReviewFeed({ list, now = () => Date.now() }: ReviewDeps): 
   }
 
   async function refresh(repos: ReviewRepo[]): Promise<boolean> {
-    if (running) return false;
-    running = true;
-    try {
-      const live = new Set(repos.map((r) => r.name));
-      for (const k of [...cache.keys()]) if (!live.has(k)) cache.delete(k);
-
-      for (const r of repos) {
-        if (fresh(cache.get(r.name))) continue;
-        try {
-          const items = await list(r.path);
-          cache.set(
-            r.name,
-            items === null
-              ? { at: now(), items: [], error: 'no forge CLI could answer' }
-              : // The CLI answers per checkout and cannot know the repo's name here, so
-                // the sweep is what stamps it — see ReviewItem.repo.
-                { at: now(), items: items.map((i) => ({ ...i, repo: r.name })) },
-          );
-        } catch (e) {
-          cache.set(r.name, { at: now(), items: [], error: (e as Error).message });
-        }
-      }
-
-      const next = JSON.stringify(snapshot());
-      if (next === sig) return false;
-      sig = next;
-      return true;
-    } finally {
-      running = false;
-    }
+    // prune: a repo that has left the scan must not leave rows on the rail behind it.
+    const { ran } = await cache.refresh(repos, { prune: true });
+    return ran && cache.changed(snapshot());
   }
 
   return {
     snapshot,
     refresh,
     forget(repo: string) {
-      cache.delete(repo);
+      cache.forget(repo);
     },
   };
 }

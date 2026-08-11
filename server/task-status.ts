@@ -14,8 +14,10 @@
  *
  * A failure is REMEMBERED as a failure. Without that, a tracker that is down or a token
  * that has expired means every sweep retries every ticket forever, and the only symptom
- * is the daemon making hundreds of doomed requests an hour.
+ * is the daemon making hundreds of doomed requests an hour. That rule, the TTL and the
+ * one-sweep-at-a-time guard are polled-cache.ts's now; the tracker call is what is left.
  */
+import { createPolledCache } from './polled-cache.ts';
 import * as sources from './sources/index.ts';
 import type { Config, PartialDeep, TaskStatus } from './types.ts';
 
@@ -25,11 +27,10 @@ const TTL_MS = 10 * 60 * 1000;
 /** How long to wait before retrying a lookup that failed, so an outage is not hammered. */
 const ERROR_TTL_MS = 5 * 60 * 1000;
 
-interface Entry {
-  at: number;
-  status: TaskStatus | null;
-  /** Set when the last attempt threw — kept so the message can be shown once, not looped. */
-  error?: string;
+/** One feature to ask about — its name, and the ticket URL to resolve (absent: nothing to ask). */
+interface Ticketed {
+  name: string;
+  ticket?: string;
 }
 
 export interface TaskStatusMap {
@@ -40,8 +41,13 @@ export interface TaskStatusMap {
 export interface TaskStatusFeed {
   /** The current snapshot — synchronous, so it can be folded into a frame. */
   snapshot(): TaskStatusMap;
-  /** Refresh anything stale. Safe to call often; it does nothing when nothing is due. */
-  refresh(features: Array<{ name: string; ticket?: string }>): Promise<boolean>;
+  /**
+   * Refresh anything stale. Safe to call often; it does nothing when nothing is due, and
+   * NEVER REJECTS — the callers `void` it, and crash.ts makes an unhandled rejection
+   * fatal, so a tracker throwing would otherwise exit the daemon. Returns whether the
+   * snapshot moved, i.e. whether a frame is worth sending.
+   */
+  refresh(features: Ticketed[]): Promise<boolean>;
   /** Forget a feature — called when one is deleted, so the map cannot grow forever. */
   forget(name: string): void;
 }
@@ -54,57 +60,39 @@ export function createTaskStatusFeed(deps: {
 }): TaskStatusFeed {
   const now = deps.now || (() => Date.now());
   const resolve = deps.resolve || defaultResolve;
-  const cache = new Map<string, Entry>();
-  let running = false;
+  const cache = createPolledCache<string, TaskStatus | null, Ticketed>({
+    ttlMs: TTL_MS,
+    errorTtlMs: ERROR_TTL_MS,
+    now,
+    key: (f) => f.name,
+    load: (f) => resolve(deps.cfg, f.ticket as string),
+    // Keep the last known column rather than blanking it: an unreachable tracker means we
+    // no longer know, not that the card moved back to nothing — and a status that flickers
+    // out and back in is a frame to every client each way.
+    onError: (_f, _e, previous) => previous?.value ?? null,
+    blank: {},
+  });
 
   function snapshot(): TaskStatusMap {
     const out: TaskStatusMap = {};
-    for (const [name, e] of cache) if (e.status) out[name] = e.status;
+    for (const [name, e] of cache.entries()) if (e.value) out[name] = e.value;
     return out;
   }
 
-  function fresh(e: Entry | undefined): boolean {
-    if (!e) return false;
-    return now() - e.at < (e.error ? ERROR_TTL_MS : TTL_MS);
-  }
-
-  async function refresh(features: Array<{ name: string; ticket?: string }>): Promise<boolean> {
-    // One sweep at a time. Two overlapping sweeps would double every request for no
-    // benefit, since the second would find the first's entries still unwritten.
-    if (running) return false;
-    const due = features.filter((f) => f.ticket && !fresh(cache.get(f.name)));
-    if (!due.length) return false;
-
-    running = true;
-    let changed = false;
-    try {
-      for (const f of due) {
-        try {
-          const status = await resolve(deps.cfg, f.ticket as string);
-          const prev = cache.get(f.name)?.status;
-          if (prev?.label !== status?.label || prev?.done !== status?.done) changed = true;
-          cache.set(f.name, { at: now(), status });
-        } catch (e) {
-          // Recorded, not thrown: one unreachable tracker must not stop the others, and
-          // the timestamp is what stops this retrying on every sweep.
-          cache.set(f.name, {
-            at: now(),
-            status: cache.get(f.name)?.status ?? null,
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
-      }
-    } finally {
-      running = false;
-    }
-    return changed;
+  async function refresh(features: Ticketed[]): Promise<boolean> {
+    // A feature with no ticket is not asked about at all — there is nothing to ask. Not
+    // pruned either: the cache is keyed by feature and cleared by forget(), because this
+    // list is only the ticketed subset and pruning against it would forget every feature
+    // whose ticket was momentarily unreadable from config.
+    const { ran } = await cache.refresh(features.filter((f) => f.ticket));
+    return ran && cache.changed(snapshot());
   }
 
   return {
     snapshot,
     refresh,
     forget(name: string) {
-      cache.delete(name);
+      cache.forget(name);
     },
   };
 }

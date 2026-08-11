@@ -132,6 +132,50 @@ test('an unchanged answer does not push a frame', async () => {
   assert.equal(await feed.refresh([repo('r')]), false, 'same answer, no frame');
 });
 
+test('the clock alone refreshes it, exactly once per TTL', async () => {
+  /*
+   * The TTL was decorative. Nothing ticked: the queue was refreshed on an SSE subscribe,
+   * a rescan and a commit, so with one browser tab left open and no git activity it never
+   * refreshed again for the life of that connection — five minutes or five hours, same
+   * answer. watch.ts now runs this as a paced job; what is asserted here is the half this
+   * module owes that scheduler: time passing is sufficient, and it costs exactly one call.
+   */
+  let calls = 0;
+  let now = 1_000_000;
+  const feed = createReviewFeed({
+    list: async () => {
+      calls += 1;
+      return [item()];
+    },
+    now: () => now,
+  });
+  await feed.refresh([repo('r')]);
+  assert.equal(calls, 1);
+
+  now += 5 * 60 * 1000 + 1; // one millisecond past the TTL, nothing else has happened
+  await feed.refresh([repo('r')]);
+  assert.equal(calls, 2, 'the TTL expiring is enough on its own');
+  await feed.refresh([repo('r')]);
+  await feed.refresh([repo('r')]);
+  assert.equal(calls, 2, 'and it buys exactly one lookup, not one per sweep');
+});
+
+test('refresh never rejects, however the CLI fails', async () => {
+  /*
+   * server.ts calls this as `void refreshReviews()` with no .catch(), and crash.ts makes
+   * an unhandled rejection FATAL — so a throw escaping here would exit the daemon, taking
+   * every PTY and the SSE fan-out with it, because `glab` was unhappy. The failure is
+   * reported as a value (false: nothing to broadcast) rather than as a rejection.
+   */
+  const thrower = createReviewFeed({
+    list: () => {
+      throw new Error('spawn glab ENOENT'); // synchronously, as a failed spawn does
+    },
+  });
+  assert.equal(await thrower.refresh([repo('r')]), false);
+  assert.deepEqual(thrower.snapshot(), []);
+});
+
 test('one sweep at a time', async () => {
   let inFlight = 0;
   let peak = 0;

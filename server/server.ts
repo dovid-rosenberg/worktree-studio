@@ -143,7 +143,7 @@ async function main() {
     ciFeed.poke({ force: true });
     // The same trigger, for the same reason: a rescan means refs moved, and refs moving
     // is the only thing that can change an overlap or a drift count.
-    void refreshOverlap();
+    fire(refreshOverlap());
   });
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
@@ -159,6 +159,18 @@ async function main() {
    * this is the one line that tells stop() what it knows.
    */
   const seenPorts = (worktreePath: string): number[] => runningCache.get(realpath(worktreePath))?.ports ?? [];
+
+  /**
+   * Start something and stop caring, without betting the daemon on it.
+   *
+   * crash.ts deliberately makes an unhandled rejection fatal, and these refreshes were
+   * fired with a bare `void` — so a throw anywhere on the rescan path would have taken
+   * the process down, and with it every PTY and the SSE fan-out. The feeds are now total
+   * (see server/polled-cache.ts), which makes this belt as well as braces; it stays
+   * because "this callee never rejects" is an invariant maintained somewhere else, and
+   * the cost of being wrong about it is the whole daemon.
+   */
+  const fire = (p: Promise<unknown>): void => void p.catch(() => {});
   async function refreshRunning() {
     try {
       runningCache = await servers.discoverRunning();
@@ -372,9 +384,9 @@ async function main() {
     ciFeed.poke();
     // Same reason, and equally cheap: with no ticket configured, or nothing stale, this
     // is a filter over a small object and no request at all.
-    void refreshTaskStatus();
-    void refreshOverlap();
-    void refreshReviews();
+    fire(refreshTaskStatus());
+    fire(refreshOverlap());
+    fire(refreshReviews());
     const hb = setInterval(() => {
       try {
         res.write(':hb\n\n');
@@ -959,7 +971,7 @@ async function main() {
       ciFeed.poke({ force: true });
       // The same trigger, for the same reason: a rescan means refs moved, and refs moving
       // is the only thing that can change an overlap or a drift count.
-      void refreshOverlap();
+      fire(refreshOverlap());
     }
     res.json(out);
   });
@@ -1526,6 +1538,17 @@ async function main() {
     rescan,
     refreshRunning,
     reconcile: () => manager.reconcile(),
+    /*
+     * The pulled feeds get a heartbeat, which three of the four never had.
+     *
+     * ci.ts carried its own tick; reviews, ticket status and overlap were driven only by
+     * an SSE subscribe, a rescan and a commit. Leave one tab open and none of those fire
+     * again — so the review queue's five-minute TTL and ticket status's ten were
+     * decorative, and the data on screen could be hours stale while looking live. The
+     * scheduler here already knows whether anyone is watching, which is the thing that
+     * makes polling three subprocess-spawning feeds affordable.
+     */
+    feeds: { reviews: refreshReviews, taskStatus: refreshTaskStatus, overlap: refreshOverlap },
     hasViewers: attention.active,
   });
   // restore() guards each session on its own, so a rejection here means the whole
