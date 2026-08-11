@@ -26,7 +26,7 @@ import type { Feature } from '../../../../../server/types';
  * present and cannot shift anything.
  */
 import { colorVars } from '$lib/featureColor.js';
-import { world } from '$lib/stores/world.svelte.js';
+import { world, quietFor, quietLabel } from '$lib/stores/world.svelte.js';
 import { ui, liveMembers, selectionKey } from '$lib/stores/ui.svelte.js';
 import StateDot from '$lib/components/StateDot.svelte';
 
@@ -77,6 +77,13 @@ const selected = $derived(sess ? ui.selectedId === sess.id : ui.selectedFeatureN
  * makes `waiting` findable.
  */
 const notable = $derived(!!sess && sess.state !== 'idle' && sess.state !== 'stopped');
+/*
+ * How long this feature's agent has been silent, when that has stopped meaning anything
+ * good. A promoted session is drawn here rather than by SessionCard, so without this the
+ * staleness warning existed for exactly the sessions that had not been promoted yet —
+ * the least interesting half.
+ */
+const quiet = $derived(sess ? quietFor(sess, world.now) : 0);
 
 /*
  * How far this branch has drifted from its base — server/overlap.ts.
@@ -118,10 +125,16 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 
     <!-- Only what is not the default. An idle agent and stopped servers say nothing;
          their absence says it without spending a row of attention on it. -->
-    {#if notable || noDeps || renamed || ms.length > 1 || !sess || behind}
+    {#if notable || quiet || noDeps || renamed || ms.length > 1 || !sess || behind}
       <div class="l2">
         {#if sess && notable}
           <span class="pill agent {sess.state}" title="The Claude session driving this feature">{sess.state}</span>
+        {/if}
+        {#if quiet}
+          <span
+            class="pill stale"
+            title="No hook event for {quietLabel(quiet)} — the state and activity shown are what the agent LAST reported, not what it is doing now. Its hooks may have stopped firing."
+          >no signal {quietLabel(quiet)}</span>
         {/if}
         {#if !sess}<span class="nosession">no session</span>{/if}
         {#if noDeps}
@@ -242,6 +255,7 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 
   .nosession { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   /* Waiting-hue, not an error: it is a thing to do, not a thing that broke. */
+  .pill.stale { color:var(--waiting); background:var(--waiting-bg); }
   .pill.nodeps { color:var(--waiting); background:var(--waiting-bg); }
   /* Same amber as deps: both say "configured wrong, not broken", and both are fixed
      by the user rather than by waiting. */

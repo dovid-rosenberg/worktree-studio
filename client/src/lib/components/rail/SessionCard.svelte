@@ -15,7 +15,7 @@ import type { Session } from '../../../../../server/types';
  * session is working — which destroyed focus, scroll position and any open menu.
  */
 import { ui, labelForSource, selectionKey } from '$lib/stores/ui.svelte.js';
-import { world } from '$lib/stores/world.svelte.js';
+import { world, quietFor, quietLabel } from '$lib/stores/world.svelte.js';
 import StateDot from '$lib/components/StateDot.svelte';
 
 let { session }: { session: Session } = $props();
@@ -30,6 +30,16 @@ const running = $derived(srv.filter((r) => r.running));
 const ports = $derived(running.flatMap((r) => r.ports || []));
 const selected = $derived(ui.selectedId === session.id);
 const reps = $derived(session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }]);
+
+/*
+ * How long this card's status has been unverified — 0 while it is still believable.
+ *
+ * Without this the card states what the LAST hook said and never states how old that is,
+ * so a session whose hooks stopped firing reads `working · running Bash` indefinitely and
+ * looks exactly like one that is working. reconcile() cannot cover it: the tmux window is
+ * still alive in every one of these cases. See quietFor for the threshold and its basis.
+ */
+const quiet = $derived(quietFor(session, world.now));
 </script>
 
 <div class="railcard scard" class:sel={selected} class:running={running.length > 0} class:stoppedrow={stopped} role="listitem">
@@ -49,6 +59,14 @@ const reps = $derived(session.repos && session.repos.length ? session.repos : [{
         </span>
       {:else}
         <span class="pill {session.state}">{session.state}</span>
+      {/if}
+      <!-- Beside the state pill, not instead of it: the last report is still the best
+           guess at what the agent was doing, and this says only that it has aged out. -->
+      {#if quiet}
+        <span
+          class="pill stale"
+          title="No hook event for {quietLabel(quiet)} — the state and activity shown are what the agent LAST reported, not what it is doing now. Its hooks may have stopped firing."
+        >no signal {quietLabel(quiet)}</span>
       {/if}
     </div>
     <div class="meta">
@@ -75,6 +93,10 @@ const reps = $derived(session.repos && session.repos.length ? session.repos : [{
   .scard.running { box-shadow:inset 3px 0 0 var(--done); }
   /* Dimmed, not hidden: a stopped agent is still resumable and must stay findable. */
   .scard.stoppedrow .title, .scard.stoppedrow .meta { opacity:.55; }
+
+  /* `waiting`'s amber, because that is what this is: something is blocked on YOU going
+     and looking. Not `--del` — nothing has failed for certain, the report is only old. */
+  .pill.stale { color:var(--waiting); background:var(--waiting-bg); }
 
   .top { display:flex; align-items:center; gap:8px; min-width:0; }
   .title { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

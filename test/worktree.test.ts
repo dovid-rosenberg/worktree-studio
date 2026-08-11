@@ -241,6 +241,72 @@ test('remove() REFUSES a worktree with untracked files, and says why', async () 
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+/*
+ * UNCOMMITTED WORK IN TRACKED FILES is the expensive case, and the one the suite did not
+ * cover: an untracked package-lock.json is regenerable, an edit an agent has been making
+ * for an hour is not. `git worktree remove` refuses both with the same message, but only
+ * the untracked half was pinned — so nothing would have caught a change that started
+ * passing --force by default, and the delete route would have taken the work with it.
+ */
+test('remove() REFUSES a worktree holding uncommitted TRACKED changes', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/edited', 'edited', { fetch: false, copyPatterns: [] });
+  fs.writeFileSync(path.join(res.path, 'README.md'), '# an hour of unsaved work\n');
+
+  const out = await worktree.remove(repo, res.path);
+  assert.match(expectErr(out, 'remove()').error, /modified or untracked|--force/);
+  assert.equal(
+    fs.readFileSync(path.join(res.path, 'README.md'), 'utf8'),
+    '# an hour of unsaved work\n',
+    'the edit is still on disk',
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('remove() REFUSES a worktree with STAGED changes too', async () => {
+  // Staged is the easier state to lose sight of: `git status` in the worktree is the only
+  // place it shows, and the rail's dirty indicator is not what the delete button consults.
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/staged', 'staged', { fetch: false, copyPatterns: [] });
+  fs.writeFileSync(path.join(res.path, 'README.md'), '# staged, not committed\n');
+  sh(res.path, 'git', ['add', 'README.md']);
+
+  const out = await worktree.remove(repo, res.path);
+  assert.match(expectErr(out, 'remove()').error, /modified or untracked|--force/);
+  assert.equal(fs.existsSync(res.path), true, 'the worktree survived the refusal');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+/*
+ * The ADMIN entry, not just the directory.
+ *
+ * `git worktree remove` deletes .git/worktrees/<name> as well as the checkout, and every
+ * caller here judges the outcome by `fs.existsSync(path)` alone. A remove that dropped the
+ * directory and left the admin entry would pass every other test in this file and still
+ * make the name permanently unusable: `git worktree add` refuses a name it already has a
+ * record for, so create() would answer "already exists" for a worktree that is not there.
+ */
+test('remove() leaves no stale entry in `git worktree list`', async () => {
+  const repo = plainRepo();
+  const res = await worktree.create(repo, 'feature/listed', 'listed', { fetch: false, copyPatterns: [] });
+  const listed = () =>
+    execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo, encoding: 'utf8' });
+  assert.ok(listed().includes(res.path), 'git knows about it before the remove');
+
+  expectOk(await worktree.remove(repo, res.path), 'remove()');
+  assert.equal(listed().includes(res.path), false, 'and has forgotten it after');
+  assert.equal(
+    fs.existsSync(path.join(repo, '.git', 'worktrees', 'listed')),
+    false,
+    'no admin dir left behind',
+  );
+
+  // The proof that matters to a user: the name is reusable.
+  const again = await worktree.create(repo, 'feature/listed-2', 'listed', { fetch: false, copyPatterns: [] });
+  expectOk(again, 'a second create() under the same name');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 test('remove({ force }) gets past it', async () => {
   const repo = plainRepo();
   const res = await worktree.create(repo, 'feature/dirty2', 'dirty2', { fetch: false, copyPatterns: [] });

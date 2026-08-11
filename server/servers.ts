@@ -9,6 +9,7 @@ import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { CHILD_ENV, run, readJsonState, writeJson, realpath, slug } from './util.ts';
 import { deriveEnv, allocSlot, rewriteAllSiblingPorts, siblingPortsIn } from './concurrency.ts';
+import { portBusy } from './start-report.ts';
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
 import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, WiredTo, Worktree } from './types.ts';
@@ -204,7 +205,15 @@ export interface LogTail {
   skipped: number;
 }
 
-const ENV = CHILD_ENV;
+/*
+ * `LC_ALL: 'C'` because this module PARSES tool output.
+ *
+ * `ps -o lstart=` writes weekday and month names in the caller's locale, and _psInfo
+ * matches the C-locale shape of a ctime. Leaving the locale to the environment made the
+ * parse depend on a setting nothing here controls, and the failure was silent rather
+ * than loud — see _psInfo.
+ */
+const ENV = { ...CHILD_ENV, LC_ALL: 'C' };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
 
 // How far a process's real start time may sit from the moment we recorded spawning
@@ -520,16 +529,40 @@ class Servers {
     }
   }
 
-  // { startedAt, command } for a live pid, or null when there is no such process.
-  // `lstart` is a fixed-width ctime string — "Mon Jul 27 22:46:40 2026", 24 chars —
-  // so the command is simply the rest of the line.
+  /**
+   * { startedAt, command } for a live pid, or null when there is no such process.
+   *
+   * MATCHED, not sliced. `lstart` is a ctime string — "Mon Jul 27 22:46:40 2026" — and
+   * this took the first 24 characters on the grounds that ctime is fixed width. It is
+   * fixed width in the C locale on BSD ps. It is not fixed width when the column is
+   * padded (GNU ps right-aligns to the widest row in its output) or when the locale
+   * writes longer weekday and month names, and nothing in the child environment pinned
+   * the locale.
+   *
+   * The failure mode is what makes this worth a regex: a shifted field does not throw
+   * and does not return null — `Date.parse` accepts the truncated remains and answers a
+   * WRONG time. One leading space yields the year 202; two yield 2020, which is a
+   * perfectly plausible timestamp that nothing downstream can tell from a real reading.
+   * The digits pushed off the end then reappear glued to the front of the command.
+   *
+   * Downstream that means `_trackedPidState` compares a bogus start time against the one
+   * stamped at spawn and calls the daemon's own dev server a 'stranger'. Fail-safe in
+   * direction — a stranger is never signalled, so nothing else gets killed — but on such
+   * a machine Studio can never stop a server it started: the record is pruned and the
+   * process is orphaned holding its port.
+   *
+   * So: anchor on the shape of a ctime and take the command from what follows, and pin
+   * the locale in ENV so the field is the one this pattern describes.
+   */
   async _psInfo(pid: number): Promise<PsInfo | null> {
     const r = await run('ps', ['-o', 'lstart=,command=', '-p', String(pid)], { env: ENV });
     const line = (r.stdout || '').split('\n').find((l) => l.trim());
     if (!line) return null;
-    const at = Date.parse(line.slice(0, 24));
+    const m = line.match(/^\s*(\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4})\s+(.*)$/);
+    if (!m) return null;
+    const at = Date.parse(m[1]);
     if (!Number.isFinite(at)) return null;
-    return { startedAt: at, command: line.slice(24).trim() };
+    return { startedAt: at, command: m[2].trim() };
   }
 
   // What a tracked record's pid actually names right now:
@@ -1119,7 +1152,22 @@ class Servers {
     try {
       for (const p of ports) {
         const pid = await this.portPid(p);
-        if (pid) return { ok: false, error: `port ${p} already in use (pid ${pid})` };
+        if (pid) {
+          /*
+           * Name the holder, not just its pid.
+           *
+           * This said "port 1233 already in use (pid 4711)" — a number the user then had
+           * to take to lsof and ps to turn into an answer, while _resolvePid two hundred
+           * lines away already maps a pid to the worktree it runs in and featureFor maps
+           * that to a feature. Knowing which feature is sitting on the port is the whole
+           * difference between an error and an instruction.
+           */
+          const owner = await this._resolvePid(String(pid));
+          return {
+            ok: false,
+            error: portBusy(p, { pid, feature: owner ? this.featureFor(owner.top) : null }),
+          };
+        }
       }
       // Re-point the worktree's FE config at this slot's sibling port before spawning.
       if (opts.patch) this.applyConfigPatch(worktreePath, opts.patch);

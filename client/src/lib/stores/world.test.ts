@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stitchSessions, webAppsFor } from './world.svelte.js';
+import { STALE_AFTER_MS, quietFor, quietLabel, stitchSessions, webAppsFor } from './world.svelte.js';
 import type { Feature, Repo, Session } from '../../../../server/types';
 
 /*
@@ -152,6 +152,53 @@ describe('stitchSessions', () => {
     const before = JSON.stringify(frame);
     stitchSessions(frame);
     expect(JSON.stringify(frame)).toBe(before);
+  });
+});
+
+/*
+ * The stale-status clock.
+ *
+ * Every word on a session card comes from the last hook the agent sent, and nothing said
+ * how old that was — so a session whose hooks stopped firing (settings file removed, agent
+ * wedged mid-tool, report.sh failing) read `working · running Bash` forever. reconcile()
+ * does not cover it: it asks whether the tmux WINDOW died, and here it has not.
+ */
+describe('quietFor', () => {
+  const T = 1_700_000_000_000;
+  const busy = (over: Partial<Session> = {}) => session({ state: 'working', lastEventAt: T, ...over });
+
+  it('says nothing while the silence is still explicable', () => {
+    // The threshold's basis: the longest gap two hooks can legitimately have is one tool
+    // call, and Claude Code's longest possible tool call is a 10-minute Bash timeout. A
+    // test suite that runs for nine minutes must not be accused of anything.
+    expect(quietFor(busy(), T + 9 * 60_000)).toBe(0);
+    expect(quietFor(busy(), T + STALE_AFTER_MS - 1)).toBe(0);
+  });
+
+  it('reports the elapsed silence once no tool call could explain it', () => {
+    expect(quietFor(busy(), T + STALE_AFTER_MS)).toBe(STALE_AFTER_MS);
+    expect(quietFor(busy(), T + 40 * 60_000)).toBe(40 * 60_000);
+  });
+
+  it('judges only a session that CLAIMS to be busy', () => {
+    // idle/waiting mean the agent finished and is waiting on a human, which can last all
+    // day. Flagging those would put a badge on every card and hide the one that matters.
+    for (const state of ['idle', 'waiting', 'stopped']) {
+      expect(quietFor(busy({ state }), T + 60 * 60_000)).toBe(0);
+    }
+    expect(quietFor(busy({ active: false }), T + 60 * 60_000)).toBe(0);
+  });
+
+  it('says nothing about a session with no clock to read', () => {
+    // Sessions persisted before a launch seeded lastEventAt have no origin, and elapsed
+    // time from an unknown start is not a measurement.
+    expect(quietFor(busy({ lastEventAt: undefined }), T + 60 * 60_000)).toBe(0);
+  });
+
+  it('labels coarsely — the order of magnitude is the message', () => {
+    expect(quietLabel(14 * 60_000)).toBe('14m');
+    expect(quietLabel(60 * 60_000)).toBe('1h');
+    expect(quietLabel(95 * 60_000)).toBe('1h 35m');
   });
 });
 

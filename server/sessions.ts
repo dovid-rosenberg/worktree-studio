@@ -333,6 +333,21 @@ class SessionManager extends EventEmitter {
     this.emit('change', { type: 'session', id });
   }
 
+  /**
+   * Start the silence clock the rail reads (`lastEventAt`).
+   *
+   * That field was written by applyHook and nothing else, so the one failure it exists to
+   * expose — the hooks never firing AT ALL: a settings file deleted, a report.sh that is
+   * no longer executable, an agent launched by a build whose token the receiver rejects —
+   * left it `undefined` forever, which is exactly what a session launched one second ago
+   * looks like. Silence is only measurable from a known start, and launching the agent is
+   * a fact about the same thing the hooks report, so it seeds the clock. A session that
+   * never reports anything then becomes the LOUDEST case instead of the invisible one.
+   */
+  _agentLaunched(s: Session): void {
+    s.lastEventAt = Date.now();
+  }
+
   // (Re)write a session's Claude Code hook settings file and record that its URLs now
   // carry the boot token. The flag is what lets the /hook receiver keep accepting
   // tokenless reports from sessions whose claude was launched by an older build —
@@ -689,7 +704,10 @@ class SessionManager extends EventEmitter {
     if (r.error) {
       session.state = 'stopped';
       session.activity = `failed to start: ${r.error}`;
-    } else await this._syncTabs(session); // trade the placeholder id for the real window id
+    } else {
+      this._agentLaunched(session);
+      await this._syncTabs(session); // trade the placeholder id for the real window id
+    }
     this._touch(id);
     return session;
   }
@@ -849,7 +867,10 @@ class SessionManager extends EventEmitter {
     if (r.error) {
       session.state = 'stopped';
       session.activity = `failed to start: ${r.error}`;
-    } else await this._syncTabs(session); // trade the placeholder id for the real window id
+    } else {
+      this._agentLaunched(session);
+      await this._syncTabs(session); // trade the placeholder id for the real window id
+    }
     this._touch(id);
     return session;
   }
@@ -1369,6 +1390,7 @@ class SessionManager extends EventEmitter {
       s.state = 'idle';
       s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
     }
+    if (!r.error) this._agentLaunched(s);
     this._touch(id);
     if (!r.error) this._anchorInWorktree(s).catch(() => {});
     return { ok: !r.error, error: r.error };
@@ -1574,6 +1596,7 @@ class SessionManager extends EventEmitter {
         }
         s.state = 'idle';
         s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
+        this._agentLaunched(s);
         // self-heal a promote whose /cd never landed (normally a no-op here).
         this._anchorInWorktree(s).catch(() => {});
         n++;

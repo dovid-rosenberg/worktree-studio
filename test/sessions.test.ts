@@ -313,6 +313,71 @@ test('applyHook SessionEnd deactivates the session and marks it stopped', () => 
   assert.equal(s.state, 'stopped');
 });
 
+test('applyHook stamps the silence clock the rail reads', () => {
+  const m = manager();
+  m.sessions.set('h6', session({ id: 'h6', muxName: 'm', state: 'idle', active: true, createdAt: 1 }));
+  const before = Date.now();
+  m.applyHook('h6', 'PreToolUse', { tool_name: 'Bash' });
+  assert.ok((got(m, 'h6').lastEventAt || 0) >= before, 'every hook re-starts the clock');
+});
+
+/*
+ * A LAUNCH seeds that clock, and this is the case the whole readout exists for.
+ *
+ * `lastEventAt` used to be written by applyHook alone, so a session whose hooks never fire
+ * at all — settings file deleted, report.sh no longer executable, a token the receiver
+ * rejects — carried no timestamp ever, and the rail could not tell it from a session
+ * launched a second ago. Silence needs an origin to be measured from; the launch is it.
+ */
+test('activate() seeds lastEventAt, so a session whose hooks NEVER fire is measurable', async () => {
+  const m = manager();
+  const repo = tempRepo('launchclock');
+  m.sessions.set(
+    'l1',
+    session({
+      id: 'l1',
+      repoName: 'a',
+      repoPath: repo,
+      home: repo,
+      muxName: 'mux-l1',
+      state: 'stopped',
+      active: false,
+      createdAt: Date.now(),
+    }),
+  );
+  const before = Date.now();
+  expectOk(await m.activate('l1'), 'activate()');
+  assert.ok((got(m, 'l1').lastEventAt || 0) >= before, 'the clock starts at the launch');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('a launch that FAILED does not seed it — there is no agent to be silent', async () => {
+  const repo = tempRepo('launchfail');
+  const failing = new SessionManager(
+    {
+      _stateDir: fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-')),
+      web: { port: 0 },
+      claude: { cmd: 'claude' },
+      baseDirs: [],
+      copyPatterns: {},
+    },
+    muxStub({
+      async ensure() {
+        return { error: 'tmux: no server running' };
+      },
+    }),
+  );
+  failing.sessions.set(
+    'l2',
+    session({ id: 'l2', repoName: 'a', repoPath: repo, home: repo, muxName: 'mux-l2', active: false }),
+  );
+  await failing.activate('l2');
+  const s = present(failing.get('l2'), 'session l2');
+  assert.equal(s.lastEventAt, undefined, 'nothing was launched, so nothing is overdue to report');
+  assert.equal(s.state, 'stopped');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 test('claudeCmd appends the seed as the final positional arg on a FRESH launch, and omits it on resume', () => {
   const m = manager();
   const s = session({
