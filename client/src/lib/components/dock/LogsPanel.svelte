@@ -4,18 +4,17 @@ import type { Session, SessionServerRepo } from '../../../../../server/types';
  * Live dev-server tail. `GET /api/servers/logs?worktreePath=&offset=` returns the
  * bytes after `offset`, so this is a byte-offset poll rather than a stream.
  *
- * Two details carried over from app.js because they are easy to get wrong:
- *  - a self-scheduling setTimeout, never setInterval, so a slow response cannot
- *    overlap the next request and double-append;
- *  - the trailing partial line is buffered, so a line split across two polls renders
- *    as one line instead of two.
+ * The polling half lives in lib/tail.ts, shared with RunsPanel — it was written twice and
+ * the two copies had drifted on every value they share. What stays here is what only this
+ * panel does: classify each line by level, and buffer the trailing partial line so a line
+ * split across two polls renders as one line instead of two. (RunsPanel needs no buffer:
+ * it keeps one string, where a split line reassembles itself.)
  */
 import { api } from '$lib/api.js';
 import { world } from '$lib/stores/world.svelte.js';
+import { MAX_LOG_LINES, tailLog } from '$lib/tail.js';
 
 let { session }: { session: Session } = $props();
-
-const MAX_LOG_LINES = 2000;
 
 /** Every repo of this session's shared workspace owns a per-worktree log file. */
 const repos = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
@@ -26,8 +25,6 @@ let tailing = $state(false);
 let body = $state<HTMLElement | null>(null);
 
 let lineId = 0;
-/** Byte offset already consumed for the current worktree. */
-let offset = undefined as number | undefined;
 /** Trailing incomplete line, prepended to the next chunk. */
 let partial = '';
 
@@ -43,40 +40,27 @@ $effect(() => {
 $effect(() => {
   const path = selectedPath;
   lines = [];
-  offset = undefined;
   partial = '';
   if (!path) {
     tailing = false;
     return;
   }
-  let alive = true;
-  /** @type {ReturnType<typeof setTimeout>|undefined} */
-  let timer: ReturnType<typeof setTimeout> | undefined;
   tailing = true;
-  const tick = async () => {
-    const el = body;
-    try {
-      const near = el ? el.scrollHeight - el.scrollTop - el.clientHeight < 60 : true;
-      const q = offset === undefined ? '' : `&offset=${offset}`;
-      const res = await api('GET', `/api/v1/servers/logs?worktreePath=${encodeURIComponent(path)}${q}`);
-      if (!alive) return;
-      offset = res.offset;
-      if (res.text) {
-        append(res.text);
-        if (follow && near)
-          queueMicrotask(() => {
-            if (body) body.scrollTop = body.scrollHeight;
-          });
-      }
-    } catch {
-      /* transient network/parse error — keep polling */
-    }
-    if (alive) timer = setTimeout(tick, 1500);
-  };
-  tick();
+  const stop = tailLog({
+    fetch: (offset) =>
+      api(
+        'GET',
+        `/api/v1/servers/logs?worktreePath=${encodeURIComponent(path)}${offset === undefined ? '' : `&offset=${offset}`}`,
+      ),
+    onText: append,
+    scroller: () => body,
+    follow: () => follow,
+    // Slower than the runs tail: a dev server log is ambient, not something you are
+    // waiting on the end of.
+    interval: 1500,
+  });
   return () => {
-    alive = false;
-    clearTimeout(timer);
+    stop();
     tailing = false;
   };
 });

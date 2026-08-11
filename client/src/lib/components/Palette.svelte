@@ -7,6 +7,7 @@
  * "⌘3" in the palette and the third card in the rail are always the same session.
  */
 import Modal from '$lib/components/Modal.svelte';
+import StateDot from '$lib/components/StateDot.svelte';
 import { ui } from '$lib/stores/ui.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
@@ -97,7 +98,8 @@ const commandRows = $derived(
     if (cur && cur.worktreePath)
       add('✎', 'Review changes', '⌘D', () => {
         ui.goToSession(cur.id);
-        ui.dockView = 'changes';
+        // setDockView, not the field: it is the only writer that persists the choice.
+        ui.setDockView('changes');
       });
     // Opens the one Insights view already drilled into this session.
     if (cur) add('◔', 'Session insights', '', () => ui.openInsights(cur.id));
@@ -198,7 +200,7 @@ function onKeydown(e: KeyboardEvent) {
           onmousemove={() => (hi = i)}
         >
           <span class="pg" aria-hidden="true">{r.glyph}</span>
-          <span class="dot {r.dot}" role="img" aria-label="{r.dot}"></span>
+          <StateDot state={r.dot} />
           <span class="ptitle">{r.title}</span>
           <span class="psub">{r.sub}</span>
         </div>
@@ -219,7 +221,9 @@ function onKeydown(e: KeyboardEvent) {
           onmousemove={() => (hi = idx)}
         >
           <span class="pg" aria-hidden="true">{r.glyph}</span>
-          <span class="dot {r.dot}" role="img" aria-label="{r.dot}"></span>
+          <!-- A review has no agent; the dot is a placeholder in the same column, so it
+               says what it actually means rather than naming a state nobody is in. -->
+          <StateDot state={r.dot} label="Awaiting your review" />
           <span class="ptitle">{r.title}</span>
           <span class="psub">{r.sub}</span>
         </div>
@@ -266,7 +270,6 @@ function onKeydown(e: KeyboardEvent) {
      greys. */
   .pcmd.on { background:var(--elevated); box-shadow:inset 2px 0 0 var(--brand); }
   .pcmd .pg { width:20px; text-align:center; color:var(--brand); flex:none; }
-  .pcmd .dot { flex:none; }
   .pcmd .ptitle { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .pcmd .psub { margin-left:auto; padding-left:12px; font-family:var(--mono); font-size:11.5px; color:var(--faint); white-space:nowrap; flex:none; }
 </style>

@@ -30,6 +30,7 @@ import type { RailSort } from '$lib/stores/ui.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { groupSplitFeature } from '$lib/ops.svelte.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
 const rows = $derived(ui.railRows);
 const dividerAt = $derived(ui.dividerAt);
@@ -153,9 +154,12 @@ const waiting = $derived(world.sessions.filter((s) => s.state === 'waiting').len
     <div class="foot-rows">{rows.length} row(s){quiet ? ` · ${quiet} idle` : ''}</div>
     {#if working || waiting || running}
       <div class="foot-counts">
-        {#if working}<span class="c"><span class="dot working"></span>{working} working</span>{/if}
-        {#if waiting}<span class="c"><span class="dot waiting"></span>{waiting} waiting</span>{/if}
-        {#if running}<span class="c"><span class="dot done"></span>{running} up</span>{/if}
+        <!-- The dot carries the whole phrase and the text beside it is hidden from
+             assistive tech: the swatch and the label are one fact, and announcing both
+             reads it twice. -->
+        {#if working}<span class="c"><StateDot state="working" label="{working} agents working" /><span aria-hidden="true">{working} working</span></span>{/if}
+        {#if waiting}<span class="c"><StateDot state="waiting" label="{waiting} agents waiting on you" /><span aria-hidden="true">{waiting} waiting</span></span>{/if}
+        {#if running}<span class="c"><StateDot state="done" label="{running} dev servers up" /><span aria-hidden="true">{running} up</span></span>{/if}
       </div>
     {/if}
   </div>

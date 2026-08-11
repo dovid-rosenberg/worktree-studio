@@ -23,6 +23,7 @@ import { world } from '$lib/stores/world.svelte.js';
 import { ui } from '$lib/stores/ui.svelte.js';
 import type { Run, Session } from '../../../../../server/types';
 import { errMessage } from '$lib/errmsg.js';
+import { capLines, tailLog } from '$lib/tail.js';
 
 let { session }: { session: Session } = $props();
 
@@ -52,8 +53,20 @@ const runTargets = $derived([
 ]);
 
 let selectedId = $state('');
+/*
+ * WHICH run is shown, as a STRING — the firebreak Dock.svelte:52 and ReviewMount both use.
+ *
+ * `selected` below is an object out of `world.view.runs`, and runs ride the session-state
+ * frame: it is re-sent on every Claude hook and re-parsed fresh, so the object is a new
+ * identity several times a second while an agent works. The tail effect used to key on
+ * that object, so it tore itself down, blanked `text` and re-tailed from offset 0 at that
+ * same rate — the log flickered and restarted while you were reading it. A derived only
+ * propagates when its value changes by `===`, and a string id does not change when the
+ * frame does.
+ */
+const shownId = $derived(runs.find((r) => r.id === selectedId)?.id ?? runs[0]?.id ?? '');
 /** The selected run, falling back to the newest so the panel is never blank. */
-const selected = $derived(runs.find((r) => r.id === selectedId) || runs[0] || null);
+const selected = $derived(runs.find((r) => r.id === shownId) || null);
 
 let body = $state<HTMLElement | null>(null);
 let text = $state('');
@@ -68,55 +81,30 @@ const fmt = (r: Run): string => {
 const when = (t: number): string => new Date(t).toLocaleTimeString();
 
 /*
- * Byte-offset tail, self-scheduling.
+ * The byte-offset tail — one implementation, shared with LogsPanel. See lib/tail.ts for
+ * the offset bookkeeping, the self-scheduling timer, and why the thresholds are what they
+ * are. What is local is what happens to the bytes: one string, capped, because a run's
+ * output is read as a block rather than line by line.
  *
- * A setTimeout chain rather than setInterval: a slow response must not stack requests
- * behind it. Re-armed only while the run is going — a finished run's log is final, so
- * polling it forever would be a request per second for a file that cannot change.
+ * Keyed on `shownId`, never on the run object — see the note on shownId above.
  */
 $effect(() => {
-  const run = selected;
-  if (!run) {
-    text = '';
-    return;
-  }
-
-  let alive = true;
-  let offset: number | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const id = shownId;
   text = '';
-
-  const tick = async () => {
-    if (!alive) return;
-    try {
-      const q = offset === undefined ? '' : `?offset=${offset}`;
-      const res = await api('GET', `/api/v1/runs/${run.id}/log${q}`);
-      if (!alive) return;
-      if (res.text) {
-        const near = !body || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-        text += res.text;
-        offset = res.offset;
-        if (follow && near)
-          queueMicrotask(() => {
-            if (body) body.scrollTop = body.scrollHeight;
-          });
-      } else if (offset === undefined) {
-        offset = res.offset;
-      }
-    } catch {
-      /* a log read must not take the panel with it */
-    }
-    // The run object is a NEW one on every frame, so re-read it from the live list
-    // rather than trusting the copy this effect closed over.
-    const live = (world.view.runs || []).find((r) => r.id === run.id);
-    if (alive && live?.status === 'running') timer = setTimeout(tick, 900);
-  };
-  tick();
-
-  return () => {
-    alive = false;
-    if (timer) clearTimeout(timer);
-  };
+  if (!id) return;
+  return tailLog({
+    fetch: (offset) => api('GET', `/api/v1/runs/${id}/log${offset === undefined ? '' : `?offset=${offset}`}`),
+    onText: (chunk) => {
+      text = capLines(text + chunk);
+    },
+    scroller: () => body,
+    follow: () => follow,
+    // Faster than the dev-server tail: a run is something you are watching finish.
+    interval: 900,
+    // The run object is a NEW one on every frame, so re-read it from the live list rather
+    // than trusting a copy this effect closed over. A finished run's log is final.
+    more: () => (world.view.runs || []).find((r) => r.id === id)?.status === 'running',
+  });
 });
 
 async function stop(r: Run) {

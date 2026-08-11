@@ -7,8 +7,8 @@
  * the room.
  *
  * The fragment reuses the rail's own key scheme — `s:` session, `f:` feature, `w:`
- * main-checkout server — instead of inventing a second vocabulary for the same three
- * things. The value is percent-encoded: feature names can be manual group names with
+ * main-checkout server, `r:` review — instead of inventing a second vocabulary for the
+ * same four things. The value is percent-encoded: feature names can be manual group names with
  * spaces, and paths can contain anything a directory name can, including the `#` that
  * would otherwise end the fragment.
  *
@@ -37,6 +37,10 @@ export function selectionFromHash(hash: string): Selection {
   if (kind === 's') return { kind: 'session', id: value };
   if (kind === 'f') return { kind: 'feature', name: value };
   if (kind === 'w') return { kind: 'mainserver', path: value };
+  // `r:` was missing here while selectionKey emitted it, so selecting a review wrote a
+  // URL that opened to nothing — a link the app produced and could not read back. The
+  // round-trip test over every Selection variant is what stops the next kind repeating it.
+  if (kind === 'r') return { kind: 'review', id: value };
   return null;
 }
 

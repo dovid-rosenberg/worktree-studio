@@ -10,7 +10,7 @@
  * hidden so it stops fitting against a 0×0 box.
  */
 import { colorVars } from '$lib/featureColor.js';
-import Terminal from '$lib/components/Terminal.svelte';
+import Terminal, { type TermStatus } from '$lib/components/Terminal.svelte';
 import ActionBar from '$lib/components/ActionBar.svelte';
 import LinkChip from '$lib/components/LinkChip.svelte';
 import DockHead from '$lib/components/dock/DockHead.svelte';
@@ -61,6 +61,17 @@ const hasWorktree = $derived(!!session?.worktreePath);
  * eager load rebuildDock() did. Refreshed, debounced, while the panel is open.
  */
 let changesCount = $state(0);
+
+/*
+ * Where the terminal's socket is, so DockHead can say so.
+ *
+ * The Terminal has always reported this and nobody listened: a dropped socket was
+ * announced by writing `[disconnected — reselect to reattach]` into the scrollback, which
+ * scrolls away, is dim by design, and is not on screen at all while you are reading a
+ * diff on the Changes tab. It is a fact about the pane, so it belongs on the pane's
+ * header, where it is visible from every tab.
+ */
+let termStatus = $state<TermStatus>('connecting');
 
 $effect(() => {
   const id = sessionId;
@@ -158,14 +169,19 @@ $effect(() => {
       </div>
     </div>
   {:else}
-    <DockHead {session} />
+    <DockHead {session} {termStatus} />
     <TabStrip {session} {changesCount} />
 
     <!-- Hidden, never unmounted: see the note at the top of this file. -->
     <div class="term-area" hidden={!isTerm}>
       <!-- `revive` flips when the agent comes back, which is what tells a pane whose
            socket closed on a dead multiplexer session to attach again. -->
-      <Terminal {sessionId} active={isTerm} revive={session.active === false ? 0 : 1} />
+      <Terminal
+        {sessionId}
+        active={isTerm}
+        revive={session.active === false ? 0 : 1}
+        onstatus={(s) => (termStatus = s)}
+      />
     </div>
 
     {#if ui.dockView === 'changes'}

@@ -2,7 +2,7 @@ import type { Tokens } from './types';
 
 // Formatting + the one piece of arithmetic the insights UI does on its own.
 //
-// Everything here is presentation. The single exception is `billedWeight()`, which
+// Everything here is presentation. The single exception is the billing WEIGHT, which
 // exists because the API prices a *model*, never a token class — see the billing
 // weight section below for why the UI needs its own answer to "where did the money
 // go" and what makes that answer exact rather than a guess. The multipliers it needs
@@ -139,7 +139,7 @@ export function shortModel(model: string | null | undefined): string {
 // as a fixed multiple of the SAME per-model input rate (server/pricing.js). So
 // scaling each class by its multiple gives a quantity exactly proportional to the
 // dollars that class contributed — for every model, without knowing any model's
-// rate. That is what `billedWeight` computes, and it is why the token-mix view can
+// rate. That is what `weightByClass` computes, and it is why the token-mix view can
 // show cost shape honestly instead of implying volume is cost.
 //
 // The deliberate limit: OUTPUT tokens bill on a separate output rate whose ratio to
@@ -152,23 +152,19 @@ export function shortModel(model: string | null | undefined): string {
 // twice. Reading the live object rather than destructuring it is what makes a chart
 // re-derive when a response installs new values.
 
-/**
- * Input-rate-equivalent tokens for one usage record. Exactly proportional to the
- * input-family dollars, model-independent. Cache writes are split by TTL because a
- * 1h write costs 1.6x a 5m one.
+/*
+ * `billedWeight(u)` — the same sum as weightByClass, undivided — used to live here. It
+ * was superseded by weightByClass (a stacked bar needs the classes apart, and their sum
+ * is the same number), and its only remaining reader was the prose above describing it.
  */
-export function billedWeight(u: Partial<Tokens> | null | undefined): number {
-  if (!u) return 0;
-  return (
-    (u.input || 0) * billingMultipliers.input +
-    (u.cacheWrite5m || 0) * billingMultipliers.cacheWrite5m +
-    (u.cacheWrite1h || 0) * billingMultipliers.cacheWrite1h +
-    (u.cacheRead || 0) * billingMultipliers.cacheRead
-  );
-}
 
-/** The three classes a stacked bar shows, on either scale. */
-export interface ClassBreakdown {
+/**
+ * The three classes a stacked bar shows, on either scale.
+ *
+ * Not exported: it is the shape of two return values in this file and nothing outside it
+ * ever named the type.
+ */
+interface ClassBreakdown {
   input: number;
   cacheWrite: number;
   cacheRead: number;

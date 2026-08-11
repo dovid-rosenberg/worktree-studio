@@ -12,13 +12,24 @@
  * only who wrote it, how old it is, and whether it is a draft.
  */
 import type { ReviewItem } from '../../../../../server/types';
-import { ui } from '$lib/stores/ui.svelte.js';
+import { ui, selectionKey } from '$lib/stores/ui.svelte.js';
 
 let { review }: { review: ReviewItem } = $props();
 
-const selected = $derived(
-  ui.selection?.kind === 'review' && ui.selection.id === `${review.repo}!${review.number}`,
-);
+/** `<repo>!<number>` — the id every other surface identifies this review by. */
+const id = $derived(`${review.repo}!${review.number}`);
+
+const selected = $derived(ui.selection?.kind === 'review' && ui.selection.id === id);
+
+/*
+ * The ⌥ digit that selects this row.
+ *
+ * A review has always occupied a digit — railOrder counts it, because a hole would shift
+ * every digit below it — but this card never drew the chip its two siblings draw. So the
+ * number was allocated, unadvertised, and (until railOrder started carrying a tagged
+ * selection) wired to a lookup that cleared the selection instead.
+ */
+const digit = $derived(ui.railDigits.get(selectionKey({ kind: 'review', id })));
 
 /**
  * Age, in the coarsest unit that is still true.
@@ -37,7 +48,7 @@ const age = $derived.by(() => {
 });
 </script>
 
-<div class="rcard" class:sel={selected} class:draft={review.draft} role="listitem">
+<div class="railcard rcard" class:sel={selected} class:draft={review.draft} role="listitem">
   <button
     class="hit"
     onclick={() => ui.selectReview(review)}
@@ -48,6 +59,7 @@ const age = $derived.by(() => {
       <span class="g" aria-hidden="true">◇</span>
       <span class="no">!{review.number}</span>
       <span class="nm">{review.title}</span>
+      {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
     </div>
     <div class="l2">
       <span class="m">{review.repo}</span>
@@ -65,23 +77,21 @@ const age = $derived.by(() => {
 </div>
 
 <style>
-  /* Bordered like a feature card, tagged down the left like one too — but in the review
-     hue, which is the only cue that has to survive a fast scan. */
-  .rcard { margin:4px 8px; border:1px solid var(--border); border-radius:9px;
-           background:var(--panel); box-shadow:inset 3px 0 0 var(--done); }
-  .rcard.sel { border-color:var(--brand); }
+  /* Bordered like a feature card because it IS one — `.railcard` in app.css — and tagged
+     down the left like one too, but in the review hue, which is the only cue that has to
+     survive a fast scan. The margins and radius used to be this card's own (4px/9px
+     against everyone else's 6px/10px), which read as a list that had not been aligned. */
+  .rcard { box-shadow:inset 3px 0 0 var(--done); }
   /* A draft is somebody thinking out loud: still listed, still openable, just not the
      thing to do next. */
   .rcard.draft { opacity:.62; }
   .rcard.draft:hover { opacity:1; }
 
-  .hit { display:block; width:100%; background:none; border:0; padding:8px 10px;
-         text-align:left; color:inherit; font:inherit; cursor:pointer; }
   .l1 { display:flex; align-items:center; gap:7px; min-width:0; }
   .l2 { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:3px; }
   .g { color:var(--done); font-size:10px; flex:none; }
   .no { font-family:var(--mono); font-size:10.5px; color:var(--done); flex:none; }
-  .nm { font-weight:600; font-size:13px; min-width:0; overflow:hidden;
+  .nm { font-weight:600; font-size:13px; flex:1; min-width:0; overflow:hidden;
         text-overflow:ellipsis; white-space:nowrap; }
   .m, .who { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
   .tag { font-family:var(--mono); font-size:10px; color:var(--muted);

@@ -28,6 +28,7 @@
  */
 
 import { world } from '$lib/stores/world.svelte.js';
+import { persisted } from '$lib/persisted.js';
 import type {
   EmbeddedSession,
   Feature,
@@ -40,10 +41,6 @@ import type {
 /** A member that survived the on-disk check — `missing` rows are filtered out first. */
 export type LiveMember = Worktree;
 
-/**
- * One ⌘1–9 target. `id` is null for a feature with no agent — there is no session to
- * jump to, so the caller selects the feature by name instead.
- */
 /**
  * One row of the rail, whatever kind of thing it is. `active` is the single sort key:
  * a live agent, or a running dev server.
@@ -71,12 +68,6 @@ export function rowSession(r: RailRow): EmbeddedSession | Session | null {
   if (r.kind === 'session') return r.session;
   if (r.kind === 'feature') return r.feature.session;
   return null;
-}
-
-export interface RailEntry {
-  kind: 'session' | 'feature';
-  id: string | null;
-  name: string;
 }
 
 /**
@@ -143,14 +134,14 @@ function splitKey(d: { branch: string; features: string[] }): string {
   return [d.branch, ...[...d.features].sort()].join('|');
 }
 
-function savedSplits(): Set<string> {
-  try {
-    const raw = JSON.parse(localStorage.getItem(SPLIT_KEY) || '[]');
-    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : []);
-  } catch {
-    return new Set();
-  }
-}
+const savedSplits = persisted<Set<string>>(
+  SPLIT_KEY,
+  (raw) => {
+    const parsed = JSON.parse(raw || '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []);
+  },
+  (v) => JSON.stringify([...v]),
+);
 
 /**
  * How the rail is ordered. `attention` is the default and the one the app is designed
@@ -238,25 +229,21 @@ const RAIL_DEFAULT = 320;
  */
 export type DockView = 'term' | 'changes' | 'logs' | 'runs' | 'usage';
 
-function savedDock(): DockView {
-  // Only Insights is worth restoring: the panel views belong to a session and reset with
-  // the selection anyway.
-  try {
-    return localStorage.getItem(DOCK_KEY) === 'usage' ? 'usage' : 'term';
-  } catch {
-    return 'term';
-  }
-}
+/**
+ * Only Insights is worth restoring: the panel views belong to a session and reset with
+ * the selection anyway. Written the same way it is read, so `changes` cannot come back
+ * from a reload pointing at a session that is no longer selected.
+ */
+const savedDock = persisted<DockView>(
+  DOCK_KEY,
+  (raw) => (raw === 'usage' ? 'usage' : 'term'),
+  (v) => (v === 'usage' ? 'usage' : 'term'),
+);
 
 /** A chosen sort persists: it is a working preference, not a per-visit whim. */
-function savedRailSort(): RailSort {
-  try {
-    const v = localStorage.getItem(SORT_KEY) as RailSort | null;
-    return v && RAIL_SORTS.some((s) => s.id === v) ? v : 'attention';
-  } catch {
-    return 'attention';
-  }
-}
+const savedRailSort = persisted<RailSort>(SORT_KEY, (raw) =>
+  raw && RAIL_SORTS.some((s) => s.id === raw) ? (raw as RailSort) : 'attention',
+);
 
 /**
  * The chosen root folder, or '' for all of them.
@@ -266,22 +253,12 @@ function savedRailSort(): RailSort {
  * simply matches nothing until the switcher re-renders, and the switcher offers "All
  * roots" as its first entry, so the way out is always on screen.
  */
-function savedRoot(): string {
-  try {
-    return localStorage.getItem(ROOT_KEY) || '';
-  } catch {
-    return '';
-  }
-}
+const savedRoot = persisted<string>(ROOT_KEY, (raw) => raw || '');
 
-function savedRailWidth(): number {
-  try {
-    const n = Number(localStorage.getItem(RAIL_KEY));
-    return Number.isFinite(n) && n >= RAIL_MIN && n <= RAIL_MAX ? n : RAIL_DEFAULT;
-  } catch {
-    return RAIL_DEFAULT;
-  }
-}
+const savedRailWidth = persisted<number>(RAIL_KEY, (raw) => {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= RAIL_MIN && n <= RAIL_MAX ? n : RAIL_DEFAULT;
+});
 
 /**
  * Active = a live agent or a running dev server. The rail's only sort key, and the only
@@ -348,15 +325,15 @@ class UI {
    * switching it is switching context; the repo filter narrows within whatever is in
    * front of you. They compose — see `#repoInScope`.
    */
-  rootFilter = $state(savedRoot());
+  rootFilter = $state(savedRoot.load());
   /** How the rail is ordered — see RAIL_SORTS. */
-  railSort = $state<RailSort>(savedRailSort());
+  railSort = $state<RailSort>(savedRailSort.load());
   /** Drift findings the user has waved off — see splitKey(). */
-  splitsDismissed = $state<Set<string>>(savedSplits());
+  splitsDismissed = $state<Set<string>>(savedSplits.load());
   /** Which dock panel is showing. 'term' keeps the live terminal mounted. */
-  dockView = $state<DockView>(savedDock());
+  dockView = $state<DockView>(savedDock.load());
   /** Rail width in px — dragged by the splitter, persisted, clamped to [MIN, MAX]. */
-  railWidth = $state(savedRailWidth());
+  railWidth = $state(savedRailWidth.load());
   /**
    * The selected multiplexer window's ID within the primary session — not its position.
    * tmux renumbers windows when one closes, so an index held across a close selects a
@@ -622,18 +599,32 @@ class UI {
    * the invariant this comment defends — it is `railDigits` below, which puts the number
    * on the card so you read it instead of counting. Then a reordering rail is honest
    * rather than misleading, because the label moves with the row.
+   *
+   * A `Selection` PER ENTRY, not a `{kind, id, name}` of its own.
+   *
+   * The old shape flattened every non-session row to `kind:'feature'` and handed the
+   * caller a bare `name` to look up — so a REVIEW row arrived as a feature named after a
+   * merge-request title, `world.features.find` returned undefined, and ⌥-digit on any
+   * review cleared the selection instead of opening it. The comment here asserted the
+   * opposite ("a review ... IS selectable, so it keeps its place"), which is what kept it
+   * invisible: the digit was allocated, non-functional, and — since ReviewCard drew no
+   * chip — unadvertised as well.
+   *
+   * Carrying the tagged value means the jump is the same value `#pick` already takes, so
+   * a new selection kind cannot be silently mis-routed: it either has a case here or the
+   * compiler says so.
    */
-  railOrder = $derived<RailEntry[]>(
+  railOrder = $derived<Selection[]>(
     this.railRows
       .filter((r) => r.kind !== 'mainserver') // nothing to select: it owns no session
-      .map((r) => ({
-        kind: r.kind === 'session' ? ('session' as const) : ('feature' as const),
-        // A review owns no session either, but it IS selectable, so it keeps its place in
-        // the ⌥-digit order — a hole here would shift every digit below it.
-        id:
-          r.kind === 'session' ? r.session.id : r.kind === 'feature' ? (r.feature.session?.id ?? null) : null,
-        name: r.name,
-      })),
+      .map((r): Selection => {
+        if (r.kind === 'session') return { kind: 'session', id: r.session.id };
+        if (r.kind === 'review') return { kind: 'review', id: `${r.review.repo}!${r.review.number}` };
+        // A promoted feature resolves to its session, exactly as clicking the card does
+        // (see selectFeature) — the dock has a terminal to show, so it shows it.
+        const sess = r.feature.session?.id;
+        return sess ? { kind: 'session', id: sess } : { kind: 'feature', name: r.feature.name };
+      }),
   );
 
   /**
@@ -700,11 +691,7 @@ class UI {
     // The repo filter belongs to the root you were in. Carrying it across means landing
     // on an empty rail filtered by a repo the new root does not contain.
     this.repoFilter = '';
-    try {
-      localStorage.setItem(ROOT_KEY, path);
-    } catch {
-      /* private browsing: the choice simply does not persist */
-    }
+    savedRoot.save(path);
   }
 
   /** True when nothing at all is selected — the dock shows its empty state. */
@@ -724,13 +711,17 @@ class UI {
   /** True while Insights owns the dock — i.e. the view that ignores the selection. */
   appView = $derived(this.dockView === 'usage');
 
+  /**
+   * THE ONLY WRITER of `dockView` — everything else goes through here.
+   *
+   * Six call sites assigned the field directly (⌘D, the palette's Review changes, and
+   * each of the three panel tabs), which skipped the line below: open Insights, ⌘D into
+   * Changes, reload, and you were back in Insights, because nothing had ever overwritten
+   * what opening Insights stored.
+   */
   setDockView(v: DockView): void {
     this.dockView = v;
-    try {
-      localStorage.setItem(DOCK_KEY, v === 'usage' ? 'usage' : 'term');
-    } catch {
-      /* private mode */
-    }
+    savedDock.save(v);
   }
 
   /**
@@ -778,29 +769,17 @@ class UI {
    */
   dismissSplit(d: { branch: string; features: string[] }): void {
     this.splitsDismissed = new Set([...this.splitsDismissed, splitKey(d)]);
-    try {
-      localStorage.setItem(SPLIT_KEY, JSON.stringify([...this.splitsDismissed]));
-    } catch {
-      /* private mode */
-    }
+    savedSplits.save(this.splitsDismissed);
   }
 
   setRailSort(v: RailSort): void {
     this.railSort = v;
-    try {
-      localStorage.setItem(SORT_KEY, v);
-    } catch {
-      /* private mode */
-    }
+    savedRailSort.save(v);
   }
 
   setRailWidth(px: number): void {
     this.railWidth = Math.max(RAIL_MIN, Math.min(RAIL_MAX, Math.round(px)));
-    try {
-      localStorage.setItem(RAIL_KEY, String(this.railWidth));
-    } catch {
-      /* private mode */
-    }
+    savedRailWidth.save(this.railWidth);
   }
 
   /**
@@ -893,8 +872,20 @@ class UI {
   }
 
   goToSession(id: string): void {
-    this.select(id);
-    // Leaving Insights up would hide the session we were just asked to go to.
+    this.goTo({ kind: 'session', id });
+  }
+
+  /**
+   * Jump to a rail row — what ⌥1–9 does with a `railOrder` entry.
+   *
+   * `applySelection` rather than a per-kind method, so every kind reaches the real
+   * selection path: the digit used to be dispatched by looking a NAME up in
+   * `world.features`, which no review has, and `selectFeature(undefined)` then cleared
+   * the selection outright.
+   */
+  goTo(s: Selection): void {
+    this.applySelection(s);
+    // Leaving Insights up would hide the thing we were just asked to go to.
     if (this.dockView === 'usage') this.setDockView('term');
   }
 }

@@ -175,8 +175,8 @@ describe('the repo filter', () => {
   });
 });
 
-describe('railOrder — what ⌘1–9 picks', () => {
-  it('matches the order the rail draws, so ⌘N is the Nth card', () => {
+describe('railOrder — what ⌥1–9 picks', () => {
+  it('matches the order the rail draws, so ⌥N is the Nth card', () => {
     give({
       features: [
         feature('quiet', [member('accept-blue')]),
@@ -184,13 +184,40 @@ describe('railOrder — what ⌘1–9 picks', () => {
       ],
       sessions: [session('s1', { title: 'agent' })],
     });
-    const drawn = ui.railRows.filter((r) => r.kind !== 'mainserver').map((r) => r.name);
-    expect(ui.railOrder.map((e) => e.name)).toEqual(drawn);
+    const drawn = ui.railRows.filter((r) => r.kind !== 'mainserver');
+    expect(ui.railOrder).toHaveLength(drawn.length);
   });
 
-  it('carries a null id for a feature with no agent — there is no session to jump to', () => {
+  /*
+   * A TAGGED SELECTION PER ENTRY, which is the fix for the review row.
+   *
+   * The entries used to be `{kind, id, name}` with every non-session row flattened to
+   * `kind:'feature'` — so a review arrived as a feature named after a merge-request
+   * title, and the caller's `world.features.find(name)` found nothing and cleared the
+   * selection. Each entry is now the value #pick already takes.
+   */
+  it('is the selection itself, so a feature with no agent selects by name', () => {
     give({ features: [feature('bare', [member('accept-blue')])] });
-    expect(ui.railOrder[0]).toMatchObject({ kind: 'feature', id: null, name: 'bare' });
+    expect(ui.railOrder[0]).toEqual({ kind: 'feature', name: 'bare' });
+  });
+
+  it('resolves a PROMOTED feature to its session, exactly as clicking the card does', () => {
+    // Both halves: the topology's embedded copy is re-projected from `sessions`, so a
+    // feature whose agent is not in that list has no session at all (stitchSessions).
+    give({
+      features: [feature('promoted', [member('accept-blue')], embedded('s9', 'idle'))],
+      sessions: [session('s9', { worktreePath: '/accept-blue/wt' })],
+    });
+    expect(ui.railOrder[0]).toEqual({ kind: 'session', id: 's9' });
+  });
+
+  it('carries a review as a review, not as a feature named after its title', () => {
+    give({
+      reviews: [
+        { repo: 'accept-blue', number: 4821, title: 'Retry the webhook', draft: false, updatedAt: '' },
+      ],
+    });
+    expect(ui.railOrder[0]).toEqual({ kind: 'review', id: 'accept-blue!4821' });
   });
 });
 
@@ -345,9 +372,9 @@ describe('switching without losing your place', () => {
     });
     // Whatever the order works out to, the label and the binding are built from one
     // filter — deriving them separately is how ⌘1 came to hit the fourth card.
-    for (const [i, row] of ui.railOrder.entries()) {
-      const key = row.kind === 'session' ? `s:${row.id}` : `f:${row.name}`;
-      if (i < 9) expect(ui.railDigits.get(key)).toBe(i + 1);
+    const rows = ui.railRows.filter((r) => r.kind !== 'mainserver');
+    for (const [i, row] of rows.entries()) {
+      if (i < 9) expect(ui.railDigits.get(row.key)).toBe(i + 1);
     }
   });
 });

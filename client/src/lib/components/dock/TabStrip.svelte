@@ -20,6 +20,7 @@
  * all of them before reaching the terminal.
  */
 import { ui } from '$lib/stores/ui.svelte.js';
+import StateDot from '$lib/components/StateDot.svelte';
 import { world } from '$lib/stores/world.svelte.js';
 import { addTab, closeTab, renameTab, selectTab } from '$lib/ops.svelte.js';
 import type { Session, SessionTab } from '../../../../../server/types';
@@ -221,7 +222,7 @@ function onAuxClick(e: MouseEvent, t: SessionTab) {
           <!-- The state belongs to the AGENT, so it is drawn on the agent's tab and
                nowhere else — and it is drawn whether or not that tab is selected. -->
           {#if t.id === agentTabId}
-            <span class="dot {session.state}" title="The agent is {session.state}"></span>
+            <StateDot state={session.state} />
           {/if}
           <span class="label">{t.title}</span>
           {#if tabs.length > 1}
@@ -254,19 +255,19 @@ function onAuxClick(e: MouseEvent, t: SessionTab) {
     {#if promoted}
       <button
         type="button" class="pill-tab" class:on={ui.dockView === 'changes'} role="tab"
-        aria-selected={ui.dockView === 'changes'} onclick={() => (ui.dockView = 'changes')}
+        aria-selected={ui.dockView === 'changes'} onclick={() => ui.setDockView('changes')}
       >✎ Changes{#if changesCount}<span class="cbadge">{changesCount}</span>{/if}</button>
 
       <button
         type="button" class="pill-tab" class:on={ui.dockView === 'logs'} role="tab"
-        aria-selected={ui.dockView === 'logs'} onclick={() => (ui.dockView = 'logs')}
+        aria-selected={ui.dockView === 'logs'} onclick={() => ui.setDockView('logs')}
       >▤ Logs</button>
 
       <!-- Running → a live count. Nothing running but the last one failed → a mark that
            stays, because "it finished" is not the answer you were waiting for. -->
       <button
         type="button" class="pill-tab" class:on={ui.dockView === 'runs'} role="tab"
-        aria-selected={ui.dockView === 'runs'} onclick={() => (ui.dockView = 'runs')}
+        aria-selected={ui.dockView === 'runs'} onclick={() => ui.setDockView('runs')}
         title={activeRuns
           ? `${activeRuns} run(s) in progress`
           : lastFailed

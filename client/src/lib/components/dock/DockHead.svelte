@@ -21,8 +21,38 @@ import { appUrl, webAppsFor, world } from '$lib/stores/world.svelte.js';
 import { shipLabel, shipVerdict } from '$lib/ship.js';
 import LinkChip from '$lib/components/LinkChip.svelte';
 import ActionBar from '$lib/components/ActionBar.svelte';
+import StateDot from '$lib/components/StateDot.svelte';
+import type { TermStatus } from '$lib/components/Terminal.svelte';
 
-let { session }: { session: Session } = $props();
+let {
+  session,
+  /**
+   * The terminal socket's state, from the Terminal the dock mounts.
+   *
+   * Defaults to `open` so a mount that does not wire it up shows nothing rather than a
+   * permanent "connecting…".
+   */
+  termStatus = 'open',
+}: { session: Session; termStatus?: TermStatus } = $props();
+
+/*
+ * A DROPPED TERMINAL, said out loud.
+ *
+ * The Terminal writes `[disconnected — reselect to reattach]` into its own scrollback and
+ * that was the entire report: dim text, several thousand lines up once the agent carries
+ * on, and not rendered at all while the dock is on Changes, Logs or Runs. So the pane
+ * would sit dead and the only symptom was that typing did nothing.
+ *
+ * Nothing at all while it is `open`, which is almost always — a chip that is up
+ * permanently is a chip nobody reads.
+ */
+const CONNECTION: Record<TermStatus, { text: string; tone: string } | null> = {
+  open: null,
+  connecting: { text: 'connecting…', tone: 'wait' },
+  reconnecting: { text: 'reconnecting…', tone: 'wait' },
+  closed: { text: 'terminal disconnected', tone: 'bad' },
+};
+const conn = $derived(CONNECTION[termStatus]);
 
 /*
  * Drift for this feature — see server/overlap.ts.
@@ -93,10 +123,15 @@ const repoChips = $derived(
 </script>
 
 <div class="dock-head">
-  <!-- A title and a label: this dot has no accompanying text, so without them the agent's
-       state is conveyed by hue and nothing else. -->
-  <span class="dot {session.state}" role="img" aria-label="Agent is {session.state}" title="The agent is {session.state}"></span>
+  <!-- This dot has no accompanying text, so without a name the agent's state is conveyed
+       by hue and nothing else. StateDot is where that name now comes from, for all of them. -->
+  <StateDot state={session.state} />
   <span class="dock-title">{session.title}</span>
+  {#if conn}
+    <!-- aria-live, because the socket drops while you are looking somewhere else: the
+         whole point is that you are told without going to check. -->
+    <span class="conn {conn.tone}" role="status" aria-live="polite">{conn.text}</span>
+  {/if}
   {#if showWtname}<span class="wtname" title="The worktree name — what groups these repos">{wtname}</span>{/if}
   {#if session.sourceUrl}
     <a class="link" href={session.sourceUrl} target="_blank" rel="noreferrer">{labelForSource(session)}</a>
@@ -196,6 +231,12 @@ const repoChips = $derived(
   .shiplist li { font-size:12.5px; color:var(--ink); }
   .shiplist li.waiting { color:var(--muted); }
   .shiplist li b { font-family:var(--mono); font-size:11.5px; color:var(--faint); margin-right:6px; }
+  /* Bordered rather than filled: it is a condition of the pane, not an action, and the
+     filled chips beside it (.shipchip.ready) are answers you asked for. */
+  .conn { font-family:var(--mono); font-size:11px; border-radius:6px; padding:2px 7px;
+          white-space:nowrap; border:1px solid currentColor; }
+  .conn.wait { color:var(--waiting); }
+  .conn.bad { color:var(--del); }
   .driftchip { font-family:var(--mono); font-size:11px; color:var(--faint);
                border:1px solid var(--border); border-radius:6px; padding:2px 7px; white-space:nowrap; }
   .driftchip .willconflict { color:var(--waiting); }

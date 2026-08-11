@@ -27,7 +27,8 @@ import type { Feature } from '../../../../../server/types';
  */
 import { colorVars } from '$lib/featureColor.js';
 import { world } from '$lib/stores/world.svelte.js';
-import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+import { ui, liveMembers, selectionKey } from '$lib/stores/ui.svelte.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
 let { feature }: { feature: Feature } = $props();
 
@@ -44,7 +45,9 @@ const sess = $derived(feature.session); // one session per feature
  * A title that still equals the worktree name is the default and adds nothing, so the
  * second line appears only once they have actually diverged.
  */
-const digit = $derived(ui.railDigits.get(`f:${feature.name}`));
+/* Through selectionKey, not a `f:` literal: railDigits is keyed on the row key, and a
+   prefix spelled twice is a lookup that silently misses when one of them changes. */
+const digit = $derived(ui.railDigits.get(selectionKey({ kind: 'feature', name: feature.name })));
 /*
  * repo → its MR tag, for the member rows.
  *
@@ -86,7 +89,7 @@ const lap = $derived(world.overlapFor(feature.name));
 const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 </script>
 
-<div style={colorVars(feature.color)} class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
+<div style={colorVars(feature.color)} class="railcard fcard" class:sel={selected} class:running={anyRunning} role="listitem">
   <button
     class="hit"
     onclick={() => ui.selectFeature(feature)}
@@ -94,12 +97,18 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
     aria-label="Select feature {label}"
   >
     <div class="l1">
-      <span class="dot {sess ? sess.state : (anyRunning ? 'done' : 'idle')}"></span>
+      <!-- The one mount where the name is load-bearing: the pill below is suppressed for
+           idle and stopped, so for those two states this dot is the whole signal. -->
+      {#if sess}
+        <StateDot state={sess.state} />
+      {:else}
+        <StateDot
+          state={anyRunning ? 'done' : 'idle'}
+          label={anyRunning ? 'No agent, dev servers running' : 'No agent'}
+        />
+      {/if}
       <span class="fname">{label}</span>
-      <!-- The ⌥ digit that selects this row. On the card rather than in your memory: the
-           rail sorts active-first, so starting a dev server renumbers everything below
-           it and a remembered number picks the wrong feature. A number you READ is
-           correct however the list moves. -->
+      <!-- The ⌥ digit that selects this row — see .railcard .digit in app.css. -->
       {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
       {#if !feature.auto}<span class="src" title="Grouped by config.groups, not by name">manual</span>{/if}
       {#if feature.slot != null}
@@ -171,15 +180,17 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 </div>
 
 <style>
-  /* `var(--fc, <default>)` IS the precedence rule, written once: a tagged feature wears
+  /* The border, radius, margin, hover and whole-card button are `.railcard` in app.css.
+     What is left here is what a FEATURE card alone has.
+
+     `var(--fc, <default>)` IS the precedence rule, written once: a tagged feature wears
      its colour, an untagged one falls back to exactly what it looked like before. No
      conditional class, and nothing to keep in sync — --fc is set (or not) on this element
-     by colorVars() and inherited by everything below. */
-  .fcard { border:1px solid var(--border); border-radius:10px; background:var(--fc-wash, var(--panel));
-           box-shadow:inset 3px 0 0 var(--fc, transparent); margin:0 8px 6px;
-           transition:border-color .12s, background .12s; }
-  @media (prefers-reduced-motion:reduce){ .fcard { transition:none; } }
-  .fcard:hover { border-color:var(--border-strong); }
+     by colorVars() and inherited by everything below.
+
+     Qualified with `.railcard` so it outranks that rule's own `background` — a tagged
+     card keeps its wash when selected, which is the whole point of the ring below. */
+  .railcard.fcard { background:var(--fc-wash, var(--panel)); box-shadow:inset 3px 0 0 var(--fc, transparent); }
   /*
    * Selection needs a channel the colour tag is not already using.
    *
@@ -199,14 +210,7 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
      is up. Identity has no second copy, so it gets the channel. */
   .fcard.running { box-shadow:inset 3px 0 0 var(--fc, var(--done)); }
 
-  /* min-width:0 at every level: without it a long branch name or a four-port list makes
-     the flex children refuse to shrink and the whole rail grows a horizontal scrollbar. */
-  .hit { display:block; width:100%; min-width:0; text-align:left; background:none; border:0;
-         padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
-
   .l1 { display:flex; align-items:center; gap:7px; min-width:0; }
-  .digit { font-family:var(--mono); font-size:10px; color:var(--faint); flex:none;
-           border:1px solid var(--border); border-radius:5px; padding:1px 4px; opacity:.75; }
   .fname { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .l2 { display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; min-width:0; }
   .l3 { display:flex; flex-direction:column; gap:3px; margin-top:6px; min-width:0; }
@@ -245,6 +249,7 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 
   .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
   .badge.slot { color:var(--working); background:var(--working-bg); }
-  .src { font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
-         border:1px solid var(--border); border-radius:5px; padding:1px 5px; color:var(--muted); flex:none; }
+  /* `.src` itself is a global token (app.css, beside .grp and .link). It was re-declared
+     here at a size of its own, which is how one token came to render at three sizes. */
+  .src { flex:none; }
 </style>

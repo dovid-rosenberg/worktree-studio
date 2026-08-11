@@ -35,7 +35,6 @@
  */
 
 import { ui } from '$lib/stores/ui.svelte.js';
-import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
 import { runStack } from '$lib/ops.svelte.js';
@@ -138,12 +137,17 @@ export function handleShortcut(e: KeyboardEvent): void {
    */
   if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code) && !overlays.any) {
     e.preventDefault();
-    // The rail draws agents then features, and a feature may have no session — so a row
-    // is picked by what it IS, not by a session id it might not have.
+    /*
+     * A row is picked by WHAT IT IS — the tagged selection railOrder carries — not by a
+     * name looked up in a list.
+     *
+     * The lookup was `world.features.find(f => f.name === pick.name)`, and a review row
+     * came through as a feature named after a merge-request title. Nothing matched, so
+     * `selectFeature(undefined)` fell through to clearing the selection: ⌥ on any review
+     * row wiped whatever you had open.
+     */
     const pick = ui.railOrder[Number(e.code.slice(5)) - 1];
-    if (!pick) return;
-    if (pick.id) ui.goToSession(pick.id);
-    else ui.selectFeature(world.features.find((f) => f.name === pick.name));
+    if (pick) ui.goTo(pick);
     return;
   }
 
@@ -185,7 +189,8 @@ export function handleShortcut(e: KeyboardEvent): void {
       return;
     }
     ui.goToSession(s.id);
-    ui.dockView = 'changes';
+    // setDockView, not the field: it is the only writer that persists the choice.
+    ui.setDockView('changes');
     return;
   }
   // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the

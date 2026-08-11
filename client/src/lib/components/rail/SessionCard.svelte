@@ -14,13 +14,15 @@ import type { Session } from '../../../../../server/types';
  * `rail.innerHTML = ''` on every SSE tick — i.e. several times a second while a
  * session is working — which destroyed focus, scroll position and any open menu.
  */
-import { ui, labelForSource } from '$lib/stores/ui.svelte.js';
+import { ui, labelForSource, selectionKey } from '$lib/stores/ui.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
 let { session }: { session: Session } = $props();
 
-/** The ⌥ digit that selects this row — see ui.railDigits for why it is shown. */
-const digit = $derived(ui.railDigits.get(`s:${session.id}`));
+/** The ⌥ digit that selects this row — see ui.railDigits for why it is shown. Built
+    through selectionKey rather than an `s:` literal: one spelling of the scheme. */
+const digit = $derived(ui.railDigits.get(selectionKey({ kind: 'session', id: session.id })));
 
 const stopped = $derived(session.state === 'stopped');
 const srv = $derived((world.servers[session.id] && world.servers[session.id].repos) || []);
@@ -30,7 +32,7 @@ const selected = $derived(ui.selectedId === session.id);
 const reps = $derived(session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }]);
 </script>
 
-<div class="scard" class:sel={selected} class:running={running.length > 0} class:stoppedrow={stopped} role="listitem">
+<div class="railcard scard" class:sel={selected} class:running={running.length > 0} class:stoppedrow={stopped} role="listitem">
   <button
     class="hit"
     onclick={() => ui.select(session.id)}
@@ -38,7 +40,7 @@ const reps = $derived(session.repos && session.repos.length ? session.repos : [{
     aria-label="Select session {session.title}"
   >
     <div class="top">
-      <span class="dot {session.state}"></span>
+      <StateDot state={session.state} />
       <span class="title">{session.title}</span>
       {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
       {#if running.length}
@@ -68,21 +70,13 @@ const reps = $derived(session.repos && session.repos.length ? session.repos : [{
 </div>
 
 <style>
-  .scard { border:1px solid var(--border); border-radius:10px; background:var(--panel); margin:0 8px 6px;
-           transition:border-color .12s, background .12s; }
-  @media (prefers-reduced-motion:reduce){ .scard { transition:none; } }
-  .scard:hover { border-color:var(--border-strong); }
-  .scard.sel { border-color:var(--brand); background:var(--elevated); }
+  /* The shell — border, radius, background, margin, hover, `.sel`, the whole-card button
+     and the ⌥ digit — is `.railcard` in app.css. Only what a SESSION card adds is here. */
   .scard.running { box-shadow:inset 3px 0 0 var(--done); }
   /* Dimmed, not hidden: a stopped agent is still resumable and must stay findable. */
   .scard.stoppedrow .title, .scard.stoppedrow .meta { opacity:.55; }
 
-  .hit { display:block; width:100%; min-width:0; text-align:left; background:none; border:0;
-         padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
-
   .top { display:flex; align-items:center; gap:8px; min-width:0; }
-  .digit { font-family:var(--mono); font-size:10px; color:var(--faint); flex:none;
-           border:1px solid var(--border); border-radius:5px; padding:1px 4px; opacity:.75; }
   .title { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .meta { display:flex; align-items:center; gap:7px; margin-top:6px; font-family:var(--mono); font-size:11.5px;
           color:var(--muted); flex-wrap:wrap; }

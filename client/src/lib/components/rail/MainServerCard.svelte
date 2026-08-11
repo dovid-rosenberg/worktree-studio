@@ -13,16 +13,27 @@ import type { Worktree } from '../../../../../server/types';
  * are at the bottom with every other verb.
  */
 import { ui } from '$lib/stores/ui.svelte.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
 let { worktree }: { worktree: Worktree } = $props();
 
 const selected = $derived(ui.selection?.kind === 'mainserver' && ui.selection.path === worktree.path);
 </script>
 
-<div class="mcard" role="listitem" class:on={selected}>
-  <button class="hit" type="button" onclick={() => ui.selectMainServer(worktree.path)}>
+<!-- `.sel`, not `.on`: three cards said `sel` and this one said `on` for the same state. -->
+<div class="railcard mcard" role="listitem" class:sel={selected}>
+  <!-- aria-pressed and a name, which its three siblings all carry and this one did not —
+       so the only selectable row announced neither what it was nor whether it was on. -->
+  <button
+    class="hit"
+    type="button"
+    onclick={() => ui.selectMainServer(worktree.path)}
+    aria-pressed={selected}
+    aria-label="Select {worktree.repo}’s main-checkout dev server"
+  >
     <span class="l1">
-      <span class="dot done"></span>
+      <!-- Not an agent: this row has none. The dot means the server is up. -->
+      <StateDot state="done" label="Dev server running" />
       <span class="rname">{worktree.repo}</span>
       <span class="src">main</span>
     </span>
@@ -35,16 +46,12 @@ const selected = $derived(ui.selection?.kind === 'mainserver' && ui.selection.pa
 </div>
 
 <style>
-  .mcard { border:1px solid var(--border); border-radius:10px; background:var(--panel); margin:0 8px 6px;
-           padding:10px 11px; box-shadow:inset 3px 0 0 var(--done); }
-  .mcard:hover { border-color:var(--border-strong); }
-  .mcard.on { border-color:var(--brand); }
-  /* A whole-card button, so the hit area is the card and not a strip inside it. */
-  .hit { display:block; width:100%; text-align:left; background:none; border:0; padding:0; cursor:pointer; color:inherit; font:inherit; }
+  /* Shell in app.css (`.railcard`), including the whole-card button — this card used to
+     carry the padding itself and zero it on the button, which is the same geometry
+     spelled the other way round. */
+  .mcard { box-shadow:inset 3px 0 0 var(--done); }
   .l1 { display:flex; align-items:center; gap:7px; }
   .rname { font-weight:600; font-size:14px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .l2 { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
   .l2 .p { font-family:var(--mono); font-size:11.5px; color:var(--done); }
-  .src { font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
-         border:1px solid var(--border); border-radius:5px; padding:1px 5px; color:var(--muted); }
 </style>

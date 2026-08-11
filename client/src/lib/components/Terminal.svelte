@@ -1,3 +1,13 @@
+<script lang="ts" module>
+/**
+ * Where the socket is, as reported to whoever mounted this.
+ *
+ * Exported from the module block so the mount site and the indicator it drives name the
+ * same four states rather than two hand-copied unions.
+ */
+export type TermStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
+</script>
+
 <script lang="ts">
 /*
  * One live terminal attached to one multiplexer pane.
@@ -6,7 +16,7 @@
  * two terminals on screen cannot reach into each other's state.
  *
  * Wire protocol (server/server.js, wss.on('connection')) — unchanged:
- *   GET /ws/term?session=<id>[&tab=<i>]&cols=<n>&rows=<n>
+ *   GET /ws/term?session=<id>&cols=<n>&rows=<n>  (the server also accepts &tab=<i>)
  *   client → server: raw bytes (written straight to the pty), or JSON
  *                    {type:'resize',cols,rows} / {type:'input',data}
  *   server → client: raw pty output, text or binary frames
@@ -22,11 +32,24 @@ import { TOKEN } from '$lib/api.js';
 // number on both ends, and types.ts is the file both ends already agree on.
 import { TERM_CLOSE_DEAD } from '../../../../server/types';
 
+/*
+ * THREE PROPS ARE GONE: `tab`, `autofocus` and `maxRetries`.
+ *
+ * All three were configuration nobody configured — the single mount site (Dock.svelte)
+ * passes none of them, so each was one default value reachable through two names. `tab`
+ * also carried a whole branch in the URL builder and a segment of the retarget key for a
+ * pane index that is never supplied: tmux window selection goes through the server
+ * (selectTab), not through a second socket. The server still accepts `&tab=`; nothing
+ * here asks for it.
+ *
+ * `onstatus` STAYS, and now has a reader. It was the same kind of dead — declared, fired
+ * four times, listened to nowhere — but the fix is the other one: a dropped socket was
+ * reported only as dim text written into the scrollback, which scrolls away and is
+ * invisible while you are on another dock tab. It drives the indicator in DockHead.
+ */
 let {
   /** Session id from /api/state. */
   sessionId,
-  /** Optional pane/window index, forwarded as `tab`. */
-  tab = null,
   /** False while the pane is hidden — suppresses fitting against a zero-sized box. */
   active = true,
   /**
@@ -40,13 +63,17 @@ let {
    * built a new component and connected as a side effect.
    */
   revive = 0,
-  /** Take keyboard focus once connected. Only one pane on screen should do this. */
-  autofocus = true,
-  /** Reconnect attempts after an unintended drop, backing off 1s→2s→4s. */
-  maxRetries = 5,
-  /** @type {((s: 'connecting'|'open'|'reconnecting'|'closed') => void)|undefined} */
+  /** Where the socket is, for a caller that wants to say so on screen. */
   onstatus = undefined,
+}: {
+  sessionId: string;
+  active?: boolean;
+  revive?: number;
+  onstatus?: (s: TermStatus) => void;
 } = $props();
+
+/** Reconnect attempts after an unintended drop, backing off 1s→2s→4s. */
+const MAX_RETRIES = 5;
 
 // Matches the pre-port terminal exactly — font metrics decide cols/rows, so changing
 // any of this silently reshapes every tmux window the UI attaches to.
@@ -157,7 +184,6 @@ function connect(t: XTerm, attempt: number, gen: number) {
   if (gen !== generation) return;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const qs = new URLSearchParams({ session: sessionId, cols: String(t.cols), rows: String(t.rows) });
-  if (tab != null) qs.set('tab', String(tab));
   // A WebSocket handshake cannot carry a header, so the boot token rides in the query
   // string — the form server/security.js accepts for exactly this reason. Without it
   // the upgrade is refused with 401 before any pty is spawned.
@@ -188,7 +214,7 @@ function connect(t: XTerm, attempt: number, gen: number) {
     // The pty spawned at the cols/rows in the query string, but the box may have been
     // resized between constructing the URL and the handshake completing.
     sendResize();
-    if (autofocus) t.focus();
+    t.focus();
     onstatus?.('open');
   };
 
@@ -203,7 +229,7 @@ function connect(t: XTerm, attempt: number, gen: number) {
       onstatus?.('closed');
       return;
     }
-    if (attempt >= maxRetries) {
+    if (attempt >= MAX_RETRIES) {
       note(t, '[disconnected — reselect to reattach]');
       onstatus?.('closed');
       return;
@@ -395,7 +421,7 @@ $effect(() => {
   // `revive` is part of the target so a resumed agent reattaches on its own. It also
   // makes the reset below fire, which is what you want: the pane is showing a dead
   // session's last screen plus the daemon's "session ended" line.
-  const target = `${sessionId}\0${tab ?? ''}\0${revive}`;
+  const target = `${sessionId}\0${revive}`;
   const t = term;
   if (!t || !sessionId) return;
 

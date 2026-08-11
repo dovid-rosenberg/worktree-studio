@@ -366,9 +366,22 @@ async function guard(fn: () => Promise<unknown>) {
     color: var(--faint); padding: 0 2px 0 8px; user-select: none;
   }
 
-  /* Before the destructive verb, which belongs to no cluster and should not look like it
-     does. A rule rather than a gap: a gap alone reads as accidental. */
-  .sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border); }
+  /*
+   * THE SPLIT — the divider the whole bar is arranged around: reversible verbs to the
+   * left of it, everything that changes what the feature IS to the right.
+   *
+   * It was described at length in the markup above and had NO RULE anywhere — not here,
+   * not in app.css — so both mounts rendered as an empty zero-width span and the
+   * arrangement the comments defend was invisible. A rule rather than a gap: a gap alone
+   * reads as accidental.
+   *
+   * Its own name rather than `.sep`: the `.sep` spans in the ⋯ snippets separate items in
+   * a VERTICAL list and are already styled by their owner (OverflowMenu's
+   * `.sheet :global(.sep)`, a 1px row). The rule that used to live here was a 1px COLUMN
+   * for that same class — dead, since the menu's own rule outranks it, and wrong for the
+   * only elements it could ever have matched.
+   */
+  .split { width: 1px; align-self: stretch; min-height: 20px; margin: 2px 5px; background: var(--border-strong); }
   /* Present even when empty, so selecting something never shifts the layout. */
   .actionbar.idle { color: var(--faint); }
   .hint { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }

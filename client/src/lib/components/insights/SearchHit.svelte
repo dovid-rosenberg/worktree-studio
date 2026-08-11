@@ -7,6 +7,7 @@
 import { activatable } from '$lib/actions/activatable.js';
 import { segments } from './snippet.js';
 import { ago, stamp, shortModel } from './format.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
 /**
  * @type {{
@@ -50,10 +51,10 @@ const when = $derived(Number.isFinite(hit.tsMs) ? hit.tsMs : Date.parse(hit.ts |
           title={`Only search ${session.title}`}
           onclick={(e) => { e.stopPropagation(); onscope(session.id); }}
         >
-          <span class="dot {session.state || 'idle'}"></span>{session.title}
+          <StateDot state={session.state || 'idle'} />{session.title}
         </button>
       {:else}
-        <span class="sesschip flat"><span class="dot {session.state || 'idle'}"></span>{session.title}</span>
+        <span class="sesschip flat"><StateDot state={session.state || 'idle'} />{session.title}</span>
       {/if}
       {#if session.repo}<span class="repo">{session.repo}</span>{/if}
     {/if}
@@ -101,10 +102,10 @@ const when = $derived(Number.isFinite(hit.tsMs) ? hit.tsMs : Date.parse(hit.ts |
   }
   .sesschip:hover { border-color: var(--brand); }
   .sesschip.flat { cursor: default; }
-  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--idle); }
-  .dot.working { background: var(--working); }
-  .dot.waiting { background: var(--waiting); }
-  .dot.stopped { background: var(--faint); }
+  /* The state dot is StateDot / the `.dot` vocabulary in app.css. A local copy lived here
+     at 7px with three of the five states re-coloured and the other two missing, so a
+     search hit for an `idle` session and one for a `done` one looked identical. One
+     vocabulary, one size. */
 
   .repo, .branch, .model, .sub, .when { color: var(--faint); white-space: nowrap; }
   .branch { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }

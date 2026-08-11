@@ -17,6 +17,7 @@ import { ui } from '$lib/stores/ui.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
 import { errMessage } from '$lib/errmsg.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
 const KNOWN = [
   { id: 'freetext', label: 'Free text' },
@@ -112,7 +113,7 @@ async function start() {
 
 <Modal label="New session" onclose={() => overlays.closeIntake()}>
   <div class="modal-head">
-    <span class="dot idle"></span><b>New session</b>
+    <StateDot state="idle" label="No agent yet" /><b>New session</b>
     <span class="spacer"></span>
     <button class="btn ghost" title="Close" aria-label="Close" onclick={() => overlays.closeIntake()}>✕</button>
   </div>
