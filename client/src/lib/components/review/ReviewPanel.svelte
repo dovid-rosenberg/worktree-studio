@@ -62,6 +62,18 @@
   // response must never overwrite a faster later one — the classic way a diff pane ends
   // up showing one commit's files under another commit's header.
   let detailToken = 0;
+  /*
+   * The same stamp for the COMMIT LIST, which did not have one — and needs it more,
+   * because its result decides what gets fetched next.
+   *
+   * Switching sessions on the rail while `/commits` is in flight re-runs the effect
+   * below and starts a second load. The first one then lands anyway, writes the OLD
+   * session's repos into `repos`, and calls `select()` with a repo from that list —
+   * which reads the CURRENT `sessionId`. The request that goes out is therefore one
+   * session's id crossed with another session's repo, and the daemon answers exactly
+   * what it should: 400 `unknown repo or no worktree`.
+   */
+  let listToken = 0;
 
   const isUncommitted = $derived(!!sel && sel.sha === 'uncommitted');
 
@@ -85,10 +97,15 @@
   /* ---------------- loading ---------------- */
 
   async function loadCommits({ keepSelection = true } = {}) {
+    const token = ++listToken;
     loadingList = true;
     listError = null;
     try {
       const data = await fetchCommits(sessionId);
+      // A newer load (or a session switch) already superseded this one. Returning
+      // BEFORE `repos` is written is the whole point: everything downstream —
+      // `select()`, the branch bar, the repo chips — reads from it.
+      if (token !== listToken) return;
       repos = data.repos || [];
       const s = sel;
       const survives = !!(keepSelection && s && repos.some((r) => r.repo === s.repo
@@ -103,9 +120,12 @@
         else { sel = null; files = []; }
       }
     } catch (e) {
+      if (token !== listToken) return; // a stale failure is not this session's problem
       listError = errMessage(e);
     } finally {
-      loadingList = false;
+      // Only the load that is still current owns the spinner; a stale one clearing it
+      // would say "loaded" while the real request is still out.
+      if (token === listToken) loadingList = false;
     }
   }
 
@@ -279,6 +299,10 @@
     files = [];
     hunkState.clear();
     detailToken++;
+    // Bumped here as well as inside loadCommits, for the case where there is no new
+    // load to bump it: switching to nothing must still discard the load in flight.
+    listToken++;
+    repos = [];
     if (id) loadCommits({ keepSelection: false });
   });
 </script>
