@@ -113,6 +113,7 @@ export function selectionKey(s: Selection, enc: (v: string) => string = (v) => v
 const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
 const SORT_KEY = 'wts-rail-sort';
+const ROOT_KEY = 'wts-root';
 
 /**
  * How the rail is ordered. `attention` is the default and the one the app is designed
@@ -220,6 +221,22 @@ function savedRailSort(): RailSort {
   }
 }
 
+/**
+ * The chosen root folder, or '' for all of them.
+ *
+ * Persisted, and NOT validated against the config here: `world.baseDirs` arrives with the
+ * first topology frame, which has not landed when this runs. A root that no longer exists
+ * simply matches nothing until the switcher re-renders, and the switcher offers "All
+ * roots" as its first entry, so the way out is always on screen.
+ */
+function savedRoot(): string {
+  try {
+    return localStorage.getItem(ROOT_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
 function savedRailWidth(): number {
   try {
     const n = Number(localStorage.getItem(RAIL_KEY));
@@ -286,6 +303,15 @@ class UI {
   #dockMemory = new Map<string, { view: DockView; tab: string }>();
   /** Rail repo filter — '' means all repos. */
   repoFilter = $state('');
+  /**
+   * The root folder the whole app is scoped to — '' means all of them.
+   *
+   * A SEPARATE AXIS from `repoFilter`, not a coarser version of it. A root is where a
+   * body of work lives (`~/Desktop/ab-code` is the job, `~/Desktop/code` is not), and
+   * switching it is switching context; the repo filter narrows within whatever is in
+   * front of you. They compose — see `#repoInScope`.
+   */
+  rootFilter = $state(savedRoot());
   /** How the rail is ordered — see RAIL_SORTS. */
   railSort = $state<RailSort>(savedRailSort());
   /** Which dock panel is showing. 'term' keeps the live terminal mounted. */
@@ -342,12 +368,43 @@ class UI {
       : null,
   );
 
+  /**
+   * The repos the chosen root admits, or null for "no root chosen, so all of them".
+   *
+   * A repo's root is read off its MAIN checkout's `baseDir`, which the server already
+   * computed (state.ts:baseDirOf) — the client does not re-derive it by comparing path
+   * prefixes, which is how the two would come to disagree about a nested baseDir.
+   */
+  #rootRepos = $derived.by((): Set<string> | null => {
+    if (!this.rootFilter) return null;
+    const out = new Set<string>();
+    for (const r of world.repos) {
+      const main = (r.worktrees || []).find((w) => w.isMain);
+      if (main && main.baseDir === this.rootFilter) out.add(r.name);
+    }
+    return out;
+  });
+
+  /**
+   * ONE membership test for both filters.
+   *
+   * The two axes were about to be four copies of `!this.filter || x === this.filter`,
+   * spread across features, unpromoted sessions, main servers and the repo dropdown —
+   * and a fifth list added later would have got one of them and not the other. Composed
+   * here instead, so every list asks the same question.
+   */
+  #repoInScope = (repo: string): boolean =>
+    (!this.repoFilter || repo === this.repoFilter) && (!this.#rootRepos || this.#rootRepos.has(repo));
+
   #featureMatches = (f: Feature): boolean =>
-    !this.repoFilter ||
+    // Nothing filtering means everything shows — including a manual group whose members
+    // have all gone missing, which has no repo to match on and must not vanish silently
+    // just because the test moved from "or" to "some".
+    (!this.repoFilter && !this.#rootRepos) ||
     // A MissingMember is a dangling config reference with no repo, so it can never
     // match a filter — guard on the discriminant rather than casting it away.
     (f.members || []).some(
-      (m) => Boolean(m) && !('missing' in m && m.missing) && (m as Worktree).repo === this.repoFilter,
+      (m) => Boolean(m) && !('missing' in m && m.missing) && this.#repoInScope((m as Worktree).repo),
     );
 
   /** Features after the repo filter, in rail order. Whole features, never split. */
@@ -366,7 +423,7 @@ class UI {
    */
   unpromotedSessions = $derived(
     world.sessions
-      .filter((s) => !s.worktreePath && (!this.repoFilter || s.repoName === this.repoFilter))
+      .filter((s) => !s.worktreePath && this.#repoInScope(s.repoName))
       .slice()
       .sort(
         (a, b) =>
@@ -385,7 +442,7 @@ class UI {
       return world.repos
         .flatMap((r) => r.worktrees || [])
         .filter((w) => w.isMain && web.has(w.repo) && w.running && (w.ports || []).length)
-        .filter((w) => !this.repoFilter || w.repo === this.repoFilter);
+        .filter((w) => this.#repoInScope(w.repo));
     })(),
   );
 
@@ -500,7 +557,13 @@ class UI {
     ),
   );
 
-  /** Repo names offered by the filter: every member repo, plus unpromoted sessions' repos. */
+  /**
+   * Repo names offered by the filter: every member repo, plus unpromoted sessions' repos.
+   *
+   * Scoped by the ROOT but not by itself: offering repos from a root you have switched
+   * away from would let you pick one and empty the rail, and the only way back would be
+   * to notice that the wrong root is selected.
+   */
   repoNames = $derived(
     [
       ...new Set([
@@ -508,9 +571,43 @@ class UI {
         ...world.sessions.map((s) => s.repoName),
       ]),
     ]
-      .filter(Boolean)
+      .filter((n) => n && (!this.#rootRepos || this.#rootRepos.has(n)))
       .sort(),
   );
+
+  /**
+   * The root folders on offer, newest-first in config order, labelled by basename.
+   *
+   * Only the ones that actually hold a repo: a baseDir pointing somewhere empty (a typo,
+   * an unmounted volume — both of which settings.ts saves anyway and warns about) would
+   * otherwise appear as a destination that silently shows nothing.
+   */
+  roots = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const r of world.repos) {
+      const main = (r.worktrees || []).find((w) => w.isMain);
+      const dir = main?.baseDir || '';
+      if (dir) counts.set(dir, (counts.get(dir) || 0) + 1);
+    }
+    return (world.baseDirs || [])
+      .filter((d) => counts.has(d))
+      .map((d) => ({ path: d, label: d.replace(/\/+$/, '').split('/').pop() || d, repos: counts.get(d) || 0 }));
+  });
+
+  /** Total repos across every root — what "All roots" is worth. */
+  rootTotal = $derived(this.roots.reduce((n, r) => n + r.repos, 0));
+
+  setRoot(path: string): void {
+    this.rootFilter = path;
+    // The repo filter belongs to the root you were in. Carrying it across means landing
+    // on an empty rail filtered by a repo the new root does not contain.
+    this.repoFilter = '';
+    try {
+      localStorage.setItem(ROOT_KEY, path);
+    } catch {
+      /* private browsing: the choice simply does not persist */
+    }
+  }
 
   /** True when nothing at all is selected — the dock shows its empty state. */
   nothingSelected = $derived(!this.selected && !this.selectedFeature);

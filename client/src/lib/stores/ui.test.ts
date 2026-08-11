@@ -52,8 +52,9 @@ function give({
   repos = [] as unknown[],
   webRepos = [] as string[],
   taskStatus = undefined as Record<string, { label: string; done: boolean }> | undefined,
+  baseDirs = [] as string[],
 }) {
-  world.topology = { features, groups: [], repos, webRepos } as never;
+  world.topology = { features, groups: [], repos, webRepos, baseDirs } as never;
   world.sessionHalf = { sessions, servers: {} } as never;
   // The ci half carries task status — same cadence, same kind of thing (see CiPayload).
   world.ciHalf = { ci: {}, taskStatus } as never;
@@ -62,6 +63,7 @@ function give({
 beforeEach(() => {
   give({});
   ui.repoFilter = '';
+  ui.rootFilter = '';
   ui.railSort = 'attention'; // the default, so one test's choice does not leak into the next
   ui.clearSelection();
 });
@@ -415,5 +417,118 @@ describe('rail sorting', () => {
     });
     ui.setRailSort('status');
     expect(ui.railRows.map((r) => r.name)).toEqual(['known', 'odd']);
+  });
+});
+
+/*
+ * THE ROOT SWITCHER.
+ *
+ * A root is where a body of work lives — `~/Desktop/ab-code` is the job, `~/Desktop/code`
+ * is not — so switching roots is switching context, and it scopes the whole app rather
+ * than filtering one list. It is a SEPARATE AXIS from the repo filter, and the two
+ * compose: both go through one membership test, because four hand-rolled copies of
+ * `!filter || x === filter` is how a fifth list ends up honouring one and not the other.
+ *
+ * A repo's root is read off its MAIN checkout's `baseDir`, which the server computed.
+ */
+const WORK = '/Users/x/Desktop/ab-code';
+const PERSONAL = '/Users/x/Desktop/code';
+
+/** A repo whose main checkout declares which root it lives under. */
+const repoIn = (name: string, baseDir: string) => ({
+  name,
+  repo: name,
+  path: `${baseDir}/${name}`,
+  worktrees: [{ repo: name, wtname: name, path: `${baseDir}/${name}`, isMain: true, baseDir, running: false, ports: [] }],
+});
+
+function twoRoots() {
+  give({
+    baseDirs: [WORK, PERSONAL],
+    repos: [repoIn('accept-blue', WORK), repoIn('merchant-v3', WORK), repoIn('studio', PERSONAL)],
+    features: [
+      feature('mfa', [member('accept-blue'), member('merchant-v3')]),
+      feature('sticky', [member('studio')]),
+    ],
+    sessions: [session('u1', { repoName: 'studio' })],
+  });
+}
+
+describe('root switcher', () => {
+  it('offers each root that holds a repo, labelled by basename and counted', () => {
+    twoRoots();
+    expect(ui.roots).toEqual([
+      { path: WORK, label: 'ab-code', repos: 2 },
+      { path: PERSONAL, label: 'code', repos: 1 },
+    ]);
+    expect(ui.rootTotal).toBe(3);
+  });
+
+  it('drops a configured root that holds nothing', () => {
+    /*
+     * settings.ts saves a baseDir that does not exist (it may be an unmounted volume) and
+     * warns instead of refusing. Offering it here would be a destination that silently
+     * shows an empty rail — which looks exactly like Studio being broken.
+     */
+    give({ baseDirs: [WORK, '/nowhere'], repos: [repoIn('accept-blue', WORK)] });
+    expect(ui.roots.map((r) => r.path)).toEqual([WORK]);
+  });
+
+  it('scopes features, unpromoted sessions and the repo dropdown together', () => {
+    twoRoots();
+    ui.setRoot(WORK);
+    expect(ui.visibleFeatures.map((f) => f.name)).toEqual(['mfa']);
+    // The unpromoted session lives in the personal root, so it goes too — the rail is one
+    // list, and a root that hides half of it is worse than no switch at all.
+    expect(ui.unpromotedSessions.map((s) => s.id)).toEqual([]);
+    expect(ui.repoNames).toEqual(['accept-blue', 'merchant-v3']);
+  });
+
+  it('composes with the repo filter rather than overriding it', () => {
+    twoRoots();
+    ui.setRoot(WORK);
+    ui.repoFilter = 'merchant-v3';
+    expect(ui.visibleFeatures.map((f) => f.name)).toEqual(['mfa']);
+    ui.repoFilter = 'studio'; // in the other root: the root wins, and nothing shows
+    expect(ui.visibleFeatures).toEqual([]);
+  });
+
+  it('clears the repo filter when the root changes', () => {
+    /*
+     * The repo filter belongs to the root you were in. Carrying `merchant-v3` into the
+     * personal root leaves an empty rail filtered by a repo that root does not contain,
+     * with the cause two controls away from the symptom.
+     */
+    twoRoots();
+    ui.setRoot(WORK);
+    ui.repoFilter = 'merchant-v3';
+    ui.setRoot(PERSONAL);
+    expect(ui.repoFilter).toBe('');
+    expect(ui.visibleFeatures.map((f) => f.name)).toEqual(['sticky']);
+  });
+
+  it('shows everything again on All roots', () => {
+    twoRoots();
+    ui.setRoot(WORK);
+    ui.setRoot('');
+    expect(ui.visibleFeatures.map((f) => f.name).sort()).toEqual(['mfa', 'sticky']);
+    expect(ui.unpromotedSessions.map((s) => s.id)).toEqual(['u1']);
+  });
+
+  it('keeps a feature whole when only one of its repos is in the root', () => {
+    /*
+     * The same rule the repo filter follows: a feature renders WHOLE or not at all.
+     * Showing only the matching members would split a BE+FE feature down the middle,
+     * which is the grouping the shared-worktree-name convention exists to create.
+     */
+    give({
+      baseDirs: [WORK, PERSONAL],
+      repos: [repoIn('accept-blue', WORK), repoIn('studio', PERSONAL)],
+      features: [feature('split', [member('accept-blue'), member('studio')])],
+    });
+    ui.setRoot(WORK);
+    const f = ui.visibleFeatures.find((x) => x.name === 'split');
+    expect(f).toBeTruthy();
+    expect(f?.members).toHaveLength(2);
   });
 });
