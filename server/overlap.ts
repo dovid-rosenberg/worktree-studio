@@ -1,24 +1,16 @@
 /*
- * WHAT ELSE IS TOUCHING THIS FILE, and how far the branch has drifted.
+ * HOW FAR A BRANCH HAS DRIFTED FROM ITS BASE.
  *
- * Studio is the only thing that knows about every worktree at once, and this is the
- * question that fact answers. Two agents editing `helpers/mfa.js` in two worktrees is
- * invisible to git — each has a clean status, each builds, each passes — right up until
- * one of them merges and the other's rebase turns into an afternoon. Measured on the
- * owner's live checkout the day this was written:
+ * Two numbers and a list: how far behind, how far ahead, and the useful part — which of
+ * the files YOU changed have ALSO changed on the base since you branched. That last set
+ * is what a rebase will actually fight, and it is knowable now rather than halfway
+ * through one.
  *
- *     iso-mfa-totp   x merchant-mfa              18 shared files
- *     custom-reports x recurring-invoice-review   3 shared files
- *
- * Both halves come from the same three git reads, which is why they are one module:
- *
- *   collision — the files a feature changed since its merge-base, intersected with
- *               every other feature's set, per repo. Features only collide inside one
- *               repo, so the pairing never crosses repos.
- *   drift     — how far behind the base a branch is, and the useful half of that: which
- *               of the files YOU changed have ALSO changed on the base since you branched.
- *               That set is what will actually conflict, and it is knowable now rather
- *               than during the rebase.
+ * This module also computed cross-feature COLLISIONS — which other feature is changing
+ * the same files. The data was right (18 shared files between two live features when it
+ * shipped) and the owner did not want the warning, so it is gone rather than left behind
+ * a flag: the pairwise intersection was the only reason `changed` was kept per feature.
+ * The per-worktree read stays because `conflicts` needs it.
  *
  * CACHED ON THE PAIR OF SHAS, not on a clock. The answer changes only when this branch
  * commits or the base moves, so a sweep that finds both unchanged costs one `rev-parse`
@@ -32,7 +24,7 @@ import type { Drift, FeatureOverlap } from './types.ts';
 interface Entry {
   headSha: string;
   baseSha: string;
-  /** Files changed since the merge-base — what a collision is computed from. */
+  /** Files changed since the merge-base — what `conflicts` is filtered from. */
   changed: string[];
   behind: number;
   ahead: number;
@@ -68,7 +60,7 @@ export interface OverlapFeed {
  *
  * Returns null when the worktree cannot be read at all — a removed directory, a repo with
  * no such base — because a feature we cannot measure must contribute nothing rather than
- * a row of zeroes that reads as "no drift, no collisions".
+ * a row of zeroes that reads as "up to date".
  */
 async function measure(
   cache: Map<string, Entry>,
@@ -128,8 +120,6 @@ export function createOverlapFeed(deps: {
     if (running) return false;
     running = true;
     try {
-      /** repo → feature → the files it changed there. */
-      const byRepo = new Map<string, Map<string, string[]>>();
       const drift = new Map<string, Drift[]>();
 
       for (const f of features) {
@@ -137,8 +127,6 @@ export function createOverlapFeed(deps: {
           if (!m?.path || !m.repo) continue;
           const e = await read(cache, m.path, baseFor(m.repo));
           if (!e) continue;
-          if (!byRepo.has(m.repo)) byRepo.set(m.repo, new Map());
-          byRepo.get(m.repo)!.set(f.name, e.changed);
           const list = drift.get(f.name) || [];
           list.push({ repo: m.repo, behind: e.behind, ahead: e.ahead, conflicts: e.conflicts });
           drift.set(f.name, list);
@@ -155,32 +143,7 @@ export function createOverlapFeed(deps: {
           behind: Math.max(0, ...d.map((x) => x.behind)),
           ahead: d.reduce((n, x) => n + x.ahead, 0),
           drift: d.filter((x) => x.behind || x.ahead || x.conflicts.length),
-          collisions: [],
         };
-      }
-
-      // Pairwise, per repo. Each pair is compared once and recorded on BOTH features:
-      // the warning is symmetric, and whichever one you happen to be looking at is the
-      // one that has to tell you.
-      for (const [repo, perFeature] of byRepo) {
-        const names = [...perFeature.keys()];
-        for (let i = 0; i < names.length; i++) {
-          for (let j = i + 1; j < names.length; j++) {
-            const a = names[i];
-            const b = names[j];
-            const setB = new Set(perFeature.get(b) || []);
-            const shared = (perFeature.get(a) || []).filter((file) => setB.has(file));
-            if (!shared.length) continue;
-            shared.sort();
-            next[a]?.collisions.push({ feature: b, repo, files: shared });
-            next[b]?.collisions.push({ feature: a, repo, files: shared });
-          }
-        }
-      }
-
-      // Most shared files first: the pair most likely to hurt is the one worth naming.
-      for (const v of Object.values(next)) {
-        v.collisions.sort((x, y) => y.files.length - x.files.length);
       }
 
       // Drop worktrees that have gone, so the cache tracks reality rather than history.

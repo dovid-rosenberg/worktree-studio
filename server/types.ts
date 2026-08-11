@@ -660,13 +660,6 @@ export interface CiRepo {
 export type CiSnapshot = Record<string, CiRepo[]>;
 
 /** The `ci` half. Note the extra nesting: the payload wraps the map in `ci`. */
-/** Another feature changing files this one also changes, inside one repo. */
-export interface Collision {
-  feature: string;
-  repo: string;
-  files: string[];
-}
-
 /** One repo's drift for one feature: how far from the base, and what will fight a rebase. */
 export interface Drift {
   repo: string;
@@ -677,7 +670,7 @@ export interface Drift {
 }
 
 /**
- * What else is touching this feature's files, and how far it has drifted.
+ * How far a feature has drifted from its base.
  *
  * Declared here rather than in server/overlap.ts because this file is the wire contract
  * and the client reads it from here — the producer imports the shape, not the other way
@@ -689,7 +682,6 @@ export interface FeatureOverlap {
   behind: number;
   ahead: number;
   drift: Drift[];
-  collisions: Collision[];
 }
 
 export interface CiPayload {
@@ -704,7 +696,7 @@ export interface CiPayload {
    */
   taskStatus?: Record<string, TaskStatus>;
   /**
-   * featureName → what else is changing its files, and how far it has drifted.
+   * featureName → how far it has drifted from its base.
    *
    * Same frame, same reasoning as taskStatus: pulled on a cadence, changing on the order
    * of commits rather than of file saves. See server/overlap.ts.
