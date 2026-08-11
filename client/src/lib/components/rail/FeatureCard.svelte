@@ -143,7 +143,17 @@
           <span class="br" class:done={m.merged}>{m.branch || m.wtname}</span>
           {#if prTags.get(m.repo)}<span class="pr">{prTags.get(m.repo)}</span>{/if}
           {#if (m.ports || []).length}
-            <span class="p">{m.ports.map((p: number) => ':' + p).join(' ')}</span>
+            <!-- Off-slot: listening, but on none of the ports this feature's slot expects
+                 — a server started outside Studio, or one whose start command ignored the
+                 slot env. It is sitting on the port the next feature will ask for, so the
+                 ports read as a warning rather than as confirmation. -->
+            <span
+              class="p"
+              class:offslot={(m.offSlot || []).length}
+              title={(m.offSlot || []).length
+                ? `not on this feature's slot ports — started outside Studio, or the start command ignored the slot`
+                : undefined}
+            >{m.ports.map((p: number) => ':' + p).join(' ')}</span>
           {/if}
         </span>
       {/each}
@@ -220,6 +230,8 @@
   .mchip .br.done { color:var(--done); }
   .pr { color:var(--brand); flex:none; }
   .mchip .p { color:var(--done); flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Same ports, different claim: these are the ones it should NOT be on. */
+  .mchip .p.offslot { color:var(--warn, var(--working)); text-decoration:underline dotted; }
 
   .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
   .badge.slot { color:var(--working); background:var(--working-bg); }

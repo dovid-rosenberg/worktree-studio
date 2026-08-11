@@ -450,6 +450,16 @@ export interface Worktree {
    * nonexistent cwd.
    */
   gone?: boolean;
+  /**
+   * Listening, but on none of the ports this feature's slot expects — so the ports it
+   * IS on. Present only when concurrency is on and the repo is slotted.
+   *
+   * The signal that a dev server was started outside Studio (or by a start command that
+   * ignored the slot env). Same meaning as `boundElsewhere` on a start() result, which
+   * answers the question for a launch Studio DID make; this answers it for one it
+   * merely discovered.
+   */
+  offSlot?: number[];
 }
 
 /**

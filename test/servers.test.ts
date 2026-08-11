@@ -9,6 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { Servers, trimLog, LOG_LIMITS } from '../server/servers.ts';
+import { realpath } from '../server/util.ts';
 
 function servers(extra = {}) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-servers-'));
@@ -147,6 +148,76 @@ test('start() trims a log the previous run left oversized', async () => {
 // node_modules across, so the start command dies the moment it is invoked. For a
 // multi-repo feature that meant one half came up and the other did not, with nothing
 // on screen saying why. It now means "starting this will work".
+
+/*
+ * offSlot: a dev server that is up, but not on the ports this feature's slot expects.
+ *
+ * Discovery has always found these — discoverRunning() maps any listening socket to its
+ * worktree, so a server an agent started with a bare `npm run dev` shows as running like
+ * any other. What it could not say is that it is on the WRONG ports: it never read the
+ * slot env, so it bound the repo's hardcoded default, and the next feature to start will
+ * collide with it. start() already answers this question for launches Studio made
+ * (`boundElsewhere`); this answers it for ones it merely discovered.
+ */
+function slottedServers() {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-slot-'));
+  return new Servers({
+    _stateDir: stateDir,
+    web: { port: 0 },
+    start: { fe: { cmd: ':', ports: [] } },
+    concurrency: {
+      enabled: true,
+      offsetStep: 100,
+      maxSlots: 3,
+      repos: { fe: { portEnv: { WTS_FE_PORT: 3000 } } },
+    },
+  });
+}
+
+test('a server on its slot ports is not flagged', () => {
+  const s = slottedServers();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-onslot-'));
+  s.slots.set(s.featureFor(dir), 1); // slot 1 → 3100
+  const d = s.decorate({ path: dir, repo: 'fe' }, new Map([[realpath(dir), { pid: 1, ports: [3100] }]]));
+  assert.equal(d.running, true);
+  assert.deepEqual(d.offSlot, [], 'exactly where it was supposed to be');
+});
+
+test('a server on none of its slot ports reports the ports it is actually on', () => {
+  const s = slottedServers();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-offslot-'));
+  s.slots.set(s.featureFor(dir), 1); // slot 1 expects 3100
+  // What a bare `npm run dev` produces: the repo's hardcoded default, slot ignored.
+  const d = s.decorate({ path: dir, repo: 'fe' }, new Map([[realpath(dir), { pid: 1, ports: [3000] }]]));
+  assert.deepEqual(d.offSlot, [3000]);
+});
+
+/*
+ * Deliberately "none of them", not "any port that is not expected". A dev server
+ * legitimately opens more than it was asked to — HMR and inspector sockets — and
+ * flagging those would make the signal fire on every healthy server. Being on the slot
+ * AT ALL is the thing that means the env was read.
+ */
+test('extra ports alongside the right one are not a mismatch', () => {
+  const s = slottedServers();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-hmr-'));
+  s.slots.set(s.featureFor(dir), 1);
+  const d = s.decorate({ path: dir, repo: 'fe' }, new Map([[realpath(dir), { pid: 1, ports: [3100, 24678] }]]));
+  assert.deepEqual(d.offSlot, [], 'the HMR socket is not evidence of anything');
+});
+
+test('a repo with no concurrency mapping is never flagged — there is no slot to miss', () => {
+  const s = slottedServers();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-unslotted-'));
+  const d = s.decorate({ path: dir, repo: 'api' }, new Map([[realpath(dir), { pid: 1, ports: [9999] }]]));
+  assert.deepEqual(d.offSlot, []);
+});
+
+test('a worktree that is not running has nothing to be off-slot about', () => {
+  const s = slottedServers();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-down-'));
+  assert.deepEqual(s.decorate({ path: dir, repo: 'fe' }, new Map()).offSlot, []);
+});
 
 test('depsMissing is true only for a package.json with no node_modules', () => {
   const s = servers();
