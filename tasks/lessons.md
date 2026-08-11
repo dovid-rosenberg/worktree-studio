@@ -50,3 +50,40 @@ starts every un-promoted session with `cwd: repoPath`, so *any* two sessions in 
 repo share that directory; assume another agent is in there. A test suite that hangs
 or a diff that disappears is this, not a bug in the code under test. The structural
 fix is planned as Phase 1 in `tasks/todo.md` (checkout lease).
+
+## A gate that runs first can hide the gate that matters (2026-08-11)
+
+**Pattern:** CI ran red for twelve consecutive pushes and it read as normal. The failing
+step was `Formatting`, a line-width reflow in seventeen files — cosmetic, and easy to
+mean to get to later. But it ran *before* `Typecheck and tests` in the same job, so for
+a full day of active development the 881-test suite did not execute in CI at all. The
+signal "CI is red" had stopped carrying information, because it was red for a reason
+nobody needed to act on, which is indistinguishable at a glance from red for a reason
+they did.
+
+Three things had to be true for that to persist, and none of them was forgetfulness:
+the failure was **unreachable locally** (`npm test` and `npm run check` both omit
+`format:check`, so the documented commands pass on a tree CI rejects); nothing blocked
+the push; and nothing blocked the merge, because merges land on `main` locally and the
+`pull_request` trigger had never once fired.
+
+**Rule:** a cheap check must never be able to prevent an expensive one from running —
+put them in sibling jobs, not sequential steps. And any check CI enforces must be
+runnable by one documented local command; if the local loop cannot reproduce the CI
+failure, the CI failure will be ignored. `npm run verify` is that command, and
+`.githooks/pre-push` is what makes it non-optional.
+
+## A subagent's finding is a lead, not a fact (2026-08-11)
+
+**Pattern:** six parallel review agents produced ~70 findings. Spot-checking the
+high-severity ones against the actual code changed the answer more than once: a client
+audit reported the two high-severity npm advisories as `undici` and `postcss` when they
+were `nanoid` and `undici`; several "dead code" claims needed a full grep before they
+held up. Others were exactly right and load-bearing — the porcelain double-slice, the
+tmux `send-keys` target, the write-only `applyConfigPatch`.
+
+**Rule:** before reporting a subagent's finding as fact or acting on it, reproduce it —
+read the cited lines, run the command, grep for the usage. Report which findings were
+verified and which are still leads, and never let an unverified claim reach the user
+without that label. The cost of checking is a minute; the cost of a confident wrong
+claim is that the whole report stops being trustworthy.
