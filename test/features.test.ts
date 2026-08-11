@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { computeFeatures, detectDrift, resolveRef } from '../server/features.ts';
+import { computeFeatures, detectSplitFeatures, resolveRef } from '../server/features.ts';
 import { present } from './helpers.ts';
 import type { FeatureMember, Worktree } from '../server/types.ts';
 
@@ -122,7 +122,7 @@ test('a worktree NOT in any group is still its own feature', () => {
 });
 
 /*
- * detectDrift(): worktrees that are obviously the same piece of work, under names that
+ * detectSplitFeatures(): worktrees that are obviously the same piece of work, under names that
  * do not group.
  *
  * identity.ts groups a feature by byte-identical worktree basenames across repos. That
@@ -136,27 +136,27 @@ test('a worktree NOT in any group is still its own feature', () => {
  * grouping is written to another tool's config file, and a guess acted on silently is
  * how the naming convention became load-bearing in the first place.
  */
-test('the same branch under two different worktree names is drift', () => {
-  const drift = detectDrift([
+test('the same branch under two different worktree names is a split feature', () => {
+  const splits = detectSplitFeatures([
     { name: 'fix-recurring-pm', auto: true, members: [wt('be', 'fix-recurring-pm', 'fix/recurring-pm')] },
     { name: 'recurring-pm-fix', auto: true, members: [wt('fe', 'recurring-pm-fix', 'fix/recurring-pm')] },
   ]);
-  assert.equal(drift.length, 1);
-  assert.equal(drift[0]?.branch, 'fix/recurring-pm');
-  assert.deepEqual(drift[0]?.features.sort(), ['fix-recurring-pm', 'recurring-pm-fix']);
+  assert.equal(splits.length, 1);
+  assert.equal(splits[0]?.branch, 'fix/recurring-pm');
+  assert.deepEqual(splits[0]?.features.sort(), ['fix-recurring-pm', 'recurring-pm-fix']);
 });
 
 // Already grouped is the success case, not a finding. One feature name spanning both
 // repos is precisely what the convention is for.
-test('one feature spanning two repos on one branch is not drift', () => {
-  const drift = detectDrift([
+test('one feature spanning two repos on one branch is not a split feature', () => {
+  const splits = detectSplitFeatures([
     {
       name: 'shared',
       auto: true,
       members: [wt('be', 'shared', 'fix/thing'), wt('fe', 'shared', 'fix/thing')],
     },
   ]);
-  assert.deepEqual(drift, []);
+  assert.deepEqual(splits, []);
 });
 
 /*
@@ -164,41 +164,41 @@ test('one feature spanning two repos on one branch is not drift', () => {
  * failed to group — they are two checkouts of one branch, which is a different thing
  * and not one to suggest merging.
  */
-test('two names on one branch within a single repo is not drift', () => {
-  const drift = detectDrift([
+test('two names on one branch within a single repo is not a split feature', () => {
+  const splits = detectSplitFeatures([
     { name: 'a', auto: true, members: [wt('be', 'a', 'fix/thing')] },
     { name: 'b', auto: true, members: [wt('be', 'b', 'fix/thing')] },
   ]);
-  assert.deepEqual(drift, []);
+  assert.deepEqual(splits, []);
 });
 
 // Everything sits on the default branch at some point. Grouping on that would propose
 // merging every unrelated worktree in the repo into one feature.
 test('the default branch is never evidence of anything', () => {
-  const drift = detectDrift(
+  const splits = detectSplitFeatures(
     [
       { name: 'a', auto: true, members: [wt('be', 'a', 'main')] },
       { name: 'b', auto: true, members: [wt('fe', 'b', 'main')] },
     ],
     new Set(['main', 'develop']),
   );
-  assert.deepEqual(drift, []);
+  assert.deepEqual(splits, []);
 });
 
 test('a worktree with no branch is not matched against another with no branch', () => {
-  const drift = detectDrift([
+  const splits = detectSplitFeatures([
     { name: 'a', auto: true, members: [wt('be', 'a', null)] },
     { name: 'b', auto: true, members: [wt('fe', 'b', null)] },
   ]);
-  assert.deepEqual(drift, []);
+  assert.deepEqual(splits, []);
 });
 
 // A manual group is the user having already answered this question. Proposing it back
 // to them would be the tool arguing with its own configuration.
 test('features already grouped by hand are left out of the evidence', () => {
-  const drift = detectDrift([
+  const splits = detectSplitFeatures([
     { name: 'chosen-name', auto: false, members: [wt('be', 'x', 'fix/thing'), wt('fe', 'y', 'fix/thing')] },
     { name: 'y', auto: true, members: [wt('fe', 'y', 'fix/thing')] },
   ]);
-  assert.deepEqual(drift, []);
+  assert.deepEqual(splits, []);
 });

@@ -5,7 +5,7 @@
  * same confirmations, same toast wording. They live outside the components because the
  * command palette, the rail, the dock and Fleet all invoke the same handful of them,
  * and duplicating "confirm then POST then toast" per call site is how the two copies
- * drift apart.
+ * are split under two names.
  *
  * Convention: an op never throws. It reports through `toast(msg, true)` and returns.
  * The UI's job is to reflect the stream that follows, not the response.
@@ -13,7 +13,7 @@
 
 import { api } from '$lib/api.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
-import type { Feature, FeatureDrift, PinnedLink, Session } from '../../../server/types';
+import type { Feature, SplitFeature, PinnedLink, Session } from '../../../server/types';
 import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
@@ -789,14 +789,14 @@ export async function stopMainServer(w: { repo: string; path: string }): Promise
 }
 
 /**
- * Accept a drift finding: make the two half-features one manual group.
+ * Accept a split-feature finding: make the two half-features one manual group.
  *
  * The name is asked for rather than derived. Studio can tell that these worktrees are
  * one piece of work — they share a branch — but it cannot tell which of the two names
  * you meant, and picking one silently is how the naming convention became load-bearing
  * without anyone deciding it should be. The first name is offered as the default.
  */
-export async function groupDrift(d: FeatureDrift) {
+export async function groupSplitFeature(d: SplitFeature) {
   const name = await uiPrompt('Group these worktrees as one feature', d.features[0] || '');
   if (!name) return;
   try {

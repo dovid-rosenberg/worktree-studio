@@ -654,14 +654,14 @@ describe('reviews in the rail', () => {
 });
 
 /*
- * Dismissing a drift finding.
+ * Dismissing a split-feature finding.
  *
- * detectDrift() reports the same pair for as long as both worktrees exist, so a banner
+ * detectSplitFeatures() reports the same pair for as long as both worktrees exist, so a banner
  * with no way to disagree restates itself on every topology frame — forever, for a pair
  * you keep apart on purpose. The key is the branch AND the feature names, so dismissing
  * means "not these two" rather than "never mention this branch".
  */
-describe('drift dismissal', () => {
+describe('split-feature dismissal', () => {
   const d = (branch: string, features: string[]) => ({ branch, features });
 
   /*
@@ -677,36 +677,36 @@ describe('drift dismissal', () => {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
     };
-    ui.driftDismissed = new Set();
+    ui.splitsDismissed = new Set();
   });
 
   it('shows a finding until it is waved off', () => {
     const finding = d('fix/thing', ['a', 'b']);
-    expect(ui.driftVisible(finding)).toBe(true);
-    ui.dismissDrift(finding);
-    expect(ui.driftVisible(finding)).toBe(false);
+    expect(ui.splitVisible(finding)).toBe(true);
+    ui.dismissSplit(finding);
+    expect(ui.splitVisible(finding)).toBe(false);
   });
 
   it('does not silence a different pair on the same branch', () => {
-    ui.dismissDrift(d('fix/thing', ['a', 'b']));
-    expect(ui.driftVisible(d('fix/thing', ['a', 'c']))).toBe(true);
+    ui.dismissSplit(d('fix/thing', ['a', 'b']));
+    expect(ui.splitVisible(d('fix/thing', ['a', 'c']))).toBe(true);
   });
 
   // A third worktree joining the pair is a new claim, and worth asking about again.
   it('asks again when the finding grows', () => {
-    ui.dismissDrift(d('fix/thing', ['a', 'b']));
-    expect(ui.driftVisible(d('fix/thing', ['a', 'b', 'c']))).toBe(true);
+    ui.dismissSplit(d('fix/thing', ['a', 'b']));
+    expect(ui.splitVisible(d('fix/thing', ['a', 'b', 'c']))).toBe(true);
   });
 
-  // The names arrive in whatever order detectDrift's Set iterated, which is not stable
+  // The names arrive in whatever order detectSplitFeatures's Set iterated, which is not stable
   // across frames — so the key sorts them, or a dismissal survives exactly one render.
   it('is not fooled by the order the names arrive in', () => {
-    ui.dismissDrift(d('fix/thing', ['a', 'b']));
-    expect(ui.driftVisible(d('fix/thing', ['b', 'a']))).toBe(false);
+    ui.dismissSplit(d('fix/thing', ['a', 'b']));
+    expect(ui.splitVisible(d('fix/thing', ['b', 'a']))).toBe(false);
   });
 
   it('survives a reload', () => {
-    ui.dismissDrift(d('fix/thing', ['a', 'b']));
-    expect(JSON.parse(store.get('wts-drift-dismissed') || '[]')).toEqual(['fix/thing|a|b']);
+    ui.dismissSplit(d('fix/thing', ['a', 'b']));
+    expect(JSON.parse(store.get('wts-split-dismissed') || '[]')).toEqual(['fix/thing|a|b']);
   });
 });

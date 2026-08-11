@@ -29,7 +29,7 @@
   import type { RailSort } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
   import { overlays } from '$lib/stores/overlays.svelte.js';
-  import { groupDrift } from '$lib/ops.svelte.js';
+  import { groupSplitFeature } from '$lib/ops.svelte.js';
 
   const rows = $derived(ui.railRows);
   const dividerAt = $derived(ui.dividerAt);
@@ -108,16 +108,16 @@
     <!-- Worktrees that are one piece of work under two names. Above the list because it
          is a claim about the list itself: two of the cards below are half a feature each,
          and nothing on either card could say so. -->
-    {#each world.drift.filter((d) => ui.driftVisible(d)) as d (d.branch)}
-      <div class="drift">
-        <div class="drift-t">Same branch, two features</div>
-        <div class="drift-b"><span class="br">{d.branch}</span> is split across {d.features.join(' + ')}</div>
-        <div class="drift-a">
-          <button class="btn sm" onclick={() => groupDrift(d)}>Group them</button>
+    {#each world.splitFeatures.filter((f) => ui.splitVisible(f)) as f (f.branch)}
+      <div class="split">
+        <div class="split-t">Same branch, two features</div>
+        <div class="split-b"><span class="br">{f.branch}</span> is split across {f.features.join(' + ')}</div>
+        <div class="split-a">
+          <button class="btn sm" onclick={() => groupSplitFeature(f)}>Group them</button>
           <!-- A finding you can disagree with. Two worktrees on one branch is sometimes
                deliberate — a spike beside the real work — and without this the banner
                restates itself on every topology frame for as long as both exist. -->
-          <button class="linkish" onclick={() => ui.dismissDrift(d)}>Not the same work</button>
+          <button class="linkish" onclick={() => ui.dismissSplit(f)}>Not the same work</button>
         </div>
       </div>
     {/each}
@@ -175,16 +175,16 @@
   .rail-foot .c { display:inline-flex; align-items:center; gap:5px; }
   /* A finding, not an error: it states something true and offers the one action that
      resolves it. Warning-toned rather than red — nothing is broken, it is just split. */
-  .drift { margin:6px 10px 10px; padding:9px 11px; border:1px solid var(--border); border-left:2px solid var(--working);
+  .split { margin:6px 10px 10px; padding:9px 11px; border:1px solid var(--border); border-left:2px solid var(--working);
            border-radius:7px; background:var(--panel-2, transparent); display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
-  .drift .drift-t { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--working); }
-  .drift .drift-b { font-size:12px; color:var(--muted); line-height:1.45; }
-  .drift .br { font-family:var(--mono); color:var(--fg); }
-  .drift .drift-a { display:flex; align-items:center; gap:10px; }
+  .split .split-t { font-family:var(--mono); font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--working); }
+  .split .split-b { font-size:12px; color:var(--muted); line-height:1.45; }
+  .split .br { font-family:var(--mono); color:var(--fg); }
+  .split .split-a { display:flex; align-items:center; gap:10px; }
   /* The dismissal is deliberately the quieter of the two: grouping is the answer this
      banner is arguing for, and disagreeing with it should not look like the primary. */
-  .drift .drift-a .linkish { font-size:11.5px; color:var(--muted); text-decoration:none; }
-  .drift .drift-a .linkish:hover { color:var(--fg); text-decoration:underline; }
+  .split .split-a .linkish { font-size:11.5px; color:var(--muted); text-decoration:none; }
+  .split .split-a .linkish:hover { color:var(--fg); text-decoration:underline; }
 
   .rail-empty { padding:14px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   .rail-empty b { display:block; color:var(--ink); margin-bottom:4px; }

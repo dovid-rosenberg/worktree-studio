@@ -125,27 +125,27 @@ const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
 const SORT_KEY = 'wts-rail-sort';
 const ROOT_KEY = 'wts-root';
-const DRIFT_KEY = 'wts-drift-dismissed';
+const SPLIT_KEY = 'wts-split-dismissed';
 
 /**
- * A dismissed drift finding, identified by what it CLAIMS rather than by its branch.
+ * A dismissed split-feature finding, identified by what it CLAIMS rather than by its branch.
  *
- * detectDrift() reports the same branch for as long as the two worktrees exist, so a
+ * detectSplitFeatures() reports the same branch for as long as the two worktrees exist, so a
  * banner keyed on the branch alone would come back on every frame — and a pair you keep
  * apart on purpose (a spike alongside the real work, two repos that genuinely diverged)
  * would nag forever. Keyed on the branch AND the feature names, sorted, so dismissing
  * says "not these two" rather than "never mention this branch": a third worktree joining
  * the pair is a new claim and asks again.
  */
-function driftKey(d: { branch: string; features: string[] }): string {
+function splitKey(d: { branch: string; features: string[] }): string {
   // `|` rather than a space: a feature name is a directory basename, so it cannot
   // contain one — the key round-trips unambiguously and reads in a storage pane.
   return [d.branch, ...[...d.features].sort()].join('|');
 }
 
-function savedDrift(): Set<string> {
+function savedSplits(): Set<string> {
   try {
-    const raw = JSON.parse(localStorage.getItem(DRIFT_KEY) || '[]');
+    const raw = JSON.parse(localStorage.getItem(SPLIT_KEY) || '[]');
     return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : []);
   } catch {
     return new Set();
@@ -351,8 +351,8 @@ class UI {
   rootFilter = $state(savedRoot());
   /** How the rail is ordered — see RAIL_SORTS. */
   railSort = $state<RailSort>(savedRailSort());
-  /** Drift findings the user has waved off — see driftKey(). */
-  driftDismissed = $state<Set<string>>(savedDrift());
+  /** Drift findings the user has waved off — see splitKey(). */
+  splitsDismissed = $state<Set<string>>(savedSplits());
   /** Which dock panel is showing. 'term' keeps the live terminal mounted. */
   dockView = $state<DockView>(savedDock());
   /** Rail width in px — dragged by the splitter, persisted, clamped to [MIN, MAX]. */
@@ -769,18 +769,18 @@ class UI {
   }
 
   /** Is this finding still worth showing? */
-  driftVisible(d: { branch: string; features: string[] }): boolean {
-    return !this.driftDismissed.has(driftKey(d));
+  splitVisible(d: { branch: string; features: string[] }): boolean {
+    return !this.splitsDismissed.has(splitKey(d));
   }
 
   /**
-   * Wave a drift finding off. Reassigned rather than mutated: a `Set` is not deeply
+   * Wave a split-feature finding off. Reassigned rather than mutated: a `Set` is not deeply
    * reactive, so `.add()` on the same instance would persist and change nothing on screen.
    */
-  dismissDrift(d: { branch: string; features: string[] }): void {
-    this.driftDismissed = new Set([...this.driftDismissed, driftKey(d)]);
+  dismissSplit(d: { branch: string; features: string[] }): void {
+    this.splitsDismissed = new Set([...this.splitsDismissed, splitKey(d)]);
     try {
-      localStorage.setItem(DRIFT_KEY, JSON.stringify([...this.driftDismissed]));
+      localStorage.setItem(SPLIT_KEY, JSON.stringify([...this.splitsDismissed]));
     } catch {
       /* private mode */
     }
