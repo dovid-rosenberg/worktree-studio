@@ -140,6 +140,9 @@ export function muxStub(over: Partial<SessionMux> = {}): SessionMux {
     async paneCommand() {
       return 'node';
     },
+    async paneCwd() {
+      return '';
+    },
     async newTab() {
       return { ok: true };
     },

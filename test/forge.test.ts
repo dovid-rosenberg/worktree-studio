@@ -114,6 +114,30 @@ test('ciForRepo answers from the first provider that has a PR and never asks the
   assert.equal(gitlabAsked, false, 'GitHub wins; GitLab is only a fallback');
 });
 
+/*
+ * A PR opened OUTSIDE Studio — an agent running `gh pr create` in its pane instead of
+ * using Studio's own openPullRequest.
+ *
+ * This is the one item on the agent/Studio overlap list (tasks/todo.md) that needed no
+ * work, and this test is why: the lookup is keyed on the BRANCH, never on anything
+ * Studio recorded when it opened a PR itself. There is no registry to be absent from, so
+ * a PR Studio has never heard of is found on the next poll like any other. Pinned here
+ * so a future refactor toward a Studio-side PR record does not quietly break it.
+ */
+test('a PR Studio never opened is found anyway — the lookup is by branch', async () => {
+  let askedFor: string | null = null;
+  const f = forge([
+    provider('github', {
+      view: async (branch) => {
+        askedFor = branch;
+        return GH_HIT; // the forge answers for the branch; who created the PR never comes up
+      },
+    }),
+  ]);
+  assert.deepEqual(await f.ciForRepo(ENTRY, {}), { repo: 'api', ...GH_HIT });
+  assert.equal(askedFor, 'feature/a', 'the branch is the whole key');
+});
+
 test('ciForRepo falls back to the next provider when the first has no PR', async () => {
   const f = forge([provider('github'), provider('gitlab', { view: async () => GL_HIT })]);
   assert.deepEqual(await f.ciForRepo(ENTRY, {}), { repo: 'api', ...GL_HIT });

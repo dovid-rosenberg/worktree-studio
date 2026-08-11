@@ -83,6 +83,7 @@ export interface TmuxDriver {
   capture(name: string, target?: string): Promise<string>;
   sendText(name: string, text: string, target?: string): Promise<RunResult>;
   paneCommand(name: string, target?: string): Promise<string>;
+  paneCwd(name: string, target?: string): Promise<string>;
   selectTab(name: string, id: string | number): Promise<boolean>;
   closeTab(name: string, id: string | number): Promise<boolean>;
   renameTab(name: string, id: string | number, title: string): Promise<boolean>;
@@ -355,6 +356,14 @@ const tmux: TmuxDriver = {
   // name like 'zsh' when it isn't). Used to gate live keystroke injection.
   async paneCommand(name, target = '0') {
     const r = await T(['display-message', '-p', '-t', `${name}:${target}`, '#{pane_current_command}']);
+    return r.code === 0 ? r.stdout.trim() : '';
+  },
+
+  // Where the pane actually IS. tmux tracks this per pane, so it follows a `cd` the
+  // agent did on its own — which is how a session that made itself a worktree and
+  // moved into it gets noticed (see SessionManager._adoptWanderedWorktree).
+  async paneCwd(name, target = '0') {
+    const r = await T(['display-message', '-p', '-t', `${name}:${target}`, '#{pane_current_path}']);
     return r.code === 0 ? r.stdout.trim() : '';
   },
 

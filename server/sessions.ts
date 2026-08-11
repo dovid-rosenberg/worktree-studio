@@ -4,13 +4,13 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
+import { makeId, shortId, realpath, slug, shq, run } from './util.ts';
 import { loadSessions, saveSessions } from './session-store.ts';
-import { readJsonState, writeJson, makeId, shortId, realpath, slug, shq, run } from './util.ts';
 import * as status from './status.ts';
 import * as worktree from './worktree.ts';
 import * as layoutMod from './layout.ts';
 import { linkSessionMemory } from './claude-memory.ts';
-import { describe as describeCheckout, prepareForSession } from './checkout.ts';
+import { describe as describeCheckout, occupancy, prepareForSession } from './checkout.ts';
 import { createIdentity } from './identity.ts';
 import type { HookPayload } from './status.ts';
 import type { WorktreeCreateResult } from './worktree.ts';
@@ -98,6 +98,8 @@ export interface SessionMux {
   sendText(name: string, text: string, target?: string): Promise<unknown>;
   /** The pane's foreground program; '' when it can't be read. */
   paneCommand(name: string, target?: string): Promise<string>;
+  /** The pane's current working directory; '' when it can't be read. */
+  paneCwd(name: string, target?: string): Promise<string>;
   newTab(name: string, opts?: MuxNewTabOptions): Promise<MuxNewTabResult>;
   listTabs(name: string): Promise<MuxTab[]>;
   selectTab(name: string, id: string | number): Promise<boolean>;
@@ -148,6 +150,18 @@ export interface SessionAdoptArgs {
    * `.jsonl` in Claude's projects directory (see server/reinstate.ts).
    */
   resumeId?: string | null;
+  /**
+   * Repos to fan out into once the session exists. Only create()'s occupied-checkout
+   * path sets this: a session born in a worktree has no promote step left to do it at.
+   */
+  pendingRepos?: Array<{ repo: string; repoPath: string }>;
+  /** Opening activity line; defaults to 'starting…'. */
+  activity?: string;
+  /**
+   * Whether the worktree pre-existed. False when Studio cut it for this session — see
+   * `Session.adopted`, which means "opened over a worktree that already existed".
+   */
+  adopted?: boolean;
 }
 
 export interface SessionAttachArgs {
@@ -579,6 +593,37 @@ class SessionManager extends EventEmitter {
 
   async create({ seed, repoPath, repoName, additionalRepos }: SessionCreateArgs): Promise<Session> {
     /*
+     * A repo has ONE main checkout, and this is where a session starts before it is
+     * promoted. So two un-promoted sessions in the same repo shared a working copy — not
+     * as a race, but by design — and the sharing was merely tolerated: `switchBranch:
+     * false` kept us from moving the tree under a running agent, and nothing kept the two
+     * agents from committing each other's half-finished edits. Which is exactly what
+     * happened on 2026-08-06 (see tasks/lessons.md).
+     *
+     * So ask first whether the checkout is anyone's. If it is, the session is born in its
+     * own worktree instead and never touches the shared copy. Occupancy is read off the
+     * filesystem, so this covers agents Studio never launched as well as its own.
+     *
+     * ONLY the `session` reason cuts a worktree. A `dirty` checkout is occupied in the
+     * sense that matters here — nothing may move it — but it is not a collision, and
+     * promoting on it would contradict the model the rest of the product is built on:
+     * you start in the checkout, you promote when the work turns out to be real. Two
+     * agents in one working copy is the mistake worth pre-empting; unfinished edits of
+     * your own are not. So `dirty` keeps the checkout still and starts the session in
+     * it, exactly as before.
+     */
+    const held = this.all().some(
+      (s) => s.active && !s.worktreePath && realpath(s.repoPath) === realpath(repoPath),
+    );
+    const occ = await occupancy(repoPath, { held });
+    if (occ.occupied && occ.reason === 'session') {
+      const own = await this._createInOwnWorktree({ seed, repoPath, repoName, additionalRepos }, occ.detail);
+      // A worktree that could not be cut is not a reason to refuse the session — fall
+      // through and share the checkout, which is what every session did until now.
+      if (own) return own;
+    }
+
+    /*
      * Start from the repo's default branch, at its latest commit.
      *
      * The main checkout is whatever you last left it on, and a new session inherits that:
@@ -589,13 +634,13 @@ class SessionManager extends EventEmitter {
      * checkout with no modified tracked files, and fast-forwards only. Anything it
      * declines to do is reported on the session rather than silently skipped.
      *
-     * Skipped when another unpromoted session already lives in this checkout: they share
-     * one working copy, and moving it under a running agent is not ours to do.
+     * Reached when the checkout is free, when it is merely dirty, or when it was held
+     * and cutting a worktree failed — hence `switchBranch` still asks, and still answers
+     * no for a checkout that is anyone's in either sense. `dirty` reaching here is the
+     * common case now, and it is also the one prepareForSession() would refuse on its
+     * own; asking twice costs nothing and keeps the reason in one place.
      */
-    const shared = this.all().some(
-      (s) => s.active && !s.worktreePath && realpath(s.repoPath) === realpath(repoPath),
-    );
-    const checkout = await prepareForSession(repoPath, { switchBranch: !shared });
+    const checkout = await prepareForSession(repoPath, { switchBranch: !occ.occupied });
 
     const id = makeId('s_');
     const title = seed.title || 'New session';
@@ -649,6 +694,57 @@ class SessionManager extends EventEmitter {
     return session;
   }
 
+  /**
+   * Create a session that starts in its OWN worktree, because the main checkout is
+   * someone else's. Returns null when the worktree could not be cut, which leaves
+   * create() free to fall back to the shared checkout rather than refuse the session.
+   *
+   * This is promote's work done up front, so the session never occupies the shared copy
+   * for even a moment. `_doAdopt` already knows how to start a session in a worktree —
+   * it is called directly rather than through `adopt()`, whose only added service is
+   * de-duplicating against a worktree that already has a session, and `unique: true`
+   * above has just guaranteed this path a name nothing else holds.
+   */
+  async _createInOwnWorktree(
+    { seed, repoPath, repoName, additionalRepos }: SessionCreateArgs,
+    why: string,
+  ): Promise<Session | null> {
+    const wtName = slug(seed.title || 'session');
+    const res = await worktree.create(repoPath, deriveBranch(seed), wtName, {
+      unique: true, // auto-suffix on collision rather than fail
+      layout: this.layout,
+      ...worktreeCopyOpts(this.cfg, repoName),
+    });
+    if (!res.ok) return null;
+
+    const session = await this._doAdopt({
+      worktreePath: res.path,
+      repoName,
+      repoPath,
+      branch: res.branch,
+      wtname: res.name,
+      seed,
+      pendingRepos: additionalRepos,
+      // Say why it started somewhere other than where sessions normally start, in the
+      // same breath describeCheckout() uses to explain an unexpected starting branch.
+      activity: `started in its own worktree — ${why}`,
+      adopted: false,
+    });
+
+    // The fan-out promote() would have done. Serialized, and each addRepo is itself
+    // gated; one repo failing must not cost the session the others.
+    for (const pr of session.pendingRepos || []) {
+      try {
+        await this.addRepo(session.id, pr);
+      } catch {
+        /* */
+      }
+    }
+    session.pendingRepos = [];
+    this._touch(session.id);
+    return session;
+  }
+
   // Start a session in a worktree that already exists (no promote step).
   /**
    * Open a session on a worktree that already exists on disk (Fleet's "Start
@@ -684,6 +780,9 @@ class SessionManager extends EventEmitter {
     wtname,
     seed,
     resumeId,
+    pendingRepos,
+    activity,
+    adopted = true,
   }: SessionAdoptArgs): Promise<Session> {
     const s: SessionSeed = seed || {
       source: 'freetext',
@@ -720,7 +819,7 @@ class SessionManager extends EventEmitter {
           primary: true,
         },
       ],
-      pendingRepos: [],
+      pendingRepos: pendingRepos || [],
       suggestedBranch: branch || null,
       suggestedName: wtname || slug(title),
       muxName,
@@ -733,13 +832,13 @@ class SessionManager extends EventEmitter {
        */
       claudeSessionId: resumeId || null,
       state: 'idle',
-      activity: 'starting…',
+      activity: activity || 'starting…',
       tabs: [{ id: PENDING_TAB, title: 'claude' }],
       seed: seed ? collapse(seedPrompt(seed)) : null,
       active: true,
       createdAt: Date.now(),
       promotedAt: Date.now(),
-      adopted: true,
+      adopted,
     };
     this._writeHookSettings(session);
     this.sessions.set(id, session);
@@ -1280,6 +1379,60 @@ class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * An un-promoted session whose agent made itself a worktree and moved into it.
+   *
+   * The rule says promote through Studio; the agent ran `git worktree add` anyway. Left
+   * alone, Studio's record still claims the session lives in the main checkout — the
+   * card shows the wrong branch, identity.ts cannot group the feature, and a later
+   * promote would cut a SECOND worktree for work that is already somewhere else.
+   *
+   * tmux tracks a pane's cwd, so the move is observable without asking anyone to
+   * declare it. The checks below are what keep this from fabricating a relationship:
+   * the pane must be inside a real git worktree, that worktree must belong to THIS
+   * repo (`--git-common-dir` is the question "same .git?"), and it must not be the main
+   * checkout, which is where an un-promoted session is supposed to be.
+   *
+   * Adoption, not promotion: the worktree already exists and the work is already in it.
+   * Nothing is created, nothing is moved, and `promotedAt` is set because from here on
+   * this session has a worktree and promote has nothing left to do.
+   */
+  async _adoptWanderedWorktree(s: Session): Promise<void> {
+    if (s.worktreePath || !s.repoPath) return; // already has one — nothing to discover
+    let cwd = '';
+    try {
+      cwd = await this.mux.paneCwd(s.muxName);
+    } catch {
+      return; // could not ask; say nothing
+    }
+    if (!cwd || realpath(cwd) === realpath(s.repoPath)) return;
+
+    const at = async (args: string[]) => (await run('git', ['-C', cwd, ...args])).stdout.trim();
+    const top = await at(['rev-parse', '--show-toplevel']);
+    if (!top || realpath(top) === realpath(s.repoPath)) return; // the main checkout, or not a repo
+
+    // Same repository? A worktree's `--git-common-dir` resolves to the main checkout's
+    // .git, which is exactly what tells a sibling worktree apart from an unrelated repo
+    // the agent happened to wander into.
+    const common = await at(['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    if (!common || realpath(path.dirname(common)) !== realpath(s.repoPath)) return;
+
+    const branch = await at(['rev-parse', '--abbrev-ref', 'HEAD']);
+    s.worktreePath = top;
+    s.worktree = path.basename(top);
+    s.branch = branch || null;
+    s.feature = this.featureOf({ repo: s.repoName, wtname: s.worktree, branch, path: top });
+    s.promotedAt = Date.now();
+    const primary = (s.repos || []).find((r) => r.primary);
+    if (primary) {
+      primary.worktree = s.worktree;
+      primary.worktreePath = top;
+      primary.branch = s.branch;
+    }
+    s.activity = `adopted its own worktree — the agent created ${s.worktree} itself`;
+    this._touch(s.id);
+  }
+
   // Self-heal live state against the multiplexer: a session whose tmux session was
   // killed out-of-band (manual `tmux kill-session`, crash) shows a stale live state
   // until an action fails. Flip any such session to stopped. Cheap: one has-session
@@ -1295,6 +1448,8 @@ class SessionManager extends EventEmitter {
         alive = true;
       }
       if (alive) {
+        // A live session may have moved itself somewhere Studio does not know about.
+        await this._adoptWanderedWorktree(s);
         /*
          * The tmux session is alive — but that stopped meaning the AGENT is, once a
          * session could hold other windows. A run configuration opens a tab in it, so

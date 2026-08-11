@@ -94,6 +94,57 @@ export async function trackedModifications(repoPath: string): Promise<string[]> 
     .filter(Boolean);
 }
 
+/**
+ * Why a checkout is not free.
+ *
+ * There is deliberately no `branch` reason. "Sitting on a feature branch" was one, and
+ * it made a CLEAN checkout occupied — which fed `switchBranch: !occupied` and quietly
+ * cancelled the thing prepareForSession() exists to do: start from the default branch at
+ * its latest commit. A branch you left behind is not somebody working; it is the state
+ * every checkout is in between tasks, and switching away from it is safe because
+ * `dirty` already covers the only case where it would not be.
+ */
+export type OccupiedReason = 'session' | 'dirty';
+
+export type Occupancy = { occupied: false } | { occupied: true; reason: OccupiedReason; detail: string };
+
+/**
+ * Is this repo's ONE working copy already someone's?
+ *
+ * A repo has a single main checkout, and `create()` used to start every un-promoted
+ * session in it. Two sessions in one repo therefore shared a working copy by design:
+ * one would commit the other's half-finished edits, or switch the branch under it. That
+ * is not a race — it is what the flow did on purpose, and `prepareForSession()`'s
+ * `switchBranch: false` was as far as tolerating it could go.
+ *
+ * This asks the prior question instead, and asks it of the FILESYSTEM. `held` covers the
+ * case Studio can see — one of its own sessions is living there — but an agent nobody
+ * launched through Studio leaves no record at all, only evidence: tracked files modified.
+ * A registry cannot see that one, which is why the answer cannot come from a registry.
+ *
+ * Being occupied is not a refusal, and it does not mean the same thing for both reasons.
+ * `session` is a collision, and create() gives the new session its own worktree. `dirty`
+ * only means nothing may MOVE this checkout — the session still starts in it, because
+ * unfinished edits are the ordinary state of a checkout between tasks.
+ */
+export async function occupancy(
+  repoPath: string,
+  { held = false }: { held?: boolean } = {},
+): Promise<Occupancy> {
+  if (held)
+    return { occupied: true, reason: 'session', detail: 'another session is working in this checkout' };
+
+  const dirty = await trackedModifications(repoPath);
+  if (dirty.length) {
+    return {
+      occupied: true,
+      reason: 'dirty',
+      detail: `the checkout has ${dirty.length} uncommitted change(s)`,
+    };
+  }
+  return { occupied: false };
+}
+
 export async function prepareForSession(repoPath: string, opts: PrepareOptions = {}): Promise<PrepareResult> {
   const current = async () => (await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
 
