@@ -185,6 +185,32 @@ export function reapLaunchScripts(maxAgeMs = 24 * 60 * 60 * 1000): number {
   }
   return removed;
 }
+/*
+ * Env that stops the pane's rc files from ASKING THE USER something at startup.
+ *
+ * The launch command is typed into the pane's tty (see launchKeys), so it is sitting in
+ * the tty buffer while the shell is still starting. Anything in the user's rc that reads
+ * stdin during startup eats it. oh-my-zsh's periodic update check is the one that bites:
+ *
+ *   . '/…/launch/wts-x-0.sh'                     <- what we typed
+ *   [oh-my-zsh] Would you like to update? [Y/n]  <- reads the tty
+ *    '/…/launch/wts-x-0.sh'                      <- the leftover after ". " was consumed
+ *   zsh: permission denied: /…/launch/wts-x-0.sh <- zsh EXECUTES it; mode is 0600
+ *
+ * and the session comes up with no agent in it. Reproduced 12/12 on a machine whose
+ * oh-my-zsh had decided it was time to check.
+ *
+ * These only apply inside Studio's own panes — nothing here changes the user's shell
+ * anywhere else. It is a mitigation of the common case, not a cure: the general problem
+ * is that a startup prompt and a typed command share one tty. See the comment on
+ * launchKeys for why the command is typed at all.
+ */
+const STARTUP_QUIET: Record<string, string> = {
+  DISABLE_AUTO_UPDATE: 'true', // oh-my-zsh: do not offer to update
+  DISABLE_UPDATE_PROMPT: 'true', // oh-my-zsh: and do not ask if it decides to anyway
+  ZSH_DISABLE_COMPFIX: 'true', // zsh: "insecure directories" prompt on some setups
+};
+
 export function launchKeys(target: string, cmd?: string): string {
   const line = persistCmd(cmd);
   try {
@@ -195,6 +221,42 @@ export function launchKeys(target: string, cmd?: string): string {
   } catch {
     return line; // can't write → type it, which is what we did before (and works under 1024)
   }
+}
+
+/**
+ * Wait until a freshly-created pane's shell is actually ready to be typed into.
+ *
+ * send-keys writes to the pane's tty, and a shell that has not finished starting has not
+ * taken the terminal over yet — so the keys sit in the tty buffer and are at the mercy of
+ * whatever the rc files do next. Two ways that goes wrong, both observed on one machine:
+ *
+ *   * something in the rc reads stdin (oh-my-zsh's update prompt) and EATS the command —
+ *     see STARTUP_QUIET, which handles the common case but cannot handle all of them;
+ *   * ZLE initialises mid-buffer and keeps only part of the line, so the Enter we sent
+ *     submits a truncated path: `. '/Users/davidr/.config/worktre` and nothing runs.
+ *
+ * The second one failed 5 times in 12 on a shell with a heavy rc. There is no "shell is
+ * ready" event to wait on, so this waits for the pane to STOP CHANGING: a shell that has
+ * finished starting has drawn its prompt and then produces nothing until it is typed at.
+ * Two identical, non-empty samples is that condition.
+ *
+ * Bounded, and a timeout is not fatal: typing into a slow shell is what happened before
+ * this existed, so the worst case is the behaviour we already had.
+ */
+async function waitForPaneReady(name: string, target: string, timeoutMs = 6000): Promise<boolean> {
+  const started = Date.now();
+  let previous: string | null = null;
+  while (Date.now() - started < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 150));
+    const r = await T(['capture-pane', '-t', `${name}:${target}`, '-p']);
+    if (r.code !== 0) return false; // pane went away — nothing to type into
+    const now = r.stdout.trimEnd();
+    // Non-empty: an empty pane means the shell has not printed a prompt yet, and two
+    // empty samples in a row would otherwise read as "settled" on a fast machine.
+    if (now && previous !== null && now === previous) return true;
+    previous = now;
+  }
+  return false;
 }
 
 const tmux: TmuxDriver = {
@@ -215,7 +277,10 @@ const tmux: TmuxDriver = {
     // and the claude launched into it — inherits it. set-environment AFTER new-session
     // is too late: window 0 already spawned without the vars.
     const envArgs: string[] = [];
-    if (env) for (const [k, v] of Object.entries(env)) envArgs.push('-e', `${k}=${String(v)}`);
+    // STARTUP_QUIET first, so a caller-supplied value of the same name still wins.
+    for (const [k, v] of Object.entries({ ...STARTUP_QUIET, ...(env || {}) })) {
+      envArgs.push('-e', `${k}=${String(v)}`);
+    }
     // `-P -F #{window_id}` so the caller learns the agent window's STABLE id here, at
     // the one moment it is unambiguous. Learning it later — "the only window there is"
     // — works exactly once: recreate the session and the id changes while the stored
@@ -240,6 +305,8 @@ const tmux: TmuxDriver = {
     ]);
     if (r.code !== 0) return { created: false, error: r.stderr.trim() };
     await T(['set-option', '-t', name, 'remain-on-exit', 'off']);
+    // Never type into a shell that has not finished starting — see waitForPaneReady.
+    await waitForPaneReady(name, '0');
     await T(['send-keys', '-t', `${name}:0`, '--', launchKeys(`${name}-0`, cmd), 'Enter']);
     return { created: true, id: r.stdout.trim() || undefined };
   },
@@ -274,6 +341,19 @@ const tmux: TmuxDriver = {
       if (running && !/^(-?(z|ba|k|c|tc|da)?sh|login)$/.test(running)) {
         return { ok: true, id: target.id, reused: true, running: true };
       }
+      /*
+       * The third send-keys site, and the one that needed this most.
+       *
+       * The pane we are typing into is a login shell that took over when claude exited,
+       * and it may have been sitting there for hours — or it may have started a moment
+       * ago, mid-`.zshrc`, which is exactly the state that swallows the front of the
+       * line. Resume is the common path to this code, so an unguarded send here is the
+       * original bug reachable by the route people actually take.
+       *
+       * A shell that has been idle for hours answers on the first poll, so the guard
+       * costs a single capture-pane in the case that does not need it.
+       */
+      await waitForPaneReady(name, target.id);
       const sent = await T([
         'send-keys',
         '-t',
@@ -317,7 +397,11 @@ const tmux: TmuxDriver = {
     ]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() };
     // new-window selects the new window → send the command to the session's active window
-    if (cmd) await T(['send-keys', '-t', name, '--', launchKeys(`${name}-tab`, cmd), 'Enter']);
+    if (cmd) {
+      // Same hazard as ensure(): a brand-new window's shell is mid-startup.
+      await waitForPaneReady(name, r.stdout.trim() || '');
+      await T(['send-keys', '-t', name, '--', launchKeys(`${name}-tab`, cmd), 'Enter']);
+    }
     return { ok: true, id: r.stdout.trim() || undefined };
   },
 
