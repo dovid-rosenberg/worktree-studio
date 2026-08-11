@@ -684,6 +684,28 @@ export interface FeatureOverlap {
   drift: Drift[];
 }
 
+/**
+ * A merge request waiting on YOU to review it.
+ *
+ * Not a feature: it has no worktree, no agent and no dev server until you decide to check
+ * it out. `repo` is filled in by the sweep, since the CLI answers per checkout and only
+ * the caller knows which repo it asked in.
+ */
+export interface ReviewItem {
+  provider: string;
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  draft: boolean;
+  /** The MR's source branch — what "check out and review" would create a worktree at. */
+  branch: string;
+  /** Its target. Shown only when it is not the repo's default, i.e. a stacked MR. */
+  target: string;
+  updatedAt: string;
+}
+
 export interface CiPayload {
   ci: CiSnapshot;
   /**
@@ -702,6 +724,11 @@ export interface CiPayload {
    * of commits rather than of file saves. See server/overlap.ts.
    */
   overlap?: Record<string, FeatureOverlap>;
+  /**
+   * Merge requests awaiting your review, across every repo. Same frame and the same
+   * reasoning as taskStatus: external state, pulled, changing on the order of minutes.
+   */
+  reviews?: ReviewItem[];
 }
 
 // ---- the assembled payload --------------------------------------------------

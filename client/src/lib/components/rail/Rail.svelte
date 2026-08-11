@@ -24,6 +24,7 @@
   import FeatureCard from '$lib/components/rail/FeatureCard.svelte';
   import MainServerCard from '$lib/components/rail/MainServerCard.svelte';
   import SessionCard from '$lib/components/rail/SessionCard.svelte';
+  import ReviewCard from '$lib/components/rail/ReviewCard.svelte';
   import { RAIL_SORTS, ui, liveMembers } from '$lib/stores/ui.svelte.js';
   import type { RailSort } from '$lib/stores/ui.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
@@ -31,6 +32,7 @@
 
   const rows = $derived(ui.railRows);
   const dividerAt = $derived(ui.dividerAt);
+  const reviewsAt = $derived(ui.reviewsAt);
   const quiet = $derived(dividerAt < 0 ? 0 : rows.length - dividerAt);
 
   /*
@@ -106,10 +108,19 @@
       {#if i === dividerAt}
         <div class="divider"><span>idle · {quiet}</span></div>
       {/if}
+      <!-- The SECOND divider, and the only place the rail groups by kind.
+           Everything above is work you started; everything below is somebody else's,
+           waiting on you. The sort orders each side; it does not decide the split, so
+           choosing a different sort cannot scatter the reviews back through your work. -->
+      {#if i === reviewsAt}
+        <div class="divider rev"><span>waiting on you · {ui.reviewRows.length}</span></div>
+      {/if}
       {#if row.kind === 'feature'}
         <FeatureCard feature={row.feature} />
       {:else if row.kind === 'session'}
         <SessionCard session={row.session} />
+      {:else if row.kind === 'review'}
+        <ReviewCard review={row.review} />
       {:else}
         <MainServerCard worktree={row.worktree} />
       {/if}
@@ -157,4 +168,8 @@
   .divider { display:flex; align-items:center; gap:9px; margin:6px 12px 8px; }
   .divider::after { content:''; flex:1; height:1px; background:var(--border); }
   .divider span { font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); }
+  /* The one divider that marks a change of KIND rather than of activity, so it is the
+     one that carries a colour. */
+  .divider.rev span { color:var(--done); }
+  .divider.rev::after { background:var(--done); opacity:.35; }
 </style>

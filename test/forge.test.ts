@@ -18,13 +18,17 @@ import { body as jsonBody, present } from './helpers.ts';
 // `git push` failure path end to end.
 const NOT_A_REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-forge-'));
 
-// A stand-in provider whose view/create are scripted per call.
-function provider(id: string, { view, create }: Partial<Pick<Provider, 'view' | 'create'>> = {}): Provider {
+// A stand-in provider whose members are scripted per call.
+function provider(
+  id: string,
+  { view, create, reviews }: Partial<Pick<Provider, 'view' | 'create' | 'reviews'>> = {},
+): Provider {
   return {
     id,
     cli: id,
     view: view ?? (async () => null),
     create: create ?? (async () => ({ ok: false, stderr: '' })),
+    reviews: reviews ?? (async () => []),
   };
 }
 

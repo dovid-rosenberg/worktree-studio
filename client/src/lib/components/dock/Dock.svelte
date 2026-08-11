@@ -19,6 +19,7 @@
   import RunsPanel from '$lib/components/dock/RunsPanel.svelte';
   import ReviewMount from '$lib/components/dock/ReviewMount.svelte';
   import FeaturePane from '$lib/components/dock/FeaturePane.svelte';
+  import ReviewPane from '$lib/components/dock/ReviewPane.svelte';
   import FleetInsights from '$lib/components/insights/FleetInsights.svelte';
   import { api } from '$lib/api.js';
   import { ui } from '$lib/stores/ui.svelte.js';
@@ -29,6 +30,8 @@
   const feature = $derived(ui.selectedFeature);
   /** A dev server in a repo's MAIN checkout — the third kind of rail row. */
   const mainServer = $derived(ui.selectedMainServer);
+  /** A merge request awaiting review — the fourth kind of rail row. */
+  const review = $derived(ui.selectedReview);
   const isTerm = $derived(ui.dockView === 'term');
   /*
    * Insights is the one dock view that renders with nothing selected: it is about the
@@ -99,6 +102,16 @@
       <ActionBar />
     </div>
     <FeaturePane {feature} />
+  {:else if review}
+    <!-- A review has no worktree, so no DockHead, no tabs and no terminal — the pane is
+         the whole thing until you check it out, at which point it becomes an ordinary
+         session row and this branch stops applying. -->
+    <div class="dockbar">
+      <span class="who">{review.repo} !{review.number}</span>
+      <span class="wtname">awaiting your review</span>
+      <span class="grow"></span>
+    </div>
+    <ReviewPane {review} />
   {:else if ui.selectionPending}
     <!-- Selected, but the frame carrying it has not landed. Saying "no session" here
          is what made starting an agent look like a no-op. -->

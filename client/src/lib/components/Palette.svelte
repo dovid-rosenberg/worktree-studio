@@ -31,7 +31,9 @@
    */
   const sessionRows = $derived(
     ui.railRows
-      .filter((r) => r.kind !== 'mainserver')
+      // Reviews are listed separately below: they have no session, no state and no repo
+      // count, so every field this map reads would have to be faked for them.
+      .filter((r) => r.kind !== 'mainserver' && r.kind !== 'review')
       .map((r) => {
         const sess = r.kind === 'session' ? r.session : r.feature.session;
         const state = sess?.state || 'idle';
@@ -50,6 +52,29 @@
             overlays.closePalette();
             if (r.kind === 'session') ui.goToSession(r.session.id);
             else ui.selectFeature(r.feature);
+          },
+        };
+      })
+      .filter((row) => !q || row.hay.includes(q)),
+  );
+
+  /** Merge requests awaiting your review — reachable by keyboard like everything else. */
+  const reviewRows = $derived(
+    ui.reviewRows
+      .filter((r) => r.kind === 'review')
+      .map((r) => {
+        const item = r.kind === 'review' ? r.review : null;
+        const digit = ui.railDigits.get(r.key);
+        return {
+          key: r.key,
+          hay: `${r.name} ${item?.repo ?? ''} ${item?.author ?? ''} review`.toLowerCase(),
+          glyph: '◇',
+          dot: 'idle',
+          title: r.name,
+          sub: `${item?.repo ?? ''} · !${item?.number ?? ''}${item?.draft ? ' · draft' : ''}${digit ? ` · ⌥${digit}` : ''}`,
+          run: () => {
+            overlays.closePalette();
+            if (item) ui.selectReview(item);
           },
         };
       })
@@ -86,7 +111,7 @@
       .map((c) => ({ ...c, dot: '', run: () => { overlays.closePalette(); c.run(); } }));
   })());
 
-  const rows = $derived([...sessionRows, ...commandRows]);
+  const rows = $derived([...sessionRows, ...reviewRows, ...commandRows]);
 
   // Any change to the result set puts the highlight back on the first row, so typing
   // never leaves it pointing at a row that scrolled out from under it.
@@ -159,9 +184,32 @@
         </div>
       {/each}
 
+      {#if reviewRows.length}<div class="psec">Waiting on you</div>{/if}
+      {#each reviewRows as r, i (r.key)}
+        {@const idx = sessionRows.length + i}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div
+          class="pcmd"
+          class:on={hi === idx}
+          id="palette-opt-{idx}"
+          role="option"
+          aria-selected={hi === idx}
+          tabindex="-1"
+          onclick={r.run}
+          onmousemove={() => (hi = idx)}
+        >
+          <span class="pg" aria-hidden="true">{r.glyph}</span>
+          <span class="dot {r.dot}" role="img" aria-label="{r.dot}"></span>
+          <span class="ptitle">{r.title}</span>
+          <span class="psub">{r.sub}</span>
+        </div>
+      {/each}
+
       {#if commandRows.length}<div class="psec">Commands</div>{/if}
       {#each commandRows as r, i (r.key)}
-        {@const idx = sessionRows.length + i}
+        <!-- Offset by BOTH groups above. `rows` is the same concatenation, and the
+             highlight indexes into it — one list, one numbering. -->
+        {@const idx = sessionRows.length + reviewRows.length + i}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div
           class="pcmd"

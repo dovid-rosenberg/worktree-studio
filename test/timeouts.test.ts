@@ -147,6 +147,8 @@ test('openPullRequest surfaces a hung push instead of blaming the forge CLI', as
       {
         id: 'gh',
         cli: 'gh',
+        // This double never lists reviews; the interface requires the member.
+        reviews: async () => [],
         view: async () => null,
         create: async () => {
           throw new Error('must not be reached');
