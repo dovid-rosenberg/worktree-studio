@@ -17,24 +17,24 @@ Two agents are editing `helpers/mfa.js` in different worktrees right now and not
 says so until one of them merges. That is the failure mode of running agents in
 parallel, and it is invisible in every other tool.
 
-## Phase 1 — collision radar + drift  ← START HERE, no open questions
+## Phase 1 — collision radar + drift  ✅ LANDED
 
 One piece of git plumbing answers both.
 
-- [ ] `server/overlap.ts`: per worktree, `merge-base` with the repo's default base,
+- [x] `server/overlap.ts`: per worktree, `merge-base` with the repo's default base,
       then `diff --name-only <mb>..HEAD`. Cache by `worktreePath + head sha` so a
       sweep is free when nothing moved.
-- [ ] Pairwise intersection per REPO (features only collide inside one repo).
-- [ ] Drift from the same primitives: `rev-list --count HEAD..base` (behind),
+- [x] Pairwise intersection per REPO (features only collide inside one repo).
+- [x] Drift from the same primitives: `rev-list --count HEAD..base` (behind),
       `base..HEAD` (ahead), and the will-conflict set — files this branch changed
       that ALSO changed on base since the merge-base. That last set is the useful
       half: it is knowable before you rebase.
-- [ ] Ride the `ci` frame's cadence (feed + TTL + "only when someone is watching"),
+- [x] Ride the `ci` frame's cadence (feed + TTL + "only when someone is watching"),
       not the topology broadcast — this shells out per worktree.
-- [ ] Rail card: quiet badge when a feature shares files with another.
-- [ ] Dock chip: `18 files also changed by iso-mfa-totp`, click to list them.
-- [ ] Drift badge `behind 27` on the rail card; the conflict set in the dock.
-- [ ] Tests: fixture repos with real overlapping worktrees; assert the pair math and
+- [x] Rail card: quiet badge when a feature shares files with another.
+- [x] Dock chip: `18 files also changed by iso-mfa-totp`, click to list them.
+- [x] Drift badge `behind 27` on the rail card; the conflict set in the dock.
+- [x] Tests: fixture repos with real overlapping worktrees; assert the pair math and
       that a clean feature reports nothing.
 
 ## Phase 2 — send a failing run to the agent
@@ -70,4 +70,18 @@ have no local worktree, so they are a new kind of rail row.
 
 ## Review
 
-_(filled in as phases land)_
+**Phase 1 landed.** 9 tests in `test/overlap.test.ts`, against real git repos rather
+than canned file lists — the trap worth catching is diffing `base..HEAD` instead of
+`mergeBase..HEAD`, which folds every commit made on master into "files you changed" and
+makes every feature collide with every other. One test moves master underneath a branch
+and asserts the feature still reports exactly the one file it edited.
+
+Two decisions worth keeping:
+- `FeatureOverlap` is declared in `types.ts`, not `overlap.ts`. The client typechecks
+  against the wire contract, and `overlap.ts` imports `./util.ts` with an extension the
+  client's tsconfig rejects — so the producer imports the shape, not the reverse.
+- Measured against `origin/<default>`, not the local base branch: a stale local master
+  makes every branch look up to date.
+
+Next: Phase 2 (send a failing run to the agent) is small and independent. Phase 3 still
+carries the one open question — how review rows sit in the rail.
