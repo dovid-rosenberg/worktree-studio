@@ -1,7 +1,7 @@
 <script lang="ts">
   /*
-   * The application header: brand, the waiting button, the Insights toggle and the ⋮
-   * menu. Four things, and every one of them is about the WHOLE FLEET.
+   * The application header: the root switcher (or the wordmark), the waiting button and
+   * the ⋮ menu. Everything here is about the WHOLE FLEET.
    *
    * IT SITS AT THE HEAD OF THE RAIL, not across the top of the window. That is the point:
    * the rail is the fleet and the dock is one feature, so the split by scope is already
@@ -12,8 +12,9 @@
    * which was which.
    *
    * The cost of the move is width: a 212px column has no room for `⎇ Worktree Studio` at
-   * 17px beside three buttons, so the wordmark shortens and the two toggles become their
-   * glyphs, named by `aria-label` and `title`.
+   * 17px beside three buttons. The wordmark shortened, the waiting button became its own
+   * count, and Insights went into the ⋮ menu — a destination among actions, but the root
+   * switcher needed the space and `⌘\` still opens it directly.
    *
    * It used to carry eleven controls: Insights, four counts, Restart all, Stop all, ⌘K,
    * ⚙, ◐ and + New session. Where the rest went, and why:
@@ -102,15 +103,6 @@
     >◉ {notify.waitingCount}</button>
   {/if}
 
-  <button
-    class="btn ghost ovbtn"
-    class:on={ui.dockView === 'usage'}
-    aria-pressed={ui.dockView === 'usage'}
-    aria-label="Insights"
-    title="Insights (⌘\\)"
-    onclick={() => ui.toggleUsage()}
-  >◔</button>
-
   <AppMenu
     {anyRunning}
     onrestartall={() => runningFeats().forEach((f) => restartStack(f.name))}
@@ -139,7 +131,6 @@
 
   /* Square-ish, so three of them fit beside the wordmark at the narrowest rail width. */
   .ovbtn { font-weight:600; padding:4px 8px; }
-  .ovbtn.on { background:var(--brand); border-color:var(--brand); color:var(--brand-ink); }
   /* The one control here that is about an interruption, so it is the one that is
      coloured. Not a fill: it would outweigh ＋ New session directly beneath it. */
   .attn { color:var(--waiting); }

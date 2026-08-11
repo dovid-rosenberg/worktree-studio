@@ -201,7 +201,9 @@ describe('Rail', () => {
      */
     give([]);
     render(Rail);
-    expect(screen.getByRole('button', { name: 'Insights' })).toBeInTheDocument();
+    // The ⋮ menu is the one that survived the head's width squeeze — Insights moved
+    // inside it (AppMenu.test.ts), and the waiting button appears only when something is
+    // waiting. So this is what "the app's own controls are in the rail" looks like now.
     expect(screen.getByLabelText('Menu')).toBeInTheDocument();
   });
 });

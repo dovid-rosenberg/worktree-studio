@@ -34,6 +34,7 @@ import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import * as reinstate from './reinstate.ts';
+import { browse } from './browse.ts';
 import * as layoutMod from './layout.ts';
 import type { ScannedRepo } from './git.ts';
 import { FEATURE_COLORS } from './types.ts';
@@ -467,6 +468,15 @@ async function main() {
       enabled: sources.enabled(cfg),
     });
   });
+
+  /*
+   * Directory listing for the base-directory picker (server/browse.ts).
+   *
+   * Read-only and shape-only: directory names and whether each is a git checkout. The
+   * daemon is the thing that will scan the folder, so the daemon is the thing that can
+   * say what folders there are — a browser cannot hand back a path.
+   */
+  api.get('/fs/dirs', (req, res) => res.json(browse(qs(req.query.path))));
 
   // ---- sources ----
   api.get('/sources', (_req, res) => res.json(sources.enabled(cfg)));
