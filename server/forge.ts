@@ -10,7 +10,7 @@
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
 import { CHILD_ENV, run, has } from './util.ts';
-import type { CiChecks, CiRepo, SessionRepo } from './types.ts';
+import type { CiChecks, CiRepo, ReviewItem, SessionRepo } from './types.ts';
 import type { Router } from 'express';
 
 // The interface above, made checkable — a provider injected by a test is held to
@@ -30,6 +30,14 @@ export interface Provider {
   cli: string;
   view: (branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<PrView | null>;
   create: (branch: string, cwd: string, env?: NodeJS.ProcessEnv) => Promise<CreateResult>;
+  /**
+   * Merge requests waiting on YOU to review, in this repo.
+   *
+   * "@me" is resolved by the CLI from whichever credential it is using, which is the
+   * point: Studio never learns or stores who you are on a forge, and a token swapped in
+   * `glab auth` changes the answer without changing any config here.
+   */
+  reviews: (cwd: string, env?: NodeJS.ProcessEnv) => Promise<ReviewItem[]>;
 }
 
 const ENV: NodeJS.ProcessEnv = CHILD_ENV;
@@ -170,6 +178,31 @@ const github: Provider = {
       checks: ghChecks(j.statusCheckRollup),
     };
   },
+  async reviews(cwd, env) {
+    const r = await run(
+      'gh',
+      ['pr', 'list', '--search', 'review-requested:@me', '--state', 'open', '--limit', '50',
+       '--json', 'number,title,url,author,isDraft,headRefName,baseRefName,updatedAt'],
+      { cwd, env, timeout: VIEW_TIMEOUT_MS },
+    );
+    if (r.code !== 0 || !r.stdout.trim()) return [];
+    const rows = JSON.parse(r.stdout) as Array<{
+      number: number; title: string; url: string; isDraft?: boolean;
+      author?: { login?: string }; headRefName?: string; baseRefName?: string; updatedAt?: string;
+    }>;
+    return rows.map((j) => ({
+      provider: 'github',
+      repo: '',
+      number: j.number,
+      title: j.title || '',
+      url: j.url || '',
+      author: j.author?.login || '',
+      draft: !!j.isDraft,
+      branch: j.headRefName || '',
+      target: j.baseRefName || '',
+      updatedAt: j.updatedAt || '',
+    }));
+  },
   async create(branch, cwd, env) {
     const r = await run('gh', ['pr', 'create', '--fill', '--head', branch], {
       cwd,
@@ -198,6 +231,33 @@ const gitlab: Provider = {
       state: j.state,
       checks: glChecks(pipe.status),
     };
+  },
+  async reviews(cwd, env) {
+    const r = await run('glab', ['mr', 'list', '--reviewer=@me', '-F', 'json'], {
+      cwd,
+      env,
+      timeout: VIEW_TIMEOUT_MS,
+    });
+    if (r.code !== 0 || !r.stdout.trim()) return [];
+    const rows = JSON.parse(r.stdout) as Array<{
+      iid: number; title?: string; web_url?: string; draft?: boolean; work_in_progress?: boolean;
+      source_branch?: string; target_branch?: string; updated_at?: string;
+      author?: { username?: string };
+    }>;
+    return rows.map((j) => ({
+      provider: 'gitlab',
+      repo: '',
+      number: j.iid,
+      title: j.title || '',
+      url: j.web_url || '',
+      author: j.author?.username || '',
+      // Older GitLab spells it `work_in_progress`; both mean the same thing and a draft
+      // shown as ready is the one mistake worth avoiding here.
+      draft: !!(j.draft || j.work_in_progress),
+      branch: j.source_branch || '',
+      target: j.target_branch || '',
+      updatedAt: j.updated_at || '',
+    }));
   },
   async create(_branch, cwd, env) {
     const r = await run('glab', ['mr', 'create', '--fill', '--yes'], {
@@ -486,7 +546,34 @@ function createForge({
     });
   }
 
-  return { register, ciForRepo, openPullRequest, invalidate, installed };
+  /**
+   * Merge requests awaiting your review in one checkout.
+   *
+   * Tries every INSTALLED provider and returns the first that answers, because a checkout
+   * is on one forge and asking the other costs a spawn for a guaranteed miss. Null — not
+   * an empty array — when nobody could answer at all: "no gh or glab" and "nothing is
+   * waiting" are different facts, and only the first is worth retrying slowly.
+   */
+  async function reviewsFor(repoPath: string): Promise<ReviewItem[] | null> {
+    const env = cliEnv(cfg);
+    let answered = false;
+    const out: ReviewItem[] = [];
+    for (const p of installed) {
+      try {
+        const rows = await p.reviews(repoPath, env);
+        // A provider that errors returns [] and is indistinguishable from an empty queue,
+        // which is the honest limit of what the CLIs tell us — so "answered" means the
+        // call completed, and a repo on the other forge simply contributes nothing.
+        answered = true;
+        out.push(...rows);
+      } catch {
+        /* try the next provider */
+      }
+    }
+    return answered ? out : null;
+  }
+
+  return { register, ciForRepo, reviewsFor, openPullRequest, invalidate, installed };
 }
 
 const TIMEOUTS = { VIEW_TIMEOUT_MS, PUSH_TIMEOUT_MS, CREATE_TIMEOUT_MS };

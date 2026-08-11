@@ -28,7 +28,14 @@
  */
 
 import { world } from '$lib/stores/world.svelte.js';
-import type { EmbeddedSession, Feature, FeatureMember, Session, Worktree } from '../../../../server/types';
+import type {
+  EmbeddedSession,
+  Feature,
+  FeatureMember,
+  ReviewItem,
+  Session,
+  Worktree,
+} from '../../../../server/types';
 
 /** A member that survived the on-disk check — `missing` rows are filtered out first. */
 export type LiveMember = Worktree;
@@ -44,7 +51,8 @@ export type LiveMember = Worktree;
 export type RailRow =
   | { kind: 'session'; key: string; name: string; session: Session; active: boolean }
   | { kind: 'mainserver'; key: string; name: string; worktree: Worktree; active: boolean }
-  | { kind: 'feature'; key: string; name: string; feature: Feature; active: boolean };
+  | { kind: 'feature'; key: string; name: string; feature: Feature; active: boolean }
+  | { kind: 'review'; key: string; name: string; review: ReviewItem; active: boolean };
 
 /**
  * The agent driving a rail row, whichever kind of row it is.
@@ -82,6 +90,8 @@ export type Selection =
   | { kind: 'session'; id: string }
   | { kind: 'feature'; name: string }
   | { kind: 'mainserver'; path: string }
+  /** A merge request awaiting your review. `id` is `<repo>!<number>`. */
+  | { kind: 'review'; id: string }
   | null;
 
 /**
@@ -107,6 +117,7 @@ export function selectionKey(s: Selection, enc: (v: string) => string = (v) => v
   if (!s) return '';
   if (s.kind === 'session') return `s:${enc(s.id)}`;
   if (s.kind === 'feature') return `f:${enc(s.name)}`;
+  if (s.kind === 'review') return `r:${enc(s.id)}`;
   return `w:${enc(s.path)}`;
 }
 
@@ -499,9 +510,57 @@ class UI {
        * to find than anything else. Waiting now reliably occupies row one, which is also
        * what makes the ⌥ digit on the card worth reading.
        */
-      return rows.sort(COMPARATORS[this.railSort] || COMPARATORS.attention);
+      rows.sort(COMPARATORS[this.railSort] || COMPARATORS.attention);
+
+      /*
+       * REVIEWS ALWAYS COME LAST, as their own group.
+       *
+       * Not a sort option, deliberately. Making the grouping one of five sorts means the
+       * arrangement is undone by choosing any of the other four — including `attention`,
+       * the default — and the arrangement is the whole point: your work and other people's
+       * are different kinds of thing and the rail should not interleave them.
+       *
+       * The sort still does its one job. It orders the rows above; reviews carry their own
+       * order (drafts last, newest first) from the server, because "attention" and "task
+       * status" mean nothing for a merge request nobody here started.
+       */
+      return [...rows, ...this.reviewRows];
     })(),
   );
+
+  /** Reviews as rail rows, filtered by the same scope every other list uses. */
+  reviewRows = $derived<RailRow[]>(
+    world.reviews
+      .filter((r) => this.#repoInScope(r.repo))
+      .map((r): RailRow => ({
+        kind: 'review',
+        key: selectionKey({ kind: 'review', id: `${r.repo}!${r.number}` }),
+        name: r.title,
+        review: r,
+        // Never "active": that word means a live agent or a running server, and a review
+        // has neither. Sorting it as active would put somebody else's MR above your own
+        // waiting agent.
+        active: false,
+      })),
+  );
+
+  /** Index of the first review row, or -1 when none — where the second divider goes. */
+  reviewsAt = $derived(
+    this.reviewRows.length ? this.railRows.length - this.reviewRows.length : -1,
+  );
+
+  /** The selected review, or null. */
+  selectedReview = $derived(
+    this.selection?.kind === 'review'
+      ? world.reviews.find(
+          (r) => `${r.repo}!${r.number}` === (this.selection as { id: string }).id,
+        ) || null
+      : null,
+  );
+
+  selectReview(item: ReviewItem): void {
+    this.#pick({ kind: 'review', id: `${item.repo}!${item.number}` });
+  }
 
   /**
    * Index of the first quiet row, or -1 when there is no meaningful boundary.
@@ -510,11 +569,17 @@ class UI {
    * other the rows are not in that order, so a line labelled "idle · N" would fall in an
    * arbitrary place and claim something untrue about everything below it.
    */
-  dividerAt = $derived(
-    this.railSort !== 'attention' || !this.railRows.some((r) => r.active)
-      ? -1
-      : this.railRows.findIndex((r) => !r.active),
-  );
+  dividerAt = $derived.by(() => {
+    if (this.railSort !== 'attention') return -1;
+    // Work rows only: the reviews below have their own divider, and `active` is false for
+    // every one of them, so searching the whole list would put the "idle" line at the top
+    // of the review group whenever no work row is quiet.
+    const work = this.railRows.length - this.reviewRows.length;
+    const rows = this.railRows.slice(0, work);
+    if (!rows.some((r) => r.active)) return -1;
+    const i = rows.findIndex((r) => !r.active);
+    return i === -1 ? -1 : i;
+  });
 
   /**
    * What ⌘1–9 picks, in the order the rail actually draws it.
@@ -537,7 +602,9 @@ class UI {
       .filter((r) => r.kind !== 'mainserver') // nothing to select: it owns no session
       .map((r) => ({
         kind: r.kind === 'session' ? ('session' as const) : ('feature' as const),
-        id: r.kind === 'session' ? r.session!.id : (r.feature?.session?.id ?? null),
+        // A review owns no session either, but it IS selectable, so it keeps its place in
+        // the ⌥-digit order — a hole here would shift every digit below it.
+        id: r.kind === 'session' ? r.session.id : r.kind === 'feature' ? (r.feature.session?.id ?? null) : null,
         name: r.name,
       })),
   );

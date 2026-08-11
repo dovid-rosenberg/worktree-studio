@@ -17,6 +17,7 @@ import { createForge } from './forge.ts';
 import { createCiFeed } from './ci.ts';
 import { createTaskStatusFeed } from './task-status.ts';
 import { createOverlapFeed } from './overlap.ts';
+import { createReviewFeed } from './reviews.ts';
 import * as orchestrator from './orchestrator.ts';
 import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
@@ -216,6 +217,20 @@ async function main() {
    * caches on (head sha, base sha), so a sweep where nothing has been committed costs one
    * `rev-parse` per worktree and no diffs at all.
    */
+  /*
+   * Merge requests awaiting your review, across every scanned repo.
+   *
+   * Asked from each repo's MAIN checkout: a worktree is on a feature branch and the
+   * question is about the repo, not the branch — and the main checkout is the one path
+   * that is always there.
+   */
+  const reviewFeed = createReviewFeed({ list: (p) => forge.reviewsFor(p) });
+  const refreshReviews = async () => {
+    if (await reviewFeed.refresh(repos.map((r) => ({ name: r.name, path: r.path })))) {
+      bus.schedule({ ci: true });
+    }
+  };
+
   const overlapFeed = createOverlapFeed();
   const refreshOverlap = async () => {
     const t = topology();
@@ -245,6 +260,7 @@ async function main() {
       ...ciFeed.snapshot(),
       taskStatus: taskFeed.snapshot(),
       overlap: overlapFeed.snapshot(),
+      reviews: reviewFeed.snapshot(),
     }),
   });
   // A run starting or finishing is a real state change and a rare one — unlike the hook
@@ -325,6 +341,7 @@ async function main() {
     // is a filter over a small object and no request at all.
     void refreshTaskStatus();
     void refreshOverlap();
+    void refreshReviews();
     const hb = setInterval(() => {
       try {
         res.write(':hb\n\n');
@@ -518,6 +535,62 @@ async function main() {
    * say what folders there are — a browser cannot hand back a path.
    */
   api.get('/fs/dirs', (req, res) => res.json(browse(qs(req.query.path))));
+
+  /*
+   * Check a merge request out and point an agent at it.
+   *
+   * The whole reason a REVIEW queue belongs in a tool that runs agents: this turns "four
+   * merge requests are waiting" into "four agents have read them". It is the only route
+   * that creates a worktree for somebody else's branch.
+   *
+   * The branch is the MR's SOURCE branch and it lives on the remote, so the worktree is
+   * cut from `origin/<branch>` — `worktree.create` fetches first, then adds a local branch
+   * at the remote tip. Naming the worktree after the MR rather than the branch keeps a
+   * review from being auto-grouped into a FEATURE with your own work: `feature/mfa-totp`
+   * would collide by name with the worktree you already have.
+   */
+  api.post('/reviews/checkout', async (req, res) => {
+    const { repo: repoName, branch, number, title, url } = req.body || {};
+    if (!repoName || !branch || !number) {
+      return res.status(400).json({ error: 'repo, branch and number are required' });
+    }
+    const repoObj = repos.find((r) => r.name === String(repoName));
+    if (!repoObj) return res.status(400).json({ error: `unknown repo '${repoName}'` });
+
+    const wtname = `review-${number}`;
+    const made = await worktree.create(repoObj.path, String(branch), wtname, {
+      base: `origin/${branch}`,
+      layout: layoutMod.resolve(cfg),
+      ...worktreeCopyOpts(cfg, repoObj.name),
+    });
+    // An existing review worktree is not a failure — it is the one you made last time.
+    if (!made.ok && !/already exists/i.test(made.error || '')) return res.status(400).json(made);
+    const worktreePath = made.path!;
+
+    const seed = {
+      source: 'review',
+      id: String(number),
+      title: `Review !${number}: ${String(title || branch)}`,
+      body:
+        `You are reviewing merge request !${number}${title ? ` — "${title}"` : ''} in ${repoObj.name}` +
+        `${url ? ` (${url})` : ''}. This worktree is checked out at its source branch, \`${branch}\`. ` +
+        `Read the diff against the target branch, then report what you find: correctness ` +
+        `problems first, then anything that would be hard to maintain. Do not change the code ` +
+        `unless I ask you to — this is a review.`,
+      url: url ? String(url) : null,
+    };
+
+    const session = await manager.adopt({
+      worktreePath,
+      repoName: repoObj.name,
+      repoPath: repoObj.path,
+      branch: String(branch),
+      wtname,
+      seed,
+    });
+    await rescan();
+    res.json({ ok: true, session, worktree: { name: wtname, path: worktreePath }, reused: !made.ok });
+  });
 
   // ---- sources ----
   api.get('/sources', (_req, res) => res.json(sources.enabled(cfg)));

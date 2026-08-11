@@ -21,6 +21,8 @@ function spy() {
   const provider: Provider = {
     id: 'gitlab',
     cli: 'glab',
+    // This double never lists reviews; the interface requires the member.
+    reviews: async () => [],
     async view(_b, _cwd, env) {
       seen.push(env || {});
       return null;

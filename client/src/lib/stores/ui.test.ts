@@ -53,11 +53,12 @@ function give({
   webRepos = [] as string[],
   taskStatus = undefined as Record<string, { label: string; done: boolean }> | undefined,
   baseDirs = [] as string[],
+  reviews = [] as unknown[],
 }) {
   world.topology = { features, groups: [], repos, webRepos, baseDirs } as never;
   world.sessionHalf = { sessions, servers: {} } as never;
   // The ci half carries task status — same cadence, same kind of thing (see CiPayload).
-  world.ciHalf = { ci: {}, taskStatus } as never;
+  world.ciHalf = { ci: {}, taskStatus, reviews } as never;
 }
 
 beforeEach(() => {
@@ -530,5 +531,114 @@ describe('root switcher', () => {
     const f = ui.visibleFeatures.find((x) => x.name === 'split');
     expect(f).toBeTruthy();
     expect(f?.members).toHaveLength(2);
+  });
+});
+
+/*
+ * REVIEWS ARE THEIR OWN GROUP, ALWAYS.
+ *
+ * The owner asked for reviews separated from their own work. Making that one of five
+ * sort options — which was the first idea — means the arrangement is undone by choosing
+ * any of the other four, including `attention`, which is the default. So the split is
+ * structural and the sort orders each side of it.
+ */
+const review = (over: Record<string, unknown> = {}) => ({
+  provider: 'gitlab',
+  repo: 'accept-blue',
+  number: 1906,
+  title: 'Create Mobile App site',
+  url: 'https://git/mr/1906',
+  author: 'yocheved',
+  draft: false,
+  branch: 'add/mobile-app-site',
+  target: 'develop',
+  updatedAt: '2026-08-10T18:00:00Z',
+  ...over,
+});
+
+describe('reviews in the rail', () => {
+  it('puts every review after every piece of your own work', () => {
+    give({
+      features: [feature('mfa', [member('accept-blue')])],
+      sessions: [session('u1', { repoName: 'accept-blue' })],
+      reviews: [review(), review({ number: 1875 })],
+    });
+    const kinds = ui.railRows.map((r) => r.kind);
+    const firstReview = kinds.indexOf('review');
+    expect(firstReview).toBeGreaterThan(-1);
+    expect(kinds.slice(firstReview).every((k) => k === 'review')).toBe(true);
+    expect(ui.reviewsAt).toBe(firstReview);
+  });
+
+  it('keeps them last under EVERY sort — that is the whole point', () => {
+    give({
+      features: [feature('zzz-last-alphabetically', [member('accept-blue')])],
+      reviews: [review({ title: 'aaa-first-alphabetically' })],
+    });
+    for (const sort of ['attention', 'name', 'running', 'agent', 'status'] as const) {
+      ui.railSort = sort;
+      const kinds = ui.railRows.map((r) => r.kind);
+      expect(kinds[kinds.length - 1]).toBe('review');
+      // `name` is the one that would sort a review titled "aaa…" to the very top if the
+      // grouping were merely a comparator.
+      expect(kinds.indexOf('review')).toBe(kinds.length - 1);
+    }
+    ui.railSort = 'attention';
+  });
+
+  it('never counts a review as active — it has no agent and no server', () => {
+    /*
+     * `active` means a live agent or a running dev server. Marking a review active would
+     * sort somebody else's merge request above your own waiting agent, which inverts the
+     * one thing the default sort exists to get right.
+     */
+    give({ reviews: [review()] });
+    expect(ui.railRows.every((r) => r.kind !== 'review' || !r.active)).toBe(true);
+  });
+
+  it('puts the idle divider inside your work, never into the review group', () => {
+    /*
+     * `dividerAt` used to search the whole list for the first inactive row. Every review
+     * is inactive, so with all your own work busy the "idle" line would land on the first
+     * review and claim the merge requests were your stale worktrees.
+     */
+    give({
+      features: [feature('busy', [member('accept-blue', { running: true })])],
+      reviews: [review()],
+    });
+    expect(ui.dividerAt).toBe(-1);
+    expect(ui.reviewsAt).toBe(1);
+  });
+
+  it('hides reviews from repos outside the chosen root', () => {
+    // The same scope every other list obeys — a root switch that left other repos'
+    // reviews behind would make the switcher a lie.
+    give({
+      baseDirs: ['/w', '/p'],
+      repos: [
+        { name: 'accept-blue', repo: 'accept-blue', path: '/w/accept-blue',
+          worktrees: [{ repo: 'accept-blue', wtname: 'accept-blue', path: '/w/accept-blue', isMain: true, baseDir: '/w', running: false, ports: [] }] },
+        { name: 'studio', repo: 'studio', path: '/p/studio',
+          worktrees: [{ repo: 'studio', wtname: 'studio', path: '/p/studio', isMain: true, baseDir: '/p', running: false, ports: [] }] },
+      ],
+      reviews: [review({ repo: 'accept-blue' }), review({ repo: 'studio', number: 7 })],
+    });
+    ui.setRoot('/p');
+    expect(ui.reviewRows.map((r) => r.name)).toHaveLength(1);
+    expect(ui.railRows.filter((r) => r.kind === 'review')).toHaveLength(1);
+    ui.setRoot('');
+  });
+
+  it('selects a review by repo and number, so two repos cannot collide', () => {
+    give({ reviews: [review({ repo: 'accept-blue', number: 5 }), review({ repo: 'merchant-v3', number: 5 })] });
+    ui.selectReview(review({ repo: 'merchant-v3', number: 5 }) as never);
+    expect(ui.selectedReview?.repo).toBe('merchant-v3');
+    expect(ui.key).toBe('r:merchant-v3!5');
+  });
+
+  it('draws no review divider at all when nothing is waiting', () => {
+    // A quiet week has to look exactly like the rail looked before any of this existed.
+    give({ features: [feature('mfa', [member('accept-blue')])] });
+    expect(ui.reviewsAt).toBe(-1);
   });
 });

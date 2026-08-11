@@ -63,6 +63,7 @@ import type { Link } from '../../../../server/links';
  * boundary drags in no module graph, and `import type` is erased before Vite sees it.
  */
 import type {
+  ReviewItem,
   FeatureOverlap,
   CiPayload,
   CiRepo,
@@ -241,6 +242,13 @@ class World {
    */
   get overlap(): Record<string, FeatureOverlap> {
     return this.view.overlap || {};
+  }
+  /**
+   * Merge requests awaiting your review, across every repo — see server/reviews.ts.
+   * Already ordered (drafts last, newest first) by the sweep that produced them.
+   */
+  get reviews(): ReviewItem[] {
+    return this.view.reviews || [];
   }
   /** One feature's answer, or null when the sweep has not reached it. */
   overlapFor(name: string | null | undefined): FeatureOverlap | null {
