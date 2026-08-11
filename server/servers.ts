@@ -639,6 +639,42 @@ class Servers {
   }
 
   /**
+   * The directory this worktree's `node_modules` really resolves to, when that is not
+   * inside the worktree — else null.
+   *
+   * The cheap answer to the problem depsMissing() describes: instead of installing,
+   * symlink the main checkout's node_modules in. Dependencies resolve, the dev server
+   * starts, depsMissing() is correctly false — and the worktree is no longer isolated
+   * in the one place tools actually write. Everything that caches inside node_modules
+   * now shares one directory: two Vite servers take turns re-optimising
+   * `node_modules/.vite/deps` over each other and full-reload the browser to recover,
+   * and an `npm install` on this branch rewrites the tree every other worktree of the
+   * repo is running against.
+   *
+   * Reported rather than inferred, because nothing else can see it. Every symptom
+   * appears in a different worktree than the cause, and the only local evidence is an
+   * lstat that no part of a normal session performs.
+   *
+   * Resolved before comparing: `ln -s ../../node_modules` is the form these actually
+   * take. A link that lands back inside the worktree isolates as well as a real
+   * directory and is not flagged, and a dangling one resolves to nothing — that is
+   * depsMissing()'s story, and naming a target that is not there would explain nothing.
+   */
+  sharedModules(worktreePath: string): string | null {
+    try {
+      const link = path.join(worktreePath, 'node_modules');
+      if (!fs.lstatSync(link).isSymbolicLink()) return null;
+      if (!fs.existsSync(link)) return null; // dangling
+      const target = realpath(link);
+      const here = realpath(worktreePath);
+      return target === here || target.startsWith(here + path.sep) ? null : target;
+    } catch {
+      // No node_modules, or a path we cannot stat. Neither is a claim this can make.
+      return null;
+    }
+  }
+
+  /**
    * Whether this worktree is missing the dependencies its start command needs.
    *
    * A worktree created by `git worktree add` has the repo's files and none of its
@@ -718,6 +754,7 @@ class Servers {
     | 'noStartCmd'
     | 'gone'
     | 'offSlot'
+    | 'sharedModules'
   > {
     const hit = running.get(realpath(worktree.path));
     /*
@@ -755,6 +792,9 @@ class Servers {
        */
       noStartCmd: !configured,
       offSlot: this.offSlotPorts(worktree, hit),
+      // Not a reason canStart is false: a shared node_modules starts perfectly well.
+      // It is the reason two worktrees that each look fine interfere with each other.
+      sharedModules: gone ? null : this.sharedModules(worktree.path),
     };
   }
 

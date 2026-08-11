@@ -202,7 +202,10 @@ test('extra ports alongside the right one are not a mismatch', () => {
   const s = slottedServers();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-hmr-'));
   s.slots.set(s.featureFor(dir), 1);
-  const d = s.decorate({ path: dir, repo: 'fe' }, new Map([[realpath(dir), { pid: 1, ports: [3100, 24678] }]]));
+  const d = s.decorate(
+    { path: dir, repo: 'fe' },
+    new Map([[realpath(dir), { pid: 1, ports: [3100, 24678] }]]),
+  );
   assert.deepEqual(d.offSlot, [], 'the HMR socket is not evidence of anything');
 });
 
@@ -217,6 +220,93 @@ test('a worktree that is not running has nothing to be off-slot about', () => {
   const s = slottedServers();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-down-'));
   assert.deepEqual(s.decorate({ path: dir, repo: 'fe' }, new Map()).offSlot, []);
+});
+
+/*
+ * sharedModules: node_modules is a symlink OUT of the worktree.
+ *
+ * The cheap way to give a worktree its dependencies — the directory is gitignored, so
+ * `git worktree add` cannot bring it across — and it silently un-isolates the worktree.
+ * Every tool that caches inside node_modules then writes to one shared directory: two
+ * Vite servers fight over `node_modules/.vite/deps`, each re-optimising what the other
+ * just wrote and full-reloading the browser to recover. `npm install` on this branch
+ * mutates the tree every other worktree of the repo is running against.
+ *
+ * Nothing looked wrong: deps resolve, the server starts, `depsMissing` is correctly
+ * false. Only lstat on the directory says so, which is why this is reported and not
+ * inferred.
+ */
+test('a worktree with its own node_modules is not flagged', () => {
+  const s = servers();
+  const dir = tempWorktree();
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+  assert.equal(s.sharedModules(dir), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('node_modules symlinked to another checkout reports the directory it really uses', () => {
+  const s = servers();
+  const main = tempWorktree();
+  const wt = tempWorktree();
+  fs.mkdirSync(path.join(main, 'node_modules'));
+  fs.symlinkSync(path.join(main, 'node_modules'), path.join(wt, 'node_modules'));
+  assert.equal(s.sharedModules(wt), realpath(path.join(main, 'node_modules')));
+  // and it rides on the same decoration the rail already reads
+  assert.equal(
+    s.decorate({ path: wt, repo: 'api' }, new Map()).sharedModules,
+    realpath(path.join(main, 'node_modules')),
+  );
+  fs.rmSync(main, { recursive: true, force: true });
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * A relative link is the form a hand-rolled worktree script actually writes
+ * (`ln -s ../../node_modules`), so resolving before comparing is the whole job.
+ */
+test('a relative symlink out of the worktree is still shared', () => {
+  const s = servers();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-rel-'));
+  const wt = path.join(root, '.worktrees', 'feature');
+  fs.mkdirSync(wt, { recursive: true });
+  fs.mkdirSync(path.join(root, 'node_modules'));
+  fs.symlinkSync('../../node_modules', path.join(wt, 'node_modules'));
+  assert.equal(s.sharedModules(wt), realpath(path.join(root, 'node_modules')));
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+/*
+ * Not every symlink is sharing. One that lands back inside the worktree isolates
+ * exactly as well as a real directory, and flagging it would be a false alarm on a
+ * layout that is doing nothing wrong.
+ */
+test('a symlink that stays inside the worktree is not sharing anything', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  fs.mkdirSync(path.join(wt, 'vendor'));
+  fs.symlinkSync(path.join(wt, 'vendor'), path.join(wt, 'node_modules'));
+  assert.equal(s.sharedModules(wt), null);
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('no node_modules at all is depsMissing, not sharing', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  assert.equal(s.sharedModules(wt), null);
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * A dangling link resolves to nothing, and the worktree cannot run either way. It is
+ * still not this signal's story to tell — reporting a target that is not there would
+ * put a path on screen that explains nothing.
+ */
+test('a broken symlink is not reported as a shared directory', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  fs.symlinkSync(path.join(wt, 'nowhere'), path.join(wt, 'node_modules'));
+  assert.equal(s.sharedModules(wt), null);
+  fs.rmSync(wt, { recursive: true, force: true });
 });
 
 test('depsMissing is true only for a package.json with no node_modules', () => {
