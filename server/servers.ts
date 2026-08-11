@@ -679,12 +679,45 @@ class Servers {
   }
 
   // Attach running/pid/ports/canStart to a worktree object using a discovered map.
+  /**
+   * A running server that is on NONE of the ports its feature's slot expects — the ports
+   * it is on instead. `[]` when it is where it should be, when the repo has no
+   * concurrency mapping, or when nothing is running.
+   *
+   * discoverRunning() has always FOUND these: it maps any listening socket to its
+   * worktree, so a server started with a bare `npm run dev` outside Studio shows as
+   * running like any other. What could not be said is that it never read the slot env,
+   * bound the repo's hardcoded default, and is now sitting on the port the next feature
+   * to start will ask for. start() answers this for launches Studio made — see
+   * `boundElsewhere` — and this is the same question for a launch it merely discovered.
+   *
+   * "None of them" and not "any unexpected port", deliberately: a dev server
+   * legitimately opens more sockets than it was asked to (HMR, inspector), and flagging
+   * those would fire on every healthy server. Being on the slot AT ALL is what proves
+   * the env was read.
+   */
+  offSlotPorts(worktree: Pick<Worktree, 'path' | 'repo'>, hit: RunningServer | undefined): number[] {
+    if (!hit?.ports?.length) return [];
+    if (!this.isSlotted(worktree.repo)) return []; // no mapping → no slot to miss
+    const { ports } = this.launchOpts(worktree.repo, this.featureFor(worktree.path));
+    if (!ports.length) return [];
+    return ports.some((p) => hit.ports.includes(p)) ? [] : [...hit.ports];
+  }
+
   decorate(
     worktree: Pick<Worktree, 'path' | 'repo'>,
     running: Map<string, RunningServer>,
   ): Pick<
     Worktree,
-    'running' | 'pid' | 'ports' | 'canStart' | 'depsMissing' | 'depsInstalling' | 'noStartCmd' | 'gone'
+    | 'running'
+    | 'pid'
+    | 'ports'
+    | 'canStart'
+    | 'depsMissing'
+    | 'depsInstalling'
+    | 'noStartCmd'
+    | 'gone'
+    | 'offSlot'
   > {
     const hit = running.get(realpath(worktree.path));
     /*
@@ -721,6 +754,7 @@ class Servers {
        * absent button carry a reason.
        */
       noStartCmd: !configured,
+      offSlot: this.offSlotPorts(worktree, hit),
     };
   }
 
