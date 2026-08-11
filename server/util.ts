@@ -275,6 +275,24 @@ function shq(s: unknown): string {
 // rejection to the error middleware itself, so the wrapper is gone and the policy it
 // enforced lives in exactly one place: crash.routeErrors(), mounted last in server.ts.
 
+/**
+ * Start something and stop caring, without betting the daemon on it.
+ *
+ * crash.ts deliberately makes an unhandled rejection fatal, and the background refreshes
+ * this wraps were fired with a bare `void` — so a throw anywhere on the rescan path would
+ * have taken the process down, and with it every PTY and the SSE fan-out. The feeds are
+ * now total (see server/polled-cache.ts), which makes this belt as well as braces; it
+ * stays because "this callee never rejects" is an invariant maintained somewhere else,
+ * and the cost of being wrong about it is the whole daemon.
+ *
+ * Here rather than in the composition root because the split between process wiring
+ * (server.ts) and route wiring (server/app.ts) put callers on both sides of it, and two
+ * copies of a swallow-everything helper is exactly the shape that drifts.
+ */
+export function fire(p: Promise<unknown>): void {
+  void p.catch(() => {});
+}
+
 export {
   CHILD_ENV,
   HOME,

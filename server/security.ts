@@ -36,7 +36,7 @@ const TOKEN_FILE = 'token';
 // Request and against the bare IncomingMessage of a WebSocket upgrade, which has
 // no `originalUrl` and no parsed `query` — so the parameter names the surface
 // both share rather than either concrete type.
-interface GuardedRequest {
+export interface GuardedRequest {
   headers: IncomingHttpHeaders;
   method?: string;
   url?: string;
@@ -45,7 +45,7 @@ interface GuardedRequest {
 }
 
 // null to allow, this to deny — see the note on createGuard.
-interface Denial {
+export interface Denial {
   status: number;
   error: string;
 }
