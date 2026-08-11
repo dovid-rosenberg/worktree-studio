@@ -35,7 +35,19 @@ async function serving<T>(app: express.Express, fn: (get: Fetcher) => Promise<T>
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as import('net').AddressInfo).port}`;
   try {
-    return await fn((p, init) => fetch(base + p, init));
+    /*
+     * Every request carries the token, because the document now demands one.
+     *
+     * These tests are about WHICH ui owns `/` and what gets substituted into the
+     * shell — not about the gate, which test/webui-token.test.ts covers on its own.
+     * Before the gate existed an unauthenticated GET returned the shell, so the
+     * absence of a header here was invisible; afterwards it silently turned three
+     * of these into assertions about the 401 page. A default header keeps each test
+     * asking its own question. Pass an explicit `headers` to override it.
+     */
+    return await fn((p, init = {}) =>
+      fetch(base + p, { ...init, headers: { 'x-wts-token': TOKEN, ...(init.headers || {}) } }),
+    );
   } finally {
     server.close();
   }

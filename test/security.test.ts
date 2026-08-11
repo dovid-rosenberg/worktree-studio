@@ -19,7 +19,7 @@ import path from 'path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
-import { makeId, shortId } from '../server/util.ts';
+import { makeId, shortId, writeJson } from '../server/util.ts';
 import { muxNameFor, SessionManager } from '../server/sessions.ts';
 import { loadToken, createGuard, splitHostPort } from '../server/security.ts';
 import * as status from '../server/status.ts';
@@ -395,6 +395,29 @@ test('loadToken writes a 0600 token once and reuses it across restarts', () => {
   fs.writeFileSync(path.join(dir, 'token'), 'short\n');
   assert.notEqual(loadToken(dir), 'short');
   assert.match(loadToken(dir), /^[0-9a-f]{64}$/);
+});
+
+test('writeJson keeps its files to this user, and fixes a file that is already open', () => {
+  // Everything writeJson writes is per-user state and some of it is secret: config.json
+  // holds the Asana personal access token, sessions.json holds the session ids that are
+  // the credential for /ws/term. Under the default umask they landed at 0644 — readable
+  // by every account on the machine.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-writejson-'));
+  const file = path.join(dir, 'nested', 'config.json');
+  writeJson(file, { forge: { token: 'secret' } });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'a new file is written 0600');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { forge: { token: 'secret' } });
+  // The rename installs the temp file's inode, so a config.json already sitting at 0644
+  // from an older build is corrected by the next save rather than staying exposed.
+  fs.chmodSync(file, 0o644);
+  writeJson(file, { forge: { token: 'secret2' } });
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'an existing 0644 file is tightened');
+  // No temp file is left behind holding the same secret at whatever mode.
+  assert.deepEqual(
+    fs.readdirSync(path.dirname(file)).filter((f) => f.includes('.tmp-')),
+    [],
+    'the temp file is renamed away, not left next to it',
+  );
 });
 
 test('splitHostPort refuses what it cannot parse rather than guessing', () => {

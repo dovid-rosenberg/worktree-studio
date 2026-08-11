@@ -143,10 +143,26 @@ function readJsonState<T>(file: string, fallback: T): T {
   }
 }
 
+// Every file this writes is per-user state, and some of it is secret: config.json
+// holds the Asana personal access token, sessions.json holds the ids that are the
+// credential for `/ws/term`. Written with the default umask they land at 0644, i.e.
+// readable by every account on the machine — so the mode is stated here rather than
+// left to whatever umask the daemon happened to inherit from launchd or a shell.
+//
+// The mode goes on the temp file, because that is the inode the rename installs: an
+// existing 0644 file is therefore corrected by the next write, without a chmod race
+// where the new content is briefly world-readable. The explicit chmod covers the one
+// case `mode:` does not — a leftover temp file from a previous process with our pid,
+// which open(O_TRUNC) reuses at its old mode.
 function writeJson(file: string, obj: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: 0o600 });
+  try {
+    fs.chmodSync(tmp, 0o600);
+  } catch {
+    /* best effort — a wrong mode is not worth losing the write over */
+  }
   fs.renameSync(tmp, file);
 }
 

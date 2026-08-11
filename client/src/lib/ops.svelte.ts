@@ -668,11 +668,15 @@ export interface PrResult {
 
 export async function showPrResults(r: { results?: PrResult[] }): Promise<void> {
   const html = (r.results || [])
-    .map((x) =>
-      x.url
-        ? `<div>${esc(x.repo)}: <a href="${esc(x.url)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`
-        : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`,
-    )
+    .map((x) => {
+      // A URL we will not link is still shown, as text: the repo answered with
+      // something, and silently dropping it would read as "no result".
+      const href = safeHref(x.url);
+      if (href)
+        return `<div>${esc(x.repo)}: <a href="${esc(href)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`;
+      if (x.url) return `<div>${esc(x.repo)}: ${esc(x.url)}</div>`;
+      return `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`;
+    })
     .join('');
   await uiDialog({
     title: 'Pull / merge requests',
@@ -808,6 +812,33 @@ export async function groupSplitFeature(d: SplitFeature) {
   } catch (e) {
     toast(errMessage(e), true);
   }
+}
+
+/**
+ * A URL we are willing to put in an `href`, or null.
+ *
+ * Escaping is not enough here. `esc()` neutralises quotes and angle brackets, so the
+ * attribute cannot be broken out of — but `href="javascript:…"` needs none of that: it
+ * runs on click, in the origin that holds the boot token, and every character in it
+ * survives escaping untouched. Feature links come back from the API (a ticket URL, a
+ * merge request, a pin the user typed), so the value is not ours to trust.
+ *
+ * Validated on render rather than only on write, because the store already holds
+ * whatever was saved before this existed, and because render is the step that can
+ * actually execute it. Anything that is not an absolute http/https URL becomes inert
+ * text — a scheme-less value is refused rather than resolved against our own origin,
+ * because a link that navigates the tab back into the studio is never what was meant.
+ */
+export function safeHref(url: unknown): string | null {
+  const raw = String(url ?? '').trim();
+  if (!raw) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
 }
 
 /** Minimal escaper for the one place we still hand a dialog raw HTML. */

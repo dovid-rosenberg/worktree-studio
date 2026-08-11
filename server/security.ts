@@ -107,6 +107,10 @@ function splitHostPort(value: string | undefined | null): { host: string; port: 
   return { host: v.slice(0, i).toLowerCase(), port: v.slice(i + 1) };
 }
 
+// Exported because the document handler (webui.ts) now has to check the token too —
+// it gates the one response that *contains* the token, so it cannot reuse the /api
+// middleware, and a `===` there would leak the token a byte at a time to a local
+// process that can time our responses.
 function timingSafeEqual(a: string, b: string): boolean {
   const x = Buffer.from(String(a || ''), 'utf8');
   const y = Buffer.from(String(b || ''), 'utf8');
@@ -228,4 +232,4 @@ function createGuard({ cfg, token }: { cfg: PartialDeep<Config>; token: string }
   return { token, denyHost, denyOrigin, denyBrowser, denyToken, browser, authed };
 }
 
-export { loadToken, createGuard, splitHostPort };
+export { loadToken, createGuard, splitHostPort, timingSafeEqual };

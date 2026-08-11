@@ -21,13 +21,36 @@
  * identifier below is statically replaced with `''`, so a token can never be written
  * into the built output.
  *
+ * COOKIE: the daemon now refuses to serve this document at all unless the request
+ * already proves it has the token, and the way a tab keeps proving that across reloads
+ * is the `wts_token` cookie it was given on the first navigation. Reading it here is the
+ * fallback for a document that arrived without an injected value — a cached shell, or a
+ * future build that stops injecting entirely. It is checked after the injected global so
+ * the document we were actually served stays authoritative.
+ *
  * An unsubstituted placeholder with no dev value means neither path ran; treat it as
  * absent so the failure is a clean 401 rather than a token that is silently wrong.
  */
+function cookieToken(): string {
+  if (typeof document === 'undefined') return '';
+  for (const part of document.cookie.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0 || part.slice(0, eq).trim() !== 'wts_token') continue;
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
 export const TOKEN: string = (() => {
   const injected =
     typeof window !== 'undefined' ? (window as unknown as { WTS_TOKEN?: string }).WTS_TOKEN : '';
   if (injected && !/^__WTS_TOKEN/.test(injected)) return String(injected);
+  const cookie = cookieToken();
+  if (cookie) return cookie;
   return String(import.meta.env.VITE_WTS_TOKEN || '');
 })();
 

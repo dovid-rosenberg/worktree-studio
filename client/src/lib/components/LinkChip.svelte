@@ -13,8 +13,19 @@
  * feature still needs a merge request opened.
  */
 import type { Link } from '../../../../server/links';
+import { safeHref } from '$lib/ops.svelte.js';
 
 let { link }: { link: Link } = $props();
+
+/*
+ * The href, only if the stored URL is one we will navigate to.
+ *
+ * A link is server data (a ticket, an MR, a pin the user typed) and Svelte will happily
+ * bind `href="javascript:…"`, which then runs in the origin holding the boot token. A
+ * URL we refuse is drawn as the inert chip below rather than dropped, so a bad link
+ * looks like a link that does not work — which is what it is.
+ */
+const href = $derived(safeHref(link.url));
 
 /** Only counts worth the width: zeroes say nothing a missing chip does not. */
 const checks = $derived(
@@ -32,7 +43,7 @@ const title = $derived(
 );
 </script>
 
-{#if link.empty}
+{#if link.empty || !href}
   <span class="chip empty" {title}>
     <span class="g">{link.glyph}</span>{link.label}<span class="sub">{link.sub}</span>
   </span>
@@ -41,7 +52,7 @@ const title = $derived(
     class="chip"
     class:merged={link.sub === 'merged'}
     class:draft={link.sub === 'draft'}
-    href={link.url}
+    {href}
     target="_blank"
     rel="noreferrer"
     {title}
