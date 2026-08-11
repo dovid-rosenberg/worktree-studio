@@ -153,7 +153,7 @@ async function main() {
 
   // The state payload lives in state.ts; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
-  const { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor } = createState({
+  const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } = createState({
     cfg,
     manager,
     servers,
@@ -177,7 +177,11 @@ async function main() {
   const forge = createForge({ cfg, manager, resolveGroup, onChanged: () => ciFeed.poke({ force: true }) });
   const ciFeed = createCiFeed({
     forge,
-    sessions: () => manager.all(),
+    // Every worktree of each session's FEATURE, not just the repos the session owns —
+    // see state.ciSubjects(). A worktree created with `wt` rather than through Studio
+    // belongs to the feature immediately and to the session never, and the chips are
+    // drawn from the feature.
+    sessions: ciSubjects,
     streams: () => bus.clients.size, // an SSE subscriber is the only thing a `ci` frame can reach
     onChange: () => bus.schedule({ ci: true }),
   });
