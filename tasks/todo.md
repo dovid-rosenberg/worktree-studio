@@ -17,7 +17,7 @@ Two agents are editing `helpers/mfa.js` in different worktrees right now and not
 says so until one of them merges. That is the failure mode of running agents in
 parallel, and it is invisible in every other tool.
 
-## Phase 1 — collision radar + drift  ✅ LANDED
+## Phase 1 — drift  ✅ LANDED (collision half removed)
 
 One piece of git plumbing answers both.
 
@@ -70,7 +70,13 @@ have no local worktree, so they are a new kind of rail row.
 
 ## Review
 
-**Phase 1 landed.** 9 tests in `test/overlap.test.ts`, against real git repos rather
+**Phase 1: the collision half was removed at the owner's request.** The data was right —
+18 shared files between two live features on the day it shipped — but the warning was not
+wanted, so the pairwise intersection and `collisions` went with the UI rather than being
+left computing into a surface nobody renders. Drift stayed: it is a fact about your own
+branch, not a warning about somebody else's.
+
+Original notes, still true of the drift half: 9 tests in `test/overlap.test.ts`, against real git repos rather
 than canned file lists — the trap worth catching is diffing `base..HEAD` instead of
 `mergeBase..HEAD`, which folds every commit made on master into "files you changed" and
 makes every feature collide with every other. One test moves master underneath a branch
