@@ -55,11 +55,54 @@ function rewriteSiblingPort(
   for (let k = 0; k < maxSlots; k++) {
     const port = basePort + k * offsetStep;
     if (port === newPort) continue; // leave the target port as-is (idempotency)
-    // Match either host form and preserve it (localhost stays localhost, 127.0.0.1 stays 127.0.0.1).
-    const re = new RegExp(`(localhost|127\\.0\\.0\\.1):${port}(?![0-9])`, 'g');
-    out = out.replace(re, `$1:${newPort}`);
+    out = out.replace(portRefRe(port), `$1:${newPort}`);
   }
   return out;
+}
+
+// What a reference to a backend port LOOKS like in an FE config, spelled once.
+//
+// Match either host form and preserve it (localhost stays localhost, 127.0.0.1 stays
+// 127.0.0.1); the trailing non-digit guard is what stops `1239` matching inside `12390`.
+//
+// One function because the writer and the reader must not be able to disagree:
+// rewriteSiblingPort REWRITES what this matches and siblingPortsIn READS BACK what
+// that wrote. A second spelling of the pattern is a second definition of "points at
+// this backend", and the two would drift the first time either side learned a new
+// host form — leaving the reader quietly blind to references the writer still edits.
+function portRefRe(port: number): RegExp {
+  return new RegExp(`(localhost|127\\.0\\.0\\.1):${port}(?![0-9])`, 'g');
+}
+
+// siblingPortsIn(text, siblingPortEnv, offsetStep, maxSlots) → the sibling-repo ports
+// `text` actually references right now, sorted ascending. The inverse of
+// rewriteAllSiblingPorts: it enumerates the exact same port families (each base, plus
+// base + k*offsetStep for k in 0..maxSlots-1) and reports which of them are present
+// instead of moving them.
+//
+// This is the half that never existed. applyConfigPatch has always been write-only —
+// nothing read the file back — so a config could say `localhost:1439` while the
+// process on 1439 belonged to a different feature's branch, and every surface in the
+// app reported green. Reading it back is the only way to know.
+//   - Pure. Ports outside the families are invisible here by construction: a number
+//     that is not `base + k*step` is not a port this system ever wrote.
+function siblingPortsIn(
+  text: string,
+  siblingPortEnv: Record<string, number> | null | undefined,
+  offsetStep: number,
+  maxSlots: number,
+): number[] {
+  const src = String(text == null ? '' : text);
+  const found = new Set<number>();
+  for (const base of Object.values(siblingPortEnv || {})) {
+    for (let k = 0; k < maxSlots; k++) {
+      const port = base + k * offsetStep;
+      // A fresh regex per probe: portRefRe is /g, and a shared /g regex carries
+      // lastIndex between .test() calls — the same port would match, then miss.
+      if (portRefRe(port).test(src)) found.add(port);
+    }
+  }
+  return [...found].sort((a, b) => a - b);
 }
 
 // rewriteAllSiblingPorts(text, siblingPortEnv, offsetStep, maxSlots, slot) → `text`
@@ -85,4 +128,4 @@ function rewriteAllSiblingPorts(
   return out;
 }
 
-export { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts };
+export { deriveEnv, allocSlot, rewriteSiblingPort, rewriteAllSiblingPorts, siblingPortsIn };

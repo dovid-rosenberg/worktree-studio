@@ -165,6 +165,29 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
                isolated from the other worktrees of its repo. Marked whether or not a
                server is up — the damage (a shared Vite dep cache, an install that
                rewrites everyone's tree) is not conditional on this one running. -->
+          <!-- Which backend this frontend's config actually points at.
+               `offSlot` above is about a socket; this is about a FILE Studio rewrites
+               and, until now, never read back. A frontend patched to :1439 while the
+               process on 1439 belongs to another feature's branch looks perfectly
+               healthy from every other signal on this card — that is the state this
+               chip exists to make visible, so it is the one that is loud. -->
+          {#if m.wiredTo}
+            <span
+              class="wired {m.wiredTo.status}"
+              title={m.wiredTo.status === 'foreign'
+                ? `WRONG BACKEND — :${m.wiredTo.port} is served by feature '${m.wiredTo.feature}'${m.wiredTo.repo ? ` (${m.wiredTo.repo})` : ''} at ${m.wiredTo.path}. This frontend's config points there, so its API calls hit that branch's code: expect 404s on routes this branch has and that one does not. Start this feature's backend and restart this frontend to re-patch the config.`
+                : m.wiredTo.status === 'mine'
+                  ? `API config points at :${m.wiredTo.port} — this feature's own backend`
+                  : m.wiredTo.status === 'dead'
+                    ? `API config points at :${m.wiredTo.port}, where nothing is listening — every API call fails until this feature's backend is up`
+                    : `API config names no backend port of the sibling repo — cannot tell what this frontend talks to`}
+            >{m.wiredTo.status === 'foreign'
+                ? `→ ${m.wiredTo.feature}:${m.wiredTo.port}`
+                : m.wiredTo.status === 'unknown'
+                  ? '→ ?'
+                  : `→ :${m.wiredTo.port}`}</span
+            >
+          {/if}
           {#if m.sharedModules}
             <span
               class="shared"
@@ -246,6 +269,32 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
   /* Not a port and not a state — a property of the checkout, so it sits apart from
      both and holds its width rather than competing with the branch for space. */
   .mchip .shared { color:var(--warn, var(--working)); flex:none; cursor:help; }
+
+  /*
+   * Where this frontend's API calls actually go.
+   *
+   * Correct is nearly silent — `→ :1239` in the faint hue, the same weight as the branch
+   * text. It is confirmation, and confirmation that shouts is confirmation nobody reads.
+   *
+   * WRONG is the exception in this file, and on purpose. Every other mark on this card is
+   * unfilled text; this one is the only FILLED chip on a member row, in the delete red
+   * that nothing else on the rail wears, and it spells the other feature's name inline
+   * rather than hiding it in the tooltip. The failure it names is the one that is
+   * invisible by construction — the frontend is up, the backend is up, the ports match
+   * what the config says, and the answers come from the wrong branch. Nothing quieter
+   * would have beaten the four green signals sitting next to it.
+   */
+  .mchip .wired { flex:none; cursor:help; }
+  .mchip .wired.mine { color:var(--faint); }
+  .mchip .wired.foreign { color:var(--del); background:var(--del-bg); font-weight:600;
+                          padding:0 5px; border-radius:999px; max-width:100%;
+                          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; }
+  /* Amber, not red: nothing is listening there, so the calls fail loudly and nobody is
+     misled. A thing to start, not a thing that lied to you. */
+  .mchip .wired.dead { color:var(--waiting); }
+  /* "I read the file and recognised nothing" — the honest non-answer, and it is styled
+     like one rather than like a verdict. */
+  .mchip .wired.unknown { color:var(--idle); }
 
   .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
   .badge.slot { color:var(--working); background:var(--working-bg); }

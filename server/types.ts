@@ -120,6 +120,47 @@ export interface ConfigPatch {
 }
 
 /**
+ * Which backend the config file above currently points at, and whose it is.
+ *
+ * `ConfigPatch` is written and never read back, and that asymmetry cost a day: an MFA
+ * frontend was patched to `localhost:1439`, the process answering on 1439 belonged to
+ * a different feature on a different branch, and `POST /merchant/api/totp/600/register`
+ * came back 404 from a checkout that simply has no such route. Nothing on screen was
+ * wrong — Studio had never looked at what it wrote.
+ *
+ * `offSlot` answers the adjacent question ("is this server on its own slot's ports?")
+ * and cannot answer this one, because this fact lives in a file rather than in a socket.
+ */
+export type WiredStatus =
+  /** The backend on that port belongs to this same feature. What you want. */
+  | 'mine'
+  /** It belongs to a DIFFERENT feature — a different branch is answering the calls. */
+  | 'foreign'
+  /** Nothing is listening there. Requests fail, but at least they fail loudly. */
+  | 'dead'
+  /** The file was read and names no port of the sibling's families — no claim to make. */
+  | 'unknown';
+
+export interface WiredTo {
+  status: WiredStatus;
+  /** Every sibling-repo port the config file names right now, ascending. */
+  ports: number[];
+  /** The one port the verdict is about; null only when `status` is 'unknown'. */
+  port: number | null;
+  /** The feature owning `port`. Null unless something is listening there. */
+  feature: string | null;
+  /**
+   * The repo owning `port` — best-effort, and null when Studio did not launch it.
+   * Discovery maps a socket to a worktree PATH; only `servers.json` knows which repo
+   * a launch was for, so a server started by hand outside Studio has no repo name to
+   * give. Named as unknown rather than guessed from the directory layout.
+   */
+  repo: string | null;
+  /** The worktree owning `port`. Null unless something is listening there. */
+  path: string | null;
+}
+
+/**
  * One repo's concurrency mapping: which env vars carry ports, and which carry
  * the slot index itself.
  */
@@ -468,6 +509,13 @@ export interface Worktree {
    * A warning, not a blocker — `canStart` stays true, because it does start.
    */
   sharedModules?: string | null;
+  /**
+   * Which backend this worktree's patched config file points at, and whose it is —
+   * or null when there is nothing to read (the repo declares no `configPatch`, or the
+   * file is absent/unreadable). See WiredStatus: null means "did not look", and is
+   * deliberately not the same value as "looked and found nothing".
+   */
+  wiredTo?: WiredTo | null;
 }
 
 /**

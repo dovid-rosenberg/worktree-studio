@@ -8,10 +8,10 @@ import crypto from 'crypto';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { CHILD_ENV, run, readJsonState, writeJson, realpath, slug } from './util.ts';
-import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
+import { deriveEnv, allocSlot, rewriteAllSiblingPorts, siblingPortsIn } from './concurrency.ts';
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
-import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, Worktree } from './types.ts';
+import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, WiredTo, Worktree } from './types.ts';
 import { TAIL_MAX_BYTES, readTail, tailFile } from './log-tail.ts';
 
 /**
@@ -81,6 +81,21 @@ interface CachedPidInfo extends PidInfo {
 /** One discovered dev server: the listening pid and every non-ephemeral port it holds. */
 export interface RunningServer {
   pid: number;
+  ports: number[];
+}
+
+/**
+ * A parsed FE config file, stamped with what it was parsed from.
+ *
+ * decorate() runs on every topology build, so the parse is memoised on the file's
+ * (mtime, size) rather than repeated. Both, not mtime alone: HFS+/APFS report mtime at
+ * one-second granularity for some writes, and a rewrite within the same second that
+ * changes the length would otherwise read as unchanged. applyConfigPatch's own write is
+ * what usually invalidates this, and it always changes at least one digit.
+ */
+interface CachedWiredPorts {
+  mtimeMs: number;
+  size: number;
   ports: number[];
 }
 
@@ -280,6 +295,7 @@ class Servers {
   slots: Map<string, number>;
   _pidInfoCache: Map<string, CachedPidInfo>;
   _starting: Map<string, number>;
+  _wiredCache: Map<string, CachedWiredPorts>;
 
   // `identity` is the shared server/identity.ts resolver (server.ts builds one and
   // hands the same instance to state.ts/orchestrator.ts). Passing it is what makes
@@ -319,6 +335,11 @@ class Servers {
     // Deliberately in-memory: a launch cannot outlive the process that is polling it,
     // so persisting this could only ever resurrect a guard for a start that is over.
     this._starting = new Map();
+    // config file path → its parsed backend ports, keyed on (mtime,size). See
+    // wiredPorts(): decorate() is on the topology-build path, so the read has to be
+    // cheap in the steady state. One entry per frontend worktree — bounded by the
+    // number of worktrees that exist, and never written for a repo with no configPatch.
+    this._wiredCache = new Map();
   }
 
   _save(): void {
@@ -834,6 +855,125 @@ class Servers {
     return ports.some((p) => hit.ports.includes(p)) ? [] : [...hit.ports];
   }
 
+  /**
+   * The backend ports this worktree's patched config file names RIGHT NOW — or null
+   * when there is nothing to read.
+   *
+   * The missing half of applyConfigPatch. That method rewrites a frontend's gitignored
+   * config so its API base URL lands on this feature's slot, and then nothing ever looks
+   * at the file again — not on start, not on stop, not on decorate. It is also never
+   * reverted, so the last write survives the feature that made it. The file is therefore
+   * a claim about the world that Studio authored and never checked.
+   *
+   * null and `[]` are different answers and both are load-bearing: null is "I did not
+   * look" (no configPatch, no sibling port map, file absent or unreadable), `[]` is
+   * "I read it and it names no backend of that repo". Collapsing them would let a
+   * missing file read as a config pointing nowhere, which is a claim about a file that
+   * is not there.
+   *
+   * Cost: one statSync per frontend worktree per decorate, and a readFileSync only when
+   * the file has changed since the last one (see _wiredCache). A repo with no
+   * configPatch does not touch the disk at all — the two map lookups above the stat are
+   * the whole of its cost.
+   */
+  wiredPorts(worktree: Pick<Worktree, 'path' | 'repo'>): number[] | null {
+    const conc = this.cfg.concurrency;
+    if (!this._concEnabled() || !conc) return null;
+    const cp = this._repoConc(worktree.repo)?.configPatch;
+    if (!cp?.file) return null;
+    // The same resolution launchOpts() does: the patch names a sibling REPO, and its
+    // portEnv is what supplies the port families. No portEnv, no families to look for.
+    const siblingPortEnv = this._repoConc(cp.siblingRepo)?.portEnv;
+    if (!siblingPortEnv) return null;
+    const file = path.join(worktree.path, cp.file);
+    try {
+      const st = fs.statSync(file);
+      const hit = this._wiredCache.get(file);
+      if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.ports;
+      const text = fs.readFileSync(file, 'utf8');
+      const ports = siblingPortsIn(text, siblingPortEnv, conc.offsetStep, conc.maxSlots || 1);
+      this._wiredCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, ports });
+      return ports;
+    } catch {
+      // Absent, unreadable, or a path we cannot stat. None of those is a claim about
+      // which backend this frontend talks to — the same rule sharedModules() follows.
+      return null;
+    }
+  }
+
+  /**
+   * Which backend this frontend is actually talking to, and whose it is.
+   *
+   * The incident: an MFA frontend called `POST /merchant/api/totp/600/register` and got
+   * a 404. Its config said `localhost:1439`, which was correct for the slot Studio had
+   * patched it to — but the process listening on 1439 belonged to another feature
+   * entirely, on a branch with no such route. Every surface reported green in good
+   * faith, because none of them had ever read the file back. Hours went into the 404.
+   *
+   * Three answers, three different things to do about them, so they are three statuses
+   * rather than a boolean: 'mine' (nothing to do), 'foreign' (the bug — the other
+   * feature is NAMED, because "wrong backend" without a name still leaves you hunting),
+   * 'dead' (nothing listening; the calls fail, but they fail honestly).
+   *
+   * A foreign hit OUTRANKS a matching one, deliberately. A config that names several
+   * backend ports can have some land on this feature and some on another — that is a
+   * half-wired frontend, and it is exactly as broken as a fully misdirected one for
+   * whichever call uses the wrong port. Reporting the good half would hide it.
+   *
+   * `running` is the map decorate() already holds: discoverRunning() maps every
+   * listening socket on the machine to the worktree its process runs in, so port →
+   * worktree → featureFor() is a lookup over a map, not a scan of anything.
+   */
+  wiredTo(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): WiredTo | null {
+    const ports = this.wiredPorts(worktree);
+    if (!ports) return null;
+    if (!ports.length)
+      return { status: 'unknown', ports: [], port: null, feature: null, repo: null, path: null };
+    const mine = this.featureFor(worktree.path);
+    let own: { port: number; feature: string; path: string } | null = null;
+    let foreign: { port: number; feature: string; path: string } | null = null;
+    for (const port of ports) {
+      for (const [p, hit] of running) {
+        if (!hit.ports.includes(port)) continue;
+        const feature = this.featureFor(p);
+        const found = { port, feature, path: p };
+        if (feature === mine) own ||= found;
+        else foreign ||= found;
+        break; // one listener per port
+      }
+      if (foreign) break; // the worst answer is the answer; no need to keep looking
+    }
+    const at = foreign || own;
+    if (!at) return { status: 'dead', ports, port: ports[0], feature: null, repo: null, path: null };
+    return {
+      status: foreign ? 'foreign' : 'mine',
+      ports,
+      port: at.port,
+      feature: at.feature,
+      repo: this._trackedRepoAt(at.path),
+      path: at.path,
+    };
+  }
+
+  /**
+   * The repo name Studio filed a launch at this worktree under, or null.
+   *
+   * Discovery knows a worktree PATH and nothing else — that is its strength, it finds
+   * servers Studio never started. Only `tracked` carries a repo name, so a server
+   * started by hand has none to give and this says so instead of inferring one from the
+   * directory layout, which would be a guess dressed as a fact.
+   *
+   * `tracked` is keyed on the path as it was handed to start(); the discovery map is
+   * keyed on realpaths. The cheap comparison is tried first so the symlink case is the
+   * only one that costs a syscall.
+   */
+  _trackedRepoAt(worktreePath: string): string | null {
+    const entries = Object.entries(this.tracked);
+    for (const [p, t] of entries) if (t.repo && p === worktreePath) return t.repo;
+    for (const [p, t] of entries) if (t.repo && realpath(p) === worktreePath) return t.repo;
+    return null;
+  }
+
   decorate(
     worktree: Pick<Worktree, 'path' | 'repo'>,
     running: Map<string, RunningServer>,
@@ -849,6 +989,7 @@ class Servers {
     | 'gone'
     | 'offSlot'
     | 'sharedModules'
+    | 'wiredTo'
   > {
     const hit = running.get(realpath(worktree.path));
     /*
@@ -889,6 +1030,10 @@ class Servers {
       // Not a reason canStart is false: a shared node_modules starts perfectly well.
       // It is the reason two worktrees that each look fine interfere with each other.
       sharedModules: gone ? null : this.sharedModules(worktree.path),
+      // Not conditional on THIS worktree running: a frontend that is down is still
+      // pointed somewhere, and the moment it comes up it will talk to whatever that is.
+      // Skipped for a vanished directory only because there is no file left to read.
+      wiredTo: gone ? null : this.wiredTo(worktree, running),
     };
   }
 
