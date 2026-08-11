@@ -32,6 +32,7 @@ import {
   coerceGroups,
   coerceRunConfigs,
   coerceStart,
+  isFollowable,
   isRecord,
   upsertGroup,
 } from './settings.ts';
@@ -447,6 +448,12 @@ async function main() {
     const ticket = typeof body.ticket === 'string' ? body.ticket.trim() : undefined;
     // Every pin needs a url; a label is optional and falls back to the provider's name.
     // Anything without a url is dropped rather than stored as a link to nowhere.
+    //
+    // ...and the url has to be one a browser may safely follow. These are rendered into
+    // an href in a page that holds the boot token, so a stored `javascript:` pin is one
+    // click away from reading it out. The client refuses to render an unsafe scheme; this
+    // is the half that stops it being written down in the first place, because config.json
+    // outlives any particular client and is also hand-edited.
     const pins = Array.isArray(body.pins)
       ? body.pins
           .filter(isRecord)
@@ -454,7 +461,7 @@ async function main() {
             label: String(x.label || '').trim(),
             url: String(x.url || '').trim(),
           }))
-          .filter((x: { url: string }) => !!x.url)
+          .filter((x: { url: string }) => !!x.url && isFollowable(x.url))
           .map((x: { label: string; url: string }) => (x.label ? x : { url: x.url }))
       : undefined;
 
@@ -1532,8 +1539,22 @@ async function main() {
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 
   server.listen(cfg.web.port, cfg.web.host, () => {
+    /*
+     * The printed URL carries the token, because the bare one no longer opens anything.
+     *
+     * The document is gated now — serving the shell to anyone who asked was how the
+     * token reached any local process on the machine. The cost is that every habitual
+     * way in (this line, a bookmark, the menubar) had to learn to hand it over once;
+     * the page swaps it for a cookie and strips it from the address bar immediately.
+     *
+     * Yes, this puts the token in the daemon's log. That log is written to the state
+     * directory alongside the token file itself, and anything that can read one can
+     * read the other — so it gives away nothing new, and the alternative is printing a
+     * link that lands the user on a challenge page with no explanation.
+     */
+    const base = `http://${cfg.web.host}:${cfg.web.port}`;
     console.log(
-      `[wt-studio] http://${cfg.web.host}:${cfg.web.port}  (${repos.length} repos, mux=${mux ? mux.name : 'none'})`,
+      `[wt-studio] ${base}/?token=${cfg._token}  (${repos.length} repos, mux=${mux ? mux.name : 'none'})`,
     );
     /*
      * Zero repos is a DEAD END, and it used to be announced as a number.

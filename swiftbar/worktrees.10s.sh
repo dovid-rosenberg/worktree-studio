@@ -52,6 +52,13 @@ restart_item() {
 }
 log_item() { [ -f "$LOG" ] && echo "Open the log | bash=/usr/bin/open param1=$LOG terminal=false"; }
 
+# The document is token-gated, the same as the API — serving the shell to anything that
+# asked was how the token leaked to any local process on the machine. So a link into the
+# UI has to carry it on the first navigation; the page swaps it for a cookie and drops it
+# from the address bar. Built once here rather than at each href, because a link that
+# forgets it lands the user on a challenge page for no reason they can see.
+UI="$BASE/?token=$TOKEN"
+
 STATE="$(curl -s -m 2 -H "x-wts-token: $TOKEN" "$BASE/api/state" 2>/dev/null)"
 # A refusal is a *response*, so "empty" no longer means "down" — tell the two
 # apart rather than reporting a rejected token as a stopped server.
@@ -101,15 +108,15 @@ elif [ "$RUN"  -gt 0 ]; then echo "⎇ ▶$RUN"
 else                         echo "⎇"
 fi
 echo "---"
-echo "Open cockpit | href=$BASE"
-echo "New session… | href=$BASE"
+echo "Open cockpit | href=$UI"
+echo "New session… | href=$UI"
 echo "---"
 
 # ── Sessions ───────────────────────────────────────────────────────────────
 # Waiting first: the whole point of the section is "who needs you". Each line
 # deep-links to that session in the cockpit (`#s:<id>`), so clicking the agent
 # that wants you lands on the agent that wants you.
-echo "$STATE" | jq -r --arg base "$BASE" '
+echo "$STATE" | jq -r --arg base "$UI" '
   def dot(s): if s=="working" then "⚙" elif s=="waiting" then "🟡"
               elif s=="stopped" then "⏹" else "○" end;
   def rank(s): if s=="waiting" then 0 elif s=="working" then 1
@@ -119,7 +126,7 @@ echo "$STATE" | jq -r --arg base "$BASE" '
     else
       "Sessions | color=#888888",
       ( $s[]
-        | "\(dot(.state)) \(.title) | href=\($base)/#s:\(.id|@uri)",
+        | "\(dot(.state)) \(.title) | href=\($base)#s:\(.id|@uri)",
           "--\(.activity // .state)",
           ( if .sourceUrl then "--\(.source): \(.sourceId // "link") ↗ | href=\(.sourceUrl)" else empty end ),
           ( .repos[]?
@@ -131,7 +138,7 @@ echo "---"
 # ── Features and their dev servers ─────────────────────────────────────────
 # `slot` is present only while one is allocated, and absent is not slot 0 —
 # hence `has("slot")` rather than a truthiness test that would hide slot 0.
-echo "$STATE" | jq -r --arg act "$ACT" --arg base "$BASE" '
+echo "$STATE" | jq -r --arg act "$ACT" --arg base "$UI" '
   def dot(s): if s=="working" then "⚙" elif s=="waiting" then "🟡" else "○" end;
   if (.features|length) == 0 then "No features | color=#888888"
   else
@@ -149,8 +156,8 @@ echo "$STATE" | jq -r --arg act "$ACT" --arg base "$BASE" '
       | "\($sym) \($f.name)  (\($up)/\($tot))"
           + ($f.auto|if . then "" else " · manual" end)
           + (if ($f|has("slot")) then "  · slot \($f.slot)" else "" end)
-          + ( if $f.session then " | href=\($base)/#s:\($f.session.id|@uri)"
-              else " | href=\($base)/#f:\($f.name|@uri)" end ),
+          + ( if $f.session then " | href=\($base)#s:\($f.session.id|@uri)"
+              else " | href=\($base)#f:\($f.name|@uri)" end ),
         ( $m[]
           | "--\(if .running then "🟢" else "⚪" end) \(.repo) \(.branch // .wtname)"
             + (if (.ports|length)>0 then "  :\(.ports|join(","))" else "" end)

