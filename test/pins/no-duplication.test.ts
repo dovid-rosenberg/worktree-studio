@@ -22,7 +22,7 @@ import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = new URL('../..', import.meta.url).pathname;
 
 function serverFiles(): string[] {
   const out: string[] = [];

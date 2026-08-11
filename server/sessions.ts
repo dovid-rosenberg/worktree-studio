@@ -1257,10 +1257,24 @@ class SessionManager extends EventEmitter {
   }
 
   // Stop the running process but keep the session (resumable later).
+  /**
+   * Stop the agent's process, keeping the record so it can be resumed.
+   *
+   * The kill's outcome decides whether the record changes, which it did not used to.
+   * `mux.kill()` discarded tmux's exit code and answered `true` unconditionally, so a
+   * kill that did not happen — tmux unreachable, socket directory gone, server wedged —
+   * still marked the session `stopped` and `active: false` and reported success. That
+   * combination is the worst of both: the agent is alive and spending tokens, and
+   * `reconcile()` skips it precisely BECAUSE it is marked inactive, so nothing ever
+   * revisits the claim. Leaving the record alone on failure means the row still says
+   * running, which is at least true, and the next reconcile can act on it.
+   */
   async deactivate(id: string) {
     const s = this.get(id);
-    if (!s) return { ok: false };
-    await this.mux.kill(s.muxName);
+    if (!s) return { ok: false, error: 'no such session' };
+    if (!(await this.mux.kill(s.muxName))) {
+      return { ok: false, error: 'the multiplexer would not stop this session' };
+    }
     s.active = false;
     s.state = 'stopped';
     s.activity = 'deactivated';

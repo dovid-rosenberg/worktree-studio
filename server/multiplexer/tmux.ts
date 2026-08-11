@@ -212,6 +212,40 @@ const STARTUP_QUIET: Record<string, string> = {
   ZSH_DISABLE_COMPFIX: 'true', // zsh: "insecure directories" prompt on some setups
 };
 
+/*
+ * Names that mean "this pane is a shell sitting at a prompt", not a program worth keeping.
+ *
+ * The fallback half of isIdleShell — see there for why $SHELL is the primary authority.
+ * A login shell announces itself with a leading `-` in argv[0] and tmux reports that
+ * verbatim, so callers strip it before testing.
+ */
+const KNOWN_SHELLS = /^(sh|bash|zsh|ksh|mksh|csh|tcsh|dash|ash|fish|nu|xonsh|elvish|pwsh|login)$/;
+
+/**
+ * Is the pane's foreground program just a shell, i.e. did whatever we launched exit?
+ *
+ * Resume hangs off this: a shell means the agent is gone and we relaunch into the pane,
+ * anything else means SOMETHING is alive there and we adopt it rather than start a second
+ * claude on the same conversation. Getting it wrong in the "shell" direction duplicates an
+ * agent; getting it wrong in the other direction is silent and permanent, which is the one
+ * that shipped.
+ *
+ * It was a regex of POSIX shell names — `/^(-?(z|ba|k|c|tc|da)?sh|login)$/`. But the shell
+ * a pane drops to is `$SHELL` (persistCmd execs it), and a fish or nushell user's idle pane
+ * therefore reports `fish`. That is not in the list, so it read as "an agent is running":
+ * the session was marked adopted, nothing was launched, and Resume returned success. The
+ * button did nothing, every time, and said it had worked.
+ *
+ * So ask $SHELL first — it is literally the process we put there — and keep a name list for
+ * the panes we did not start that way (a session tmux already had, a shell exec'd by an
+ * rc file) and for an environment with no $SHELL at all.
+ */
+export function isIdleShell(cmd: string, shell = process.env.SHELL || ''): boolean {
+  const base = cmd.trim().replace(/^-/, '');
+  if (!base) return false;
+  return base === path.basename(shell) || KNOWN_SHELLS.test(base);
+}
+
 export function launchKeys(target: string, cmd?: string): string {
   const line = persistCmd(cmd);
   try {
@@ -339,7 +373,7 @@ const tmux: TmuxDriver = {
     const target = tabs.find((t) => t.id === tabId) || tabs.find((t) => t.title === 'claude');
     if (target) {
       const running = (await this.paneCommand(name, target.id)).trim();
-      if (running && !/^(-?(z|ba|k|c|tc|da)?sh|login)$/.test(running)) {
+      if (running && !isIdleShell(running)) {
         return { ok: true, id: target.id, reused: true, running: true };
       }
       /*
@@ -397,13 +431,28 @@ const tmux: TmuxDriver = {
       cwd || HOME,
     ]);
     if (r.code !== 0) return { ok: false, error: r.stderr.trim() };
-    // new-window selects the new window → send the command to the session's active window
+    const wid = r.stdout.trim();
     if (cmd) {
-      // Same hazard as ensure(): a brand-new window's shell is mid-startup.
-      await waitForPaneReady(name, r.stdout.trim() || '');
-      await T(['send-keys', '-t', name, '--', launchKeys(`${name}-tab`, cmd), 'Enter']);
+      /*
+       * Address the window we just made BY ID, both here and in the wait.
+       *
+       * This used to send to `-t name` — the SESSION, which tmux resolves to whatever
+       * window is active AT THAT MOMENT — on the reasoning that new-window had just
+       * selected ours. True when the line was written, false by the time it runs: the
+       * wait below can sit here for up to six seconds, and a click on another tab or a
+       * second newTab landing in the same session moves the active window underneath us.
+       * The launch command was then typed into whatever pane won, and the pane that
+       * usually wins is the agent's: a shell command submitted into a live conversation.
+       *
+       * Same hazard as ensure(): a brand-new window's shell is mid-startup.
+       */
+      await waitForPaneReady(name, wid);
+      // The script is named per WINDOW, not per session. `${name}-tab` meant two tabs
+      // opening at once in one session wrote the same file, and the first one to reach
+      // send-keys sourced the second one's command.
+      await T(['send-keys', '-t', `${name}:${wid}`, '--', launchKeys(`${name}-${wid}`, cmd), 'Enter']);
     }
-    return { ok: true, id: r.stdout.trim() || undefined };
+    return { ok: true, id: wid || undefined };
   },
 
   async renameTab(name, id, title) {
@@ -463,13 +512,28 @@ const tmux: TmuxDriver = {
     return (await T(['rename-session', '-t', oldName, newName])).code === 0;
   },
 
+  /*
+   * Returns whether the session is actually GONE, which is not what it used to return.
+   *
+   * It discarded kill-session's exit code and answered `true` unconditionally, so a tmux
+   * that could not be reached at all still read as a clean kill. deactivate() then marked
+   * the session stopped and reported success — and a stopped session is exactly the one
+   * reconcile skips, so the agent kept running, and burning tokens, with nothing left
+   * watching it and no way for the user to learn that.
+   *
+   * "Already gone" is a success, not a failure: kill-session exits non-zero on a session
+   * it cannot find, and deactivating a session whose tmux died on its own is the ordinary
+   * case. So the answer is the state, not the exit code — and when tmux is unreachable
+   * has-session cannot confirm anything either, which is the `false` the caller needs.
+   */
   async kill(name) {
-    await T(['kill-session', '-t', `=${name}`]);
+    const killed = await T(['kill-session', '-t', `=${name}`]);
     // Still killed, and deliberately: sessions created before pop-out and the split pane
     // were removed may have one of these alive, and nothing else would ever reap them.
+    // Their fate does not decide the answer — the session proper does.
     await T(['kill-session', '-t', `=${name}-popout`]);
     await T(['kill-session', '-t', `=${name}-split`]);
-    return true;
+    return killed.code === 0 || !(await this.hasSession(name));
   },
 };
 
