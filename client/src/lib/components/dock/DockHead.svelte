@@ -24,13 +24,11 @@
   let { session }: { session: Session } = $props();
 
   /*
-   * Collision and drift for this feature — see server/overlap.ts.
+   * Drift for this feature — see server/overlap.ts.
    *
    * Read through the feature, not the session: the answer is about worktrees, and a
-   * feature is what owns those. `$state` for the expansion because the list of files is
-   * worth showing on demand and worth staying out of the way otherwise.
+   * feature is what owns those.
    */
-  let showOverlap = $state(false);
 
   /** Sources that mean "typed here", which is the default and says nothing. */
   const LOCAL_SOURCES = new Set(['text', 'freetext', '']);
@@ -111,30 +109,6 @@
     </span>
   {/if}
 
-  <!--
-    WHAT ELSE IS TOUCHING THESE FILES. server/overlap.ts computes it; this is the only
-    place in the app that can tell you, because it is the only place that knows about
-    every worktree at once. Named, not counted: "18 shared" is a number you dismiss,
-    "18 files also changed by iso-mfa-totp" is a name you recognise.
-  -->
-  <!--
-    DEDUPED BY FEATURE for the label, not for the detail. Collisions are recorded per
-    REPO, so a BE+FE feature that overlaps in both repos is two entries — correct data,
-    and "custom-reports, custom-reports" in a chip that is meant to name who you are
-    colliding with. The expanded list below keeps them apart, because there the repo is
-    the thing you need in order to go and look.
-  -->
-  {#if lap && lap.collisions.length}
-    {@const total = lap.collisions.reduce((n, c) => n + c.files.length, 0)}
-    <button
-      class="overlapchip"
-      title={lap.collisions
-        .map((c) => `${c.feature} (${c.repo}): ${c.files.slice(0, 12).join(', ')}${c.files.length > 12 ? `, +${c.files.length - 12} more` : ''}`)
-        .join('\n')}
-      onclick={() => (showOverlap = !showOverlap)}
-      aria-expanded={showOverlap}
-    >⚠ {total} file{total === 1 ? '' : 's'} also changed by {[...new Set(lap.collisions.map((c) => c.feature))].join(', ')}</button>
-  {/if}
   {#if lap && lap.behind >= 5}
     <span class="driftchip" title={lap.drift.map((d) => `${d.repo}: behind ${d.behind}, ahead ${d.ahead}${d.conflicts.length ? ` — ${d.conflicts.length} file(s) will conflict: ${d.conflicts.slice(0, 8).join(', ')}` : ''}`).join('\n')}
       >behind {lap.behind}{#if conflictCount}<span class="willconflict"> · {conflictCount} will conflict</span>{/if}</span>
@@ -178,45 +152,12 @@
   <span class="grow"></span>
   <ActionBar />
 
-  {#if showOverlap && lap}
-    <!-- Full width under the bar: a file list is a list, and squeezing it into a tooltip
-         is how you learn there are 18 of them without learning which. -->
-    <div class="overlapdetail">
-      {#each lap.collisions as c (c.feature + c.repo)}
-        <div class="ovrow">
-          <b>{c.feature}</b> <span class="ovrepo">{c.repo}</span>
-          <div class="ovfiles">{#each c.files as f (f)}<code>{f}</code>{/each}</div>
-        </div>
-      {/each}
-      {#each lap.drift.filter((d) => d.conflicts.length) as d (d.repo)}
-        <div class="ovrow">
-          <b>will conflict on rebase</b> <span class="ovrepo">{d.repo}</span>
-          <div class="ovfiles">{#each d.conflicts as f (f)}<code>{f}</code>{/each}</div>
-        </div>
-      {/each}
-    </div>
-  {/if}
-
 </div>
 
 <style>
-  /* Warning-coloured because it is about somebody else's work landing on yours; a button
-     because the useful part is WHICH files, and that has to be reachable. */
-  .overlapchip { font-family:var(--mono); font-size:11px; color:var(--del); background:none;
-                 border:1px solid var(--del); border-radius:6px; padding:2px 7px; cursor:pointer;
-                 white-space:nowrap; max-width:340px; overflow:hidden; text-overflow:ellipsis; }
-  .overlapchip:hover { background:var(--del); color:var(--panel); }
   .driftchip { font-family:var(--mono); font-size:11px; color:var(--faint);
                border:1px solid var(--border); border-radius:6px; padding:2px 7px; white-space:nowrap; }
   .driftchip .willconflict { color:var(--waiting); }
-  .overlapdetail { flex-basis:100%; margin-top:6px; padding:9px 11px; background:var(--bg);
-                   border:1px solid var(--border); border-radius:9px; display:flex;
-                   flex-direction:column; gap:8px; max-height:34vh; overflow-y:auto; }
-  .ovrow b { font-size:12.5px; }
-  .ovrow .ovrepo { font-family:var(--mono); font-size:10.5px; color:var(--faint); }
-  .ovfiles { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
-  .ovfiles code { font-family:var(--mono); font-size:11px; color:var(--muted);
-                  background:var(--elevated); border-radius:4px; padding:1px 5px; }
   /* The feature's colour tag, inherited from .dock (see Dock.svelte). This is the surface
      that matters: the rail is what you SCAN, but the dock is what you are looking at while
      you work, so a tag only in the rail would be invisible at the moment you switch.

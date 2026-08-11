@@ -1,11 +1,11 @@
 /*
- * Collision radar and drift (server/overlap.ts), against REAL git repos.
+ * Branch drift (server/overlap.ts), against REAL git repos.
  *
- * The whole value is arithmetic over merge-bases, and a fake that returns canned file
- * lists would prove only that the intersection operator works. So these build actual
- * worktrees, commit into them, and move the base underneath — which is also the only way
- * to catch the thing most likely to be wrong: comparing against the branch tip instead of
- * the merge-base, which silently reports every commit made on master as "yours".
+ * The whole value is arithmetic over merge-bases, and a fake returning canned file lists
+ * would prove only that the set operations work. So these build actual worktrees, commit
+ * into them, and move the base underneath — which is the only way to catch the thing most
+ * likely to be wrong: comparing against the branch tip instead of the merge-base, which
+ * silently reports every commit made on master as "yours".
  */
 import { test } from 'node:test';
 import assert from 'node:assert';
@@ -45,51 +45,6 @@ function branchWith(dir: string, name: string, files: string[]): string {
 const feature = (name: string, repoName: string, wt: string) => ({
   name,
   members: [{ repo: repoName, path: wt, branch: `feature/${name}` }],
-});
-
-test('names the files two features are both changing, and says so on both', async () => {
-  const dir = repo();
-  const a = branchWith(dir, 'alpha', ['shared.js', 'a-only.js']);
-  const b = branchWith(dir, 'beta', ['shared.js', 'b-only.js']);
-
-  const feed = createOverlapFeed();
-  await feed.refresh([feature('alpha', 'r', a), feature('beta', 'r', b)], () => 'master');
-  const snap = feed.snapshot();
-
-  assert.deepEqual(snap.alpha.collisions, [{ feature: 'beta', repo: 'r', files: ['shared.js'] }]);
-  // Symmetric: whichever one you are looking at is the one that has to warn you.
-  assert.deepEqual(snap.beta.collisions, [{ feature: 'alpha', repo: 'r', files: ['shared.js'] }]);
-
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-test('says nothing about a feature that shares no files', async () => {
-  const dir = repo();
-  const a = branchWith(dir, 'alpha', ['a-only.js']);
-  const b = branchWith(dir, 'beta', ['b-only.js']);
-
-  const feed = createOverlapFeed();
-  await feed.refresh([feature('alpha', 'r', a), feature('beta', 'r', b)], () => 'master');
-  assert.deepEqual(feed.snapshot().alpha.collisions, []);
-  assert.deepEqual(feed.snapshot().beta.collisions, []);
-
-  fs.rmSync(dir, { recursive: true, force: true });
-});
-
-test('never pairs features across repos — they cannot collide there', async () => {
-  const one = repo();
-  const two = repo();
-  const a = branchWith(one, 'alpha', ['shared.js']);
-  const b = branchWith(two, 'beta', ['shared.js']);
-
-  const feed = createOverlapFeed();
-  // Same filename, different repos. A path-only comparison would call this a collision.
-  await feed.refresh([feature('alpha', 'one', a), feature('beta', 'two', b)], () => 'master');
-  assert.deepEqual(feed.snapshot().alpha.collisions, []);
-  assert.deepEqual(feed.snapshot().beta.collisions, []);
-
-  fs.rmSync(one, { recursive: true, force: true });
-  fs.rmSync(two, { recursive: true, force: true });
 });
 
 test('counts drift from the merge-base, not from the branch tip', async () => {
@@ -179,17 +134,17 @@ test('an unchanged answer does not push a frame', async () => {
   assert.equal(reads, 2);
 });
 
-test('forgets a worktree that has been removed', async () => {
+test('forgets a feature whose worktree has been removed', async () => {
   const dir = repo();
   const a = branchWith(dir, 'alpha', ['shared.js']);
   const b = branchWith(dir, 'beta', ['shared.js']);
   const feed = createOverlapFeed();
   await feed.refresh([feature('alpha', 'r', a), feature('beta', 'r', b)], () => 'master');
-  assert.equal(feed.snapshot().alpha.collisions.length, 1);
+  assert.ok(feed.snapshot().beta, 'both are measured to begin with');
 
-  // beta goes away: alpha must stop being warned about it.
+  // beta goes away: the snapshot must track reality rather than history.
   await feed.refresh([feature('alpha', 'r', a)], () => 'master');
-  assert.deepEqual(feed.snapshot().alpha.collisions, []);
+  assert.ok(feed.snapshot().alpha, 'alpha is still measured');
   assert.equal(feed.snapshot().beta, undefined);
 
   fs.rmSync(dir, { recursive: true, force: true });
