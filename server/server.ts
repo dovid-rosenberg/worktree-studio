@@ -36,6 +36,7 @@ import * as transcriptRoutes from './transcript-routes.ts';
 import * as routesReview from './routes-review.ts';
 import * as reinstate from './reinstate.ts';
 import { browse } from './browse.ts';
+import { handoff } from './run-handoff.ts';
 import * as layoutMod from './layout.ts';
 import type { ScannedRepo } from './git.ts';
 import { FEATURE_COLORS } from './types.ts';
@@ -995,6 +996,29 @@ async function main() {
   api.post('/runs/:id/stop', (req, res) => res.json(runner.stop(req.params.id)));
   api.post('/runs/:id/rerun', (req, res) => res.json(runner.rerun(req.params.id)));
   api.delete('/runs/:id', (req, res) => res.json(runner.remove(req.params.id)));
+
+  /*
+   * Hand a finished run to the agent working in that worktree.
+   *
+   * The session is looked up FROM THE RUN's worktree rather than taken from the request:
+   * a run belongs to a worktree, exactly one session owns a worktree, and letting the
+   * client name the target would let a stale tab send a failure to whichever agent it
+   * last had selected.
+   */
+  api.post('/runs/:id/to-agent', async (req, res) => {
+    const out = await handoff(
+      {
+        getRun: (id) => runner.get(id),
+        sessionFor: (p) => manager.sessionForWorktree(p),
+        send: (mux, text, session) => manager.sendWhenReady(mux, text, session as never),
+      },
+      req.params.id,
+    );
+    // 200 for "the agent is not ready", 400 for "there is nothing to send": the first is
+    // a state the client should explain, not an error it should report as a failure.
+    if (!out.ok && !out.skipped) return res.status(400).json(out);
+    res.json(out);
+  });
 
   api.post('/run-configs/run', async (req, res) => {
     const { repo, worktreePath, name } = req.body || {};

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import type { Session } from '../../../../../server/types';
 
 /*
@@ -13,7 +14,13 @@ import type { Session } from '../../../../../server/types';
  */
 const runMenu = vi.hoisted(() => vi.fn());
 vi.mock('$lib/components/RunConfigMenu.svelte', () => ({ default: runMenu as never }));
-vi.mock('$lib/api.js', () => ({ api: vi.fn(async () => ({ text: '', offset: 0 })) }));
+// Typed with its real arg list: `vi.fn(async () => …)` infers a ZERO-arg function, so
+// `.mock.calls` becomes an empty tuple and asserting on the url would not compile.
+const apiMock = vi.hoisted(() =>
+  vi.fn(async (..._args: unknown[]) => ({ text: '', offset: 0 }) as Record<string, unknown>),
+);
+vi.mock('$lib/api.js', () => ({ api: apiMock }));
+vi.mock('$lib/stores/toasts.svelte.js', () => ({ toast: vi.fn() }));
 
 const { default: RunsPanel } = await import('./RunsPanel.svelte');
 const { world } = await import('$lib/stores/world.svelte.js');
@@ -104,5 +111,49 @@ describe('RunsPanel', () => {
     // Promote first: a run config is read from a worktree, and there is not one yet.
     render(RunsPanel, { props: { session: session({ worktreePath: null, repos: [] }) } });
     expect(runMenu).not.toHaveBeenCalled();
+  });
+
+  it('offers to hand a FAILED run to the agent, and nothing else', async () => {
+    /*
+     * The one action a red row actually wants. On a green row it would be decoration, and
+     * on a running one there is no verdict to explain yet — the server refuses that case
+     * too, but a button you can press and that always fails is its own defect.
+     */
+    world.sessionHalf = {
+      sessions: [], servers: {},
+      runs: [
+        { id: 'r-bad', name: 'Unit tests', repo: 'accept-blue', worktreePath: '/accept-blue/wt',
+          cmd: 'npm test', status: 'failed', startedAt: 1, endedAt: 2, exitCode: 1, log: '/l' },
+        { id: 'r-ok', name: 'Lint', repo: 'accept-blue', worktreePath: '/accept-blue/wt',
+          cmd: 'npm run lint', status: 'passed', startedAt: 1, endedAt: 2, exitCode: 0, log: '/l' },
+      ],
+    } as never;
+
+    render(RunsPanel, { props: { session: session() } });
+    expect(screen.getByRole('button', { name: 'Send Unit tests to the agent' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send Lint to the agent' })).not.toBeInTheDocument();
+  });
+
+  it('asks the daemon to resolve the agent, rather than naming one itself', async () => {
+    /*
+     * A run belongs to a worktree and exactly one session owns a worktree, so the daemon
+     * can resolve the target. Sending a session id from here would let a stale tab hand a
+     * failure to whichever agent it last had selected.
+     */
+    world.sessionHalf = {
+      sessions: [], servers: {},
+      runs: [{ id: 'r-bad', name: 'Unit tests', repo: 'accept-blue', worktreePath: '/accept-blue/wt',
+               cmd: 'npm test', status: 'failed', startedAt: 1, endedAt: 2, exitCode: 1, log: '/l' }],
+    } as never;
+    apiMock.mockResolvedValue({ ok: true });
+
+    render(RunsPanel, { props: { session: session() } });
+    screen.getByRole('button', { name: 'Send Unit tests to the agent' }).click();
+    await tick();
+
+    const call = apiMock.mock.calls.find((c) => String(c[1]).includes('/to-agent'));
+    expect(call).toBeTruthy();
+    expect(call?.[1]).toBe('/api/v1/runs/r-bad/to-agent');
+    expect(call?.[2]).toEqual({});
   });
 });

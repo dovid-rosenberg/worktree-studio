@@ -20,6 +20,7 @@
   import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
   import { toast } from '$lib/stores/toasts.svelte.js';
   import { world } from '$lib/stores/world.svelte.js';
+  import { ui } from '$lib/stores/ui.svelte.js';
   import type { Run, Session } from '../../../../../server/types';
   import { errMessage } from '$lib/errmsg.js';
 
@@ -122,6 +123,38 @@
     } catch (e) { toast(errMessage(e), true); }
   }
 
+  /*
+   * Hand this run to the agent.
+   *
+   * The daemon resolves WHICH agent from the run's worktree — a run belongs to a
+   * worktree and exactly one session owns one, so naming the target from here would let a
+   * stale tab send a failure to whichever agent it last had selected.
+   *
+   * `skipped` is not a failure: the agent exists but was not listening (still booting, or
+   * mid-turn). Saying so is the difference between "try again in a second" and "this
+   * button is broken".
+   */
+  let handing = $state('');
+  async function toAgent(r: Run) {
+    handing = r.id;
+    try {
+      const res = await api('POST', `/api/v1/runs/${r.id}/to-agent`, {});
+      if (res.ok) {
+        toast(`Sent “${r.name}” to the agent`);
+        // Go and watch it, since that is why you pressed the button.
+        ui.setDockView('term');
+      } else if (res.skipped) {
+        toast('The agent is not ready yet — try again in a moment', true);
+      } else {
+        toast(res.error || 'Could not reach the agent', true);
+      }
+    } catch (e) {
+      toast(errMessage(e), true);
+    } finally {
+      handing = '';
+    }
+  }
+
   async function forget(r: Run) {
     try {
       const res = await api('DELETE', `/api/v1/runs/${r.id}`);
@@ -171,6 +204,18 @@
           {:else}
             <!-- Runs the RECORDED command again, not whatever the config says today —
                  see Runner.rerun. ▷ Run is the one that re-reads the file. -->
+            {#if r.status === 'failed'}
+              <!-- Only on a FAILURE, and only when an agent is there to receive it. The
+                   button is the one action a red row actually wants; offering it on a
+                   green one would make it decoration. -->
+              <button
+                class="btn xs"
+                disabled={handing === r.id}
+                title="Tell the agent this failed and point it at the output"
+                aria-label={`Send ${r.name} to the agent`}
+                onclick={() => toAgent(r)}
+              >{handing === r.id ? '…' : '➔ agent'}</button>
+            {/if}
             <button
               class="btn xs ghost"
               title={`Run this again — ${r.cmd}`}
