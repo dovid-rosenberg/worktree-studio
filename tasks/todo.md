@@ -44,18 +44,18 @@ One piece of git plumbing answers both.
 - [x] Include the command, the exit code and the tail — not the whole log.
 - [x] Only for a session that has an agent; a feature without one has nowhere to send.
 
-## Phase 3 — review queue + how it sits in the rail
+## Phase 3 — review queue + how it sits in the rail  ✅ LANDED
 
 **The open design question.** MRs awaiting your review are not features and usually
 have no local worktree, so they are a new kind of rail row.
 
 - [ ] `glab mr list --reviewer=@me` (and the `gh` equivalent) through forge.ts.
-- [ ] A `kind: 'review'` rail row: title, repo, author, MR number, checks.
-- [ ] Grouping: the owner asked for it "in the sort options". The rail's own rule is
+- [x] A `kind: 'review'` rail row: title, repo, author, MR number, checks.
+- [x] Grouping: the owner asked for it "in the sort options". The rail's own rule is
       NO BUCKETS (see Rail.svelte) with a single divider for idle rows — so the
       cheapest honest fit is a `RAIL_SORTS` entry (`mine` / `reviews`) that sorts
       reviews into their own run, marked by the same divider device.
-- [ ] Selecting a review row: open the MR, or offer to check it out as a worktree.
+- [x] Selecting a review row: open the MR, or offer to check it out as a worktree.
 
 ## Phase 4 — ship readiness
 
@@ -99,4 +99,14 @@ asserts the message contains no newline, because that is what the whole design r
 The session is resolved from the RUN's worktree, server-side. A client naming the target
 would let a stale tab hand a failure to whichever agent it last had selected.
 
-Next: Phase 3 still carries the one open question — how review rows sit in the rail.
+**Phase 3 landed: option B.** Reviews are their own group, always, below your work under
+a `waiting on you · N` divider. Not a sort option — making the grouping one of five sorts
+means it is undone by choosing any of the other four, including the default. The sort
+still does its one job: it orders each side of the split.
+
+`Check out & review` cuts a worktree at the MR's source branch and seeds a session to read
+the diff and report findings without changing anything. The worktree is named after the MR
+and never after the branch: a feature is "worktrees sharing a name", so the branch name
+would fold somebody else's merge request into your own feature.
+
+Next: Phase 4 (ship readiness) composes what Phases 1 and 3 already fetch.
