@@ -13,7 +13,7 @@
 // behavior (group by the worktree's directory name).
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
-import type { Feature, FeatureDrift, FeatureMember, GroupConfig, Worktree } from './types.ts';
+import type { Feature, SplitFeature, FeatureMember, GroupConfig, Worktree } from './types.ts';
 
 /**
  * A feature as this module builds it. `session` is absent because only state.ts
@@ -162,7 +162,7 @@ function attachableWorktrees(
  * @param defaultBranches branch names that prove nothing — every worktree sits on one at
  *   some point, and grouping on them would propose merging a whole repo into one feature.
  */
-function detectDrift(features: ComputedFeature[], defaultBranches: Set<string> = new Set()): FeatureDrift[] {
+function detectSplitFeatures(features: ComputedFeature[], defaultBranches: Set<string> = new Set()): SplitFeature[] {
   const byBranch = new Map<string, Array<{ feature: string; member: Worktree }>>();
   for (const f of features) {
     // A manual group is the user having already answered this; proposing it back to them
@@ -176,14 +176,14 @@ function detectDrift(features: ComputedFeature[], defaultBranches: Set<string> =
     }
   }
 
-  const drift: FeatureDrift[] = [];
+  const splits: SplitFeature[] = [];
   for (const [branch, hits] of byBranch) {
     const names = new Set(hits.map((h) => h.feature));
     if (names.size < 2) continue; // one name for one branch is the convention working
     // Two names inside ONE repo are two checkouts of a branch, not a cross-repo feature
     // that failed to group — a different thing, and not one to suggest merging.
     if (new Set(hits.map((h) => h.member.repo)).size < 2) continue;
-    drift.push({
+    splits.push({
       branch,
       features: [...names],
       members: hits.map((h) => ({
@@ -194,7 +194,7 @@ function detectDrift(features: ComputedFeature[], defaultBranches: Set<string> =
       })),
     });
   }
-  return drift;
+  return splits;
 }
 
-export { computeFeatures, detectDrift, resolveRef, attachableWorktrees };
+export { computeFeatures, detectSplitFeatures, resolveRef, attachableWorktrees };

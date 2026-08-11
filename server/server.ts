@@ -1166,10 +1166,10 @@ async function main() {
   });
 
   /*
-   * Group worktrees that drift apart under different names.
+   * Group worktrees that ended up under different names.
    *
    * `drift` on the topology payload reports features that look like one piece of work
-   * under two names (see features.ts detectDrift). This is the half that acts on it, and
+   * under two names (see features.ts detectSplitFeatures). This is the half that acts on it, and
    * it is a SINGLE-GROUP write on purpose: the user is answering one question about one
    * card, and POST /settings — a full replace of the whole map — would let a payload
    * built from that card delete every group they had made by hand.

@@ -539,10 +539,10 @@ export type FeatureColor = (typeof FEATURE_COLORS)[number];
 
 /**
  * Two or more features that look like one piece of work under names that do not group —
- * see features.ts detectDrift(). Reported, never acted on: the fix is a manual group in
+ * see features.ts detectSplitFeatures(). Reported, never acted on: the fix is a manual group in
  * another tool's config file, and that is the user's call.
  */
-export interface FeatureDrift {
+export interface SplitFeature {
   /** The shared branch — the evidence the differing names threw away. */
   branch: string;
   /** The feature names that would become one. */
@@ -622,7 +622,7 @@ export interface TopologyPayload {
   features: Feature[];
   groups: Feature[];
   /** Features that look like one piece of work under names that do not group. */
-  drift: FeatureDrift[];
+  splitFeatures: SplitFeature[];
 }
 
 // ---- session state ----------------------------------------------------------

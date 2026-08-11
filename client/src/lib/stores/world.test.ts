@@ -42,7 +42,7 @@ const worldOf = (over: Record<string, unknown> = {}) =>
     servers: {},
     features: [] as Feature[],
     groups: [] as Feature[],
-    drift: [],
+    splitFeatures: [],
     webRepos: [] as string[],
     baseDirs: [],
     editors: [],
