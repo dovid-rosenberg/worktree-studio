@@ -9,7 +9,13 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { defaultBranchOf, describe, prepareForSession, trackedModifications } from '../server/checkout.ts';
+import {
+  defaultBranchOf,
+  describe,
+  occupancy,
+  prepareForSession,
+  trackedModifications,
+} from '../server/checkout.ts';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd }).toString().trim();
 
@@ -173,6 +179,86 @@ test('trackedModifications ignores untracked and reports staged', async () => {
   fs.writeFileSync(path.join(work, 'README.md'), '# changed\n');
   git(work, 'add', 'README.md');
   assert.equal((await trackedModifications(work)).length, 1, 'staged counts');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+/*
+ * occupancy(): is this working copy already someone's?
+ *
+ * Deliberately a question about the FILESYSTEM rather than about Studio's records. A
+ * Studio session holding the checkout is only one of the ways it can be busy — an agent
+ * nobody launched through Studio leaves exactly the same evidence (tracked files
+ * modified), and no registry of sessions can see that one.
+ *
+ * Being on a non-default branch is deliberately NOT evidence. It used to be, and it made
+ * every clean checkout between tasks "occupied" — which fed `switchBranch: !occupied` and
+ * cancelled the start-from-default behaviour prepareForSession() exists for.
+ */
+test('a clean checkout on the default branch is free', async () => {
+  const { root, work } = repoPair('develop');
+  assert.deepEqual(await occupancy(work), { occupied: false });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a Studio session holding the checkout occupies it', async () => {
+  const { root, work } = repoPair('develop');
+  const occ = await occupancy(work, { held: true });
+  assert.equal(occ.occupied, true);
+  assert.equal(occ.occupied && occ.reason, 'session');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// A branch left behind is the state every checkout is in between tasks. Calling it
+// occupied stopped the switch back to the default branch, which is the one thing
+// prepareForSession() is for — and `dirty` already covers the case where switching
+// would actually cost something.
+test('a clean checkout on another branch is free — the branch is not evidence', async () => {
+  const { root, work } = repoPair('develop');
+  git(work, 'checkout', '-qb', 'feature/someone-elses-work');
+  assert.deepEqual(await occupancy(work), { occupied: false });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('modified tracked files occupy the checkout', async () => {
+  const { root, work } = repoPair('develop');
+  fs.writeFileSync(path.join(work, 'README.md'), '# someone is mid-edit\n');
+  const occ = await occupancy(work);
+  assert.equal(occ.occupied, true);
+  assert.equal(occ.occupied && occ.reason, 'dirty');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// The same carve-out prepareForSession() makes, for the same reason: `git checkout`
+// carries untracked files across untouched, so they are not evidence anyone is working
+// here. Counting them would exile every session to a worktree over six scratch scripts.
+test('untracked files alone leave the checkout free', async () => {
+  const { root, work } = repoPair('develop');
+  fs.writeFileSync(path.join(work, 'scratch.sh'), 'echo hi\n');
+  assert.deepEqual(await occupancy(work), { occupied: false });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// A remote-less repo has no default branch to compare against and no reason to care:
+// occupancy asks about work in progress, and this one has none.
+test('a repo with no origin/HEAD is free when it is clean', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-occ-noorigin-'));
+  git(root, 'init', '-q', '-b', 'whatever');
+  git(root, 'config', 'user.email', 't@t.t');
+  git(root, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(root, 'a.txt'), 'a');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'a');
+  assert.deepEqual(await occupancy(root), { occupied: false });
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// Precedence matters only because the reason is shown to the user: "another session is
+// working here" explains the worktree better than "1 uncommitted change" does.
+test('a held checkout reports the session, not whatever else is also true of it', async () => {
+  const { root, work } = repoPair('develop');
+  fs.writeFileSync(path.join(work, 'README.md'), '# dirty too\n');
+  const occ = await occupancy(work, { held: true });
+  assert.equal(occ.occupied && occ.reason, 'session');
   fs.rmSync(root, { recursive: true, force: true });
 });
 

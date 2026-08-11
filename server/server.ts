@@ -22,6 +22,7 @@ import * as orchestrator from './orchestrator.ts';
 import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
+import { createAdopter, describeAdoption } from './adopt.ts';
 import { attachableWorktrees } from './features.ts';
 import * as runConfigs from './run-configs.ts';
 // isRecord too: this file had a byte-identical copy, docstring included, of a
@@ -94,6 +95,9 @@ async function main() {
   // One scan at a time, and a request that arrives mid-scan is QUEUED rather than
   // dropped — see server/rescan.ts for the caller (POST /api/settings changing
   // baseDirs) that nothing on the filesystem would ever have re-triggered.
+  // Heals worktrees Studio did not create — see server/adopt.ts. Built once so it can
+  // remember which worktrees it has already looked at across scans.
+  const adoptScanned = createAdopter({ cfg });
   const rescan = createRescan(async () => {
     try {
       repos = await gitMod.scan(cfg.baseDirs, cfg.scanDepth);
@@ -106,6 +110,17 @@ async function main() {
        */
       console.error(`[wt-studio] repo scan failed, keeping the previous ${repos.length} repo(s):`, e);
     }
+    // After the scan, before the topology goes out: a worktree made outside Studio is
+    // already in `repos`, but it never got the run configs or the gitignored local
+    // config the copy step only ran inside create(). Fire and forget — the topology
+    // must not wait on a copy, and the pass reports only what it actually healed.
+    adoptScanned(repos)
+      .then((healed) => {
+        for (const h of healed) console.log(`[wt-studio] ${describeAdoption(h)}`);
+      })
+      .catch(() => {
+        /* contained per-worktree already; this is the belt for the pass itself */
+      });
     // The scan is the only thing that knows each worktree's branch, and the
     // branch/manifest identity strategies need it to answer from a path alone.
     identity.reindex(repos);

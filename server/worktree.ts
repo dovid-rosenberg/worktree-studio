@@ -172,11 +172,13 @@ function worktreeCopyOpts(cfg: PartialDeep<Config> | null | undefined, repo: str
 }
 
 // Copy one expanded pattern's files from repoPath into dest. Returns the count.
-function copyMatches(repoPath: string, dest: string, pattern: string): number {
+// `skipExisting` is what separates a backfill from a create: see backfill() below.
+function copyMatches(repoPath: string, dest: string, pattern: string, skipExisting = false): number {
   let n = 0;
   for (const rel of expandPattern(repoPath, pattern)) {
     const src = path.join(repoPath, rel);
     const target = path.join(dest, rel);
+    if (skipExisting && fs.existsSync(target)) continue;
     fs.mkdirSync(path.dirname(target), { recursive: true });
     try {
       fs.copyFileSync(src, target);
@@ -198,9 +200,10 @@ async function populate(
   dest: string,
   patterns?: string[] | null,
   always: string[] | null = DEFAULT_COPY_ALWAYS,
+  { skipExisting = false }: { skipExisting?: boolean } = {},
 ): Promise<CopyCounts> {
   const copied: CopyCounts = { runConfigs: 0, files: 0 };
-  for (const pat of always || []) copied.runConfigs += copyMatches(repoPath, dest, pat);
+  for (const pat of always || []) copied.runConfigs += copyMatches(repoPath, dest, pat, skipExisting);
   // local files — only carry the ones git actually ignores
   for (const pat of patterns || []) {
     for (const rel of expandPattern(repoPath, pat)) {
@@ -208,6 +211,7 @@ async function populate(
       if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
       if (!(await isIgnored(repoPath, rel))) continue; // tracked files arrive with checkout
       const target = path.join(dest, rel);
+      if (skipExisting && fs.existsSync(target)) continue;
       fs.mkdirSync(path.dirname(target), { recursive: true });
       try {
         fs.copyFileSync(src, target);
@@ -218,6 +222,33 @@ async function populate(
     }
   }
   return copied;
+}
+
+/**
+ * Run the copy step against a worktree that ALREADY EXISTS, and report what was missing.
+ *
+ * `populate()` only ever ran inside create(), so a worktree made by anything else — an
+ * agent running `git worktree add`, a hand-rolled one, anything predating Studio — never
+ * received the run configs or the gitignored local config. That is precisely the silent
+ * failure the "never run `git worktree add`, use `wt`" rule exists to prevent: the Run
+ * menu comes up empty and the app falls back to default config WITHOUT erroring. A rule
+ * an agent can forget is not an invariant; this is the invariant.
+ *
+ * The one behavioural difference from create's copy is `skipExisting`, and it is the
+ * whole reason this is a separate entry point. At create time the destination is empty,
+ * so overwriting means nothing. A worktree discovered later has been lived in — the
+ * `.env` it is missing pieces of may have been edited — and clobbering that would
+ * destroy real work in the name of restoring a default. Backfill ADDS what is absent
+ * and touches nothing else, which also makes it safe to re-run on every discovery.
+ */
+async function backfill(
+  repoPath: string,
+  dest: string,
+  opts: Partial<WorktreeCopyOpts> = {},
+): Promise<CopyCounts> {
+  return populate(repoPath, dest, opts.copyPatterns, opts.copyAlways ?? DEFAULT_COPY_ALWAYS, {
+    skipExisting: true,
+  });
 }
 
 // Does a local or remote branch already exist?
@@ -363,4 +394,16 @@ async function remove(
   return branchError ? { ok: true, branchDeleted, branchError } : { ok: true, branchDeleted };
 }
 
-export { create, remove, branchExists, defaultBase, worktreeCopyOpts, DEFAULT_COPY_ALWAYS, FETCH_TIMEOUT_MS };
+// `backfill` joins the list; `populate` and `expandPattern` deliberately do not. Main
+// dropped ten exports nobody imported, and re-adding two of them here would undo that
+// for no caller — adopt.ts needs backfill and nothing else.
+export {
+  create,
+  remove,
+  backfill,
+  branchExists,
+  defaultBase,
+  worktreeCopyOpts,
+  DEFAULT_COPY_ALWAYS,
+  FETCH_TIMEOUT_MS,
+};

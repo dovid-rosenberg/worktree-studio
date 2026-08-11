@@ -81,6 +81,92 @@ test('remove() deletes the worktree directory', async () => {
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
+/*
+ * backfill(): the copy step, run against a worktree that already exists.
+ *
+ * The whole reason "never run `git worktree add`, use `wt`" had to be written down as a
+ * RULE is that a bare worktree add silently drops these files — the run menu comes up
+ * empty and the app falls back to default config without erroring. The copy only ever
+ * ran inside create(), so a worktree an agent made by hand could never get them. This
+ * is that copy, made re-runnable.
+ */
+function bareWorktree(repo: string, name: string): string {
+  const dest = path.join(repo, '.worktrees', name);
+  sh(repo, 'git', ['worktree', 'add', '-q', '-b', `feature/${name}`, dest]);
+  return dest;
+}
+
+test('backfill() carries the files a bare `git worktree add` dropped', async () => {
+  const repo = tempRepo();
+  const dest = bareWorktree(repo, 'by-hand');
+  assert.equal(fs.existsSync(path.join(dest, '.env')), false, 'the bare add really did drop it');
+
+  const copied = await worktree.backfill(repo, dest, {
+    copyPatterns: ['.env', 'config/*-config.ts'],
+    copyAlways: ['.idea/runConfigurations/*.xml'],
+  });
+  assert.equal(fs.readFileSync(path.join(dest, '.env'), 'utf8'), 'SECRET=1\n');
+  assert.ok(fs.existsSync(path.join(dest, '.idea', 'runConfigurations', 'start.xml')), 'run config copied');
+  assert.equal(copied.runConfigs, 1);
+  assert.equal(copied.files, 2, '.env and the dev config');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+/*
+ * The difference between backfill and create's copy, and the reason it is a separate
+ * entry point rather than a flag nobody sets: at create time the destination is empty,
+ * so overwriting is meaningless. A worktree discovered later has been LIVED IN — an
+ * agent may have edited the .env it is missing pieces of — and clobbering that would
+ * destroy work in the name of restoring a default.
+ */
+test('backfill() never overwrites a file the worktree already has', async () => {
+  const repo = tempRepo();
+  const dest = bareWorktree(repo, 'lived-in');
+  fs.writeFileSync(path.join(dest, '.env'), 'SECRET=edited-by-the-agent\n');
+
+  const copied = await worktree.backfill(repo, dest, {
+    copyPatterns: ['.env', 'config/*-config.ts'],
+    copyAlways: ['.idea/runConfigurations/*.xml'],
+  });
+  assert.equal(
+    fs.readFileSync(path.join(dest, '.env'), 'utf8'),
+    'SECRET=edited-by-the-agent\n',
+    "the agent's edit survived",
+  );
+  assert.equal(copied.files, 1, 'only the dev config was missing, so only it was counted');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('backfill() on a worktree that lacks nothing reports nothing, and is safe to re-run', async () => {
+  const repo = tempRepo();
+  const res = await worktree.create(repo, 'feature/complete', 'complete', {
+    fetch: false,
+    copyPatterns: ['.env', 'config/*-config.ts'],
+  });
+  const opts = { copyPatterns: ['.env', 'config/*-config.ts'], copyAlways: ['.idea/runConfigurations/*.xml'] };
+  const first = await worktree.backfill(repo, res.path, opts);
+  assert.deepEqual(first, { runConfigs: 0, files: 0 }, 'create() already brought everything');
+  assert.deepEqual(await worktree.backfill(repo, res.path, opts), { runConfigs: 0, files: 0 }, 'idempotent');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// A tracked file arrives with the checkout; copying the main checkout's copy over it
+// would import uncommitted edits. populate() has always made this distinction and
+// backfill inherits it rather than restating it.
+test('backfill() still refuses to copy tracked files', async () => {
+  const repo = tempRepo();
+  const dest = bareWorktree(repo, 'tracked');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# uncommitted edit in the main checkout\n');
+
+  await worktree.backfill(repo, dest, { copyPatterns: ['README.md'], copyAlways: [] });
+  assert.equal(
+    fs.readFileSync(path.join(dest, 'README.md'), 'utf8'),
+    '# repo\n',
+    "the worktree keeps the committed content, not the checkout's uncommitted edit",
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 test('remove() with { deleteBranch } also deletes the branch', async () => {
   const repo = plainRepo();
   const res = await worktree.create(repo, 'feature/gone2', 'gone2', { fetch: false, copyPatterns: [] });

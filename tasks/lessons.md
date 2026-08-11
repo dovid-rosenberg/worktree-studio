@@ -29,3 +29,24 @@ delivered the keys, the kernel threw them away.
 asserts the typed line stays under 1024 bytes. Note the trap only fires when the
 receiving shell is slow to reach raw mode — a `zsh -f` repro will pass while a real
 login shell with a heavy rc hangs.
+
+## Never work in this repo's main checkout (2026-08-06)
+
+**Pattern:** while fixing the `can't find session` reconnect loop directly in
+`/Users/davidr/Desktop/code/worktree-studio`, a *second* Claude session working in
+the same checkout ran a blanket `git add` and committed my half-finished edits under
+its own unrelated message (`0f23b28`, about run configs) — capturing them mid-edit,
+before a broken import was fixed. It then switched the checkout to `feat/run-panel`
+while my tests were still running, and pushed to `main`. Symptoms that looked
+inexplicable at the time: `git status` clean with my changes nowhere in the diff, a
+`svelte-check` error in `ActionBar.svelte` I had never touched that vanished on the
+next run, and a `node --test` run that hung for 21 minutes and then passed in 19
+seconds when re-run.
+
+**Rule:** before editing anything in this repo, `git branch --show-current` and
+`git status`. If the tree is dirty or on someone else's branch, stop and create a
+worktree with `wt <branch> <name>` — never work in the main checkout. Studio itself
+starts every un-promoted session with `cwd: repoPath`, so *any* two sessions in one
+repo share that directory; assume another agent is in there. A test suite that hangs
+or a diff that disappears is this, not a bug in the code under test. The structural
+fix is planned as Phase 1 in `tasks/todo.md` (checkout lease).

@@ -5,8 +5,8 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { SessionManager } from '../server/sessions.ts';
+import { realpath, shq } from '../server/util.ts';
 import { loadSessions } from '../server/session-store.ts';
-import { shq } from '../server/util.ts';
 import { CONFIG_DIR } from '../server/config.ts';
 import type { Session, Worktree } from '../server/types.ts';
 import type { PartialDeep, Config } from '../server/types.ts';
@@ -844,8 +844,8 @@ test('restore() carries on past a session it cannot relaunch, and still saves', 
   assert.equal(got(m, 'c').activity, 'restarted');
   // _save() must still run, or the on-disk state keeps claiming everything is fine.
   // Read through loadSessions rather than JSON.parse: the file is a versioned envelope
-  // now, and a test that reaches past the module owning that shape would break on the
-  // next migration for no reason of its own.
+  // now (see server/session-store.ts), and a test that reaches past that is asserting
+  // on the storage format when what it cares about is the sessions in it.
   const saved: Session[] = loadSessions(m.file).sessions;
   const savedBy = (id: string) =>
     present(
@@ -854,6 +854,219 @@ test('restore() carries on past a session it cannot relaunch, and still saves', 
     );
   assert.equal(savedBy('b').state, 'stopped');
   assert.equal(savedBy('c').activity, 'restarted');
+});
+
+/*
+ * create() and the occupied checkout.
+ *
+ * A repo has one main working copy and this is where an un-promoted session lives, so
+ * two of them in a repo shared it — one agent committing the other's half-finished
+ * edits, or switching the branch under it. These pin the rule that replaced that:
+ * a checkout that is already someone's sends the new session to its own worktree.
+ */
+const freetext = (title: string) => ({ source: 'freetext' as const, title, body: '', url: null });
+
+test('a free checkout still starts the session in it, un-promoted', async () => {
+  const m = manager();
+  const repo = tempRepo('create-free');
+  const s = await m.create({ seed: freetext('first thing'), repoPath: repo, repoName: 'a' });
+  assert.equal(s.worktreePath, null, 'nothing was cut — this is still the cheap path');
+  assert.equal(s.home, repo);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('a second session in the same repo is born in its own worktree, not the shared checkout', async () => {
+  const m = manager();
+  const repo = tempRepo('create-second');
+  const first = await m.create({ seed: freetext('first thing'), repoPath: repo, repoName: 'a' });
+  assert.equal(first.worktreePath, null, 'the first session takes the checkout');
+
+  const second = await m.create({ seed: freetext('second thing'), repoPath: repo, repoName: 'a' });
+  const wt = present(second.worktreePath, "the second session's worktree");
+  assert.ok(fs.existsSync(wt), 'the worktree really exists on disk');
+  assert.equal(branchOf(wt), 'feature/second-thing', 'on its own derived branch');
+  assert.equal(second.home, wt, 'claude launches there, so the transcript lives there');
+  assert.notEqual(second.repoPath, second.worktreePath);
+  assert.equal(second.repos[0].worktreePath, wt, 'the primary repo entry knows too');
+  assert.match(second.activity, /own worktree/, 'and it says why it started somewhere unusual');
+  assert.match(second.activity, /another session/, 'naming the reason, not just the fact');
+  assert.notEqual(second.adopted, true, 'Studio cut this worktree — it did not pre-exist');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+/*
+ * A DIRTY checkout is not a collision, and does not get a worktree cut for it.
+ *
+ * `occupancy()` still calls it occupied, and that still matters — nothing may move a
+ * checkout with work in it, so the branch switch stays off. But promoting on it would
+ * contradict the model the rest of the product is built on: you start in the checkout,
+ * and you promote when the work turns out to be real. Unfinished edits of your own are
+ * the ordinary state of a checkout between tasks, not two agents in one working copy.
+ */
+test('a checkout with uncommitted work keeps the session, and keeps the work', async () => {
+  const m = manager();
+  const repo = tempRepo('create-dirty');
+  fs.writeFileSync(path.join(repo, 'README.md'), '# someone is mid-edit\n');
+
+  const s = await m.create({ seed: freetext('third thing'), repoPath: repo, repoName: 'a' });
+  assert.equal(s.worktreePath, null, 'no worktree is cut — promote is still the way to one');
+  assert.equal(s.repoPath, repo, 'the session starts in the checkout, as it always did');
+  assert.equal(
+    fs.readFileSync(path.join(repo, 'README.md'), 'utf8'),
+    '# someone is mid-edit\n',
+    'and the work that made it dirty is untouched',
+  );
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// The other half of dropping the `branch` reason: a checkout left on a feature branch is
+// between tasks, not busy, so the session starts there and prepareForSession() is free to
+// move it back to the default branch — which is the entire point of that call.
+test('a clean checkout on a feature branch still starts the session in it', async () => {
+  const m = manager();
+  const repo = tempRepo('create-branchy');
+  execFileSync('git', ['checkout', '-qb', 'feature/left-over'], { cwd: repo });
+
+  const s = await m.create({ seed: freetext('fourth thing'), repoPath: repo, repoName: 'a' });
+  assert.equal(s.worktreePath, null, 'a branch left behind is not evidence anyone is working');
+  assert.equal(s.repoPath, repo);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+/*
+ * An un-promoted session whose agent made itself a worktree and moved into it.
+ *
+ * This is the collision from the other side: the rule says use Studio's promote, the
+ * agent ran `git worktree add` anyway, and Studio's record still says the session lives
+ * in the main checkout — so the card shows the wrong branch, the feature is ungrouped,
+ * and promote would later cut a SECOND worktree for work that is already somewhere else.
+ * tmux tracks a pane's cwd, so the move is observable; reconcile() catches up with it.
+ */
+function managerAt(cwd: string) {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-'));
+  const cfg: PartialDeep<Config> = {
+    _stateDir: stateDir,
+    _file: path.join(stateDir, 'config.json'),
+    web: { port: 0 },
+    claude: { cmd: 'claude' },
+    baseDirs: [],
+    copyPatterns: {},
+  };
+  return new SessionManager(
+    cfg,
+    muxStub({
+      async hasSession() {
+        return true;
+      },
+      async paneCwd() {
+        return cwd;
+      },
+    }),
+  );
+}
+
+test('a session whose agent made its own worktree is attached to it', async () => {
+  const repo = tempRepo('wandered');
+  execFileSync(
+    'git',
+    ['worktree', 'add', '-q', '-b', 'fix/by-the-agent', path.join(repo, '.worktrees', 'by-the-agent')],
+    {
+      cwd: repo,
+    },
+  );
+  const wt = path.join(repo, '.worktrees', 'by-the-agent');
+
+  const m = managerAt(wt); // the pane has cd'd into the worktree the agent cut
+  m.sessions.set(
+    'w1',
+    session({
+      id: 'w1',
+      repoName: 'a',
+      repoPath: repo,
+      home: repo,
+      worktree: null,
+      worktreePath: null,
+      branch: null,
+      feature: 'wandered',
+      muxName: 'mux-w1',
+      repos: [sessionRepo({ repo: 'a', repoPath: repo, primary: true })],
+      state: 'idle',
+      active: true,
+      createdAt: Date.now(),
+    }),
+  );
+
+  await m.reconcile();
+
+  const s = got(m, 'w1');
+  // Through realpath on both sides: git answers with the resolved path (/private/var on
+  // macOS) and the test built its own from mkdtemp's unresolved one. Every comparison of
+  // these paths in the server goes through realpath for exactly this reason.
+  assert.equal(realpath(present(s.worktreePath, 'worktreePath')), realpath(wt), 'the session found its work');
+  assert.equal(s.worktree, 'by-the-agent');
+  assert.equal(s.branch, 'fix/by-the-agent', 'and which branch it is on');
+  assert.equal(realpath(present(s.repos[0]?.worktreePath, 'primary worktreePath')), realpath(wt));
+  assert.ok(s.promotedAt, 'it counts as promoted — there is no second worktree to cut');
+  assert.match(s.activity, /own worktree/);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('a session still sitting in the main checkout is left alone', async () => {
+  const repo = tempRepo('stayed');
+  const m = managerAt(repo); // the pane never went anywhere
+  m.sessions.set(
+    'w2',
+    session({
+      id: 'w2',
+      repoName: 'a',
+      repoPath: repo,
+      home: repo,
+      worktree: null,
+      worktreePath: null,
+      branch: null,
+      feature: 'stayed',
+      muxName: 'mux-w2',
+      repos: [sessionRepo({ repo: 'a', repoPath: repo, primary: true })],
+      state: 'idle',
+      active: true,
+      createdAt: Date.now(),
+    }),
+  );
+
+  await m.reconcile();
+  assert.equal(got(m, 'w2').worktreePath, null, 'the main checkout is not a worktree to adopt');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// A pane that wandered somewhere unrelated — another repo entirely, or ~ — says nothing
+// about this session's work, and attaching it would be a fabrication.
+test('a pane in a directory belonging to another repo is not adopted', async () => {
+  const repo = tempRepo('mine');
+  const elsewhere = tempRepo('theirs');
+  const m = managerAt(elsewhere);
+  m.sessions.set(
+    'w3',
+    session({
+      id: 'w3',
+      repoName: 'a',
+      repoPath: repo,
+      home: repo,
+      worktree: null,
+      worktreePath: null,
+      branch: null,
+      feature: 'mine',
+      muxName: 'mux-w3',
+      repos: [sessionRepo({ repo: 'a', repoPath: repo, primary: true })],
+      state: 'idle',
+      active: true,
+      createdAt: Date.now(),
+    }),
+  );
+
+  await m.reconcile();
+  assert.equal(got(m, 'w3').worktreePath, null);
+  fs.rmSync(repo, { recursive: true, force: true });
+  fs.rmSync(elsewhere, { recursive: true, force: true });
 });
 
 test('restore() reports a count that a caller can distinguish from failure', async () => {
