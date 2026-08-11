@@ -106,6 +106,130 @@ function parseWorktrees(porcelain: string): PorcelainWorktree[] {
   return out;
 }
 
+/** One line of `git status --porcelain`, split into the two things a caller can use. */
+export interface PorcelainEntry {
+  /**
+   * The two-character status field exactly as git wrote it — index column then worktree
+   * column, e.g. ' M', 'M ', 'A ', '??', 'RM'. Kept verbatim so a caller can ask its own
+   * question of it rather than having this parser guess which distinction matters.
+   */
+  status: string;
+  /** The path, unquoted and unescaped. For a rename or copy this is the DESTINATION. */
+  path: string;
+  /** Where a rename or copy came from. Absent for every other status. */
+  from?: string;
+}
+
+/**
+ * Undo git's C-style quoting of a path.
+ *
+ * git wraps a path in double quotes and escapes it the moment it contains anything
+ * awkward — a space, a control character, or (with the default core.quotePath) any byte
+ * outside ASCII, which arrives as three-digit OCTAL escapes of the UTF-8 bytes. Decoding
+ * has to go through bytes for that reason: "\303\274" is one character, ü, not two.
+ */
+function unquotePath(field: string): string {
+  if (!field.startsWith('"') || !field.endsWith('"') || field.length < 2) return field;
+  const body = field.slice(1, -1);
+  const simple: Record<string, number> = {
+    a: 7,
+    b: 8,
+    f: 12,
+    n: 10,
+    r: 13,
+    t: 9,
+    v: 11,
+    '\\': 92,
+    '"': 34,
+  };
+  const bytes: number[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c !== '\\') {
+      for (const b of Buffer.from(c, 'utf8')) bytes.push(b);
+      continue;
+    }
+    const next = body[++i];
+    if (next === undefined) break;
+    if (next >= '0' && next <= '7') {
+      bytes.push(parseInt(body.slice(i, i + 3), 8));
+      i += 2;
+    } else if (next in simple) {
+      bytes.push(simple[next]);
+    } else {
+      for (const b of Buffer.from(next, 'utf8')) bytes.push(b);
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/**
+ * Split `old -> new` without being fooled by an arrow INSIDE a quoted path.
+ *
+ * A path is only left unquoted when it holds nothing special, and " -> " holds spaces —
+ * so an unquoted first field cannot contain the separator, and a quoted one is bounded by
+ * its own closing quote. Reading the first field to its end and only then looking for the
+ * arrow is what keeps a file literally named `a -> b` from being read as a rename.
+ */
+function splitRename(rest: string): { path: string; from?: string } {
+  let end: number;
+  if (rest.startsWith('"')) {
+    end = 1;
+    while (end < rest.length && rest[end] !== '"') end += rest[end] === '\\' ? 2 : 1;
+    end++;
+  } else {
+    const arrow = rest.indexOf(' -> ');
+    end = arrow === -1 ? rest.length : arrow;
+  }
+  const tail = rest.slice(end);
+  if (!tail.startsWith(' -> ')) return { path: unquotePath(rest) };
+  return { from: unquotePath(rest.slice(0, end)), path: unquotePath(tail.slice(4)) };
+}
+
+/**
+ * Parse `git status --porcelain` (v1) output.
+ *
+ * This exists because the same parse was written three times with three different
+ * contracts — one stripped the status prefix, one did not, and a third stripped it a
+ * SECOND time off an already-stripped line. That third one was a guard against stashing
+ * away a sibling worktree, and comparing `rktrees/foo` against `.worktrees/` meant it
+ * could never fire. One parser, one contract: status and path, both honest.
+ */
+export function parsePorcelain(stdout: string): PorcelainEntry[] {
+  const out: PorcelainEntry[] = [];
+  for (const line of stdout.split('\n')) {
+    // Every record is `XY<space><path>`; anything shorter is not one.
+    if (line.length < 4) continue;
+    const status = line.slice(0, 2);
+    const rest = line.slice(3);
+    // Only R and C carry a source; for every other status an arrow is part of the name.
+    const paths =
+      status.startsWith('R') || status.startsWith('C') ? splitRename(rest) : { path: unquotePath(rest) };
+    out.push({ status, ...paths });
+  }
+  return out;
+}
+
+/**
+ * What `git status` says about a repo, parsed.
+ *
+ * `untracked: false` passes `--untracked-files=no`, which is a genuinely different
+ * question rather than a filter over the same answer: a checkout carries untracked files
+ * across a branch switch unharmed, so a caller deciding whether a switch is safe must not
+ * see them, while a caller deciding what a stash would sweep up must.
+ */
+export async function porcelainStatus(
+  repoPath: string,
+  { untracked = true }: { untracked?: boolean } = {},
+): Promise<PorcelainEntry[]> {
+  const r = await gitFull(repoPath, [
+    'status',
+    '--porcelain',
+    ...(untracked ? [] : ['--untracked-files=no']),
+  ]);
+  return r.code === 0 ? parsePorcelain(r.stdout) : [];
+}
+
 /*
  * "What is this repo's default branch" — asked THREE ways, answered three ways.
  *

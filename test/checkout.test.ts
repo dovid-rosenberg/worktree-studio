@@ -178,7 +178,9 @@ test('trackedModifications ignores untracked and reports staged', async () => {
 
   fs.writeFileSync(path.join(work, 'README.md'), '# changed\n');
   git(work, 'add', 'README.md');
-  assert.equal((await trackedModifications(work)).length, 1, 'staged counts');
+  // The PATH, not the porcelain line: this used to hand back ' M README.md' with the
+  // status prefix still on it, which is why three callers each stripped it differently.
+  assert.deepEqual(await trackedModifications(work), ['README.md'], 'staged counts, by path');
   fs.rmSync(root, { recursive: true, force: true });
 });
 

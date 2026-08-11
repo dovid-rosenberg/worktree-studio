@@ -4,7 +4,7 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
-import { makeId, shortId, realpath, slug, shq, run } from './util.ts';
+import { makeId, shortId, realpath, slug, shq, run, git } from './util.ts';
 import { loadSessions, saveSessions } from './session-store.ts';
 import * as status from './status.ts';
 import * as worktree from './worktree.ts';
@@ -17,7 +17,7 @@ import type { WorktreeCreateResult } from './worktree.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Identity, IdentityInput } from './identity.ts';
 import type { Config, PartialDeep, Session, SourceSeed, SessionTab } from './types.ts';
-import { currentBranch, originHead } from './git.ts';
+import { currentBranch, originHead, porcelainStatus } from './git.ts';
 const { worktreeCopyOpts } = worktree;
 
 // ---- the collaborators, typed by what this file asks of them ----------------
@@ -858,12 +858,7 @@ class SessionManager extends EventEmitter {
   // main when we branch the worktree cleanly off the default branch).
   async _dirtyMain(repoPath: string): Promise<string[]> {
     try {
-      const r = await run('git', ['-C', repoPath, 'status', '--porcelain']);
-      if (r.code !== 0) return [];
-      return r.stdout
-        .split('\n')
-        .filter(Boolean)
-        .map((l) => l.slice(3));
+      return (await porcelainStatus(repoPath)).map((e) => e.path);
     } catch {
       return [];
     }
@@ -885,10 +880,12 @@ class SessionManager extends EventEmitter {
   async _aheadOfBase(repoPath: string): Promise<{ branch: string; base: string; commits: string[] }> {
     const empty = { branch: '', base: '', commits: [] };
     try {
-      const head = await run('git', ['-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD']);
-      const branch = head.stdout.trim();
+      // currentBranch() from git.ts, which already answers null for a detached HEAD —
+      // this had re-derived the "the literal string HEAD is not a branch name" rule
+      // rather than reading it from the one place that states it.
+      const branch = await currentBranch(repoPath);
       // Detached HEAD has no branch to be "ahead" of and no sensible thing to offer.
-      if (!branch || branch === 'HEAD') return empty;
+      if (!branch) return empty;
       // originHead() from git.ts — this was a FOURTH hand-rolled copy of the same
       // lookup. The raw form is right here: no origin/HEAD means there is genuinely no
       // base to be ahead of, and guessing 'main' would compare against a branch that may
@@ -950,9 +947,13 @@ class SessionManager extends EventEmitter {
      * worktrees themselves. Stashing that with --include-untracked would move every
      * one of them into the stash and delete them from disk. Bailing out costs the user
      * one gitignore line; the alternative costs them their checkouts.
+     *
+     * `_dirtyMain` hands back PATHS. This test used to slice three characters off them
+     * first, on the assumption they still carried the `XY ` status prefix, so
+     * `.worktrees/foo` was compared as `rktrees/foo` and the guard could never fire.
      */
     const container = path.basename(path.dirname(worktreePath));
-    const swept = before.find((l) => l.slice(3).replace(/^"|"$/g, '').startsWith(`${container}/`));
+    const swept = before.find((p) => p.startsWith(`${container}/`));
     if (swept) {
       return {
         ok: false,
@@ -1407,7 +1408,7 @@ class SessionManager extends EventEmitter {
     }
     if (!cwd || realpath(cwd) === realpath(s.repoPath)) return;
 
-    const at = async (args: string[]) => (await run('git', ['-C', cwd, ...args])).stdout.trim();
+    const at = (args: string[]) => git(cwd, args);
     const top = await at(['rev-parse', '--show-toplevel']);
     if (!top || realpath(top) === realpath(s.repoPath)) return; // the main checkout, or not a repo
 
