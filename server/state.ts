@@ -13,6 +13,8 @@
 import { computeFeatures } from './features.ts';
 import { SHIPPED_PROVIDERS } from './links.ts';
 import type { ComputedFeature } from './features.ts';
+import type { CiSession } from './ci.ts';
+import type { CiEntry } from './forge.ts';
 import { createRealpathCache } from './util.ts';
 import * as sources from './sources/index.ts';
 import type { RunningServer } from './servers.ts';
@@ -134,6 +136,8 @@ export interface State {
   buildState(): Promise<StatePayload>;
   topology(): TopologyPayload;
   sessionState(): SessionStatePayload;
+  /** What the CI sweep looks up: every worktree of a session's FEATURE, not just its own. */
+  ciSubjects(): CiSession[];
   prunePaths(): void;
   resolveGroup(name: string): Promise<{ group: ResolvedFeature | null; flat: Worktree[] }>;
   conflictsFor<W extends ConflictCandidate>(member: Pick<Worktree, 'repo' | 'path'>, flat: W[]): W[];
@@ -317,6 +321,48 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
     return !!m && !m.missing;
   }
 
+  /**
+   * What the CI sweep should look up, keyed by the session that will display it.
+   *
+   * THE FEATURE'S WORKTREES, NOT THE SESSION'S REPOS. A feature is several worktrees
+   * sharing a name, and `links.ts:assemble()` already walks `feature.members` when it
+   * builds the merge-request chips — but the `ci` rows it looks each member up in were
+   * built from `session.repos`, which is a narrower set. Any worktree that belongs to the
+   * feature without being owned by the session (created with `wt` directly, or added
+   * after the session started) therefore missed every lookup, and assemble()'s `!hit`
+   * branch rendered it as a flat "<repo> · no MR" chip. Not a missing chip — a chip
+   * asserting there is no merge request, for a branch that has one.
+   *
+   * A UNION, not a replacement: "Add a repo" can attach a worktree whose directory name
+   * differs from the feature's, and that one is in `session.repos` and in no feature.
+   * Keyed by worktree path, so a repo reached both ways is still one lookup.
+   *
+   * Built from `topology()` rather than by computing features a second time — it is
+   * synchronous and pure over the cached scan, which is why it is affordable here.
+   */
+  function ciSubjects(): CiSession[] {
+    const t = topology();
+    const out = new Map<string, { id: string; repos: CiEntry[] }>();
+    for (const s of manager.all()) {
+      out.set(s.id, { id: s.id, repos: [...(s.repos || [])] });
+    }
+    for (const f of [...t.features, ...t.groups]) {
+      const sid = f.session?.id;
+      if (!sid) continue;
+      const row = out.get(sid) || { id: sid, repos: [] };
+      const seen = new Set(row.repos.map((r) => r.worktreePath).filter(Boolean));
+      for (const m of f.members || []) {
+        // The main checkout is not a member of anybody's branch work, and a member with
+        // no branch (a detached worktree, a `missing` stub) has nothing to look up.
+        if (!present(m) || m.isMain || !m.branch || seen.has(m.path)) continue;
+        seen.add(m.path);
+        row.repos.push({ repo: m.repo, worktreePath: m.path, branch: m.branch });
+      }
+      out.set(sid, row);
+    }
+    return [...out.values()];
+  }
+
   // Resolve a feature/group by name from current state; drop missing members.
   async function resolveGroup(name: string): Promise<{ group: ResolvedFeature | null; flat: Worktree[] }> {
     const st = await buildState();
@@ -339,7 +385,7 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
     return flat.filter((w) => w.repo === member.repo && w.path !== member.path && w.running);
   }
 
-  return { buildState, topology, sessionState, prunePaths, resolveGroup, conflictsFor };
+  return { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor };
 }
 
 export { createState };

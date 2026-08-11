@@ -586,3 +586,140 @@ test('every field decorate() returns reaches the worktree row', () => {
   assert.equal(row.depsInstalling, true, 'depsInstalling must reach the client');
   assert.equal(row[marker], 'kept', 'topology() must not hand-pick decorate()’s fields');
 });
+
+/*
+ * WHAT THE CI SWEEP LOOKS UP.
+ *
+ * The chips are drawn from `feature.members` (links.ts:assemble) but the `ci` rows they
+ * are joined against used to be built from `session.repos`. Those are not the same set:
+ * a worktree created with `wt` rather than through Studio joins the FEATURE the moment it
+ * is on disk and joins the SESSION never. It therefore missed every merge-request lookup,
+ * and assemble()'s `!hit` branch printed a flat "<repo> · no MR" chip — not a missing
+ * chip, a chip asserting there is no merge request for a branch that has one.
+ *
+ * Reproduced from real state: feature `merchant-mfa`, two worktrees of that name, one
+ * session owning only the backend.
+ */
+function twoRepoFeature(): StateRepo[] {
+  return [
+    {
+      name: 'api',
+      path: '/code/api',
+      defaultBranch: 'develop',
+      worktrees: [
+        { path: '/code/api', name: 'api', branch: 'develop', isMain: true, detached: false, merged: false },
+        { path: '/code/api/.worktrees/mfa', name: 'mfa', branch: 'feature/api-mfa', isMain: false, detached: false, merged: false },
+      ],
+    },
+    {
+      name: 'web',
+      path: '/code/web',
+      defaultBranch: 'develop',
+      worktrees: [
+        { path: '/code/web', name: 'web', branch: 'develop', isMain: true, detached: false, merged: false },
+        { path: '/code/web/.worktrees/mfa', name: 'mfa', branch: 'feature/web-mfa', isMain: false, detached: false, merged: false },
+      ],
+    },
+  ];
+}
+
+/** A session driving the api side of `mfa` only — the web worktree is not its repo. */
+function mfaSession(): Session {
+  return session({
+    id: 's_mfa',
+    feature: 'mfa',
+    worktree: 'mfa',
+    worktreePath: '/code/api/.worktrees/mfa',
+    branch: 'feature/api-mfa',
+    repos: [
+      sessionRepo({
+        repo: 'api',
+        worktree: 'mfa',
+        worktreePath: '/code/api/.worktrees/mfa',
+        branch: 'feature/api-mfa',
+        primary: true,
+      }),
+    ],
+  });
+}
+
+test('the CI sweep covers every worktree of the feature, not just the session’s repos', () => {
+  const s = mfaSession();
+  const { state } = build({
+    repos: twoRepoFeature(),
+    manager: fakeManager([s], { '/code/api/.worktrees/mfa': s }),
+  });
+
+  // The feature really does span both, which is why the chips ask about both.
+  const feature = present(
+    state.topology().features.find((f) => f.name === 'mfa'),
+    'the mfa feature',
+  );
+  assert.deepEqual(
+    feature.members.map((m) => (m && 'repo' in m ? m.repo : '')).sort(),
+    ['api', 'web'],
+  );
+
+  const subject = present(
+    state.ciSubjects().find((x) => x.id === 's_mfa'),
+    'a CI subject for the mfa session',
+  );
+  assert.deepEqual(
+    (subject.repos || []).map((r) => `${r.repo}:${r.branch}`).sort(),
+    ['api:feature/api-mfa', 'web:feature/web-mfa'],
+    'the web worktree belongs to the feature, so its merge request must be looked up',
+  );
+});
+
+test('the CI sweep keeps a repo the session owns but no feature claims', () => {
+  /*
+   * A union, not a replacement. "Add a repo" can attach a worktree whose directory name
+   * differs from the feature's — that one is in session.repos and in no feature, and
+   * swapping the two sources rather than merging them would silently drop it.
+   */
+  const s = session({
+    id: 's_mfa',
+    feature: 'mfa',
+    worktreePath: '/code/api/.worktrees/mfa',
+    repos: [
+      sessionRepo({ repo: 'api', worktreePath: '/code/api/.worktrees/mfa', branch: 'feature/api-mfa' }),
+      sessionRepo({ repo: 'other', worktreePath: '/elsewhere/odd-name', branch: 'feature/odd' }),
+    ],
+  });
+  const { state } = build({
+    repos: twoRepoFeature(),
+    manager: fakeManager([s], { '/code/api/.worktrees/mfa': s }),
+  });
+  const subject = present(state.ciSubjects().find((x) => x.id === 's_mfa'), 'the mfa subject');
+  assert.ok(
+    (subject.repos || []).some((r) => r.worktreePath === '/elsewhere/odd-name'),
+    'a session-owned worktree outside the feature must still be looked up',
+  );
+});
+
+test('the CI sweep asks about each worktree once, and never about a main checkout', () => {
+  /*
+   * The session's own repo IS a feature member, so a naive concat asks twice — two glab
+   * processes for one answer, per sweep. And a main checkout is nobody's branch work:
+   * looking it up would report the default branch's pipeline as the feature's MR.
+   */
+  const s = mfaSession();
+  const { state } = build({
+    repos: twoRepoFeature(),
+    manager: fakeManager([s], { '/code/api/.worktrees/mfa': s }),
+  });
+  const repos = present(state.ciSubjects().find((x) => x.id === 's_mfa'), 'the mfa subject').repos || [];
+  const paths = repos.map((r) => r.worktreePath);
+  assert.equal(new Set(paths).size, paths.length, 'no worktree asked about twice');
+  assert.ok(!paths.includes('/code/api'), 'the main checkout is not part of the feature');
+  assert.ok(!paths.includes('/code/web'), 'the main checkout is not part of the feature');
+});
+
+test('a session with no worktree yet still gets a subject, with nothing to look up', () => {
+  // Unpromoted: ci.ts drops it from the snapshot itself ("an unpromoted session has no
+  // CI half at all"), but it must not vanish before it gets there.
+  const s = session({ id: 's_new', feature: 'brand-new', repos: [] });
+  const { state } = build({ repos: twoRepoFeature(), manager: fakeManager([s], {}) });
+  const subject = present(state.ciSubjects().find((x) => x.id === 's_new'), 'the new session');
+  assert.deepEqual(subject.repos, []);
+});
