@@ -89,7 +89,9 @@
    */
   const lap = $derived(world.overlapFor(feature.name));
   const shared = $derived(lap?.collisions.reduce((n, c) => n + c.files.length, 0) || 0);
-  const sharedWith = $derived(lap?.collisions.map((c) => c.feature) || []);
+  // Deduped: collisions are per REPO, so a feature overlapping in both halves of a
+  // BE+FE pair appears twice, and the tooltip would name it twice.
+  const sharedWith = $derived([...new Set(lap?.collisions.map((c) => c.feature) || [])]);
   /** Only worth saying once it is a real rebase; a branch one commit behind is fine. */
   const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 

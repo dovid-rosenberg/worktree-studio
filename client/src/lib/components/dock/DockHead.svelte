@@ -117,6 +117,13 @@
     every worktree at once. Named, not counted: "18 shared" is a number you dismiss,
     "18 files also changed by iso-mfa-totp" is a name you recognise.
   -->
+  <!--
+    DEDUPED BY FEATURE for the label, not for the detail. Collisions are recorded per
+    REPO, so a BE+FE feature that overlaps in both repos is two entries — correct data,
+    and "custom-reports, custom-reports" in a chip that is meant to name who you are
+    colliding with. The expanded list below keeps them apart, because there the repo is
+    the thing you need in order to go and look.
+  -->
   {#if lap && lap.collisions.length}
     {@const total = lap.collisions.reduce((n, c) => n + c.files.length, 0)}
     <button
@@ -126,7 +133,7 @@
         .join('\n')}
       onclick={() => (showOverlap = !showOverlap)}
       aria-expanded={showOverlap}
-    >⚠ {total} file{total === 1 ? '' : 's'} also changed by {lap.collisions.map((c) => c.feature).join(', ')}</button>
+    >⚠ {total} file{total === 1 ? '' : 's'} also changed by {[...new Set(lap.collisions.map((c) => c.feature))].join(', ')}</button>
   {/if}
   {#if lap && lap.behind >= 5}
     <span class="driftchip" title={lap.drift.map((d) => `${d.repo}: behind ${d.behind}, ahead ${d.ahead}${d.conflicts.length ? ` — ${d.conflicts.length} file(s) will conflict: ${d.conflicts.slice(0, 8).join(', ')}` : ''}`).join('\n')}
