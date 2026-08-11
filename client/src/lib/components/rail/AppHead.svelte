@@ -52,7 +52,35 @@
 </script>
 
 <header class="apphead">
-  <div class="brand" title="Worktree Studio"><span class="glyph">⎇</span> Studio</div>
+  <!--
+    The ROOT SWITCHER, or the wordmark when there is nothing to switch between.
+
+    Only ever one of the two: a picker offering a single choice is a control that cannot
+    do anything, and it would be sitting in the most valuable 120px in the app. With two
+    or more roots the switcher takes the wordmark's place rather than crowding in beside
+    it — you know what app you are in; you do not always know which body of work you are
+    looking at, and that is the thing worth naming here.
+
+    A native <select>, deliberately, matching the rail's repo and sort pickers directly
+    below it. This is the same kind of act as those two — it changes what the list shows
+    and nothing about the work — so it should not look like a heavier one.
+  -->
+  {#if ui.roots.length > 1}
+    <select
+      class="rootpick"
+      value={ui.rootFilter}
+      onchange={(e) => ui.setRoot(e.currentTarget.value)}
+      title="Which root folder to work in"
+      aria-label="Root folder"
+    >
+      <option value="">All roots · {ui.rootTotal} repos</option>
+      {#each ui.roots as r (r.path)}
+        <option value={r.path} title={r.path}>{r.label} · {r.repos} repos</option>
+      {/each}
+    </select>
+  {:else}
+    <div class="brand" title="Worktree Studio"><span class="glyph">⎇</span> Studio</div>
+  {/if}
 
   <span class="spacer"></span>
 
@@ -97,6 +125,16 @@
              border-bottom:1px solid var(--border); background:var(--panel); flex:none; }
   .brand { font-weight:700; font-size:13.5px; letter-spacing:-.01em; display:flex; align-items:center; gap:6px; white-space:nowrap; }
   .brand .glyph { color:var(--brand); font-size:15px; }
+
+  /* Weighted like the wordmark it replaces, because it is doing that job: it names where
+     you are. `min-width:0` so a long root name truncates instead of pushing the three
+     buttons out of a 212px column. */
+  .rootpick {
+    font-family:inherit; font-size:13px; font-weight:650; color:var(--ink);
+    background:transparent; border:1px solid transparent; border-radius:7px;
+    padding:3px 4px; min-width:0; max-width:100%; cursor:pointer;
+  }
+  .rootpick:hover { border-color:var(--border); background:var(--elevated); }
   .spacer { flex:1; }
 
   /* Square-ish, so three of them fit beside the wordmark at the narrowest rail width. */

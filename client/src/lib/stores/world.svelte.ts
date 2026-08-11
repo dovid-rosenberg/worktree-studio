@@ -190,6 +190,10 @@ class World {
   get webRepos(): string[] {
     return this.view.webRepos;
   }
+  /** The scanned root folders, in config order — what the root switcher offers. */
+  get baseDirs(): string[] {
+    return this.view.baseDirs ?? [];
+  }
   /** sessionId → the repos array `GET /sessions/:id/ci` would answer with. */
   get ci(): Record<string, CiRepo[]> {
     return this.view.ci;
