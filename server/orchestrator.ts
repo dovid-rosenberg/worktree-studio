@@ -32,6 +32,12 @@ interface Member {
   branch?: string | null;
   wtname?: string;
   running?: boolean;
+  /**
+   * Where this member was last SEEN listening — not where its slot says it should be.
+   * Handed to servers.stop() so a server that drifted onto another feature's ports is
+   * still reachable by the row that owns it.
+   */
+  ports?: number[];
   canStart?: boolean;
   /** Why `canStart` is false — see servers.decorate(). Both feed skipReason(). */
   depsMissing?: boolean;
@@ -85,7 +91,11 @@ interface Servers {
    * tried. That is how /group/restart came to report "3/3 restarted" for three servers
    * that never bound a port.
    */
-  stop(repo: string, worktreePath: string): Promise<{ ok: true; killed: boolean; stillListening: number[] }>;
+  stop(
+    repo: string,
+    worktreePath: string,
+    alsoPorts?: number[],
+  ): Promise<{ ok: true; killed: boolean; stillListening: number[] }>;
   /*
    * The FULL outcome, not `{ok, error}`.
    *
@@ -94,7 +104,12 @@ interface Servers {
    * on the way in, so /group/restart could not have reported a server that spawned and
    * never bound even if it had tried.
    */
-  restart(repo: string, worktreePath: string, opts: LaunchOpts): Promise<Omit<StartOutcome, 'repo'>>;
+  restart(
+    repo: string,
+    worktreePath: string,
+    opts: LaunchOpts,
+    alsoPorts?: number[],
+  ): Promise<Omit<StartOutcome, 'repo'>>;
 }
 
 /** The session these routes hand back untouched; only its id is ever read. */
@@ -211,7 +226,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
       return res.json({ ok: true, needsConfirm: true, conflicts, willStart: toStart, skipped });
     }
     if (stopConflicts) {
-      for (const c of conflicts) await servers.stop(c.repo, c.path);
+      for (const c of conflicts) await servers.stop(c.repo, c.path, c.ports);
       await new Promise((r) => setTimeout(r, 1200));
     }
     // Key each slot on the member's own feature identity — the one canonical key.
@@ -234,7 +249,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
     if (!g) return res.status(404).json({ error: 'no such feature' });
     const running = g.members.filter((m) => m.running);
     const stops = await Promise.all(
-      running.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path)) })),
+      running.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path, m.ports)) })),
     );
     // Refresh first, then release: the guard reads what is still listening, and this
     // released the slot BEFORE looking — so a member that refused to die still took its
@@ -292,7 +307,12 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const results = await Promise.all(
       toRestart.map(async (m) => ({
         repo: m.repo,
-        ...(await servers.restart(m.repo, m.path, servers.launchOpts(m.repo, servers.featureFor(m.path)))),
+        ...(await servers.restart(
+          m.repo,
+          m.path,
+          servers.launchOpts(m.repo, servers.featureFor(m.path)),
+          m.ports,
+        )),
       })),
     );
     await refreshRunning();
@@ -330,7 +350,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
     const { group: g } = await resolveGroup(String(req.body?.group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     for (const m of g.members) {
-      if (m.running) await servers.stop(m.repo, m.path);
+      if (m.running) await servers.stop(m.repo, m.path, m.ports);
       if (m.session) await manager.deactivate(m.session.id);
     }
     // Close had no refresh at all, so it released against a stale map.
@@ -366,7 +386,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
        * removing under it is the failure this ordering exists to avoid. Only the
        * session close moved.
        */
-      if (m.running) await servers.stop(m.repo, m.path);
+      if (m.running) await servers.stop(m.repo, m.path, m.ports);
       const rr = await worktree.remove(repoObj.path, m.path, {
         branch: m.branch,
         deleteBranch: !!deleteBranches,
