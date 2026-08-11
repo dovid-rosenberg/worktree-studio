@@ -18,6 +18,7 @@
  * cadence as the CI feed.
  */
 import { git } from './util.ts';
+import { currentBranch } from './git.ts';
 import type { Drift, FeatureOverlap } from './types.ts';
 
 /** One worktree's answer, cached against the shas it was computed from. */
@@ -30,6 +31,12 @@ interface Entry {
   ahead: number;
   /** Of `changed`, the ones the base also touched since the merge-base. */
   conflicts: string[];
+  /**
+   * Commits on this branch that `origin/<branch>` does not have — work that exists only
+   * on this laptop. Null when the branch has never been pushed, which is a different
+   * sentence ("no branch on the remote") from "3 commits ahead of it".
+   */
+  unpushed: number | null;
 }
 
 /** A feature's member worktree, narrowed to what a git read needs. */
@@ -80,11 +87,18 @@ async function measure(
   const mb = await git(wt, ['merge-base', headSha, baseSha]);
   if (!mb) return null;
 
-  const [mine, theirs, behind, ahead] = await Promise.all([
+  // The branch's own name, so `origin/<branch>` can be asked about. Detached (null) has
+  // no remote counterpart at all.
+  const branch = await currentBranch(wt);
+
+  const [mine, theirs, behind, ahead, unpushedRaw] = await Promise.all([
     git(wt, ['diff', '--name-only', `${mb}..${headSha}`]),
     git(wt, ['diff', '--name-only', `${mb}..${baseSha}`]),
     git(wt, ['rev-list', '--count', `${headSha}..${baseSha}`]),
     git(wt, ['rev-list', '--count', `${baseSha}..${headSha}`]),
+    // `--` guards a branch name that could be read as a path. An unknown revision exits
+    // non-zero and `git()` answers '', which is what "never pushed" looks like here.
+    branch ? git(wt, ['rev-list', '--count', `origin/${branch}..HEAD`, '--']) : Promise.resolve(''),
   ]);
 
   const changed = mine.split('\n').filter(Boolean);
@@ -96,6 +110,7 @@ async function measure(
     behind: Number(behind) || 0,
     ahead: Number(ahead) || 0,
     conflicts: changed.filter((f) => onBase.has(f)),
+    unpushed: unpushedRaw === '' ? null : Number(unpushedRaw) || 0,
   };
   cache.set(wt, entry);
   return entry;
@@ -128,7 +143,13 @@ export function createOverlapFeed(deps: {
           const e = await read(cache, m.path, baseFor(m.repo));
           if (!e) continue;
           const list = drift.get(f.name) || [];
-          list.push({ repo: m.repo, behind: e.behind, ahead: e.ahead, conflicts: e.conflicts });
+          list.push({
+            repo: m.repo,
+            behind: e.behind,
+            ahead: e.ahead,
+            conflicts: e.conflicts,
+            unpushed: e.unpushed,
+          });
           drift.set(f.name, list);
         }
       }
@@ -142,7 +163,7 @@ export function createOverlapFeed(deps: {
           // feature — summing or averaging would hide exactly the repo that needs work.
           behind: Math.max(0, ...d.map((x) => x.behind)),
           ahead: d.reduce((n, x) => n + x.ahead, 0),
-          drift: d.filter((x) => x.behind || x.ahead || x.conflicts.length),
+          drift: d.filter((x) => x.behind || x.ahead || x.conflicts.length || x.unpushed),
         };
       }
 
