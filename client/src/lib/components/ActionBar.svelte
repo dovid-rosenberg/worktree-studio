@@ -269,15 +269,47 @@
         {#if runTargets.length}
           <RunConfigMenu targets={runTargets} />
         {/if}
-        <button class="btn sm" onclick={() => openGroup(feature.name)}>Open in editor</button>
-        <!-- "Open PR / MR" said CREATE here and OPEN IN BROWSER on the CI pill — the same four
-             words for two different actions. This one creates. -->
-        <button class="btn sm" onclick={() => prFeature(feature.name)}>Create PR / MR</button>
-        <button class="btn sm ghost" title="Colour this feature" aria-label="Edit feature" onclick={() => editFeature(feature)}>✐</button>
-        {#if anyRunning}
-          <button class="btn sm ghost" onclick={() => closeFeature(feature.name)}>Close feature</button>
-        {/if}
-        <button class="btn sm ghost dangertext" onclick={() => deleteFeature(feature)}>Delete feature…</button>
+        <!--
+          THE SAME SPLIT THE SESSION BAR USES, and for the same reason.
+
+          This branch was five loose buttons — `Open in editor`, `Create PR / MR`, a bare
+          `✐`, `Close feature`, `Delete feature…` — mixing full-text verbs with a glyph at
+          identical weight, with a destructive one on the end. That is precisely the row
+          the clustering was introduced to end, and it survived because the work only ever
+          touched the branch above: a feature WITH an agent got clusters and a ⋯ menu,
+          a feature without one kept the old row. The two bars are the same bar.
+
+          So: the one verb worth pressing stays out here (starting an agent is why you
+          selected this), servers keep their cluster above, and everything that changes
+          what the feature IS goes behind the divider into ⋯.
+        -->
+        <span class="split" aria-hidden="true"></span>
+        {@const feat = feature}
+        <OverflowMenu>
+          {#snippet children(pick)}
+            <button role="menuitem" onclick={() => pick(() => openGroup(feat.name))}>
+              <span class="g">↗</span> Open in editor
+            </button>
+            <!-- "Open PR / MR" said CREATE here and OPEN IN BROWSER on the CI pill — the
+                 same four words for two different actions. This one creates. -->
+            <button role="menuitem" onclick={() => pick(() => prFeature(feat.name))}>
+              <span class="g">⑂</span> Create PR / MR
+            </button>
+            <button role="menuitem" onclick={() => pick(() => editFeature(feat))}>
+              <span class="g">✐</span> Edit name, colour, links
+            </button>
+            {#if anyRunning}
+              <span class="sep"></span>
+              <button role="menuitem" onclick={() => pick(() => closeFeature(feat.name))}>
+                <span class="g">⏻</span> Close feature
+              </button>
+            {/if}
+            <span class="sep"></span>
+            <button role="menuitem" class="danger" onclick={() => pick(() => deleteFeature(feat))}>
+              <span class="g">🗑</span> Delete feature…
+            </button>
+          {/snippet}
+        </OverflowMenu>
       {/if}
     {/if}
   {/if}

@@ -269,12 +269,42 @@ describe('ActionBar', () => {
     ui.selectFeature({ name: 'token-race-fix' } as never);
     render(ActionBar);
     expect(screen.getByText('Start session')).toBeInTheDocument();
-    // CREATE, not "Open" — the pill in the dock opens one in a browser, and the same
-    // four words for two different actions is a trap you fall into once a week.
-    expect(screen.getByText('Create PR / MR')).toBeInTheDocument();
     // Session-only verbs must not appear for something with no session.
     expect(screen.queryByLabelText('Deactivate session')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Delete session')).not.toBeInTheDocument();
+  });
+
+  it('splits a sessionless feature the same way it splits a session', async () => {
+    /*
+     * THE TWO BARS ARE ONE BAR. The clustering — one verb out front, everything that
+     * changes what the thing IS behind a divider and a ⋯ — was only ever applied to the
+     * branch with a session. A feature without one kept five loose buttons: two full-text
+     * verbs, a bare `✐`, and a destructive one on the end at the same weight. That is
+     * exactly the row the clustering was introduced to end, and it survived in the one
+     * place nobody looked, so it reappeared the moment the rail filled with sessionless
+     * features.
+     *
+     * Asserted through the MENU rather than by counting buttons: what matters is that the
+     * verbs still exist and are reachable, not that the bar is short.
+     */
+    give([feature()], []);
+    ui.selectFeature({ name: 'token-race-fix' } as never);
+    const { container } = render(ActionBar);
+
+    // The one thing to do here keeps its words and stays in front.
+    expect(screen.getByText('Start session')).toBeInTheDocument();
+    // The rest is behind the divider.
+    expect(container.querySelector('.split')).not.toBeNull();
+    for (const gone of ['Open in editor', 'Create PR / MR', 'Delete feature…']) {
+      expect(screen.queryByRole('button', { name: gone })).not.toBeInTheDocument();
+    }
+
+    screen.getByRole('button', { name: 'More actions' }).click();
+    // CREATE, not "Open" — the pill in the dock opens one in a browser, and the same
+    // four words for two different actions is a trap you fall into once a week.
+    expect(await screen.findByRole('menuitem', { name: /Create PR \/ MR/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Open in editor/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Delete feature/ })).toBeInTheDocument();
   });
 
   /*
