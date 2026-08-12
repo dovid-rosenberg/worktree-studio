@@ -26,6 +26,8 @@ export interface Startable {
   running?: boolean;
   canStart?: boolean;
   depsMissing?: boolean;
+  /** Installed tree older than package-lock.json — see servers.depsStale(). */
+  depsStale?: boolean;
   noStartCmd?: boolean;
   /** The worktree directory is gone — see servers.decorate(). */
   gone?: boolean;
@@ -94,6 +96,17 @@ export function skipReason(m: Startable): string {
   if (m.gone) return 'the worktree directory no longer exists';
   if (m.depsMissing) return 'dependencies not installed';
   if (m.noStartCmd) return 'no start command configured for this repo';
+  /*
+   * LAST, and only ever in place of "cannot start".
+   *
+   * Stale dependencies are not a reason a launch is refused — `canStart` ignores them by
+   * design, because a stale tree usually runs. So this can only be reached when a member
+   * is unstartable for a reason none of the three above explains, and in that position
+   * the alternative is the bare "cannot start": a sentence that names nothing, offers
+   * nothing to press and has never once helped anybody. An install that is older than
+   * the lockfile is the one lead left on the object, and reinstalling is cheap.
+   */
+  if (m.depsStale) return 'dependencies may be stale — the lockfile is newer than the installed tree';
   return 'cannot start';
 }
 

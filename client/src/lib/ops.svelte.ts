@@ -189,7 +189,7 @@ export async function addTab(s: Session, title = 'shell') {
      * rather than clearing the highlight to a tab that does not exist.
      */
     if (r?.id) {
-      ui.dockView = 'term';
+      ui.setDockView('term');
       ui.activeTabId = r.id;
     }
   } catch (e) {
@@ -198,7 +198,7 @@ export async function addTab(s: Session, title = 'shell') {
 }
 
 export async function selectTab(s: Session, tab: string) {
-  ui.dockView = 'term';
+  ui.setDockView('term');
   ui.activeTabId = tab;
   try {
     await api('POST', `/api/v1/sessions/${s.id}/select-tab`, { tab });
@@ -772,11 +772,43 @@ export async function deleteFeature(f: Feature) {
  * promote keeps promote fast for the many features that never run a server.
  */
 export async function installDeps(w: { repo: string; path: string }): Promise<void> {
+  return runInstall(w, `Installing dependencies in ${w.repo}…`, `${w.repo} is ready`);
+}
+
+/**
+ * Give a worktree its OWN node_modules: drop the shared symlink, then install.
+ *
+ * The verb for the finding `sharedModules` has been reporting all along. The rail could
+ * say "node_modules is a symlink to /elsewhere — replace it with a real install" and
+ * there was no button anywhere that did that; the two commands it takes are not
+ * guessable, and getting the first one wrong deletes another checkout's dependency tree.
+ *
+ * The same endpoint as Install deps, deliberately — the server unlinks a shared symlink
+ * before installing whichever button you pressed, because installing THROUGH the link
+ * rewrites the tree every other worktree of that repo is running against. Only the
+ * wording differs, because only the reason for pressing it differs.
+ */
+export async function replaceSharedDeps(w: { repo: string; path: string }): Promise<void> {
+  return runInstall(
+    w,
+    `Replacing ${w.repo}'s shared node_modules…`,
+    `${w.repo} has its own dependencies now`,
+  );
+}
+
+/**
+ * One install call, two labels.
+ *
+ * Keyed on the worktree path (not the repo) exactly as the two callers were: a multi-repo
+ * feature installs its members concurrently, and one key per repo would let a two-repo
+ * feature's second click be swallowed as a duplicate of the first.
+ */
+function runInstall(w: { repo: string; path: string }, starting: string, done: string): Promise<void> {
   return pending.run(`deps:${w.path}`, async () => {
-    toast(`Installing dependencies in ${w.repo}…`);
+    toast(starting);
     try {
       const r = await api('POST', '/api/v1/worktrees/install-deps', { worktreePath: w.path });
-      toast(r.ok ? `${w.repo} is ready` : r.error || 'install failed', !r.ok);
+      toast(r.ok ? done : r.error || 'install failed', !r.ok);
     } catch (e) {
       toast(errMessage(e), true);
     }

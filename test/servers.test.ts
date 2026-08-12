@@ -608,3 +608,244 @@ test('two worktrees with the same name install into separate logs', async () => 
 
   for (const d of dirs) fs.rmSync(d.root, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// unlinkSharedModules — the verb sharedModules() never had
+// ---------------------------------------------------------------------------
+//
+// sharedModules() could report that a worktree's node_modules is a symlink into another
+// checkout, with a tooltip explaining exactly why that hurts, and there was nothing
+// anywhere that fixed it. The fix is two steps and neither is guessable — remove the
+// LINK (not the tree it points at, which is another worktree's), then install.
+//
+// Every test below is about what it REFUSES, because the thing being deleted sits one
+// resolution step away from a whole dependency tree that belongs to somebody else.
+
+test('a real node_modules directory is refused, not deleted', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  fs.mkdirSync(path.join(wt, 'node_modules'));
+  fs.writeFileSync(path.join(wt, 'node_modules', 'marker'), 'x');
+
+  const r = s.unlinkSharedModules(wt);
+  assert.match(present(r.error, 'a refusal'), /real directory/);
+  assert.equal(r.unlinked, null);
+  assert.ok(fs.existsSync(path.join(wt, 'node_modules', 'marker')), 'the tree is untouched');
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * THE ONE THAT MATTERS: the link goes, the target stays.
+ *
+ * `fs.unlinkSync` on a symlink removes the link — but the whole hazard of this feature is
+ * that the obvious repair for a failed unlink (rm -rf) deletes the main checkout's
+ * node_modules, and every other worktree of that repo with it. This asserts the target
+ * survives, so a future "fix" that follows the link fails here rather than in somebody's
+ * afternoon.
+ */
+test('unlinking a shared node_modules removes the link and never the target', () => {
+  const s = servers();
+  const main = tempWorktree();
+  const wt = tempWorktree();
+  fs.mkdirSync(path.join(main, 'node_modules'));
+  fs.writeFileSync(path.join(main, 'node_modules', 'express'), 'the real tree');
+  fs.symlinkSync(path.join(main, 'node_modules'), path.join(wt, 'node_modules'));
+
+  const r = s.unlinkSharedModules(wt);
+  assert.equal(r.error, undefined);
+  assert.equal(r.unlinked, realpath(path.join(main, 'node_modules')), 'it names what it detached from');
+  assert.equal(fs.existsSync(path.join(wt, 'node_modules')), false, 'the link is gone');
+  assert.equal(
+    fs.readFileSync(path.join(main, 'node_modules', 'express'), 'utf8'),
+    'the real tree',
+    "the OTHER checkout's dependency tree is intact",
+  );
+  // And the worktree now reads as one npm can honestly install into.
+  assert.equal(s.sharedModules(wt), null);
+  fs.rmSync(main, { recursive: true, force: true });
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * A link that lands back inside the worktree is not sharing anything — sharedModules()
+ * does not flag it, and it isolates as well as a real directory. Removing it would
+ * dismantle a working layout to solve a problem it does not have.
+ */
+test('a symlink that stays inside the worktree is refused', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  fs.mkdirSync(path.join(wt, 'vendor'));
+  fs.symlinkSync(path.join(wt, 'vendor'), path.join(wt, 'node_modules'));
+
+  const r = s.unlinkSharedModules(wt);
+  assert.match(present(r.error, 'a refusal'), /inside this worktree/);
+  assert.ok(fs.lstatSync(path.join(wt, 'node_modules')).isSymbolicLink(), 'still there');
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('a dangling link is removed — npm cannot install through it either', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  fs.symlinkSync(path.join(wt, 'nowhere'), path.join(wt, 'node_modules'));
+  const r = s.unlinkSharedModules(wt);
+  assert.equal(r.error, undefined);
+  assert.equal(r.unlinked, null, 'there was nothing on the other end to name');
+  assert.equal(fs.existsSync(path.join(wt, 'node_modules')), false);
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+test('no node_modules at all is not an error — installing is the whole job', () => {
+  const s = servers();
+  const wt = tempWorktree();
+  assert.deepEqual(s.unlinkSharedModules(wt), { unlinked: null });
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * installDeps() unlinks BY DEFAULT, and that is the point of the feature.
+ *
+ * Running `npm install` through the link is the worst thing this button could do: npm
+ * follows the symlink and rewrites the main checkout's dependency tree — the one every
+ * other worktree of the repo is running against — so one click restarts a colleague's
+ * dev server on different package versions.
+ */
+test('installDeps drops a shared symlink before npm can write through it', async () => {
+  const s = servers();
+  const main = tempWorktree();
+  const wt = tempWorktree();
+  fs.mkdirSync(path.join(main, 'node_modules'));
+  fs.writeFileSync(path.join(main, 'node_modules', 'sentinel'), 'not ours to touch');
+  fs.symlinkSync(path.join(main, 'node_modules'), path.join(wt, 'node_modules'));
+  // No dependencies: npm creates nothing, so what the tree looks like afterwards is
+  // entirely the unlink's doing.
+  fs.writeFileSync(path.join(wt, 'package.json'), '{"name":"api","version":"1.0.0"}');
+
+  const r = await s.installDeps(wt);
+  assert.equal(r.ok, true, r.error || '');
+  assert.equal(r.unlinked, realpath(path.join(main, 'node_modules')), 'and it reports what it detached');
+  assert.equal(
+    fs.readFileSync(path.join(main, 'node_modules', 'sentinel'), 'utf8'),
+    'not ours to touch',
+    'npm never got to write through the link',
+  );
+  fs.rmSync(main, { recursive: true, force: true });
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * The unlink is gated on sharedModules(), not on unlinkSharedModules()'s own refusals.
+ *
+ * That method refuses a real node_modules loudly — a caller asking it to remove a link
+ * that is not there deserves to hear so — and wiring that refusal straight into
+ * installDeps would have broken the ordinary case completely: every reinstall of a
+ * worktree with its own dependency tree would answer "node_modules is a real directory
+ * here" and install nothing.
+ */
+test('a real node_modules does not turn an ordinary install into a refusal', async () => {
+  const s = servers();
+  const wt = tempWorktree();
+  fs.mkdirSync(path.join(wt, 'node_modules'));
+  fs.writeFileSync(path.join(wt, 'package.json'), '{"name":"api","version":"1.0.0"}');
+  const r = await s.installDeps(wt);
+  assert.equal(r.ok, true, r.error || '');
+  assert.equal(r.unlinked, undefined, 'nothing was shared, so nothing was detached');
+  fs.rmSync(wt, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// A dev server that DIED — the transition a map diff cannot carry
+// ---------------------------------------------------------------------------
+//
+// Discovery is a map of what is listening right now. When a dev server dies, the sweep
+// re-runs, decorate() flips `running` to false, the green edge on the card disappears —
+// and that is the entire notice. Nobody is watching the rail at that moment, so a backend
+// that died on a syntax error announced itself as a 502 in the browser twenty minutes
+// later, and the first suspect is always the frontend.
+//
+// The hard half is that a stop the user asked for must NEVER be announced this way: a
+// mark that fires every time you press Stop is a mark you stop reading within a day.
+
+// A Servers whose discovery is driven by a settable set of listening worktrees.
+function discovery(paths: string[]) {
+  const s = servers();
+  let live = paths;
+  s._psInfo = async (pid: number) => ({ startedAt: 1_700_000_000_000, command: `pid-${pid}` });
+  s._listeningPids = async () => new Map(live.map((_p, i) => [String(100 + i), new Set([3000 + i])]));
+  s._resolvePid = async (pid) => ({ cwd: live[Number(pid) - 100], top: live[Number(pid) - 100] });
+  return { s, set: (next: string[]) => (live = next) };
+}
+
+test('a tracked server that vanishes between sweeps is announced as died', async () => {
+  const { s, set } = discovery(['/top/feat-a']);
+  s.tracked['/top/feat-a'] = { pid: 100, repo: 'api', log: '/dev/null', startedAt: 1_700_000_000_000 };
+
+  await s.discoverRunning(); // seen listening
+  assert.equal(s.deathAt('/top/feat-a'), null, 'a running server is not news');
+
+  set([]); // the process is gone, and nobody asked for that
+  await s.discoverRunning();
+  const died = present(s.deathAt('/top/feat-a'), 'the death');
+  assert.equal(died.repo, 'api', 'it names the repo whose log to read');
+  assert.deepEqual(died.ports, [3000], 'and the ports whose failures are now explained');
+  assert.equal(died.pid, 100);
+  assert.ok(died.at > 0);
+  // and it reaches the client on the decoration the rail already reads
+  assert.equal(s.decorate({ path: '/top/feat-a', repo: 'api' }, new Map()).died?.repo, 'api');
+});
+
+test('a server the user stopped is not announced', async () => {
+  const { s, set } = discovery(['/top/feat-a']);
+  s.tracked['/top/feat-a'] = { pid: 100, repo: 'api', log: '/dev/null', startedAt: 1_700_000_000_000 };
+  await s.discoverRunning();
+
+  // stop() records the request before it signals anything — the sweep that notices the
+  // absence may land at any point after that.
+  await s.stop('api', '/top/feat-a');
+  set([]);
+  await s.discoverRunning();
+  assert.equal(s.deathAt('/top/feat-a'), null, 'a stop working is not a server failing');
+});
+
+/*
+ * Two independent things say "we stopped it", because either alone has a hole: the
+ * recorded request expires, and a proven stop deletes the tracked record. This is the
+ * second: no record, no death, however long ago the stop was.
+ */
+test('a server Studio never tracked is not its story to tell', async () => {
+  const { s, set } = discovery(['/top/somebody-elses']);
+  await s.discoverRunning();
+  set([]);
+  await s.discoverRunning();
+  assert.equal(s.deathAt('/top/somebody-elses'), null);
+});
+
+test('a death is cleared when the server comes back', async () => {
+  const { s, set } = discovery(['/top/feat-a']);
+  s.tracked['/top/feat-a'] = { pid: 100, repo: 'api', log: '/dev/null', startedAt: 1_700_000_000_000 };
+  await s.discoverRunning();
+  set([]);
+  await s.discoverRunning();
+  assert.ok(s.deathAt('/top/feat-a'), 'died');
+
+  set(['/top/feat-a']); // started again, by whatever means
+  await s.discoverRunning();
+  assert.equal(s.deathAt('/top/feat-a'), null, 'its own return is the truest dismissal');
+});
+
+/*
+ * A server killed from a terminal keeps its tracked record and was never asked to stop.
+ * That IS a death as far as Studio can tell — nothing it knows about wanted it — and
+ * announcing it is right: the ports are down either way, and the user who did it will
+ * recognise their own doing.
+ */
+test('a kill from outside Studio still announces', async () => {
+  const { s, set } = discovery(['/top/feat-a', '/top/feat-b']);
+  s.tracked['/top/feat-a'] = { pid: 100, repo: 'api', log: '/dev/null', startedAt: 1_700_000_000_000 };
+  s.tracked['/top/feat-b'] = { pid: 101, repo: 'fe', log: '/dev/null', startedAt: 1_700_000_000_000 };
+  await s.discoverRunning();
+
+  set(['/top/feat-a']); // feat-b's process was killed by hand
+  await s.discoverRunning();
+  assert.equal(s.deathAt('/top/feat-a'), null, 'the one still up is not touched');
+  assert.equal(present(s.deathAt('/top/feat-b'), "feat-b's death").repo, 'fe');
+});

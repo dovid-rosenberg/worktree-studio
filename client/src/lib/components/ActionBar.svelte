@@ -47,6 +47,7 @@ import {
   prFeature,
   promote,
   reinstateOrphan,
+  replaceSharedDeps,
   restartStack,
   restartTerminal,
   runStack,
@@ -81,6 +82,14 @@ const anyRunning = $derived(ms.some((m) => m.running));
 const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
 /** Members that cannot start until their dependencies exist. */
 const needDeps = $derived(ms.filter((m) => m.depsMissing));
+/*
+ * Members whose node_modules is a symlink out of the worktree.
+ *
+ * These are not `needDeps` — they start perfectly well, which is the trap. The rail has
+ * been able to say "this worktree shares its dependency tree" since sharedModules() was
+ * written, and there was no button anywhere that fixed it. This is that button.
+ */
+const sharedDeps = $derived(ms.filter((m) => m.sharedModules));
 const installingDeps = $derived(ms.some((m) => m.depsInstalling));
 const isPending = $derived(!!target && pending.has(target.name));
 
@@ -172,6 +181,21 @@ async function guard(fn: () => Promise<unknown>) {
             title="{needDeps.map((m) => m.repo).join(', ')} cannot start until their dependencies are installed"
             onclick={() => needDeps.forEach((m) => installDeps({ repo: m.repo, path: m.path }))}
           >{installingDeps ? 'Installing…' : `Install deps (${needDeps.length})`}</button>
+        {/if}
+
+        <!--
+          Beside Install deps, and never at the same time as it: a worktree with a shared
+          node_modules is not missing dependencies, it is borrowing somebody else's. The
+          finding used to be a tooltip with no verb attached, which left the two-command
+          fix (remove the link — not the directory — then install) to be typed by hand.
+        -->
+        {#if sharedDeps.length}
+          <button
+            class="btn sm"
+            disabled={installingDeps}
+            title="{sharedDeps.map((m) => m.repo).join(', ')} share a node_modules with another checkout — every cache inside it (Vite's .vite/deps above all) is shared, and an install there rewrites the other worktrees' tree. This removes the symlink and installs here."
+            onclick={() => sharedDeps.forEach((m) => replaceSharedDeps({ repo: m.repo, path: m.path }))}
+          >{installingDeps ? 'Installing…' : `Own deps (${sharedDeps.length})`}</button>
         {/if}
       {/if}
 

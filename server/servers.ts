@@ -12,7 +12,15 @@ import { deriveEnv, allocSlot, rewriteAllSiblingPorts, siblingPortsIn } from './
 import { portBusy } from './start-report.ts';
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
-import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, WiredTo, Worktree } from './types.ts';
+import type {
+  ConcurrencyConfig,
+  Config,
+  PartialDeep,
+  RepoConcurrency,
+  ServerDeath,
+  WiredTo,
+  Worktree,
+} from './types.ts';
 import { TAIL_MAX_BYTES, readTail, tailFile } from './log-tail.ts';
 
 /**
@@ -191,6 +199,17 @@ export interface DroppedRecord {
   pid?: number;
 }
 
+/** How an install should treat a `node_modules` that is a symlink — see installDeps(). */
+export interface InstallOptions {
+  /**
+   * Remove a shared node_modules symlink before installing. Defaults to TRUE: installing
+   * through the link rewrites the tree it points at, which belongs to another checkout.
+   * The flag exists so a caller can say it means the old behaviour, not so the safe path
+   * has to be asked for.
+   */
+  unlinkShared?: boolean;
+}
+
 export interface LogsOptions {
   offset?: number;
   lines?: number;
@@ -232,6 +251,24 @@ const PID_START_SKEW_MS = 10000;
 // not a gate: a stop the user asked for must happen even if the wait expires, because the
 // alternative is a Stop button that reports failure and leaves the server up.
 const LOCK_WAIT_MS = 2000;
+
+/*
+ * How long a death stays on the decoration, and how long a stop we performed suppresses
+ * one — see _noteDeaths().
+ *
+ * DEATH_TTL_MS is a ceiling, not the usual exit: a death is cleared the moment the
+ * worktree is seen listening again, and by start() before that can even be observed. The
+ * ceiling exists because there is no route to dismiss one, and a banner about a crash
+ * from this morning is noise by the afternoon. Fifteen minutes is long enough that a
+ * server which died while you were in another window is still explained when you come
+ * back.
+ *
+ * STOP_GRACE_MS is the window in which a vanished server is attributed to the stop that
+ * asked for it. A SIGTERM that has not taken effect in a minute did not work, and a
+ * disappearance long after that is a different event.
+ */
+const DEATH_TTL_MS = 15 * 60 * 1000;
+const STOP_GRACE_MS = 60 * 1000;
 
 // Feature identity of a worktree, from a path alone. Kept as a free function for
 // the callers that have nothing but a path and no resolver to hand; it answers
@@ -305,6 +342,9 @@ class Servers {
   _pidInfoCache: Map<string, CachedPidInfo>;
   _starting: Map<string, number>;
   _wiredCache: Map<string, CachedWiredPorts>;
+  _lastRunning: Map<string, RunningServer>;
+  _stopRequested: Map<string, number>;
+  deaths: Map<string, ServerDeath>;
 
   // `identity` is the shared server/identity.ts resolver (server.ts builds one and
   // hands the same instance to state.ts/orchestrator.ts). Passing it is what makes
@@ -349,6 +389,16 @@ class Servers {
     // cheap in the steady state. One entry per frontend worktree — bounded by the
     // number of worktrees that exist, and never written for a repo with no configPatch.
     this._wiredCache = new Map();
+    // The previous discovery result, kept so a sweep can be compared with the one before
+    // it — see _noteDeaths(). Discovery is a map of the world RIGHT NOW, and a
+    // disappearance is not in it; only the diff is.
+    this._lastRunning = new Map();
+    // realpath → when a stop was asked for. What tells "we stopped it" from "it died".
+    this._stopRequested = new Map();
+    // realpath → the death the last diff found. Deliberately in memory: a dev server
+    // cannot outlive the daemon, so on a restart there is nothing left to announce, and a
+    // persisted death would be re-announced for a server nobody remembers.
+    this.deaths = new Map();
   }
 
   _save(): void {
@@ -711,7 +761,81 @@ class Servers {
     }
     // drop cache entries for pids that are no longer listening
     for (const p of [...this._pidInfoCache.keys()]) if (!byPid.has(p)) this._pidInfoCache.delete(p);
+    this._noteDeaths(out);
     return out;
+  }
+
+  /**
+   * Announce a dev server that DIED — the transition nothing was watching.
+   *
+   * Discovery is a map diff and nothing more: the sweep re-runs, decorate() flips
+   * `running` to false, the green edge on the card disappears, and that is the entire
+   * notice anybody gets. Nobody is looking at the rail at the moment it happens. So a
+   * backend that OOMed, or died on a syntax error in a file the agent had just written,
+   * announced itself as a 502 in the browser twenty minutes later — and the first guess
+   * is always the frontend, or the route, or the branch. The state was visible; the EVENT
+   * was not, and only the event says "it was up, and then it wasn't".
+   *
+   * "Tracked and listening, now neither." Both halves matter. Listening is what makes it
+   * a disappearance rather than a server that was never up. Tracked is what makes it
+   * OURS: discovery finds every listening socket on the machine, including a colleague's
+   * unrelated process in some other checkout, and Studio has no business narrating the
+   * lifecycle of a server it did not start.
+   *
+   * A DELIBERATE STOP IS NOT A DEATH, and this is the distinction the whole thing turns
+   * on — announcing one would train the user to ignore the mark within a day. Two
+   * independent things say so, because either alone has a hole:
+   *   - stop() records the request (see _stopRequested). This covers the normal path,
+   *     including a stop whose process lingered past the sweep that observed it.
+   *   - a tracked record must still exist. stop() deletes it once the stop is proven, so
+   *     a stop that completed cleanly leaves nothing to attribute a death to even after
+   *     the grace window has expired.
+   * A server killed from a terminal keeps its tracked record and was never asked to stop,
+   * so it announces — correctly. That IS a death from Studio's point of view: nothing it
+   * knows about asked for it.
+   */
+  _noteDeaths(now: Map<string, RunningServer>): void {
+    const at = Date.now();
+    for (const [p, was] of this._lastRunning) {
+      if (now.has(p)) continue;
+      // Asked for, recently: this is the stop working, not a server failing.
+      const asked = this._stopRequested.get(p);
+      if (asked !== undefined && at - asked <= STOP_GRACE_MS) {
+        this._stopRequested.delete(p);
+        continue;
+      }
+      // Studio never started anything here, or a completed stop already forgot it.
+      const repo = this._trackedRepoAt(p);
+      if (!this._trackedAt(p)) continue;
+      this.deaths.set(p, { at, pid: was.pid ?? null, ports: was.ports || [], repo });
+    }
+    // Up again — by a restart, by hand, by anything. The mark is about a server that is
+    // NOT there, so its own return is the truest possible dismissal.
+    for (const p of now.keys()) this.deaths.delete(p);
+    for (const [p, d] of this.deaths) if (at - d.at > DEATH_TTL_MS) this.deaths.delete(p);
+    for (const [p, t] of this._stopRequested) if (at - t > STOP_GRACE_MS) this._stopRequested.delete(p);
+    this._lastRunning = now;
+  }
+
+  /**
+   * The death recorded for this worktree, or null — the read side of _noteDeaths, for
+   * decorate().
+   *
+   * Keyed on realpath because the discovery map is, while callers hold the path as git
+   * printed it. The direct hit is tried first so the symlinked-checkout case is the only
+   * one that costs a syscall — the same order _trackedRepoAt uses.
+   */
+  deathAt(worktreePath: string): ServerDeath | null {
+    if (!this.deaths.size) return null;
+    return this.deaths.get(worktreePath) || this.deaths.get(realpath(worktreePath)) || null;
+  }
+
+  /** Is there a tracked record for this path, under either spelling of it? */
+  _trackedAt(worktreePath: string): TrackedServer | null {
+    const direct = this.tracked[worktreePath];
+    if (direct) return direct;
+    for (const [p, t] of Object.entries(this.tracked)) if (realpath(p) === worktreePath) return t;
+    return null;
   }
 
   /**
@@ -734,11 +858,43 @@ class Servers {
    * Logs beside the dev-server logs so a failed install is readable in the same place,
    * and resolves when npm exits so the caller can report a real outcome.
    */
-  async installDeps(worktreePath: string): Promise<{ ok: boolean; error?: string; log?: string }> {
+  async installDeps(
+    worktreePath: string,
+    opts: InstallOptions = {},
+  ): Promise<{ ok: boolean; error?: string; log?: string; unlinked?: string }> {
     if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: false, error: 'no such worktree' };
     if (!fs.existsSync(path.join(worktreePath, 'package.json')))
       return { ok: false, error: 'no package.json here' };
     if (this.installing.has(worktreePath)) return { ok: false, error: 'already installing' };
+
+    /*
+     * THE VERB FOR A SHARED node_modules, and the reason it defaults to on.
+     *
+     * sharedModules() has been able to report the symlink since it was written, with a
+     * tooltip explaining exactly why it is bad, and there was nothing anywhere to DO
+     * about it — the finding named a problem and left the user to fix it in a terminal.
+     * The fix is two steps and neither is guessable: remove the link (not the directory
+     * it points at, which is another worktree's working tree), then install.
+     *
+     * On by default because running `npm install` THROUGH the link is never the intent.
+     * That is the worst thing this button could do: npm follows the symlink and rewrites
+     * the main checkout's dependency tree — the one every other worktree of the repo is
+     * running against — so one click here restarts somebody else's dev server on
+     * different package versions. Every install that reaches this line with a shared
+     * node_modules would rather have unlinked first, so it does.
+     *
+     * Gated on sharedModules() rather than on unlinkSharedModules()'s own refusals: that
+     * method refuses a real node_modules loudly, because a caller asking it to remove a
+     * link that is not there deserves to hear so — but an ORDINARY install into a
+     * worktree with its own tree must not fail on the same fact. Asking the question
+     * that names the condition keeps the loud refusal for the caller who meant it.
+     */
+    let unlinked: string | undefined;
+    if (opts.unlinkShared !== false && this.sharedModules(worktreePath)) {
+      const r = this.unlinkSharedModules(worktreePath);
+      if (r.error) return { ok: false, error: r.error };
+      unlinked = r.unlinked ?? undefined;
+    }
 
     this.installing.add(worktreePath);
     /*
@@ -777,10 +933,10 @@ class Servers {
         child.once('error', () => resolve(-1));
         child.once('exit', (c) => resolve(c ?? -1));
       });
-      if (code !== 0) return { ok: false, error: `npm install exited ${code}`, log };
-      return { ok: true, log };
+      if (code !== 0) return { ok: false, error: `npm install exited ${code}`, log, unlinked };
+      return { ok: true, log, unlinked };
     } catch (e) {
-      return { ok: false, error: (e as Error).message, log };
+      return { ok: false, error: (e as Error).message, log, unlinked };
     } finally {
       this.installing.delete(worktreePath);
     }
@@ -823,6 +979,66 @@ class Servers {
   }
 
   /**
+   * Remove a shared `node_modules` SYMLINK — the link, never what it points at.
+   *
+   * The first half of the verb sharedModules() has been missing: it reports that this
+   * worktree's dependency tree belongs to somebody else and offers nothing to do about
+   * it. installDeps() supplies the second half.
+   *
+   * Every line here is a refusal, because the thing being deleted sits one resolution
+   * step away from another worktree's entire node_modules:
+   *
+   *   - a REAL directory is refused outright. `fs.unlinkSync` would fail on it (EPERM /
+   *     EISDIR) rather than delete it, but the check is explicit rather than relying on
+   *     that, because the obvious "improvement" — reaching for rm -rf when unlink fails —
+   *     is exactly the change that would turn this into a tree deletion. There is a
+   *     refusal here so the next person has to argue with it.
+   *   - a link that resolves back INSIDE the worktree is refused: sharedModules() does
+   *     not flag it, it isolates as well as a real directory, and removing it would
+   *     delete a working layout to solve a problem it does not have.
+   *   - `fs.unlinkSync` on a symlink removes the LINK. Nothing here uses fs.rmSync,
+   *     recursive anything, or a path that has been through realpath() — a resolved path
+   *     is the target, and the target is not ours.
+   *
+   * A dangling link is removed too: it is the same broken bookkeeping, npm refuses to
+   * install through it, and there is nothing on the other end to endanger.
+   */
+  unlinkSharedModules(worktreePath: string): { unlinked: string | null; error?: string } {
+    const link = path.join(worktreePath, 'node_modules');
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(link);
+    } catch {
+      return { unlinked: null }; // nothing there — an install is all that was ever needed
+    }
+    if (!st.isSymbolicLink()) {
+      // A real tree in the worktree is not shared with anybody. Refused rather than
+      // ignored: the caller asked for a link to be removed and there is none, and a
+      // silent "done" on a path that is a whole dependency tree is the wrong answer to
+      // be wrong about.
+      return { unlinked: null, error: 'node_modules is a real directory here, not a shared symlink' };
+    }
+    // Resolve for the REPORT, not to act on. `target` is only ever returned.
+    const target = this.sharedModules(worktreePath);
+    let dangling = false;
+    try {
+      dangling = !fs.existsSync(link);
+    } catch {
+      /* treated as dangling: a link we cannot follow is not one we can keep */
+      dangling = true;
+    }
+    if (!target && !dangling) {
+      return { unlinked: null, error: 'node_modules links inside this worktree — it is not shared' };
+    }
+    try {
+      fs.unlinkSync(link);
+    } catch (e) {
+      return { unlinked: null, error: `could not remove the node_modules symlink: ${(e as Error).message}` };
+    }
+    return { unlinked: target };
+  }
+
+  /**
    * Whether this worktree is missing the dependencies its start command needs.
    *
    * A worktree created by `git worktree add` has the repo's files and none of its
@@ -858,6 +1074,58 @@ class Servers {
     } catch {
       // Unparseable package.json: not a claim we can make either way, and blocking the
       // start on a JSON syntax error would be a confusing place to learn about it.
+      return false;
+    }
+  }
+
+  /**
+   * Whether the installed tree is OLDER than the lockfile that describes it.
+   *
+   * depsMissing() is deliberately binary — a package.json with no node_modules — and that
+   * leaves the failure everybody actually loses an afternoon to. A worktree installed
+   * three weeks ago, then rebased onto a branch that bumped a dependency, has a
+   * node_modules full of the WRONG versions. Every signal on the card is green: deps
+   * resolve, the server starts, depsMissing is correctly false. What you get is a
+   * TypeError from inside a package you did not touch, or a route that 404s because the
+   * router version predates it — a failure that looks exactly like a bug in the branch
+   * you are reading, so that is where the hours go.
+   *
+   * `node_modules/.package-lock.json` is npm's own record of what it last wrote into the
+   * tree; it is rewritten on every install. So the comparison is a straight mtime
+   * ordering: lockfile newer than the tree means the tree predates the current
+   * dependency set. Nothing here parses either file — the question is "when", not "what".
+   *
+   * Three deliberate silences, because a false alarm here would be worse than the signal:
+   *   - no package-lock.json: not an npm-lockfile project, nothing to be stale against;
+   *   - no node_modules/.package-lock.json: either nothing is installed (depsMissing's
+   *     story, not this one) or the tree was written by yarn/pnpm/bun, whose bookkeeping
+   *     this cannot read — claiming staleness from a file another tool never writes would
+   *     mark every such worktree stale forever;
+   *   - equal mtimes: an install that finished in the same millisecond the lock was
+   *     written is a fresh install, not a stale one.
+   *
+   * NOT a reason canStart is false, and that is the whole point: stale deps usually run.
+   * Blocking the start would trade a confusing failure for an impossible one, and the
+   * install is a click away on the same card.
+   *
+   * Cost: two statSync per worktree per decorate, on the topology-build path. Measured at
+   * ~4.5 µs for the pair when both files exist and ~1.7 µs when the lockfile is absent
+   * (`throwIfNoEntry: false` rather than a caught ENOENT, which costs ~6.4 µs per miss —
+   * the exception, not the syscall, is the expensive half). At forty worktrees that is
+   * under 0.2 ms per topology build, against an lsof sweep measured in tens of ms.
+   */
+  depsStale(worktreePath: string): boolean {
+    try {
+      const lock = fs.statSync(path.join(worktreePath, 'package-lock.json'), { throwIfNoEntry: false });
+      if (!lock) return false;
+      const installed = fs.statSync(path.join(worktreePath, 'node_modules', '.package-lock.json'), {
+        throwIfNoEntry: false,
+      });
+      if (!installed) return false;
+      return lock.mtimeMs > installed.mtimeMs;
+    } catch {
+      // A path we cannot stat at all (permissions, a directory that vanished mid-scan).
+      // Same rule the neighbours follow: no claim, rather than a guessed one.
       return false;
     }
   }
@@ -1017,12 +1285,14 @@ class Servers {
     | 'ports'
     | 'canStart'
     | 'depsMissing'
+    | 'depsStale'
     | 'depsInstalling'
     | 'noStartCmd'
     | 'gone'
     | 'offSlot'
     | 'sharedModules'
     | 'wiredTo'
+    | 'died'
   > {
     const hit = running.get(realpath(worktree.path));
     /*
@@ -1048,6 +1318,10 @@ class Servers {
       canStart: configured && !deps && !gone,
       gone,
       depsMissing: deps,
+      // Not folded into `deps` and not a reason canStart is false — see depsStale().
+      // A vanished directory has no files to compare, and `gone` already says the
+      // only thing worth saying about it.
+      depsStale: gone ? false : this.depsStale(worktree.path),
       depsInstalling: this.installing.has(worktree.path),
       /*
        * Why `canStart` is false, for the half that could not say so.
@@ -1067,6 +1341,10 @@ class Servers {
       // pointed somewhere, and the moment it comes up it will talk to whatever that is.
       // Skipped for a vanished directory only because there is no file left to read.
       wiredTo: gone ? null : this.wiredTo(worktree, running),
+      // A server that was up on the last sweep and is not up now, and that nobody asked
+      // to stop — see _noteDeaths(). A fact about the transition, which is the one thing
+      // a map diff of the current world can never carry.
+      died: this.deathAt(worktree.path),
     };
   }
 
@@ -1225,6 +1503,11 @@ class Servers {
         return { ok: false, error: `could not start ${repo}: ${spawnError.message}` };
       }
       this.tracked[worktreePath] = { pid: child.pid, repo, log, startedAt };
+      // Whatever died here is answered for. Clearing on the launch rather than waiting
+      // for the next sweep to see it listening means the mark does not survive the click
+      // that addresses it — including when the relaunch itself fails, where the start
+      // error is the live news and a stale death beside it is just noise.
+      this.deaths.delete(realpath(worktreePath));
       this._save();
       /*
        * Poll for the ports to bind. The verdict is REPORTED now rather than discarded:
@@ -1408,6 +1691,16 @@ class Servers {
      * check in `forget` below is what makes that case safe.
      */
     const lock = await this._lockWaiting(worktreePath, LOCK_WAIT_MS);
+    /*
+     * Recorded BEFORE anything is signalled, and before the lock could have been given
+     * up on: the sweep that notices the server is gone may land at any point from here
+     * on, and a stop the user asked for must never be announced as a death (_noteDeaths).
+     * Also clears any death already on the row — stopping a server that is already gone
+     * is exactly how a user acknowledges one.
+     */
+    const key = realpath(worktreePath);
+    this._stopRequested.set(key, Date.now());
+    this.deaths.delete(key);
     try {
       let killed = false;
       const t = this.tracked[worktreePath];

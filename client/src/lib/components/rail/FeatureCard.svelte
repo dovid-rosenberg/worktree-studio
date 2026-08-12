@@ -204,8 +204,36 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
           {#if m.sharedModules}
             <span
               class="shared"
-              title="node_modules is a symlink to {m.sharedModules} — this worktree shares its dependency tree and every cache inside it (Vite's .vite/deps above all). Replace it with a real install."
+              title="node_modules is a symlink to {m.sharedModules} — this worktree shares its dependency tree and every cache inside it (Vite's .vite/deps above all). Replace it with a real install: “Own deps” in the action bar."
             >⇄deps</span>
+          {/if}
+          <!--
+            Stale dependencies: installed, resolvable, and OLDER than the lockfile that
+            describes them. Beside ⇄deps because they are the same kind of claim — a fact
+            about this checkout's node_modules, not about whether a server is up — and it
+            is the one member-level condition where every other signal on the row is
+            green. The card's "deps missing" pill cannot cover it: that pill means the
+            server will not start, and this one starts and then misbehaves from inside a
+            package nobody edited.
+          -->
+          {#if m.depsStale && !m.depsMissing}
+            <span
+              class="staledeps"
+              title="node_modules is older than package-lock.json — this worktree is running the dependencies from before the last lockfile change. It will start, and then fail in ways that look like a bug in this branch. Install deps to resync."
+            >⌛deps</span>
+          {/if}
+          <!--
+            A dev server that DIED. Discovery is a map diff, so the only notice a crash
+            used to give was the green edge quietly going away while nobody was looking at
+            the rail — and the user found out from a 502 twenty minutes later, then blamed
+            the frontend. A stop the user asked for is never marked (the server knows the
+            difference), so this mark always means something went wrong on its own.
+          -->
+          {#if m.died}
+            <span
+              class="died"
+              title="The dev server here stopped on its own at {new Date(m.died.at).toLocaleTimeString()} — it was listening on {(m.died.ports || []).map((p: number) => ':' + p).join(' ') || 'no port we saw'}{m.died.pid ? ` as pid ${m.died.pid}` : ''}, and nothing asked it to stop. Calls to those ports fail until it is started again; its log has the reason."
+            >died</span>
           {/if}
         </span>
       {/each}
@@ -283,6 +311,23 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
   /* Not a port and not a state — a property of the checkout, so it sits apart from
      both and holds its width rather than competing with the branch for space. */
   .mchip .shared { color:var(--warn, var(--working)); flex:none; cursor:help; }
+  /* Same hue and weight as ⇄deps: both are properties of this checkout's node_modules
+     that the user fixes with an install, and neither stops anything from running.
+     `.staledeps` rather than `.stale` because `.pill.stale` on this same card already
+     means "the agent has gone quiet" — one class name for two conditions is how a
+     stylesheet comes to say something it did not mean. */
+  .mchip .staledeps { color:var(--warn, var(--working)); flex:none; cursor:help; }
+  /*
+   * A server that died is the loudest thing a member row can say, and it earns it.
+   *
+   * Every other mark here is a condition you can take your time over. This one is the
+   * only one that means something that WAS working has stopped, with nothing on screen
+   * having changed to say so — the failure the mark exists for is precisely that it went
+   * unnoticed. So it is filled, in the same red as a foreign backend, rather than
+   * competing quietly with the amber conditions beside it.
+   */
+  .mchip .died { color:var(--del); background:var(--del-bg); font-weight:600;
+                 padding:0 5px; border-radius:999px; flex:none; cursor:help; }
 
   /*
    * Where this frontend's API calls actually go.

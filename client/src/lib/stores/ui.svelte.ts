@@ -715,12 +715,14 @@ class UI {
    * THE WRITER of `dockView` — every change of dock view goes through here.
    *
    * Call sites assigned the field directly (⌘D, the palette's Review changes, each of the
-   * three panel tabs, and #pick below), which skipped the line under it: open Insights,
-   * ⌘D into Changes, reload, and you were back in Insights, because nothing had ever
-   * overwritten what opening Insights stored. The field stays public only for the last
-   * two direct assignments outside this file (ops.svelte.ts, focusing the terminal after
-   * a tab call) — once those come through here it can be private behind a getter, which
-   * is what makes the rule enforceable rather than remembered.
+   * three panel tabs, #pick below, and the two terminal-focusing calls in ops.svelte.ts),
+   * which skipped the line under it: open Insights, ⌘D into Changes, reload, and you were
+   * back in Insights, because nothing had ever overwritten what opening Insights stored.
+   *
+   * Every production writer now comes through here. The field is still public because
+   * four component test files set it directly as a fixture; making it private behind a
+   * getter is a test-side change away, and that is what would turn this rule from
+   * remembered into enforced.
    */
   setDockView(v: DockView): void {
     this.dockView = v;

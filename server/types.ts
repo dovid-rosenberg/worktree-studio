@@ -477,6 +477,17 @@ export interface Worktree {
   missing?: false;
   /** package.json present, node_modules absent — the start command cannot succeed. */
   depsMissing?: boolean;
+  /**
+   * package-lock.json is NEWER than the installed tree (npm's own
+   * `node_modules/.package-lock.json`) — the worktree is running dependencies from
+   * before the last lockfile change.
+   *
+   * A warning, never a blocker: `canStart` stays true because it does start. That is the
+   * point of reporting it. A worktree installed weeks ago and since rebased resolves its
+   * imports, boots its dev server and then fails from inside a package nobody edited —
+   * which reads as a bug in the branch, and is where the afternoon goes.
+   */
+  depsStale?: boolean;
   /** An install is running for this worktree right now. */
   depsInstalling?: boolean;
   /** No `config.start` entry for this repo — the other reason `canStart` is false. */
@@ -516,6 +527,34 @@ export interface Worktree {
    * deliberately not the same value as "looked and found nothing".
    */
   wiredTo?: WiredTo | null;
+  /**
+   * This worktree's dev server was up on the previous discovery sweep and is not up now,
+   * and nobody asked it to stop — see Servers._noteDeaths(). Null in the ordinary case.
+   *
+   * The only field on this object that describes a TRANSITION rather than the present.
+   * Everything else here is a fact about the world as the sweep found it, and a server
+   * dying is invisible in such a fact: `running` simply reads false, exactly as it does
+   * for one that was never started.
+   */
+  died?: ServerDeath | null;
+}
+
+/**
+ * A dev server that stopped listening without being asked to.
+ *
+ * Everything in it describes the server as it LAST was — the pid that is gone and the
+ * ports it is no longer on — because that is what makes the mark actionable: it names
+ * the log to read and the ports whose 502s are now explained.
+ */
+export interface ServerDeath {
+  /** Epoch ms of the sweep that first found it gone (within one sweep interval of death). */
+  at: number;
+  /** The pid that had been listening, when discovery knew one. */
+  pid: number | null;
+  /** The ports it held on the last sweep that saw it. */
+  ports: number[];
+  /** The repo Studio filed the launch under, or null for one it merely discovered. */
+  repo: string | null;
 }
 
 /**
