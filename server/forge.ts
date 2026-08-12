@@ -9,7 +9,7 @@
 //   create → { ok:true, url } or { ok:false, stderr }
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
-import { CHILD_ENV, run, has } from './util.ts';
+import { CHILD_ENV, run, has, requireFeature } from './util.ts';
 import { createPolledCache } from './polled-cache.ts';
 import type { CiChecks, CiRepo, ReviewItem, SessionRepo } from './types.ts';
 import type { Router } from 'express';
@@ -623,8 +623,9 @@ function createForge({
       // String(x ?? ''): the body can carry an array, an object, a number. Every other
       // resolveGroup call site coerces — orchestrator.ts documents it as the resolver's
       // contract — and this was the one that did not.
-      const { group: g } = await resolve(String(req.body?.group ?? ''));
-      if (!g) return res.status(404).json({ error: 'no such feature' });
+      const found = await requireFeature(res, resolve, req.body?.group);
+      if (!found.ok) return;
+      const g = found.value.group;
       const results: PrResult[] = [];
       for (const m of g.members) results.push(await openPullRequest(m, forgeEnv));
       // A branch that had no PR a second ago now has one, and its cached "hasPR:

@@ -372,7 +372,13 @@ function andList(xs: readonly string[]): string {
 
 /** What a resolveGroup implementation answers. `flat` is optional: only /group/start reads it. */
 interface GroupResolution<G, M> {
-  group: G | null;
+  /*
+   * Optional as well as nullable, because the resolvers genuinely differ: two of them
+   * always return the key and forge.ts's declares it optional. Accepting both here is
+   * what lets one guard serve every caller — narrowing it would push a cast onto the
+   * one call site that does not fit, which is how the copies started.
+   */
+  group?: G | null;
   flat?: M[];
 }
 

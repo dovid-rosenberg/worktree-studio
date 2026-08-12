@@ -696,7 +696,7 @@ class SessionManager extends EventEmitter {
   // Used when starting one session for a feature whose worktrees already exist.
   async attachRepo(id: string, { repo, repoPath, worktreePath, branch, wtname }: SessionAttachArgs) {
     const s = this.get(id);
-    if (!s) return { ok: false };
+    if (!s) return { ok: false, error: 'no such session' };
     if ((s.repos || []).some((r) => r.worktreePath === worktreePath)) return { ok: true, already: true };
     s.repos.push({
       repo,
@@ -1250,7 +1250,7 @@ class SessionManager extends EventEmitter {
 
   async selectTab(id: string, ref: string | number) {
     const s = this.get(id);
-    if (!s) return { ok: false };
+    if (!s) return { ok: false, error: 'no such session' };
     const tab = this.#tabAt(s, ref);
     if (!tab) return { ok: false, error: 'no such tab' };
     const ok = await this.mux.selectTab(s.muxName, tab.id);
@@ -1264,7 +1264,10 @@ class SessionManager extends EventEmitter {
       for (const other of s.tabs) other.active = other.id === tab.id;
       this._touch(id);
     }
-    return { ok };
+    // The multiplexer's refusal, said out loud. This forwarded a bare boolean, so a tab
+    // that would not select produced `{ok:false}` with nothing to act on — the same
+    // silence the five `no such session` returns above used to have, one layer down.
+    return ok ? { ok } : { ok: false, error: 'the multiplexer would not select that tab' };
   }
 
   async renameTab(id: string, ref: string | number, title: string) {
@@ -1286,7 +1289,7 @@ class SessionManager extends EventEmitter {
 
   async closeTab(id: string, ref: string | number) {
     const s = this.get(id);
-    if (!s) return { ok: false };
+    if (!s) return { ok: false, error: 'no such session' };
     if ((s.tabs || []).length <= 1) return { ok: false, error: 'can’t close the only tab' };
     const tab = this.#tabAt(s, ref);
     if (!tab) return { ok: false, error: 'no such tab' };
@@ -1306,7 +1309,7 @@ class SessionManager extends EventEmitter {
 
   async close(id: string, { kill = true }: { kill?: boolean } = {}) {
     const s = this.get(id);
-    if (!s) return { ok: false };
+    if (!s) return { ok: false, error: 'no such session' };
     if (kill) await this.mux.kill(s.muxName);
     // clean up the per-session hook settings file (best-effort)
     if (s.settingsFile) {
@@ -1421,7 +1424,7 @@ class SessionManager extends EventEmitter {
   // Bring a deactivated session back, resuming its conversation.
   async activate(id: string) {
     const s = this.get(id);
-    if (!s) return { ok: false };
+    if (!s) return { ok: false, error: 'no such session' };
     // A promoted session whose worktree vanished can't continue — flag it instead of
     // faking a resume into a dead directory.
     if (s.worktreePath && !fs.existsSync(s.worktreePath)) {

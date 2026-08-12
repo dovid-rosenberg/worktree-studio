@@ -177,14 +177,15 @@ function buildApp(deps: AppDeps): express.Express {
    * pressing Close Tab on a window the multiplexer would not kill produced a response
    * with nothing in it to report, log or retry, indistinguishable from a client bug.
    *
-   * Most of those bare answers are "no such session", and requireSession() below now
-   * catches that case before the manager is called at all. What is left is the genuinely
-   * silent half — the multiplexer refusing — which the route cannot diagnose but CAN
-   * name, because it knows what it just asked for. `whenSilent` is that sentence.
+   * Those bare answers have since been given reasons at source, and requireSession()
+   * below catches "no such session" before the manager is called at all — so on today's
+   * code this substitution should never fire. It stays as a backstop, and deliberately:
+   * the invariant it enforces ("a failure leaving this process says why") is maintained
+   * in another file by convention, and the failure mode when that convention slips is
+   * silence, which is the hardest thing to notice from the outside. `whenSilent` is the
+   * sentence the route can always supply, because it knows what it just asked for.
    *
-   * Still a 200: the operation was well-formed and really was attempted. Fixing the
-   * status too belongs with fixing sessions.ts, which is where the reason should have
-   * come from in the first place.
+   * Still a 200: the operation was well-formed and really was attempted.
    */
   const forward = (res: Response, out: unknown, whenSilent: string) => {
     const r = out as { ok?: unknown; error?: unknown } | null;

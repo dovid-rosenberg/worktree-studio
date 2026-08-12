@@ -567,7 +567,13 @@ flicker is the thing this verb exists to avoid.
 End a session for good: stop the dev servers of every worktree it owns, release
 their concurrency slots, kill the multiplexer session (unless `kill=false`), and
 delete the record and its generated settings file. Worktrees are **kept** — use
-`/group/delete` to remove those. `{ ok: true }`, or `{ ok: false }` if unknown.
+`/group/delete` to remove those. `{ ok: true }`, or `{ ok: false, error }` if unknown.
+
+This one answers `200` for an unknown session rather than the `404` its neighbours give.
+That is deliberate and worth stating rather than quietly fixing: deleting something that
+is already gone is the outcome the caller wanted, and a menubar or CLI retrying a delete
+should not have to treat "it was not there" as a failure. The `error` is present so the
+reason is never silent.
 
 ### Tabs
 
@@ -613,7 +619,8 @@ mainline commits. `uncommitted` summarises the working tree as
 `400` for a repo the session doesn't own.
 
 `POST /sessions/:id/commit` takes `{ repo, message, paths?, amend? }`. Without
-`paths` it stages everything (`git add -A`). `message` is required (`400`).
+`paths` it stages everything (`git add -A`). `message` is required (`400`), and an
+unknown session is a `404` like every other session route.
 
 ### Structured diff and hunk staging
 
