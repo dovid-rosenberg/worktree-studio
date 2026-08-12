@@ -9,7 +9,7 @@
 // server/routes-review.ts for why registering onto it is what makes the two prefixes
 // answer identically.
 import type { Router } from 'express';
-import { openEditor, resolveEditor, shq } from './util.ts';
+import { editorCommands, openEditor, resolveEditor } from './util.ts';
 import type { EditorLike } from './util.ts';
 
 /** Typed by the two config keys this route reads, not by the whole Config. */
@@ -36,7 +36,6 @@ function register(api: Router, { cfg }: OpenDeps): void {
     // `editors[x] || editors[default]` silently opened the default for a typo.
     const pick = resolveEditor(cfg.editors, editor, cfg.defaultEditor || '');
     if (!pick.ok) return res.status(400).json({ ok: false, error: pick.error });
-    const ed = pick.editor;
     // Dedupe: two repos of one feature are distinct worktrees, but a caller that passed
     // the same path twice must not open two windows on it.
     const list = [
@@ -45,14 +44,10 @@ function register(api: Router, { cfg }: OpenDeps): void {
       ),
     ];
     if (!list.length) return res.status(400).json({ error: 'path or paths is required' });
-    // split/join, not replace(): `$&`/`` $` ``/`$'`/`$$` in a REPLACEMENT string expand
-    // after shq() quoted the path, so such a path would open the wrong file.
-    const cmds =
-      list.length > 1 && ed.openGroup
-        ? [ed.openGroup.split('{paths}').join(list.map(shq).join(' '))]
-        : list.map((one) => ed.open.split('{path}').join(shq(one)));
+    // The templating — and its quoting hazard — is shared with /group/open, which is
+    // where the second copy of it lived. See editorCommands().
     // The exit code, not a hardcoded ok — see openEditor().
-    const opened = await openEditor(cmds);
+    const opened = await openEditor(editorCommands(pick.editor, list));
     if (!opened.ok) return res.status(500).json({ ok: false, error: `editor failed: ${opened.error}` });
     res.json({ ok: true, opened: list.length });
   });

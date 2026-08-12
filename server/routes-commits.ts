@@ -16,7 +16,7 @@
 import fs from 'fs';
 import type { Router } from 'express';
 import * as review from './review.ts';
-import { qs } from './util.ts';
+import { defaultBranchOf, qs, requireFeature, requireSession } from './util.ts';
 
 /** A session's repo, as far as these routes are concerned. */
 interface CommitRepo {
@@ -59,11 +59,13 @@ interface CommitsDeps {
 function register(api: Router, deps: CommitsDeps): void {
   const { manager, repos, resolveGroup, onCommit } = deps;
 
-  // A repo's default branch, or 'main' when the scan cache doesn't know it — the same
-  // fallback server/routes-review.ts uses, and the one git.ts already guarantees for
-  // a repo it HAS scanned. Only a repo absent from the cache reaches the literal.
-  const defaultBranchOf = (name: string): string =>
-    repos().find((r) => r.name === name)?.defaultBranch || 'main';
+  /** Bound here rather than passed as `manager.get`, which would lose its receiver. */
+  const getSession = (id: string) => manager.get(id);
+
+  // A repo's default branch, or 'main' when the scan cache doesn't know it. The rule
+  // itself lives in util.ts now — routes-review.ts had a second copy of this closure,
+  // and two spellings of one fallback is how the two panes come to disagree on a base.
+  const defaultBranch = (name: string): string => defaultBranchOf(repos(), name);
 
   /**
    * One repo's review rollup: its commits, its base, and what is uncommitted.
@@ -88,7 +90,7 @@ function register(api: Router, deps: CommitsDeps): void {
         uncommitted: { fileCount: 0, added: 0, deleted: 0 },
       };
     }
-    const def = defaultBranchOf(repo);
+    const def = defaultBranch(repo);
     const { base, commits } = await review.commits(worktreePath, def);
     const wc = await review.working(worktreePath);
     return {
@@ -115,10 +117,10 @@ function register(api: Router, deps: CommitsDeps): void {
    * way.
    */
   api.get('/group/:name/commits', async (req, res) => {
-    const { group: g } = await resolveGroup(String(req.params.name || ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, req.params.name);
+    if (!found.ok) return;
     const out = [];
-    for (const m of g.members) {
+    for (const m of found.value.group.members) {
       if (!m.path) continue;
       out.push(await reviewRollup(m.repo, m.path, m.branch));
     }
@@ -126,10 +128,10 @@ function register(api: Router, deps: CommitsDeps): void {
   });
 
   api.get('/sessions/:id/commits', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
     const out = [];
-    for (const entry of s.repos || []) {
+    for (const entry of s.value.repos || []) {
       if (!entry.worktreePath) continue;
       out.push(await reviewRollup(entry.repo, entry.worktreePath, entry.branch));
     }
@@ -137,23 +139,25 @@ function register(api: Router, deps: CommitsDeps): void {
   });
 
   api.get('/sessions/:id/commit-detail', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    const entry = (s.repos || []).find((r) => r.repo === qs(req.query.repo));
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
+    const entry = (s.value.repos || []).find((r) => r.repo === qs(req.query.repo));
     if (!entry?.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     const sha = qs(req.query.sha) || 'uncommitted';
     // Same boundary check as routes-review.ts: `sha` reaches a git argv, so it has
     // to be an object name and not an option (see server/review.ts).
     if (!review.isValidSha(sha))
       return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
-    res.json(await review.commitDetail(entry.worktreePath, defaultBranchOf(entry.repo), sha));
+    res.json(await review.commitDetail(entry.worktreePath, defaultBranch(entry.repo), sha));
   });
 
   api.post('/sessions/:id/commit', async (req, res) => {
-    const s = manager.get(req.params.id);
+    // 404, like its three neighbours and like the table in docs/api.md: this one
+    // answered 400 for an unknown session, which is the status for a bad FIELD.
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
     const { repo, message, paths, amend } = req.body || {};
-    if (!s) return res.status(400).json({ error: 'no such session' });
-    const entry = (s.repos || []).find((r) => r.repo === repo);
+    const entry = (s.value.repos || []).find((r) => r.repo === repo);
     if (!entry?.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
     if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
     const out = await review.commit(entry.worktreePath, message, { amend, paths });

@@ -35,7 +35,7 @@ import { handoff } from './run-handoff.ts';
 import * as sources from './sources/index.ts';
 import * as startReport from './start-report.ts';
 import * as transcriptRoutes from './transcript-routes.ts';
-import { qs, realpath, slug } from './util.ts';
+import { qs, realpath, requireBody, requireRepo, requireSession, slug } from './util.ts';
 import * as webui from './webui.ts';
 import * as worktree from './worktree.ts';
 import { attachableWorktrees } from './features.ts';
@@ -166,6 +166,34 @@ function buildApp(deps: AppDeps): express.Express {
     return running();
   };
 
+  /** Bound here rather than handed over as `manager.get`, which would lose its receiver. */
+  const getSession = (id: string) => manager.get(id);
+
+  /*
+   * Forward a manager answer, refusing to pass on a failure with no reason.
+   *
+   * Six SessionManager methods answer a bare `{ok:false}` where their siblings answer
+   * `{ok:false, error:'…'}`, and these routes forwarded both verbatim with a 200 — so
+   * pressing Close Tab on a window the multiplexer would not kill produced a response
+   * with nothing in it to report, log or retry, indistinguishable from a client bug.
+   *
+   * Most of those bare answers are "no such session", and requireSession() below now
+   * catches that case before the manager is called at all. What is left is the genuinely
+   * silent half — the multiplexer refusing — which the route cannot diagnose but CAN
+   * name, because it knows what it just asked for. `whenSilent` is that sentence.
+   *
+   * Still a 200: the operation was well-formed and really was attempted. Fixing the
+   * status too belongs with fixing sessions.ts, which is where the reason should have
+   * come from in the first place.
+   */
+  const forward = (res: Response, out: unknown, whenSilent: string) => {
+    const r = out as { ok?: unknown; error?: unknown } | null;
+    if (r && typeof r === 'object' && r.ok === false && !r.error) {
+      return res.json({ ...r, error: whenSilent });
+    }
+    return res.json(out);
+  };
+
   const app = express();
 
   // Everything below sits behind the Host/Origin allowlist — see security.ts for
@@ -248,8 +276,9 @@ function buildApp(deps: AppDeps): express.Express {
     if (!repoName || !branch || !number) {
       return res.status(400).json({ error: 'repo, branch and number are required' });
     }
-    const repoObj = repos().find((r) => r.name === String(repoName));
-    if (!repoObj) return res.status(400).json({ error: `unknown repo '${repoName}'` });
+    const found = requireRepo(res, repos(), repoName);
+    if (!found.ok) return;
+    const repoObj = found.value;
 
     const wtname = `review-${number}`;
     const made = await worktree.create(repoObj.path, String(branch), wtname, {
@@ -290,8 +319,9 @@ function buildApp(deps: AppDeps): express.Express {
   api.post('/sessions', async (req, res) => {
     try {
       const { source, sourceId, text, name, repo, additionalRepos } = req.body || {};
-      const repoObj = repos().find((r) => r.name === repo);
-      if (!repoObj) return res.status(400).json({ error: `unknown repo '${repo}'` });
+      const found = requireRepo(res, repos(), repo);
+      if (!found.ok) return;
+      const repoObj = found.value;
       const seed = await sources.seed(cfg, source || 'freetext', {
         repoPath: repoObj.path,
         id: sourceId,
@@ -314,19 +344,39 @@ function buildApp(deps: AppDeps): express.Express {
     }
   });
 
+  /*
+   * The session-scoped verbs below all start the same way, and they did not used to.
+   *
+   * Each one handed :id straight to the manager and forwarded whatever came back with a
+   * 200 — including the bare `{ok:false}` five of those methods answer for a session that
+   * is not there. docs/api.md's own table says an unknown session is a 404, and every
+   * route that guarded got that right; these are the ones that did not. requireSession()
+   * is that guard, once.
+   */
   api.post('/sessions/:id/rename', async (req, res) => {
-    res.json(await manager.rename(req.params.id, req.body?.title || ''));
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
+    forward(
+      res,
+      await manager.rename(req.params.id, req.body?.title || ''),
+      'that session could not be renamed',
+    );
   });
   // Kill the mux session and relaunch it, keeping the conversation — see restartTerminal.
   api.post('/sessions/:id/restart-terminal', async (req, res) => {
-    const out = await manager.restartTerminal(req.params.id);
-    res.json(out);
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
+    forward(res, await manager.restartTerminal(req.params.id), 'the terminal could not be restarted');
   });
   api.post('/sessions/:id/deactivate', async (req, res) => {
-    res.json(await manager.deactivate(req.params.id));
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
+    forward(res, await manager.deactivate(req.params.id), 'that session could not be deactivated');
   });
   api.post('/sessions/:id/activate', async (req, res) => {
-    res.json(await manager.activate(req.params.id));
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
+    forward(res, await manager.activate(req.params.id), 'that session could not be activated');
   });
 
   /** Feature worktrees this session has no record of — see features.ts for why. */
@@ -341,8 +391,9 @@ function buildApp(deps: AppDeps): express.Express {
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
   api.post('/sessions/:id/add-repo', async (req, res) => {
-    const repoObj = repos().find((r) => r.name === req.body?.repo);
-    if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body?.repo}'` });
+    const found = requireRepo(res, repos(), req.body?.repo);
+    if (!found.ok) return;
+    const repoObj = found.value;
     const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
     if (!out.ok) return res.status(400).json(out);
     await rescan(); // pick up the sibling worktree so the feature updates immediately
@@ -390,30 +441,54 @@ function buildApp(deps: AppDeps): express.Express {
   });
 
   api.post('/sessions/:id/tabs', async (req, res) => {
-    res.json(await manager.addTab(req.params.id, req.body || {}));
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
+    forward(res, await manager.addTab(req.params.id, req.body || {}), 'the multiplexer would not open a tab');
   });
 
   // `tab` is the multiplexer window id; `index` is the legacy positional form, kept so
   // an older client keeps working. The manager resolves either.
   api.post('/sessions/:id/select-tab', async (req, res) => {
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
     const b = req.body || {};
-    res.json(await manager.selectTab(req.params.id, b.tab ?? b.index ?? 0));
+    // selectTab answers a bare `{ ok }` straight off the multiplexer, so this is the one
+    // route where the reason is genuinely missing rather than merely a missing session:
+    // tmux refusing to select a window it no longer has looked exactly like success.
+    forward(
+      res,
+      await manager.selectTab(req.params.id, b.tab ?? b.index ?? 0),
+      'the multiplexer would not select that tab',
+    );
   });
 
   api.post('/sessions/:id/rename-tab', async (req, res) => {
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
     const b = req.body || {};
-    res.json(await manager.renameTab(req.params.id, b.tab ?? b.index ?? 0, b.title));
+    forward(
+      res,
+      await manager.renameTab(req.params.id, b.tab ?? b.index ?? 0, b.title),
+      'the multiplexer would not rename that tab',
+    );
   });
 
   api.post('/sessions/:id/close-tab', async (req, res) => {
+    const s = requireSession(res, getSession, req.params.id);
+    if (!s.ok) return;
     const b = req.body || {};
-    res.json(await manager.closeTab(req.params.id, b.tab ?? b.index ?? 0));
+    forward(
+      res,
+      await manager.closeTab(req.params.id, b.tab ?? b.index ?? 0),
+      'the multiplexer would not close that tab',
+    );
   });
 
   // Start / stop ALL dev servers of a session's shared workspace (every repo it owns).
   api.post('/sessions/:id/servers/start', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
+    const found = requireSession(res, getSession, req.params.id);
+    if (!found.ok) return;
+    const s = found.value;
     /*
      * The same judgement /group/start makes, from the same module.
      *
@@ -442,9 +517,9 @@ function buildApp(deps: AppDeps): express.Express {
     res.json({ ...startReport.report(out.results, skipped), results: out.results });
   });
   api.post('/sessions/:id/servers/stop', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    const owned = (s.repos || []).filter(promoted);
+    const found = requireSession(res, getSession, req.params.id);
+    if (!found.ok) return;
+    const owned = (found.value.repos || []).filter(promoted);
     /*
      * stopAll is the mirror of startAll, and this is the sequence it exists for: stop
      * each target, refresh, then release only the slots nothing still holds. Refreshing
@@ -473,7 +548,10 @@ function buildApp(deps: AppDeps): express.Express {
       for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), running());
       broadcastTopology();
     }
-    res.json(out);
+    // No requireSession() here, unlike its neighbours: docs/api.md states outright that
+    // this route answers `{ ok: false }` for an unknown session, so a 404 would break a
+    // stated contract. What it must not do is answer that with nothing in it to read.
+    forward(res, out, 'no such session');
   });
 
   // ---- review: the branch's commits, one commit's diff, and committing ----
@@ -483,8 +561,9 @@ function buildApp(deps: AppDeps): express.Express {
   api.post('/worktrees', async (req, res) => {
     const { repo, branch, name } = req.body || {};
     if (!branch && !name) return res.status(400).json({ error: 'branch or name is required' });
-    const repoObj = repos().find((r) => r.name === repo);
-    if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
+    const found = requireRepo(res, repos(), repo);
+    if (!found.ok) return;
+    const repoObj = found.value;
     // `name` alone is a documented request (the guard above accepts it), but an absent
     // branch reached `git worktree add -b undefined` and created a branch literally
     // named "undefined". Name-only means "branch after the name".
@@ -497,16 +576,20 @@ function buildApp(deps: AppDeps): express.Express {
   });
 
   api.delete('/worktrees', async (req, res) => {
-    const { repo, worktreePath, branch, deleteBranch, force } = req.body || {};
-    const repoObj = repos().find((r) => r.name === repo);
-    if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
+    const { repo, branch, deleteBranch, force } = req.body || {};
+    const found = requireRepo(res, repos(), repo);
+    if (!found.ok) return;
     // Its three siblings all guard this; this one passed the value straight into a git
     // argv, so an omitted field became the literal string "undefined" in an error that
-    // was then reported with a 200.
-    if (!worktreePath || typeof worktreePath !== 'string') {
-      return res.status(400).json({ ok: false, error: 'worktreePath is required' });
-    }
-    const out = await worktree.remove(repoObj.path, worktreePath, { branch, deleteBranch, force: !!force });
+    // was then reported with a 200. requireBody() takes only a real string, for exactly
+    // that reason — an object here would coerce to "[object Object]" and reach the argv.
+    const asked = requireBody(res, req.body, ['worktreePath']);
+    if (!asked.ok) return;
+    const out = await worktree.remove(found.value.path, asked.value.worktreePath, {
+      branch,
+      deleteBranch,
+      force: !!force,
+    });
     await rescan();
     res.json(out);
   });
@@ -534,12 +617,13 @@ function buildApp(deps: AppDeps): express.Express {
      * `await r.json()` got a parse error instead of the message. It also skipped the
      * canStart gate that /sessions/:id/servers/start applies, so it would happily launch
      * into a worktree with no dependencies or none at all.
+     *
+     * The check itself is requireBody() — this route and its two neighbours below were
+     * three identical copies of it, which is three places to forget a field.
      */
-    const repo = String(req.body?.repo || '').trim();
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!repo || !worktreePath) {
-      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
-    }
+    const asked = requireBody(res, req.body, ['repo', 'worktreePath']);
+    if (!asked.ok) return;
+    const { repo, worktreePath } = asked.value;
     const member = {
       repo,
       path: worktreePath,
@@ -555,11 +639,9 @@ function buildApp(deps: AppDeps): express.Express {
     res.json(startReport.report(out.results));
   });
   api.post('/servers/stop', async (req, res) => {
-    const repo = String(req.body?.repo || '').trim();
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!repo || !worktreePath) {
-      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
-    }
+    const asked = requireBody(res, req.body, ['repo', 'worktreePath']);
+    if (!asked.ok) return;
+    const { repo, worktreePath } = asked.value;
     const out = await servers.stop(repo, worktreePath, seenPorts(worktreePath));
     await refreshRunning();
     // This route already had the right rule; it is now the shared one (releaseSlotIfIdle).
@@ -568,11 +650,9 @@ function buildApp(deps: AppDeps): express.Express {
     res.json(out);
   });
   api.post('/servers/restart', async (req, res) => {
-    const repo = String(req.body?.repo || '').trim();
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!repo || !worktreePath) {
-      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
-    }
+    const asked = requireBody(res, req.body, ['repo', 'worktreePath']);
+    if (!asked.ok) return;
+    const { repo, worktreePath } = asked.value;
     const feature = servers.featureFor(worktreePath);
     const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
@@ -744,9 +824,9 @@ function buildApp(deps: AppDeps): express.Express {
   api.post('/worktrees/adopt', async (req, res) => {
     const { repo, worktreePath, branch, wtname } = req.body || {};
     if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
-    const repoObj = repos().find((r) => r.name === repo);
-    if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
-    let s = await manager.adopt({ worktreePath, repoName: repo, repoPath: repoObj.path, branch, wtname });
+    const found = requireRepo(res, repos(), repo);
+    if (!found.ok) return;
+    let s = await manager.adopt({ worktreePath, repoName: repo, repoPath: found.value.path, branch, wtname });
     if (!s) s = manager.sessionForWorktree(worktreePath); // an adopt was already in flight
     broadcastTopology();
     res.json(s || { error: 'session is already being opened' });

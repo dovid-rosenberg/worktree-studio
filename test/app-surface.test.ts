@@ -38,6 +38,7 @@ import { SessionManager } from '../server/sessions.ts';
 import { createState } from '../server/state.ts';
 import * as webui from '../server/webui.ts';
 import { muxStub, present, session as makeSession } from './helpers.ts';
+import type { JsonBody } from './helpers.ts';
 import type { Config } from '../server/types.ts';
 
 const TOKEN = 'a'.repeat(64);
@@ -57,7 +58,7 @@ const SENTINEL = 'zz-nothing-here';
  * Fakes here would only be a second description of the daemon's wiring, which is the
  * thing this file exists to stop.
  */
-function buildTestApp() {
+function buildTestApp(mux = muxStub()) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-surface-'));
   // A client build the resolver will accept. The placeholder proves the document goes
   // through the injector rather than out of the static mount; `bundle.js` is a stand-in
@@ -82,7 +83,7 @@ function buildTestApp() {
   };
 
   const identity = createIdentity(cfg);
-  const manager = new SessionManager(cfg, muxStub(), identity);
+  const manager = new SessionManager(cfg, mux, identity);
   const servers = new Servers(cfg, identity);
   const runner = new Runner(stateDir);
   const state = createState({
@@ -338,6 +339,103 @@ test('every mounted API path refuses an unauthenticated request — 401, and not
           assert.deepEqual(await r.json(), { error: 'missing or invalid token' });
         }
       }
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+/*
+ * ---- a refusal always says why ----------------------------------------------
+ *
+ * Two failure modes that looked identical from a client and were not: a route that
+ * answered 200 `{ok:false}` with no `error` in it, and three routes that each carried
+ * their own copy of one body check. Both are now one helper apiece (server/util.ts), and
+ * both are asserted against the REAL app rather than a fake — the point is the wiring.
+ */
+
+test('the three /servers/* routes share one body check, message and all', async () => {
+  const { app, cleanup } = buildTestApp();
+  try {
+    await serving(app, async (get) => {
+      for (const route of ['/servers/start', '/servers/stop', '/servers/restart']) {
+        for (const body of ['{}', '{"repo":"api"}', '{"worktreePath":"/w"}']) {
+          const r = await get(`/api/v1${route}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-wts-token': TOKEN },
+            body,
+          });
+          assert.equal(r.status, 400, `${route} accepted ${body}`);
+          assert.deepEqual(await r.json(), { ok: false, error: 'repo and worktreePath are required' });
+        }
+      }
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('a session-scoped verb refuses an unknown session with a reason, not a bare ok:false', async () => {
+  /*
+   * Five SessionManager methods answer `{ok:false}` with nothing in it when the session
+   * is gone, and these routes forwarded that verbatim with a 200 — a failure a client
+   * cannot report, log or retry, and indistinguishable from a bug of its own. Every one
+   * of them now goes through requireSession() first, which is also the status
+   * docs/api.md's own table states for a named thing that is not there.
+   */
+  const { app, cleanup } = buildTestApp();
+  try {
+    await serving(app, async (get) => {
+      for (const route of [
+        '/sessions/nope/rename',
+        '/sessions/nope/activate',
+        '/sessions/nope/deactivate',
+        '/sessions/nope/restart-terminal',
+        '/sessions/nope/tabs',
+        '/sessions/nope/select-tab',
+        '/sessions/nope/rename-tab',
+        '/sessions/nope/close-tab',
+      ]) {
+        const r = await get(`/api/v1${route}`, authed('POST'));
+        assert.equal(r.status, 404, `${route} answered ${r.status}`);
+        assert.deepEqual(await r.json(), { error: 'no such session' }, route);
+      }
+    });
+  } finally {
+    cleanup();
+  }
+});
+
+test('a multiplexer that silently refuses is reported, not forwarded as a reasonless failure', async () => {
+  /*
+   * The half requireSession cannot fix: `selectTab` hands back the driver's boolean as a
+   * bare `{ ok }`, so tmux declining to select a window it no longer has arrived as
+   * `{ok:false}` with nothing to read — which is exactly what "the tab strip highlights
+   * the tab you left" looks like from the outside. sessions.ts is where the reason
+   * belongs; until it says so, the route names what it just asked for.
+   */
+  const { app, manager, cleanup } = buildTestApp(
+    muxStub({
+      async selectTab() {
+        return false;
+      },
+    }),
+  );
+  try {
+    manager.sessions.set('s1', makeSession({ id: 's1', tabs: [{ id: '@1', title: 'agent', active: true }] }));
+    await serving(app, async (get) => {
+      const r = await get('/api/v1/sessions/s1/select-tab', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-wts-token': TOKEN },
+        body: '{"tab":"@1"}',
+      });
+      const out: JsonBody = await r.json();
+      assert.equal(out.ok, false, 'the driver refused');
+      assert.equal(
+        out.error,
+        'the multiplexer would not select that tab',
+        `a failure with no reason in it reached the client: ${JSON.stringify(out)}`,
+      );
     });
   } finally {
     cleanup();

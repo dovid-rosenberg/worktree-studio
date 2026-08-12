@@ -22,6 +22,7 @@ import * as routesReview from '../server/routes-review.ts';
 import * as transcriptRoutes from '../server/transcript-routes.ts';
 import type { TranscriptManager } from '../server/transcript-routes.ts';
 import type { AddressInfo } from 'net';
+import { requireBody, requireFeature, requireRepo, requireSession } from '../server/util.ts';
 import { body as jsonBody, present, session as makeSession } from './helpers.ts';
 import type { JsonBody } from './helpers.ts';
 
@@ -262,6 +263,169 @@ test('an unknown feature is a 404 with the same body under both prefixes', async
     const { status, body } = await bothPrefixes(get, '/group/start', post({ group: 'nope' }));
     assert.equal(status, 404);
     assert.deepEqual(body, { error: 'no such feature' });
+  });
+});
+
+/*
+ * ---- the route preamble, once -----------------------------------------------
+ *
+ * `resolveGroup` + `if (!g) 404`, `repos().find` + `if (!repoObj)`, and the body check
+ * the three /servers/* routes shared were spelled out at some twenty-five call sites,
+ * and one of them was missing its guard — POST /group/session read `pRepo.path` for a
+ * repo the scan cache had not seen, which is a TypeError, i.e. a 500 carrying an
+ * internal message for what is the caller's own bad input.
+ *
+ * requireFeature / requireRepo / requireSession / requireBody are that preamble. The
+ * tests below cover both halves: every group verb really goes through the shared 404,
+ * and the guards themselves answer what they promise.
+ */
+
+test('every group verb answers the SAME 404, with a reason, for a feature that is not there', async () => {
+  // One shared helper, so this cannot be true of six routes and false of the seventh —
+  // which is how /group/session came to be the one without a repo guard.
+  for (const route of [
+    '/group/start',
+    '/group/stop',
+    '/group/restart',
+    '/group/open',
+    '/group/close',
+    '/group/delete',
+    '/group/session',
+  ]) {
+    const { app } = harness({ group: FEATURE });
+    await serving(app, async (get) => {
+      const { status, body } = await bothPrefixes(get, route, post({ group: 'nope' }));
+      assert.equal(status, 404, `${route} answered ${status} for an unknown feature`);
+      assert.deepEqual(body, { error: 'no such feature' }, `${route} must say why it refused`);
+    });
+  }
+});
+
+test('a feature naming a repo the scan cache has not seen is a 400, not a 500', async () => {
+  /*
+   * The exact shape of the bug: the feature resolves, so the 404 above does not fire, and
+   * its primary member names a repo `repos()` does not hold. That went straight to
+   * `pRepo.path` and threw. The answer has to be the caller's 400, and it has to name the
+   * repo — `unknown repo ''` is the first-run symptom (no baseDirs, so an empty picker),
+   * and a message without the name cannot tell you that is what happened.
+   */
+  const ghost = {
+    name: 'feat-ghost',
+    members: [{ repo: 'ghost', path: WT('feat-ghost'), branch: 'feature/ghost', wtname: 'feat-ghost' }],
+  };
+  const { app } = harness({ group: ghost });
+  await serving(app, async (get) => {
+    const { status, body } = await bothPrefixes(get, '/group/session', post({ group: 'feat-ghost' }));
+    assert.equal(status, 400, `answered ${status} — a missing repo reached a property access`);
+    assert.deepEqual(body, { error: "unknown repo 'ghost'" });
+  });
+});
+
+// The guards on their own, over a real express app: the group routes above prove they are
+// wired in, these prove what they answer. Registered against handlers that do nothing but
+// call the guard, because what is being pinned is the guard's contract, not a route's.
+function guardApp() {
+  const app = express();
+  app.use(express.json());
+  const api = express.Router();
+  app.use('/api', api);
+  const sessions: Record<string, { id: string }> = { live: { id: 'live' } };
+
+  api.post('/g/feature', async (req, res) => {
+    const resolve = async (name: string) => (name === 'known' ? { group: { members: [] } } : { group: null });
+    const found = await requireFeature(res, resolve, req.body?.group);
+    if (!found.ok) return;
+    res.json({ reached: true });
+  });
+  api.post('/g/repo', (req, res) => {
+    const found = requireRepo(res, [{ name: 'api', path: '/code/api' }], req.body?.repo);
+    if (!found.ok) return;
+    res.json({ reached: found.value.path });
+  });
+  api.post('/g/session', (req, res) => {
+    const found = requireSession(res, (id) => sessions[id], String(req.body?.id ?? ''));
+    if (!found.ok) return;
+    res.json({ reached: found.value.id });
+  });
+  api.post('/g/body', (req, res) => {
+    const asked = requireBody(res, req.body, ['repo', 'worktreePath']);
+    if (!asked.ok) return;
+    res.json({ reached: asked.value });
+  });
+  api.post('/g/body-one', (req, res) => {
+    const asked = requireBody(res, req.body, ['worktreePath']);
+    if (!asked.ok) return;
+    res.json({ reached: asked.value });
+  });
+  mountErrors(app);
+  return app;
+}
+
+test('requireFeature: a feature that is not there is a 404 that says so', async () => {
+  await serving(guardApp(), async (get) => {
+    const miss = await get('/api/g/feature', post({ group: 'nope' }));
+    assert.equal(miss.status, 404);
+    assert.deepEqual(await jsonBody(miss), { error: 'no such feature' });
+    // A name off the wire is not a string. The coercion lives in the guard so that no
+    // call site has to remember String(), which is how one of them came to skip it.
+    const coerced = await get('/api/g/feature', post({ group: ['known', 'other'] }));
+    assert.equal(coerced.status, 404, 'an array is not the feature named "known"');
+    const hit = await get('/api/g/feature', post({ group: 'known' }));
+    assert.deepEqual(await jsonBody(hit), { reached: true });
+  });
+});
+
+test('requireRepo: an unknown repo is a 400 naming what was asked for', async () => {
+  await serving(guardApp(), async (get) => {
+    const miss = await get('/api/g/repo', post({ repo: 'nope' }));
+    assert.equal(miss.status, 400, 'unresolvable input, which docs/api.md states is a 400');
+    assert.deepEqual(await jsonBody(miss), { error: "unknown repo 'nope'" });
+    // The empty-picker case, which is what a first run with no baseDirs looks like.
+    const unnamed = await get('/api/g/repo', post({}));
+    assert.deepEqual(await jsonBody(unnamed), { error: "unknown repo ''" });
+    const hit = await get('/api/g/repo', post({ repo: 'api' }));
+    assert.deepEqual(await jsonBody(hit), { reached: '/code/api' });
+  });
+});
+
+test('requireSession: an unknown session is a 404, and never a reasonless failure', async () => {
+  await serving(guardApp(), async (get) => {
+    const miss = await get('/api/g/session', post({ id: 'gone' }));
+    assert.equal(miss.status, 404, 'the status docs/api.md states for a named thing that is not there');
+    assert.deepEqual(
+      await jsonBody(miss),
+      { error: 'no such session' },
+      'this is the half of the bare `{ok:false}` the route layer can fix on its own',
+    );
+    const hit = await get('/api/g/session', post({ id: 'live' }));
+    assert.deepEqual(await jsonBody(hit), { reached: 'live' });
+  });
+});
+
+test('requireBody: a missing field is a 400 stating the whole contract', async () => {
+  await serving(guardApp(), async (get) => {
+    for (const body of [{}, { repo: 'api' }, { worktreePath: '/w' }, { repo: '  ', worktreePath: '/w' }]) {
+      const r = await get('/api/g/body', post(body));
+      assert.equal(r.status, 400, `${JSON.stringify(body)} was accepted`);
+      // Every field, not the missing one: the message is the route's contract, and it is
+      // the message these three routes already carried.
+      assert.deepEqual(await jsonBody(r), { ok: false, error: 'repo and worktreePath are required' });
+    }
+    const one = await get('/api/g/body-one', post({}));
+    assert.deepEqual(await jsonBody(one), { ok: false, error: 'worktreePath is required' }, 'and it reads');
+
+    /*
+     * Only a real string counts. `String(req.body?.x || '')` — what these routes did —
+     * turns an object into "[object Object]" and an array into "a,b", and DELETE
+     * /worktrees was fixed once already for handing exactly that kind of value to a git
+     * argv and reporting the failure with a 200.
+     */
+    for (const bad of [{ a: 1 }, ['/w'], 7, true, null]) {
+      const r = await get('/api/g/body', post({ repo: 'api', worktreePath: bad }));
+      assert.equal(r.status, 400, `${JSON.stringify(bad)} was coerced into a path`);
+    }
+    const ok = await get('/api/g/body', post({ repo: ' api ', worktreePath: '/w' }));
+    assert.deepEqual(await jsonBody(ok), { reached: { repo: 'api', worktreePath: '/w' } }, 'trimmed');
   });
 });
 

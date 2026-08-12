@@ -17,7 +17,7 @@ import fs from 'fs';
 import type { Router } from 'express';
 import * as layoutMod from './layout.ts';
 import * as reinstate from './reinstate.ts';
-import { realpath, run } from './util.ts';
+import { realpath, requireBody, run } from './util.ts';
 import * as worktree from './worktree.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Config, PartialDeep, Session } from './types.ts';
@@ -125,8 +125,9 @@ function register(api: Router, deps: OrphansDeps): void {
    * directory that does not hold the code it is discussing.
    */
   api.post('/orphans/reinstate', async (req, res) => {
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!worktreePath) return res.status(400).json({ ok: false, error: 'worktreePath is required' });
+    const asked = requireBody(res, req.body, ['worktreePath']);
+    if (!asked.ok) return;
+    const { worktreePath } = asked.value;
 
     const cand = (await orphanCandidates()).find((c) => c.worktreePath === worktreePath);
     if (!cand) return res.status(404).json({ ok: false, error: 'nothing to reinstate at that path' });

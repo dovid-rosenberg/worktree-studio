@@ -13,7 +13,7 @@
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 import type { Router } from 'express';
 import * as worktree from './worktree.ts';
-import { openEditor, resolveEditor, shq } from './util.ts';
+import { editorCommands, openEditor, requireFeature, requireRepo, resolveEditor } from './util.ts';
 import * as startReport from './start-report.ts';
 import type { StartOutcome } from './start-report.ts';
 
@@ -154,8 +154,8 @@ interface OrchestratorDeps {
   manager: Manager;
   repos: () => RepoRef[];
   /**
-   * `name` arrives straight off the wire, so every call site coerces it with
-   * String() first — the resolver only ever compares it against a feature name.
+   * `name` arrives straight off the wire; requireFeature() is what coerces it, so no
+   * route below spells String() — the resolver only ever compares it against a name.
    */
   resolveGroup: (name: string) => Promise<{ group: ResolvedGroup | null; flat: Member[] }>;
   conflictsFor: (member: Member, flat: Member[]) => Member[];
@@ -209,8 +209,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/start', async (req, res) => {
     const { group, stopConflicts }: GroupBody = req.body || {};
-    const { group: g, flat } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const { group: g, flat } = found.value;
     // Both halves of the split come from server/start-report.ts, which is also what the
     // session route uses — that shared rule is the whole reason this cannot drift again.
     const toStart = startReport.toStart(g.members);
@@ -264,8 +265,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/stop', async (req, res) => {
     const { group }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
     const running_ = g.members.filter((m) => m.running);
     const stops = await Promise.all(
       running_.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path, m.ports)) })),
@@ -302,8 +304,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/restart', async (req, res) => {
     const { group }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
     const toRestart = g.members.filter((m) => m.running || m.canStart);
     // Same omission /group/start had: a member that is neither running nor startable is
     // dropped here too, and a restart that silently brings back less than was asked for
@@ -341,33 +344,30 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/open', async (req, res) => {
     const { group, editor }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    // String(): `editor` is whatever the body carried — it can be an array, an object,
-    // a number. A property access coerces the key exactly this way already, so naming
-    // the coercion cannot change which editor is picked.
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
     // Same resolution as POST /open, from the same helper — this was the second copy of
     // an expression that could not tell an unnamed editor from an unknown one.
     const pick = resolveEditor(cfg.editors, editor, cfg.defaultEditor);
     if (!pick.ok) return res.status(400).json({ ok: false, error: pick.error });
-    const ed = pick.editor;
-    const paths = g.members.map((m) => m.path);
-    // split/join, never replace(): the shell-quoted path is the REPLACEMENT string, and
-    // `$&`, `` $` ``, `$'` and `$$` in a replacement string are expanded by the engine
-    // AFTER shq() has done its quoting — so a worktree path containing `$&` would open
-    // some other path entirely, quoting notwithstanding. split/join is literal.
-    const cmds = ed.openGroup
-      ? [ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]
-      : paths.map((p) => ed.open.split('{path}').join(shq(p)));
-    const opened = await openEditor(cmds);
+    // ...and the templating is the same helper too, for the same reason: it was the
+    // second copy, quoting hazard and all. See editorCommands().
+    const opened = await openEditor(
+      editorCommands(
+        pick.editor,
+        g.members.map((m) => m.path),
+      ),
+    );
     if (!opened.ok) return res.status(500).json({ ok: false, error: `editor failed: ${opened.error}` });
     res.json({ ok: true });
   });
 
   // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
   app.post('/group/close', async (req, res) => {
-    const { group: g } = await resolveGroup(String(req.body?.group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, req.body?.group);
+    if (!found.ok) return;
+    const g = found.value.group;
     for (const m of g.members) {
       if (m.running) await servers.stop(m.repo, m.path, m.ports);
       if (m.session) await manager.deactivate(m.session.id);
@@ -383,8 +383,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
   app.post('/group/delete', async (req, res) => {
     const { group, deleteBranches, force }: GroupBody = req.body || {};
     const name = String(group ?? '');
-    const { group: g } = await resolveGroup(name);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, name);
+    if (!found.ok) return;
+    const g = found.value.group;
     const results: Array<{ repo: string; ok: boolean; error?: string; branchError?: string }> = [];
     for (const m of g.members) {
       const repoObj = repos().find((r) => r.name === m.repo);
@@ -468,24 +469,26 @@ function register(app: Router, deps: OrchestratorDeps): void {
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
   app.post('/group/session', async (req, res) => {
-    const { group: g } = await resolveGroup(String(req.body?.group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const members = g.members;
+    const found = await requireFeature(res, resolveGroup, req.body?.group);
+    if (!found.ok) return;
+    const members = found.value.group.members;
     if (!members.length) return res.status(400).json({ error: 'feature has no members' });
     for (const m of members) {
       const s = manager.sessionForWorktree(m.path);
       if (s) return res.json({ ok: true, session: s, existed: true });
     }
     const [primary, ...rest] = members;
-    const pRepo = repos().find((r) => r.name === primary.repo);
-    // A repo the scan cache has not seen. The `rest` loop below already skips one;
-    // the primary went straight to `pRepo.path`, so the same miss was a TypeError —
-    // a 500 leaking an internal message where the caller's own 400 belongs.
-    if (!pRepo) return res.status(400).json({ error: 'unknown repo' });
+    // A repo the scan cache has not seen. The `rest` loop below already skips one; the
+    // primary went straight to `pRepo.path`, so the same miss was a TypeError — a 500
+    // leaking an internal message where the caller's own 400 belongs. THIS is the site
+    // requireRepo() exists for: the guard cannot be forgotten, because `.value` does not
+    // exist until the check has narrowed it.
+    const pRepo = requireRepo(res, repos(), primary.repo);
+    if (!pRepo.ok) return;
     const session = await manager.adopt({
       worktreePath: primary.path,
       repoName: primary.repo,
-      repoPath: pRepo.path,
+      repoPath: pRepo.value.path,
       branch: primary.branch,
       wtname: primary.wtname,
     });

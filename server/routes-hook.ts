@@ -13,6 +13,7 @@
 // the /api prefix. test/app-surface.test.ts asserts that this, and nothing else, is the
 // unauthenticated hole in the mounted surface.
 import type { Router } from 'express';
+import { qs } from './util.ts';
 import type { Denial, GuardedRequest } from './security.ts';
 import type { HookBody } from './sessions.ts';
 
@@ -36,11 +37,9 @@ interface HookDeps {
 function register(app: Router, { manager, denyToken }: HookDeps): void {
   app.post('/hook/:event', (req, res) => {
     // `?wts=a&wts=b` (or `?wts[x]=y`) hands express an array/object, not a string —
-    // same hazard transcript-routes.ts collapses for its query params. Here it made
-    // the lookup miss and the hook get dropped in silence. Collapse to the first
-    // value, which is what a client sending one session id meant.
-    const raw = req.query.wts;
-    const id = raw == null ? '' : String(Array.isArray(raw) ? raw[0] : raw);
+    // here that made the lookup miss and the hook get dropped in silence. qs() is the
+    // one implementation of that collapse; this was an open-coded fourth copy of it.
+    const id = qs(req.query.wts);
     const known = id ? manager.get(id) : null;
     const deny = denyToken(req);
     if (deny && !(known && known.hookAuth !== true))
