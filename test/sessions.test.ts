@@ -475,6 +475,53 @@ test('activate/restore resume cwd resolves to home (transcript dir) for a promot
   fs.rmSync(wt, { recursive: true, force: true });
 });
 
+/*
+ * The fallback half of the same rule, and the reason it is worth one test rather than
+ * none: tmux refuses `-c` on a directory that is not there, so a session whose recorded
+ * home has since been deleted or moved does not come back at all — it fails to launch and
+ * says "failed to start", which reads as a broken tmux rather than a stale path. The rule
+ * lived in activate() and in restore() as two copies and was fixed in one at a time; it is
+ * now `_launchDir`, so this pins it once for every launch there is.
+ */
+test('a session whose home no longer exists launches from repoPath instead of failing', async () => {
+  const m = manager();
+  const repo = tempRepo('fallback');
+  const goneHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-gone-'));
+  fs.rmSync(goneHome, { recursive: true, force: true });
+  let cwd: string | null = null;
+  m.mux = muxStub({
+    async ensure(_n, opts) {
+      cwd = opts?.cwd ?? null;
+      return {};
+    },
+  });
+  m.sessions.set(
+    'h1',
+    session({
+      id: 'h1',
+      muxName: 'mux-h1',
+      repoName: 'a',
+      repoPath: repo,
+      home: goneHome,
+      // Not promoted: a session WITH a missing worktree is refused outright a few lines
+      // earlier in activate(), so this is the shape the fallback actually stands behind.
+      worktreePath: null,
+      settingsFile: '/tmp/h1.settings.json',
+      repos: [sessionRepo({ repo: 'a', primary: true })],
+      claudeSessionId: 'sid-h1',
+      active: false,
+      state: 'stopped',
+      createdAt: Date.now(),
+    }),
+  );
+
+  expectOk(await m.activate('h1'), 'activate()');
+  assert.equal(cwd, repo, 'the launch falls back to the repo checkout');
+  assert.equal(m._launchDir(got(m, 'h1')), repo, 'and _launchDir says so on its own');
+
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 test('restore flags a promoted session whose worktree dir is gone instead of faking a resume', async () => {
   const m = manager();
   const ensured: string[] = [];

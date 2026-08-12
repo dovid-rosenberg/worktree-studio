@@ -164,6 +164,25 @@ export interface SessionAdoptArgs {
   adopted?: boolean;
 }
 
+/** How a particular caller of `_launch()` differs from the others. */
+export interface LaunchOpts {
+  /** Resume the conversation (`claude -r`) instead of opening a fresh one. */
+  resume?: boolean;
+  /**
+   * Restart the agent when the multiplexer session is ALREADY there. Only Resume wants
+   * this: everywhere else the mux session is being made by this very call, and a driver
+   * that answers "already there" is answering about someone else's session.
+   */
+  relaunchIfPresent?: boolean;
+  /**
+   * Overwrite the activity line with what this launch did ('resumed'/'restarted'/'already
+   * running'). Off for a session being born, whose activity already says something the
+   * launch does not know — which branch the checkout was on, or that it started in its own
+   * worktree because the checkout was someone else's. 'restarted' would erase that.
+   */
+  announce?: boolean;
+}
+
 export interface SessionAttachArgs {
   repo: string;
   repoPath: string;
@@ -474,6 +493,92 @@ class SessionManager extends EventEmitter {
     return parts.join(' ');
   }
 
+  /**
+   * The directory a session's claude is launched in.
+   *
+   * `home` is where the transcript lives, so launching there is what lets `--resume` find
+   * the conversation; for a promoted session home IS the worktree (moved there at promote),
+   * which is also what puts a resumed agent back in its worktree rather than in the
+   * checkout it was born in.
+   *
+   * The fallback is the part worth stating: a home that no longer exists is not a launch
+   * dir. tmux refuses `-c` on a missing directory, so the session simply fails to come
+   * back — and the directory a session's home points at is exactly the thing that gets
+   * deleted (a worktree removed by hand, a checkout moved). This rule was written out in
+   * activate() and again in restore(), and fixed in one copy at a time, twice.
+   */
+  _launchDir(s: Session): string {
+    const home = s.home || s.repoPath;
+    return home && fs.existsSync(home) ? home : s.repoPath;
+  }
+
+  /**
+   * Start a session's agent: hook settings, memories, launch dir, command, `ensure`, and
+   * what the result means.
+   *
+   * The sequence is the same for a session being created, a worktree being adopted, a
+   * Resume, and a daemon restart — and it was spelled out at all four. The bill came in
+   * twice, both recorded in the comments this replaces: the launch-dir fallback above, and
+   * "a launch that failed is not a running session", were each found once and then fixed in
+   * ONE COPY AT A TIME, leaving the others reporting live idle agents that were never
+   * launched. Whatever the next such rule turns out to be, it now has one place to land.
+   *
+   * Callers keep what genuinely differs: how the session came to exist, its tab strip, and
+   * what a failure costs them.
+   */
+  async _launch(
+    s: Session,
+    { resume = false, relaunchIfPresent = false, announce = false }: LaunchOpts = {},
+  ): Promise<{ ok: boolean; error?: string }> {
+    // Rewritten on every launch rather than once at creation, so it tracks the current
+    // install path and port — this is what makes a relaunch self-heal after the studio dir
+    // is moved or the port changes.
+    this._writeHookSettings(s);
+    this._shareMemories(s);
+    const cmd = this.claudeCmd(s, { resume });
+    const cwd = this._launchDir(s);
+    const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
+    // Take the agent's window id from the launch that opened it. Inferring it later cannot
+    // survive a relaunch, and carrying the PREVIOUS id forward is what made a restored
+    // session report 'agent exited' against a live agent — so a create that cannot say
+    // where it put the agent clears the id instead of leaving a confidently stale one.
+    if (r.created) s.agentTabId = r.id ?? null;
+    let adopted = false;
+    /*
+     * Resume has to make the AGENT run, which is not the same as making its session exist.
+     * `ensure` is create-if-missing: for a session whose tmux outlived its claude — the
+     * ordinary state after the agent quits, since the launch script ends in `exec zsh -l` —
+     * it correctly reported "already there" and started nothing, so the button did nothing
+     * at all.
+     */
+    if (relaunchIfPresent && !r.created && !r.error) {
+      const again = await this.mux.relaunchAgent(s.muxName, { cwd, cmd, tabId: s.agentTabId });
+      if (again.id) s.agentTabId = again.id;
+      if (!again.ok) r.error = again.error || 'could not restart the agent';
+      adopted = !!again.running;
+    }
+    /*
+     * The launch result decides the state, rather than being reported alongside a state
+     * that assumes success. Where this was missing, a failed relaunch broadcast a live,
+     * idle session while the HTTP response said it had failed — the card and the toast said
+     * opposite things, and the card won, because it is what you look at.
+     */
+    if (r.error) {
+      s.state = 'stopped';
+      s.activity = `failed to start: ${r.error}`;
+      return { ok: false, error: r.error };
+    }
+    this._agentLaunched(s);
+    if (announce) {
+      s.state = 'idle';
+      // 'already running' when nothing was launched: the agent was there all along and only
+      // its recorded window id was wrong. Saying "resumed" would credit this call with work
+      // it did not do.
+      s.activity = adopted ? 'already running' : s.claudeSessionId ? 'resumed' : 'restarted';
+    }
+    return { ok: true };
+  }
+
   // Send `text` into a session's claude pane, but only once claude is actually the
   // foreground program AND (preferably) not mid-turn. If claude never comes up we
   // no-op and flag it for the UI rather than typing a command into a bare shell.
@@ -695,19 +800,11 @@ class SessionManager extends EventEmitter {
       createdAt: Date.now(),
       promotedAt: null,
     };
-    this._writeHookSettings(session);
     this.sessions.set(id, session);
-
-    this._shareMemories(session);
-    const cmd = this.claudeCmd(session);
-    const r = await this.mux.ensure(muxName, { cwd: repoPath, cmd, env: { WT_STUDIO_SESSION: id } });
-    if (r.error) {
-      session.state = 'stopped';
-      session.activity = `failed to start: ${r.error}`;
-    } else {
-      this._agentLaunched(session);
-      await this._syncTabs(session); // trade the placeholder id for the real window id
-    }
+    // Fresh conversation, fresh mux session, and the activity it was born with stands (it
+    // says which branch the checkout was on) — so no resume, no relaunch, no announce.
+    const r = await this._launch(session);
+    if (r.ok) await this._syncTabs(session); // trade the placeholder id for the real window id
     this._touch(id);
     return session;
   }
@@ -858,19 +955,12 @@ class SessionManager extends EventEmitter {
       promotedAt: Date.now(),
       adopted,
     };
-    this._writeHookSettings(session);
     this.sessions.set(id, session);
-    this._shareMemories(session);
-    // `resume` when we were handed a conversation id: this is a reinstate, not a start.
-    const cmd = this.claudeCmd(session, { resume: !!resumeId });
-    const r = await this.mux.ensure(muxName, { cwd: worktreePath, cmd, env: { WT_STUDIO_SESSION: id } });
-    if (r.error) {
-      session.state = 'stopped';
-      session.activity = `failed to start: ${r.error}`;
-    } else {
-      this._agentLaunched(session);
-      await this._syncTabs(session); // trade the placeholder id for the real window id
-    }
+    // `resume` when we were handed a conversation id: this is a reinstate, not a start. The
+    // activity stands as given (`_createInOwnWorktree` uses it to say why this session
+    // started somewhere other than where sessions normally start), so nothing is announced.
+    const r = await this._launch(session, { resume: !!resumeId });
+    if (r.ok) await this._syncTabs(session); // trade the placeholder id for the real window id
     this._touch(id);
     return session;
   }
@@ -1341,59 +1431,22 @@ class SessionManager extends EventEmitter {
       this._touch(id);
       return { ok: false, error: 'worktree missing' };
     }
-    // Regenerate the hook settings file so it tracks the current install path/port —
-    // makes a relaunch self-heal after the studio dir is moved or the port changes.
-    this._writeHookSettings(s);
-    this._shareMemories(s);
-    const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
-    // Resume from the transcript's home dir so --resume finds the conversation. For a
-    // promoted session home is already the worktree (moved there at promote), so it
-    // launches straight into the worktree; _anchorInWorktree self-heals the rare case
-    // where the promote-time /cd never landed.
-    let cwd = s.home || s.repoPath;
-    if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
-    /*
-     * Resume has to make the AGENT run, which is not the same as making its session
-     * exist. `ensure` is create-if-missing: for a session whose tmux outlived its
-     * claude — the ordinary state after the agent quits, since the launch script ends
-     * in `exec zsh -l` — it correctly reported "already there" and started nothing, so
-     * the button did nothing at all. Whichever path runs, the agent's window id is
-     * recorded from the launch itself; inferring it later cannot survive a relaunch.
-     */
-    const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
-    if (r.created && r.id) s.agentTabId = r.id;
-    let adopted = false;
-    if (!r.created && !r.error) {
-      const again = await this.mux.relaunchAgent(s.muxName, { cwd, cmd, tabId: s.agentTabId });
-      if (again.id) s.agentTabId = again.id;
-      if (!again.ok) r.error = again.error || 'could not restart the agent';
-      adopted = !!again.running;
-    }
-    /*
-     * The launch result decides the state, rather than being reported alongside a state
-     * that assumes success. This set `active`/`idle`/'resumed' unconditionally, so a
-     * failed relaunch broadcast a live, idle session while the HTTP response said it had
-     * failed — the card and the toast said opposite things, and the card won, because it
-     * is what you look at. `create()` and `_doAdopt()` have always recorded the failure;
-     * this was the third copy of that rule and the only one that did not.
-     */
+    // The only caller that may find the mux session already there, so the only one that
+    // asks for the agent to be relaunched inside it.
+    const r = await this._launch(s, {
+      resume: !!s.claudeSessionId,
+      relaunchIfPresent: true,
+      announce: true,
+    });
+    // Live again whichever way the launch went: `active` says the user asked for this
+    // session back, and a failed relaunch is a stopped session you can see, not a
+    // deactivated one that has left the rail.
     s.active = true;
-    if (r.error) {
-      s.state = 'stopped';
-      s.activity = `failed to start: ${r.error}`;
-    } else if (adopted) {
-      // Nothing was launched: the agent was already there and only its recorded window
-      // id was wrong. Saying "resumed" would credit this call with work it did not do.
-      s.state = 'idle';
-      s.activity = 'already running';
-    } else {
-      s.state = 'idle';
-      s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
-    }
-    if (!r.error) this._agentLaunched(s);
     this._touch(id);
-    if (!r.error) this._anchorInWorktree(s).catch(() => {});
-    return { ok: !r.error, error: r.error };
+    // Self-heal the rare promoted session whose promote-time /cd never landed. Only worth
+    // doing when something is actually running there.
+    if (r.ok) this._anchorInWorktree(s).catch(() => {});
+    return r;
   }
 
   // Reconcile a session's tab strip with the tmux windows that actually exist.
@@ -1561,42 +1614,25 @@ class SessionManager extends EventEmitter {
           s.activity = 'worktree missing';
           continue;
         }
-        // Refresh the hook settings file to the current install path/port before relaunch.
-        this._writeHookSettings(s);
-        this._shareMemories(s);
-        const cmd = this.claudeCmd(s, { resume: !!s.claudeSessionId });
-        // Resume from the transcript's home dir so --resume finds the conversation.
-        // Promoted sessions already have home = worktree (moved at promote time).
-        let cwd = s.home || s.repoPath;
-        if (!cwd || !fs.existsSync(cwd)) cwd = s.repoPath;
-        const r = await this.mux.ensure(s.muxName, { cwd, cmd, env: { WT_STUDIO_SESSION: s.id } });
-        // The relaunch gives the agent a NEW window; carrying the old id forward is
-        // what made a restored session report "agent exited" against a live agent.
-        if (r.created) s.agentTabId = r.id ?? null;
+        // No relaunch-if-present: the hasSession() check above already returned for a mux
+        // session that outlived the daemon, so this launch is always making a new one.
+        const r = await this._launch(s, { resume: !!s.claudeSessionId, announce: true });
         // restore recreates only the primary claude window — drop any stale extra
         // tabs so the tab strip matches the windows that actually exist.
         s.tabs = [{ id: PENDING_TAB, title: 'claude' }];
         /*
-         * A launch that failed is not a restored session.
-         *
-         * The result was discarded here — the third and last copy of the rule
-         * `create()` and `_doAdopt()` both implement — so a boot with a broken tmux
-         * (socket dir gone, launch script unwritable) printed "restored 8 session(s)",
-         * every card showed a live idle agent, and the first sign of trouble was an
-         * empty terminal minutes later. The catch below already reports a THROWN
-         * failure loudly; ensure() reports this kind by returning it.
+         * A launch that failed is not a restored session, and here it is also not a quiet
+         * one: a boot with a broken tmux (socket dir gone, launch script unwritable) used
+         * to print "restored 8 session(s)" and show eight live idle cards, with the first
+         * sign of trouble an empty terminal minutes later. The catch below reports a THROWN
+         * failure; this is the returned kind, which is the one boot actually produces.
          */
-        if (r.error) {
-          s.state = 'stopped';
-          s.activity = `failed to start: ${r.error}`;
+        if (!r.ok) {
           console.error(
             `[wt-studio] could not restore session ${s.id} (${s.title || 'untitled'}): ${r.error}`,
           );
           continue;
         }
-        s.state = 'idle';
-        s.activity = s.claudeSessionId ? 'resumed' : 'restarted';
-        this._agentLaunched(s);
         // self-heal a promote whose /cd never landed (normally a no-op here).
         this._anchorInWorktree(s).catch(() => {});
         n++;
