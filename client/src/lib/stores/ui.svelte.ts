@@ -712,12 +712,15 @@ class UI {
   appView = $derived(this.dockView === 'usage');
 
   /**
-   * THE ONLY WRITER of `dockView` — everything else goes through here.
+   * THE WRITER of `dockView` — every change of dock view goes through here.
    *
-   * Six call sites assigned the field directly (⌘D, the palette's Review changes, and
-   * each of the three panel tabs), which skipped the line below: open Insights, ⌘D into
-   * Changes, reload, and you were back in Insights, because nothing had ever overwritten
-   * what opening Insights stored.
+   * Call sites assigned the field directly (⌘D, the palette's Review changes, each of the
+   * three panel tabs, and #pick below), which skipped the line under it: open Insights,
+   * ⌘D into Changes, reload, and you were back in Insights, because nothing had ever
+   * overwritten what opening Insights stored. The field stays public only for the last
+   * two direct assignments outside this file (ops.svelte.ts, focusing the terminal after
+   * a tab call) — once those come through here it can be private behind a getter, which
+   * is what makes the rule enforceable rather than remembered.
    */
   setDockView(v: DockView): void {
     this.dockView = v;
@@ -790,16 +793,22 @@ class UI {
    * to have selected, and you re-navigate. Times a dozen features, that is most of what
    * "switching is expensive" actually consists of.
    *
-   * Keyed the same way the rail keys its rows, and deliberately NOT persisted: it
-   * describes where you were a moment ago, and restoring it across a reload would mean
-   * opening the app into a stale view of a session you have not looked at in a week.
+   * THE MAP is keyed the same way the rail keys its rows, and is deliberately NOT
+   * persisted: it describes where you were a moment ago, and restoring it across a reload
+   * would mean opening the app into a stale view of a session you have not looked at in a
+   * week.
+   *
+   * THE RESULTING VIEW is persisted, through setDockView — this line assigned the field
+   * directly, so switching rows changed what was on screen without changing what a reload
+   * would restore. Look at Insights, click a session (dock goes to its terminal), reload:
+   * back in Insights, because the last thing that ever wrote storage was opening it.
    */
   #pick(next: Selection): void {
     const from = selectionKey(this.selection);
     if (from) this.#dockMemory.set(from, { view: this.dockView, tab: this.activeTabId });
     this.selection = next;
     const back = this.#dockMemory.get(selectionKey(next));
-    this.dockView = back?.view ?? 'term';
+    this.setDockView(back?.view ?? 'term');
     this.activeTabId = back?.tab ?? '';
   }
 

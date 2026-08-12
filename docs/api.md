@@ -205,11 +205,13 @@ not part of this document: it is built asynchronously and is stream-only.)
 | `editors`      | string[]  | Configured editor **names** only (`["WebStorm","Zed"]`). Pass one as `editor` to `/open` and `/group/open`. |
 | `defaultEditor`| string    | The editor used when a request omits `editor`.                                               |
 | `webRepos`     | string[]  | Repos that serve a browsable frontend — the UI offers "Open app ↗" for these.                |
-| `runConfigs`   | object    | `{ "<repo>": [{ name, cmd, kind, source }] }` — imported editor run/test configs. `{}` when none. |
+| `runConfigs`   | object    | `{ "<repo>": [{ name, cmd, kind, source }] }` — the **manual** run configs from `config.runConfigs`. An editor's own are discovered per worktree, on request: `GET /run-configs`. `{}` when none. |
+| `linkProviders`| object[]  | `{ id, match, label, glyph?, idPattern? }` — how a pinned URL is recognised and labelled. `config.linkProviders` first, then the shipped Asana/GitHub/GitLab recognisers, so a user entry can override a shipped one. |
 | `sources`      | object[]  | Enabled intake adapters: `{ id, label, needsRepo }`. `id` is what `POST /sessions` takes as `source`. |
 | `repos`        | object[]  | Every scanned repo, each with its worktrees. See *Repo*.                                     |
 | `features`     | object[]  | Every feature, including single-worktree ones. See *Feature*.                                |
 | `groups`       | object[]  | The subset that are real multi-worktree groups: manual groups plus auto groups with ≥ 2 members. Same object shape as `features`. |
+| `splitFeatures`| object[]  | One piece of work sitting under two names. See *Split features*.                             |
 | `sessions`     | object[]  | Every session, newest first. See *Session*.                                                  |
 | `servers`      | object    | `{ "<sessionId>": { repos: [...] } }` — per-session dev-server view. See *Session servers*.  |
 
@@ -248,7 +250,24 @@ sets: a manual group appears in both. Use `features` for a complete list, and
 | `noStartCmd` | boolean         | No `config.start` entry for this repo: the other reason `canStart` is false. |
 | `offSlot`    | number[]        | Listening, but on none of the ports this feature's slot expects — the ports it is on instead. Evidence the slot env was never read. |
 | `sharedModules` | string \| null | The directory `node_modules` really resolves to, when it is a symlink out of the worktree. The worktree is not isolated: every cache inside it, Vite's `.vite/deps` above all, is shared. |
+| `wiredTo`    | object \| null  | Which *feature's* backend this worktree's gitignored config actually points at. `null` when the repo declares no wired ports. See below. |
 | `session`    | object \| null  | `{ id, state, activity, muxName }` of the session driving this worktree — a deliberately trimmed view of *Session*. `null` for main checkouts and undriven worktrees. |
+
+`wiredTo` is `{ status, ports, port, feature, repo, path }`. `ports` is every
+sibling-repo port the config file names *right now* (read back from disk, not
+assumed from the slot); `port` is the one the verdict is about, with `feature` /
+`repo` / `path` naming whoever is listening there.
+
+| `status`  | Meaning                                                                       |
+| --------- | ----------------------------------------------------------------------------- |
+| `mine`    | It points at this feature's own backend. Nothing to do.                        |
+| `foreign` | It points at **another feature's** backend, which is named in `feature`. The frontend is talking to a different branch's server — the calls succeed and answer wrongly. |
+| `dead`    | Nothing is listening there. The calls fail, but they fail honestly.            |
+| `unknown` | The repo is wired but the file named no ports — nothing to check against.      |
+
+A `foreign` hit outranks a matching one: a config naming several ports can have
+some land here and some elsewhere, and reporting the good half would hide the
+half that is broken.
 
 ### Feature
 
@@ -259,8 +278,35 @@ sets: a manual group appears in both. Use `features` for a complete list, and
 | `members` | object[]        | Full *Worktree* objects. A manual group member that resolves to nothing is the stub `{ missing: true, ref: "<repo>/<branch-or-name>" }` instead — check `missing` before reading any other field. |
 | `session` | object \| null  | The one session driving this feature (the first member that has one), same trimmed shape as `worktree.session`. |
 | `slot`    | number          | The feature's concurrency slot, **present only while one is allocated.** Absent means no slot, which is not the same as slot `0`. |
+| `color`   | string          | The colour tag set by `POST /features/:name/color`. Absent when untagged.      |
+| `ticket`  | string          | The tracker URL set by `POST /features/:name/links`. Absent when unset.        |
+| `pins`    | object[]        | `[{ url, label? }]` pinned by hand, same route. Absent when there are none.    |
+
+`color` / `ticket` / `pins` are the raw config, not rendered links: the MR chips
+a client shows alongside them are joined in from the `ci` frame, which this
+payload deliberately does not carry.
 
 Features are ordered by running-member count descending, then by name.
+
+### Split features
+
+`state.splitFeatures` reports what the naming convention is supposed to prevent:
+two features, on the same branch, in different repos — i.e. one piece of work
+that failed to group because the worktrees were named differently. Two slots, two
+sets of ports, two cards for one job.
+
+```jsonc
+[ { "branch": "feature/mfa-totp",
+    "features": ["mfa-totp", "totp-mfa"],
+    "members": [ { "repo": "api", "wtname": "mfa-totp", "path": "…", "feature": "mfa-totp" },
+                 { "repo": "fe",  "wtname": "totp-mfa", "path": "…", "feature": "totp-mfa" } ] } ]
+```
+
+**Detection only.** The fix is a manual group (`POST /groups`), and it is the
+user's call — grouping on a guess is how the naming convention became
+load-bearing without anyone deciding it should be. Manual groups are excluded
+from detection (the user has already answered), as are the repos' own default
+branches, since every worktree sits on one at some point.
 
 ### Session
 
@@ -363,6 +409,67 @@ them), so they are edited in `config.json` and picked up on restart. See
 `open` / `openGroup` are shell commands with `{path}` / `{paths}` placeholders,
 substituted with shell-quoted paths and run via `bash -lc`.
 
+### `POST /features/:name/color`
+
+`{ color }` → tag a feature. One of `teal`, `sky`, `indigo`, `violet`, `magenta`,
+`rose`, `olive`, `sand`; anything else is `400 { ok: false, error }`. An empty
+`color` **clears** the tag rather than storing a blank, so the stored map only
+ever holds live entries. `{ ok: true, color }`, persisted to `config.json` and
+broadcast as `topology`.
+
+Its own route rather than a field on `POST /settings`, deliberately: that
+endpoint full-replaces the maps it is given, so tagging one feature from a client
+holding a stale copy would delete every other tag.
+
+### `POST /features/:name/links`
+
+`{ ticket?, pins? }` → a feature's tracker URL and hand-pinned links.
+`{ ok: true, links }` with the merged entry (`{ ticket?, pins? }`), or
+`400 { ok: false, error: 'no feature named' }`.
+
+Keyed by **feature**, not by session: a ticket outlives the agent working on it,
+and `session.sourceUrl` died whenever the session did. Only the fields present
+are touched; an empty `ticket` removes it, and an entry left with nothing in it
+is dropped entirely.
+
+`pins` is `[{ url, label? }]` and is a full replace. A pin without a `url` is
+dropped rather than stored as a link to nowhere, and so is one whose scheme a
+browser should not follow — these are rendered into an `href` in the page that
+holds the boot token, so a stored `javascript:` pin would be one click from
+reading it out. The client refuses to render those; this is the half that stops
+them being written down, because `config.json` outlives any client and is also
+edited by hand.
+
+### `POST /groups`
+
+`{ name, members }` → create or update **one** manual group.
+`400 { ok: false, error: 'name and at least two members are required' }` below
+two members: one worktree is already a feature on its own, so a one-member group
+is a row that changes nothing. `{ ok: true, groups }` with the whole list, and a
+`topology` broadcast — two features becoming one changes the payload, so it is
+rebuilt rather than merely re-sent.
+
+This is what acts on `state.splitFeatures`. A single-group write on purpose: the
+user is answering one question about one card, and `POST /settings`' `groups`
+field is a full replace, so a payload built from that card could delete every
+group they had made by hand.
+
+### `GET /fs/dirs?path=<dir>`
+
+Directory listing for the base-directory picker.
+`{ path, parent, repoCount, entries: [{ name, path, repo }], error? }` — `parent`
+is `null` at the filesystem root, `repo` says the entry is a git checkout, and
+`repoCount` is how many of the children are. Defaults to the home directory.
+
+Never fails: an unreadable or missing path answers with the home directory's
+listing plus an `error`, because a picker that goes blank on a fat-fingered path
+is one you cannot get out of without closing it.
+
+The daemon lists it because the daemon is the thing that will scan it — a browser
+cannot hand back a path (`webkitdirectory` uploads contents,
+`showDirectoryPicker()` returns a handle with no path). It discloses directory
+**names** and repo-ness only: no file names, no contents, no sizes.
+
 ---
 
 ## Sources (session intake)
@@ -376,6 +483,17 @@ The enabled adapters — identical to `state.sources`.
 Pickable items from one adapter. `{ ok: true, items: [{ id, title, subtitle }] }`,
 or `{ ok: false, error, items: [] }` if the adapter is disabled or threw. Always
 `200`. `repo` is required by adapters whose `needsRepo` is true.
+
+### `POST /sources/asana/verify`
+
+`{ token }` → check a token the user has just typed and say who it belongs to:
+`{ ok: true, … }` with Asana's own answer, or `400 { ok: false, error }` (a
+rejected token is reported as `Asana rejected that token`, since that is much the
+commonest thing to get wrong).
+
+Takes the token in the **body**, and persists nothing: this is asked *before*
+anything is saved — proving the token works is what the user is doing when they
+press Connect.
 
 ---
 
@@ -432,6 +550,17 @@ blank one.
 Kill the multiplexer session but keep the record (`{ ok: true }`), and bring it
 back resuming the conversation. Activate answers `{ ok: false, error: 'worktree
 missing' }` if the worktree is gone rather than faking a resume.
+
+### `POST /sessions/:id/restart-terminal`
+
+Kill the multiplexer session and relaunch it, resuming the same conversation —
+for a pty that has wedged, without losing the transcript. Answers exactly as
+`activate` does (`{ ok: true }`, or `{ ok: false, error }` including `no such
+session`).
+
+Deliberately quiet in between: no broadcast is sent between the kill and the
+relaunch, so the session never renders as `stopped` for the length of it. The
+flicker is the thing this verb exists to avoid.
 
 ### `DELETE /sessions/:id?kill=false`
 
@@ -676,6 +805,83 @@ already exists. Returns the *Session*, the existing one if this worktree already
 has a session, or `{ error: 'session is already being opened' }` when an adopt
 for the same path is already in flight.
 
+### `POST /worktrees/install-deps`
+
+`{ worktreePath }` → run `npm install` in a worktree whose `node_modules` is
+missing (`worktree.depsMissing`), which is the other reason a startable repo
+cannot start.
+
+The response is the **outcome**, not an acknowledgement — `{ ok: true, log }` or
+`{ ok: false, error, log? }`, where `log` is the install log `GET /servers/logs`
+cannot reach (it is keyed by run, not by worktree). This means the request is
+open for as long as the install takes, deliberately: a client that got an
+acknowledgement could only guess at success from a later sweep, and the npm exit
+code is the thing worth reporting. `error` is `no such worktree`,
+`no package.json here`, `already installing`, or `npm install exited <code>`.
+
+`canStart` / `depsMissing` change as a result, so a `topology` frame follows.
+
+---
+
+## Reviews
+
+### `POST /reviews/checkout`
+
+`{ repo, branch, number, title?, url? }` → check somebody else's merge request
+out and point an agent at it. `{ ok: true, session, worktree: { name, path },
+reused }`, or `400 { error }` for a missing field, an unknown repo, or a git
+failure.
+
+The only route that creates a worktree for a branch that is not yours. It is cut
+from `origin/<branch>` (fetch, then a local branch at the remote tip) because the
+MR's source branch lives on the remote, and the worktree is named
+`review-<number>` rather than after the branch: `feature/mfa-totp` would collide
+by name with the worktree you already have and be auto-grouped into the same
+*feature* as your own work.
+
+An existing `review-<number>` worktree is not a failure — it is the one you made
+last time, and it is reused (`reused: true`). The adopted session is seeded with
+a review brief that tells the agent to report rather than change the code.
+
+---
+
+## Orphans (reinstating a closed session)
+
+Closing a session deletes Studio's pointer to it; the **conversation** belongs to
+Claude Code and stays on disk. These two routes find those conversations and
+bring one back.
+
+### `GET /orphans`
+
+`{ orphans: [ { worktreePath, repo, name, branch, claudeSessionId, lastModified,
+conversations, recoverable, reason? } ] }` — every worktree with a transcript and
+no live session, newest conversation per worktree (`conversations > 1` means one
+was picked). `recoverable: false` carries the `reason`.
+
+Candidates are worktrees that exist right now *and* the paths that branches with
+no worktree **would** occupy under `config.worktrees.layout`. The second half is
+what makes a deleted worktree findable at all: the lookup only goes forwards, from
+a path to its transcript directory, because Claude's directory slug is lossy and
+cannot be walked back to a path. Branches are enumerated lazily, here, rather than
+on every scan — that would be a git call per repo on every file change to answer
+a question nobody asks until they open this list.
+
+### `POST /orphans/reinstate`
+
+`{ worktreePath }` → recreate the worktree if it is missing, then adopt it with
+`--resume`. `{ ok: true, session }`.
+
+- `400 { ok: false, error: 'worktreePath is required' }`, or a git failure.
+- `404` — nothing to reinstate at that path, or no conversation was found for it.
+- `409` — not recoverable (the `reason` from `GET /orphans`), or a session for
+  that worktree is already opening.
+
+It refuses rather than improvises when the branch is gone: recreating then would
+give an empty branch off the default with a transcript attached — an agent
+resuming into a directory that does not hold the code it is discussing. When the
+branch is there, the worktree is recreated **at the path the transcript is keyed
+to**, which is what makes `--resume` find it.
+
 ---
 
 ## Dev servers
@@ -710,11 +916,97 @@ the start. Unknown/untracked worktrees answer `{ offset, text: "", size: 0 }`.
 
 ---
 
+## Run configurations and runs
+
+A worktree's editor run configurations — JetBrains, VS Code, Zed — read out of the
+worktree, and what happens when you run one.
+
+### `GET /run-configs?worktreePath=<path>&repo=<name>`
+
+`{ configs: [ { name, cmd, kind, source, file, env? } ] }`, where `kind` is
+`server` (long-lived) or `task` (finite), and `source` is `jetbrains` / `vscode` /
+`zed` — or `manual` for an entry from `config.runConfigs[repo]`, whose `file` is
+the config file. Deduped by name, discovered entries winning a clash with a
+manual one, then JetBrains → VS Code → Zed among themselves. `400` without a
+`worktreePath`.
+
+**Discovered on request, not imported and not part of the topology payload.** An
+imported copy goes stale the moment the editor's config changes, and the topology
+half is broadcast on every git rescan — putting a per-worktree directory scan
+there would cost a handful of stats per worktree per broadcast for something only
+read when a menu is opened.
+
+### `POST /run-configs/run`
+
+`{ repo, worktreePath, name }` → run one. `400` for a missing field, `404
+{ error: "no run configuration named '<name>'" }` if the worktree no longer
+declares it. What comes back depends on its `kind`:
+
+- `server` → it is launched and tracked exactly like a dev server (a pid, a log,
+  reachable by Stop stack), on the feature's concurrency slot: the `start`
+  response plus `kind: 'server'`, or `409 { ok: false, error }` if no slot is
+  free. A run config names no ports, so there is nothing to pre-check — discovery
+  finds it once it binds.
+- `task` → `{ ok: true, kind: 'task', runId }`, and it becomes a *run* below.
+
+A finite command used to open a tmux tab. That works, but it makes you read raw
+ANSI in a pane competing with the agent's own tabs, it answers none of the
+questions you have about a test run, and it needs a session to exist — which a
+feature may not have. A run needs only a worktree.
+
+### Runs
+
+| Route                     | Returns                                                        |
+| ------------------------- | -------------------------------------------------------------- |
+| `GET /runs`               | `{ runs: [ <Run> ] }` — all of them, or `?worktreePath=` for one worktree's |
+| `GET /runs/:id/log`       | `{ offset, text, size, skipped? }` — same tail contract as `/servers/logs` |
+| `POST /runs/:id/stop`     | `{ ok: true }`, or `{ ok: false, error: 'no such run' }`         |
+| `POST /runs/:id/rerun`    | `{ ok: true, run }` — a **new** run                              |
+| `DELETE /runs/:id`        | `{ ok: true }`; `{ ok: false, error: 'still running — stop it first' }` |
+| `POST /runs/:id/to-agent` | see below                                                        |
+
+A *Run* is `{ id, name, repo, worktreePath, cmd, status, startedAt, endedAt?,
+exitCode?, log, env?, pid? }`. `status` is `running` | `passed` | `failed` |
+`stopped`. `exitCode` is null for a run killed before it reported one, and `pid`
+is absent after a daemon restart — a pid from a previous process is not ours to
+signal. The last 60 finished runs are kept: history is for "what did the last one
+say", not an archive.
+
+`stop` signals the process **group**, so a test runner's children do not outlive
+it. `rerun` re-executes the recorded `cmd` and `env` rather than re-resolving the
+configuration by name — a history row says "run *that* again", so it cannot fail
+because the config was renamed, and cannot quietly run something else because the
+file changed. Use `POST /run-configs/run` for whatever the config says today.
+
+### `POST /runs/:id/to-agent`
+
+Hand a finished run to the agent working in its worktree: one line naming the
+configuration, how it exited, and **the path to its log** — not the output.
+
+`{ ok: true, sessionId, message }`. `400 { ok: false, error }` for `no such run`,
+`that run is still going — wait for it to finish`, or `no agent is attached to
+that worktree`. `200 { ok: false, skipped: true, reason, sessionId, message }`
+means the agent is there but was not ready — a state the client should explain,
+not a failure it should report.
+
+The session is looked up **from the run's worktree** rather than named by the
+caller: one session owns a worktree, and letting a stale tab pick the target
+would send a failure to whichever agent it last had selected.
+
+A path, not a paste, for two reasons. Text is written into the pane and Enter is
+pressed separately, so a body containing newlines submits at the first one — a
+stack trace would arrive as fifty half-messages, each interrupting the agent
+again. And the log is already on disk: the agent reads *all* of it rather than
+whatever tail we guessed was enough.
+
+---
+
 ## Features and groups
 
 Every route takes `{ group: "<feature name>" }` and answers `404 { error: 'no
 such feature' }` if the name matches neither a feature nor a group. Members that
-don't resolve (`missing`) are skipped throughout.
+don't resolve (`missing`) are skipped throughout. The one exception is the read
+below, `GET /group/:name/commits`, which has no body to put the name in.
 
 ### `POST /group/start`
 
@@ -818,6 +1110,16 @@ order:
 
 A provider whose CLI isn't installed exits with an empty stderr, and that
 silence never replaces the reason from one that ran.
+
+### `GET /group/:name/commits`
+
+The `GET /sessions/:id/commits` rollup for a **feature** rather than a session:
+`{ repos: [ … ] }`, the same shape and the same `base..HEAD` rules, one entry per
+member with a path. `404 { error: 'no such feature' }`.
+
+That route is keyed on a session, so a feature with no agent — the exact case the
+dock's feature pane exists for — could not answer "what is in here, and is it
+merged?" without starting one. Same shape, so a client renders both the same way.
 
 ---
 
