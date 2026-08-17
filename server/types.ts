@@ -145,6 +145,25 @@ export interface RepoConcurrency {
   configPatch?: ConfigPatch;
 }
 
+/**
+ * One slot's availability, judged FOR A SPECIFIC FEATURE.
+ *
+ * There is no global answer: a slot is usable or not depending on which repos are asking,
+ * because only the ports those repos derive get bound. `held` and `blocked` are kept
+ * apart because their remedies differ — stop the other feature, versus go deal with a
+ * process Studio does not manage.
+ */
+export interface SlotReport {
+  slot: number;
+  state: 'free' | 'held' | 'blocked' | 'current';
+  /** repo name → the ports that repo derives on this slot. Only concurrency-governed repos appear. */
+  ports: Record<string, number[]>;
+  /** Set when state === 'held': the feature holding it. */
+  heldBy?: string;
+  /** Set when state === 'blocked': the first bound port and its pid. */
+  blockedBy?: { port: number; pid: number };
+}
+
 export interface ConcurrencyConfig {
   enabled: boolean;
   offsetStep: number;

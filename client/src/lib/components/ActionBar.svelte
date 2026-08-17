@@ -27,6 +27,7 @@
    */
   import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
   import OverflowMenu from '$lib/components/OverflowMenu.svelte';
+  import SlotMenu from '$lib/components/SlotMenu.svelte';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
   // openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
   import { openApp } from '$lib/stores/world.svelte.js';
@@ -142,7 +143,13 @@
               <button class="btn sm ghost" title="Stop the dev servers" aria-label="Stop dev servers" onclick={() => stopStack(target.name)}>{'■'}</button>
               <button class="btn sm ghost" title="Restart the dev servers" aria-label="Restart dev servers" onclick={() => restartStack(target.name)}>{'↻'}</button>
             {:else if anyStartable}
-              <button class="btn sm primary" title="Start the dev servers" aria-label="Start dev servers" onclick={() => runStack(target.name)}>{'▶︎'}</button>
+              <!--
+                A split button. ▶ is unchanged — one click, default slot, no new decision
+                for the case that never cared. The caret is the whole opt-in: it says what
+                each slot would cost and which of them cannot work right now.
+              -->
+              <button class="btn sm primary split-go" title="Start the dev servers" aria-label="Start dev servers" onclick={() => runStack(target.name)}>{'▶︎'}</button>
+              <SlotMenu feature={target.name} mode="start" onpick={(slot) => runStack(target.name, slot)} />
             {/if}
           </span>
         {/if}

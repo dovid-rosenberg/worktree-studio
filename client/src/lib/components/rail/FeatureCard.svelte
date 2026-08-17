@@ -28,6 +28,8 @@
   import { colorVars } from '$lib/featureColor.js';
   import { world } from '$lib/stores/world.svelte.js';
   import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+  import SlotMenu from '$lib/components/SlotMenu.svelte';
+  import { moveSlot, moveSummary } from '$lib/ops.svelte.js';
 
   let { feature }: { feature: Feature } = $props();
 
@@ -105,8 +107,15 @@
            correct however the list moves. -->
       {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
       {#if !feature.auto}<span class="src" title="Grouped by config.groups, not by name">manual</span>{/if}
+      <!-- The badge is also the move control; SlotMenu stops the click reaching the card,
+           so opening the menu does not also select the row behind it. -->
       {#if feature.slot != null}
-        <span class="badge slot" title="Concurrency slot — its ports are offset by slot·100">{feature.slot}</span>
+        <SlotMenu
+          feature={feature.name}
+          mode="move"
+          current={feature.slot}
+          onpick={(slot, report) => moveSlot(feature.name, slot, moveSummary({ members: ms }, report))}
+        />
       {/if}
     </div>
 

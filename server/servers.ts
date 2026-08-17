@@ -11,7 +11,14 @@ import { CHILD_ENV, run, readJsonState, writeJson, realpath, slug } from './util
 import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
-import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, Worktree } from './types.ts';
+import type {
+  ConcurrencyConfig,
+  Config,
+  PartialDeep,
+  RepoConcurrency,
+  SlotReport,
+  Worktree,
+} from './types.ts';
 import { TAIL_MAX_BYTES, readTail, tailFile } from './log-tail.ts';
 
 /**
@@ -81,22 +88,9 @@ export interface StartCommand {
 /** A slot, or why there isn't one. */
 export type SlotAllocation = { slot: number; error?: undefined } | { slot?: undefined; error: string };
 
-/**
- * One slot's availability, judged FOR A SPECIFIC FEATURE.
- *
- * `held` and `blocked` are kept apart because their remedies are different: stop the
- * other feature, versus go deal with a process Studio does not manage.
- */
-export interface SlotReport {
-  slot: number;
-  state: 'free' | 'held' | 'blocked' | 'current';
-  /** repo name → the ports that repo derives on this slot. Only concurrency-governed repos appear. */
-  ports: Record<string, number[]>;
-  /** Set when state === 'held': the feature holding it. */
-  heldBy?: string;
-  /** Set when state === 'blocked': the first bound port and its pid. */
-  blockedBy?: { port: number; pid: number };
-}
+// SlotReport lives in types.ts with the rest of the wire shapes: the client renders it,
+// and importing it from here would drag servers.ts into the client's typecheck.
+export type { SlotReport } from './types.ts';
 
 /**
  * A config rewrite start() applies before spawning: which file, which sibling port

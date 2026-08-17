@@ -16,7 +16,7 @@ import * as worktree from './worktree.ts';
 import { openEditor, resolveEditor, shq } from './util.ts';
 import * as startReport from './start-report.ts';
 import type { StartOutcome } from './start-report.ts';
-import type { SlotReport } from './servers.ts';
+import type { SlotReport } from './types.ts';
 
 // The collaborators below are typed by the surface these routes touch, not by the
 // concrete objects server.ts hands over — the same rule server/routes-review.ts

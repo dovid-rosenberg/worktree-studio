@@ -589,10 +589,18 @@ function startResult(
   return `${head}. Skipped ${detail}`;
 }
 
-export function runStack(name: string) {
+/**
+ * Start a feature's dev servers.
+ *
+ * `slot` is the picker's opt-in. It rides on the stopConflicts retry too — dropping it
+ * there would silently start the feature somewhere other than where it was asked for,
+ * which is the one outcome the picker exists to prevent.
+ */
+export function runStack(name: string, slot?: number) {
+  const body = slot === undefined ? { group: name } : { group: name, slot };
   return pending.run(name, async () => {
     try {
-      const r = await api('POST', '/api/v1/group/start', { group: name });
+      const r = await api('POST', '/api/v1/group/start', body);
       if (r.needsConfirm) {
         const names = [...new Set(r.conflicts.map((c: { wtname: string }) => c.wtname))];
         const list = names.map((n) => `“${n}”`).join(', ');
@@ -601,7 +609,7 @@ export function runStack(name: string) {
           { title: 'Stop & switch?', okLabel: 'Stop & switch' },
         );
         if (!ok) return;
-        const r2 = await api('POST', '/api/v1/group/start', { group: name, stopConflicts: true });
+        const r2 = await api('POST', '/api/v1/group/start', { ...body, stopConflicts: true });
         toast(startResult('Switched — started', r2), !r2.ok);
       } else {
         toast(startResult('Started', r), !r.ok);
@@ -617,6 +625,56 @@ export function stopStack(name: string) {
     try {
       await api('POST', '/api/v1/group/stop', { group: name });
       toast(`Stopped ${name}`);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
+  });
+}
+
+/**
+ * The confirm text for a slot move: what each repo's ports become.
+ *
+ * Built from the picked SlotMenu row, which already carries the target slot's derived
+ * ports, and the feature's live members, which carry the current ones. Naming both sides
+ * is the point — "move to slot 2" alone does not tell you what is about to change.
+ */
+export function moveSummary(
+  feature: { members?: Array<{ repo: string; ports?: number[] }> },
+  report: { ports: Record<string, number[]> },
+): string {
+  const now = new Map((feature.members || []).map((m) => [m.repo, m.ports || []]));
+  const lines = Object.entries(report.ports)
+    .filter(([, to]) => to.length)
+    .map(([repo, to]) => {
+      const from = now.get(repo) || [];
+      return from.length ? `${repo}: ${from.join(' ')} → ${to.join(' ')}` : `${repo}: → ${to.join(' ')}`;
+    });
+  return [
+    'The dev servers restart. Your session, terminal, and working tree are untouched.',
+    ...lines,
+  ].join('\n');
+}
+
+/**
+ * Move a feature's dev servers to another slot.
+ *
+ * A restart, not a slide: ports come from env read at launch and the FE config patch is
+ * written before spawn, so the confirm says "Move & restart" rather than implying the
+ * running processes change ports underneath you.
+ *
+ * `summary` is built from the SlotMenu row the user just picked — the before/after ports
+ * are already in hand, so the dialog can be specific instead of generic.
+ */
+export function moveSlot(name: string, slot: number, summary: string) {
+  return pending.run(name, async () => {
+    const ok = await uiConfirm(summary, {
+      title: `Move “${name}” to slot ${slot}?`,
+      okLabel: 'Move & restart',
+    });
+    if (!ok) return;
+    try {
+      const r = await api('POST', '/api/v1/group/slot', { group: name, slot });
+      toast(startResult(`Moved to slot ${slot} — started`, r), !r.ok);
     } catch (e) {
       toast(errMessage(e), true);
     }
