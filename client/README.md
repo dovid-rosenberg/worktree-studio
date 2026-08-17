@@ -51,9 +51,8 @@ client/
           DiffViewport.svelte  the windowed diff surface + keyboard navigation
           model.js             blocks → flat fixed-height item list (pure)
           api.js               the four review routes, typed
-        insights/           transcript search (SearchPanel/SearchHit, ⌘⇧F) and the
-                            index-health readout it carries (IndexStatus). Named for the
-                            dock view it was extracted from; that view is gone.
+        search/             transcript search (SearchPanel/SearchHit, ⌘⇧F) and the
+                            index-health readout it carries (IndexStatus).
     routes/
       +layout.js            ssr = false, prerender = false
       +layout.svelte        theme, the SSE connection, global keys, every overlay

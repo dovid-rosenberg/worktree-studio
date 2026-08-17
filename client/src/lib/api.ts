@@ -83,7 +83,7 @@ export interface RequestOpts {
 /**
  * THE call to the daemon. Auth, parsing and error shape, once.
  *
- * There were three of these — this one, `insights/api.ts` and `review/api.ts` — each
+ * There were three of these — this one, `search/api.ts` and `review/api.ts` — each
  * re-implementing token headers, text→JSON and non-2xx→Error, and they had already
  * drifted: the review copy read `globalThis.WTS_TOKEN` with none of the placeholder
  * guards below, so in dev it sent the literal `__WTS_TOKEN__` and every call 401'd.

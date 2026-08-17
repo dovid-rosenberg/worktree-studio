@@ -21,11 +21,11 @@
  * in the terminal instead of on <body>.
  */
 import Modal from '$lib/components/Modal.svelte';
-import SearchPanel from '$lib/components/insights/SearchPanel.svelte';
+import SearchPanel from '$lib/components/search/SearchPanel.svelte';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { ui } from '$lib/stores/ui.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
-import type { Hit } from '$lib/components/insights/types';
+import type { Hit } from '$lib/components/search/types';
 
 /*
  * Scoped to the selection when there IS one, and to everything otherwise.
