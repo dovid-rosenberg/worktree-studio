@@ -19,6 +19,7 @@ import type { Session } from '../../../../../server/types';
 import { labelForSource } from '$lib/stores/ui.svelte.js';
 import { appUrl, webAppsFor, world } from '$lib/stores/world.svelte.js';
 import { shipLabel, shipVerdict } from '$lib/ship.js';
+import { pushFeature, updateFromBase } from '$lib/ops.svelte.js';
 import LinkChip from '$lib/components/LinkChip.svelte';
 import ActionBar from '$lib/components/ActionBar.svelte';
 import StateDot from '$lib/components/StateDot.svelte';
@@ -211,7 +212,17 @@ const repoChips = $derived(
          to fix" is only useful if the three are one click away. -->
     <ul class="shiplist">
       {#each ship.blockers as b (b.repo + b.text)}
-        <li class={b.kind}><b>{b.repo}</b> {b.text}</li>
+        <!-- A blocker the app can clear gets the verb that clears it. "has 3 unpushed
+             commits", naming something you then go and do by hand, is the shape of
+             problem this panel exists to avoid. -->
+        <li class={b.kind}>
+          <b>{b.repo}</b> {b.text}
+          {#if b.action === 'push' && feature}
+            <button class="fix" onclick={() => pushFeature(feature.name)}>Push</button>
+          {:else if b.action === 'update' && feature}
+            <button class="fix" onclick={() => updateFromBase(feature.name)}>Update from base</button>
+          {/if}
+        </li>
       {/each}
     </ul>
   {/if}
@@ -226,6 +237,9 @@ const repoChips = $derived(
   .shipchip.ready { background:var(--done); border-color:var(--done); color:var(--panel); cursor:default; }
   .shipchip.blocked { color:var(--del); border-color:var(--del); }
   .shipchip.waiting { color:var(--waiting); border-color:var(--waiting); }
+  .shiplist button.fix { font:inherit; font-size:11.5px; margin-left:6px; padding:0 6px;
+    color:var(--brand); background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; }
+  .shiplist button.fix:hover { border-color:var(--brand); }
   .shiplist { flex-basis:100%; margin:6px 0 0; padding:9px 12px; list-style:none; background:var(--bg);
               border:1px solid var(--border); border-radius:9px; display:flex; flex-direction:column; gap:4px; }
   .shiplist li { font-size:12.5px; color:var(--ink); }

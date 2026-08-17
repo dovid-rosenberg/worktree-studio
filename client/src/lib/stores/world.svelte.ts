@@ -77,6 +77,7 @@ import type {
   SessionStatePayload,
   TopologyPayload,
   Worktree,
+  SessionRepoGap,
 } from '../../../../server/types';
 
 /** The two halves as received, plus the CI half, all optional before first frame. */
@@ -92,6 +93,7 @@ export interface WorldView extends WorldFrames {
   groups: Feature[];
   /** Features that look like one piece of work under names that do not group. */
   splitFeatures: SplitFeature[];
+  sessionRepoGaps?: SessionRepoGap[];
   webRepos: string[];
   baseDirs: string[];
   editors: string[];
@@ -108,6 +110,7 @@ const EMPTY = {
   features: [] as Feature[],
   groups: [] as Feature[],
   splitFeatures: [] as SplitFeature[],
+  sessionRepoGaps: [] as SessionRepoGap[],
   webRepos: [] as string[],
   baseDirs: [] as string[],
   editors: [] as string[],
@@ -205,6 +208,10 @@ class World {
   }
   get splitFeatures(): SplitFeature[] {
     return this.view.splitFeatures ?? [];
+  }
+  /** Sessions whose repos are a strict subset of their feature's worktrees — see features.ts. */
+  get sessionRepoGaps(): SessionRepoGap[] {
+    return this.view.sessionRepoGaps ?? [];
   }
   get webRepos(): string[] {
     return this.view.webRepos;

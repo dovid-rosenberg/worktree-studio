@@ -29,7 +29,7 @@ import { RAIL_SORTS, ui, liveMembers } from '$lib/stores/ui.svelte.js';
 import type { RailSort } from '$lib/stores/ui.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
-import { groupSplitFeature } from '$lib/ops.svelte.js';
+import { attachSessionRepos, groupSplitFeature } from '$lib/ops.svelte.js';
 import StateDot from '$lib/components/StateDot.svelte';
 
 const rows = $derived(ui.railRows);
@@ -119,6 +119,23 @@ const waiting = $derived(world.sessions.filter((s) => s.state === 'waiting').len
                deliberate — a spike beside the real work — and without this the banner
                restates itself on every topology frame for as long as both exist. -->
           <button class="linkish" onclick={() => ui.dismissSplit(f)}>Not the same work</button>
+        </div>
+      </div>
+    {/each}
+
+    <!-- A session that cannot see part of its own feature. Above the list for the same
+         reason as the banner above: it is a claim ABOUT a card below — that its Changes
+         panel is drawing an empty diff of a branch that has changes, because the session
+         and the feature disagree about which worktrees belong to it. -->
+    {#each world.sessionRepoGaps as gap (gap.sessionId)}
+      <div class="split">
+        <div class="split-t">Session is missing part of its feature</div>
+        <div class="split-b">
+          <span class="br">{gap.title}</span> has no access to
+          {gap.missing.map((m) => m.repo).join(' + ')}
+        </div>
+        <div class="split-a">
+          <button class="btn sm" onclick={() => attachSessionRepos(gap)}>Give it access</button>
         </div>
       </div>
     {/each}

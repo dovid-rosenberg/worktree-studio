@@ -13,7 +13,7 @@
 
 import { api } from '$lib/api.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
-import type { Feature, SplitFeature, PinnedLink, Session } from '../../../server/types';
+import type { Feature, SplitFeature, PinnedLink, Session, SessionRepoGap } from '../../../server/types';
 import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
@@ -932,6 +932,27 @@ export async function stopMainServer(w: { repo: string; path: string }): Promise
  * you meant, and picking one silently is how the naming convention became load-bearing
  * without anyone deciding it should be. The first name is offered as the default.
  */
+/**
+ * Accept the offer to attach a session's missing feature worktrees.
+ *
+ * Confirmed rather than one-click, because this is not bookkeeping: each attach sends
+ * `/add-dir` into the running agent, widening what it may read and write, possibly
+ * mid-turn. The server detects the gap and deliberately does not close it; this is where
+ * a person decides.
+ */
+export async function attachSessionRepos(gap: SessionRepoGap) {
+  const repos = gap.missing.map((m) => m.repo).join(', ');
+  if (!(await uiConfirm(`Give this session access to ${repos}?`))) return;
+  try {
+    const out = await api('POST', `/api/v1/sessions/${encodeURIComponent(gap.sessionId)}/attach-repos`);
+    const n = (out as { attached?: unknown[] })?.attached?.length ?? 0;
+    const failed = (out as { failed?: unknown[] })?.failed?.length ?? 0;
+    toast(failed ? `Attached ${n}, ${failed} failed` : `Attached ${n} repo(s)`, !!failed);
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
+}
+
 export async function groupSplitFeature(d: SplitFeature) {
   const name = await uiPrompt('Group these worktrees as one feature', d.features[0] || '');
   if (!name) return;
