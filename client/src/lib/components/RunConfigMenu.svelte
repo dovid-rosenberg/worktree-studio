@@ -178,8 +178,8 @@ $effect(() => {
       {:else if !total}
         <div class="note">
           No run configurations in {targets.length === 1 ? 'this worktree' : 'these worktrees'}.
-          Studio reads <code>.idea/runConfigurations</code>, <code>.vscode</code> and
-          <code>.zed</code> from each one.
+          Studio reads <code>.idea/runConfigurations</code> and <code>.vscode</code>
+          from each one.
         </div>
       {:else}
         {#each groups.filter((g) => g.configs.length) as g (g.repo)}

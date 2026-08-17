@@ -30,7 +30,7 @@ export interface DiscoveredConfig {
    */
   kind: RunKind;
   env?: Record<string, string>;
-  source: 'jetbrains' | 'vscode' | 'zed';
+  source: 'jetbrains' | 'vscode';
   /** The file it came from — shown as the tooltip, so a surprising command is traceable. */
   file: string;
 }
@@ -65,12 +65,12 @@ const SERVER_NAME = /^(start|dev|serve|watch|run)\b|(^|[^a-z])(server|daemon)([^
  * an exit code, shown in the Runs panel). Getting it wrong for a server means a dev server
  * that no Stop can reach and a Runs row that never finishes.
  *
- * It was decided SIX different ways across the parsers: one hardcoded 'task', one that
- * tested the name but not the command, one that tested the command but not the name, one
- * that never called matchesStartCmd at all — and discover() did not even PASS startCmd to
- * two of them, so those could not have applied the rule if they had tried. So the exact
- * case this exists for (a Zed or VS Code task whose command IS `config.start[repo].cmd`)
- * was classified 'task', while the identical command in a JetBrains XML was a server.
+ * It was once decided a different way in every parser: one hardcoded 'task', one tested
+ * the name but not the command, one tested the command but not the name, one never called
+ * matchesStartCmd at all — and discover() did not even PASS startCmd to some of them, so
+ * those could not have applied the rule if they had tried. So the exact case this exists
+ * for (a VS Code task whose command IS `config.start[repo].cmd`) was classified 'task',
+ * while the identical command in a JetBrains XML was a server.
  *
  * One function now, with every signal the callers had between them:
  *   - an explicit declaration from the editor (VS Code's `isBackground`) wins outright;
@@ -115,7 +115,7 @@ function resolvePlaceholders(s: string, worktreePath: string): string {
 }
 
 /**
- * JSON with comments and trailing commas — what VS Code and Zed actually write.
+ * JSON with comments and trailing commas — what VS Code actually writes.
  *
  * `JSON.parse` rejects both, and every one of the user's real `.vscode/launch.json`
  * files opens with three comment lines. Returns null rather than throwing: a config file
@@ -335,39 +335,6 @@ export function parseVsCodeLaunch(
   return out;
 }
 
-interface ZedTask {
-  label?: string;
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-}
-
-/** `.zed/tasks.json` — a bare array of `{label, command, args}`. */
-export function parseZed(
-  text: string,
-  worktreePath: string,
-  file: string,
-  /** Same omission as parseVsCodeTasks — see the note there. */
-  startCmd?: string,
-): DiscoveredConfig[] {
-  const doc = parseJsonc<ZedTask[]>(text);
-  if (!Array.isArray(doc)) return [];
-  const out: DiscoveredConfig[] = [];
-  for (const t of doc) {
-    if (!t?.label || !t.command) continue;
-    const cmd = resolvePlaceholders([t.command, ...(t.args || [])].join(' '), worktreePath);
-    out.push({
-      name: t.label,
-      cmd,
-      kind: isServer({ cmd, name: t.label, worktreePath, startCmd }) ? 'server' : 'task',
-      env: t.env,
-      source: 'zed',
-      file,
-    });
-  }
-  return out;
-}
-
 const read = (f: string): string | null => {
   try {
     return fs.readFileSync(f, 'utf8');
@@ -379,9 +346,9 @@ const read = (f: string): string | null => {
 /**
  * Every run configuration this worktree declares, from every editor it declares them in.
  *
- * Deduped by name, first source winning in the order JetBrains → VS Code → Zed. Two
- * editors describing the same script should be one entry, and a stable order beats a
- * merge nobody asked for.
+ * Deduped by name, first source winning in the order JetBrains → VS Code. Two editors
+ * describing the same script should be one entry, and a stable order beats a merge
+ * nobody asked for.
  */
 export async function discover(
   worktreePath: string,
@@ -411,10 +378,6 @@ export async function discover(
   const launch = path.join(worktreePath, '.vscode', 'launch.json');
   const launchText = read(launch);
   if (launchText) out.push(...parseVsCodeLaunch(launchText, worktreePath, launch, opts.startCmd));
-
-  const zed = path.join(worktreePath, '.zed', 'tasks.json');
-  const zedText = read(zed);
-  if (zedText) out.push(...parseZed(zedText, worktreePath, zed, opts.startCmd));
 
   const seen = new Set<string>();
   return out.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true)));

@@ -14,7 +14,7 @@ dashboard with a single page at **http://127.0.0.1:7788**.
 
 1. [Concepts & glossary](#concepts--glossary)
 2. [Install & run](#install--run) — including [start at login](#start-it-at-login-macos)
-3. [Menubar and Alfred](#menubar-and-alfred)
+3. [Menubar](#menubar)
 4. [The feature lifecycle](#the-feature-lifecycle) — the spine of the tool
 5. [Feature reference](#feature-reference)
 6. [The layout](#the-layout)
@@ -101,14 +101,12 @@ place if you move the repo.
 
 ---
 
-## Menubar and Alfred
+## Menubar
 
-Both surfaces are thin clients over the same [HTTP API](docs/api.md): they read
-`GET /state` and POST the same routes the web UI does. Both find the port in your
-config and the token in `~/.local/state/worktree-studio/token`, so neither needs
-configuration of its own. Both need `jq`.
-
-### SwiftBar (menubar)
+The menubar is a thin client over the same [HTTP API](docs/api.md): it reads
+`GET /state` and POSTs the same routes the web UI does. It finds the port in your
+config and the token in `~/.local/state/worktree-studio/token`, so it needs no
+configuration of its own. It needs `jq`.
 
 `install.sh` symlinks `swiftbar/worktrees.10s.sh` into SwiftBar's plugin folder. The
 title carries one number, picked by urgency — agents **waiting on you** (🟡), else
@@ -138,30 +136,10 @@ The distinction matters because of `KeepAlive`: a crashing daemon is relaunched
 within seconds, so "not running" with a Start button would be both fleeting and
 useless — it would ask you to press what launchd is already pressing.
 
-### Alfred
-
-Double-click **`alfred/Worktree Studio.alfredworkflow`** to import it. The keyword is
-`wt`. (Editing `alfred/src/*.sh` does nothing until you re-run `alfred/build.sh` and
-re-import — Alfred copies a workflow into its own preferences on import, so the
-bundle is a snapshot.)
-
-Type `wt` to get your active sessions first, then every worktree, and:
-
-| Key | On a session | On a worktree |
-| --- | --- | --- |
-| `⏎` | **open it in Studio** — the cockpit, focused on that session | open it in Studio: its agent, or its feature |
-| `⌘` | open its worktree in your editor | open it in your editor |
-| `⌃` | start the whole feature's stack | start this repo's dev server |
-| `⌥` | open its ticket ↗, or stop the stack when there is no ticket | stop this repo's dev server |
-| `⇧` | reveal in Finder | reveal in Finder |
-
-A modifier whose action cannot apply — no worktree yet, no `start` command
-configured, nothing running to stop — is shown greyed out with the reason, rather
-than accepting the keystroke and doing nothing.
-
 ### Deep links
 
-`⏎` works because the cockpit reads its selection from the URL fragment:
+Clicking a menubar item opens the cockpit already focused on the right thing,
+because the cockpit reads its selection from the URL fragment:
 
 | Link | Opens |
 | --- | --- |
@@ -239,7 +217,6 @@ Studio reads, per worktree:
 - `.idea/runConfigurations/*.xml` (JetBrains) — npm scripts, mocha runs, Node files
 - `.vscode/tasks.json` and `.vscode/launch.json` — npm/shell tasks, and launches that
   name a runnable command (a debugger-only entry is skipped, not approximated)
-- `.zed/tasks.json`
 
 They are grouped by repo, since a feature spans several and two repos often both have a
 `test:unit`. Two kinds, and the glyph says which:
@@ -336,7 +313,7 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
   the server refreshes when a commit, a push or a branch switch lands, when a PR is
   opened, and on a slow safety net, and *only* while a browser stream is open: with no
   dashboard attached, neither CLI is ever spawned. Briefly cached and shared with
-  `GET /api/sessions/:id/ci`, the on-demand answer SwiftBar/Alfred still use. Degrades
+  `GET /api/sessions/:id/ci`, the on-demand answer SwiftBar still uses. Degrades
   gracefully when no PR exists or the CLI is missing.
 - **Open PR / MR** and **Create PR** (`/api/group/pr`) across the feature’s repos.
 
@@ -375,8 +352,8 @@ and the PR/CI pills. No buttons.
 **The action bar** (bottom) — every verb for whatever is selected. The rule: the top says
 what you are looking at, the bottom does something to it.
 
-**Insights** (**⌘\\** or ◔ in the top bar) — one destination: a fleet-wide cost overview
-you drill into. Picking a session shows its token breakdown and transcript search.
+**Insights** (**⌘\\** or ◔ in the ⋮ menu) — the state of the transcript index that
+**⌘⇧F** searches over: which backend, how much is indexed, and a rebuild button.
 
 ---
 
@@ -386,7 +363,7 @@ you drill into. Picking a session shows its token breakdown and transcript searc
 |-----|--------|
 | `⌘K` | Command palette (works even while typing) |
 | `⌘N` | New session |
-| `⌘\` | Insights (fleet cost overview) |
+| `⌘\` | Insights (transcript-index status) |
 | `⌥1`–`⌥9` | Jump to the Nth row in the rail |
 | `⌘⇧F` | Search every transcript |
 | `⌘D` | Review changes (open the ✎ Changes tab) |
@@ -547,7 +524,7 @@ Every request is authenticated. Send `x-wts-token: $(cat
 ~/.local/state/worktree-studio/token)` — or `?token=…` for `EventSource` and the
 WebSocket, which can't set headers. The server also refuses any request whose
 `Host` isn't a loopback name (DNS-rebinding defense) or whose `Origin`, if it has
-one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred and
+one, isn't this server. `docs/api.md` has the full rules; the SwiftBar and
 `wt-studio` clients already do all of this.
 
 **State & events**

@@ -493,8 +493,8 @@ function nudge<T>(list: T[], i: number, by: number): T[] {
       <div class="setsec">
         <span class="lbl">Run configurations <span class="lbl-note">— hand-written; your editor's own are found automatically</span></span>
         <p class="secnote">
-          <b>▷ Run</b> reads <code>.idea/runConfigurations</code>, <code>.vscode</code> and
-          <code>.zed</code> from each worktree, so anything your editor already knows needs
+          <b>▷ Run</b> reads <code>.idea/runConfigurations</code> and <code>.vscode</code>
+          from each worktree, so anything your editor already knows needs
           no entry here. Add one only for a command no editor config expresses.
           <b>server</b> is tracked like a dev server; <b>task</b> gets a run with output and
           an exit code.

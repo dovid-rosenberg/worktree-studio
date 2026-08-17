@@ -20,7 +20,7 @@ One engine (this server) and one screen — there is no view to toggle:
 
 Worktrees sharing a name across repos group into a **feature** (BE+FE by shared name,
 plus manual groups), which is what start / stop / restart / stop&switch act on. The
-SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
+SwiftBar menubar reads the same `/api/state` (no more `core.sh`).
 
 ## What it does
 
@@ -68,8 +68,7 @@ npm start            # → http://127.0.0.1:7788
 
 To have it running whenever your Mac is, install the launchd agent instead —
 `./install.sh --autostart` starts the server at login, restarts it if it dies, and
-links the SwiftBar menubar plugin. `./uninstall.sh` reverses both. Alfred users:
-double-click `alfred/Worktree Studio.alfredworkflow`, then type `wt`. See
+links the SwiftBar menubar plugin. `./uninstall.sh` reverses both. See
 [MANUAL.md](MANUAL.md#start-it-at-login-macos).
 
 The UI is the SvelteKit app in `client/`, built to static files that the daemon serves
@@ -122,8 +121,7 @@ server/
   identity.ts          which worktrees are "the same feature"
   broadcast.ts         the SSE fan-out (topology · session-state · ci)
   review.ts hunks.js diff.js   commits, structured diffs, hunk-level staging
-  transcripts.ts transcript-index.js   transcript reader + sqlite search/telemetry
-  pricing.ts           the maintained price table every dollar figure derives from
+  transcripts.ts transcript-index.js   transcript reader + sqlite/FTS5 search index
   sources/             freetext · github · gitlab · asana adapters
   webui.ts             which frontend is served, and the boot-token injector
 client/                the served UI (SvelteKit → client/build); see client/README.md

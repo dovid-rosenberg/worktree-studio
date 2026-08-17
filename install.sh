@@ -39,7 +39,7 @@ else
   echo "· SwiftBar not detected ($SB missing) — skipping menubar"
 fi
 
-chmod +x swiftbar/*.sh alfred/src/*.sh 2>/dev/null || true
+chmod +x swiftbar/*.sh 2>/dev/null || true
 
 if [ "$AUTOSTART" = 1 ]; then
   # A login agent, not a daemon: it runs as you, in your GUI session, which is what
@@ -79,10 +79,21 @@ fi
 echo
 if [ "$AUTOSTART" = 1 ]; then
   echo "Done. The server is running now and will start again at every login."
-  echo "  →  http://127.0.0.1:7788"
+  # `wt-studio endpoint` prints shell-evaluable assignments — one call, no parsing here.
+  if eval "$(node bin/wt-studio.ts endpoint 2>/dev/null)" 2>/dev/null && [ -n "${WT_STUDIO_TOKEN:-}" ]; then
+    echo "  →  $WT_STUDIO_BASE/?token=$WT_STUDIO_TOKEN"
+  else
+    echo "  →  run 'node bin/wt-studio.ts endpoint' for the URL to open"
+  fi
 else
-  echo "Done. Start the app:  npm start   →  http://127.0.0.1:7788"
+  echo "Done. Start the app:  npm start"
   echo "Start it at login instead:  ./install.sh --autostart"
 fi
+# The URL has to carry the token on the first visit. The document is gated — serving the
+# shell to anything that asked was how the boot token reached any local process on the
+# machine — and the page swaps the token for a cookie and strips it from the address bar
+# immediately, so this is a one-time hand-over and not a URL to bookmark. Printed only
+# when the server is already running; before a first start there is no token to read.
+echo "The menubar's \"Open cockpit\" always carries it for you."
+
 echo "Config: ~/.config/worktree-studio/config.json"
-echo "Alfred: double-click alfred/Worktree Studio.alfredworkflow to import it"

@@ -177,7 +177,7 @@ async function forget(r: Run) {
   <div class="runbar">
     <RunConfigMenu targets={runTargets} />
     <span class="from">
-      read from <code>.idea</code>, <code>.vscode</code> and <code>.zed</code>
+      read from <code>.idea</code> and <code>.vscode</code>
       {runTargets.length > 1 ? ` in all ${runTargets.length} worktrees` : ''}
     </span>
   </div>

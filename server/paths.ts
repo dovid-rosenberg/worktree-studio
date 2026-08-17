@@ -1,11 +1,10 @@
 /*
  * Where Studio's files live, and how to reach its API. Side-effect-free.
  *
- * One convention, six copies. bin/wt-studio.ts re-derived the config path, the default
- * port and the token file for its `add-repo` call; swiftbar/wts-action.sh,
- * swiftbar/worktrees.10s.sh, alfred/src/action.sh and alfred/src/filter.sh each derive
- * the same three again with `jq`. Move the default port and only the daemon follows —
- * every surface that reaches it keeps talking to 7788.
+ * One convention, four copies. bin/wt-studio.ts re-derived the config path, the default
+ * port and the token file for its `add-repo` call, and swiftbar/wts-action.sh and
+ * swiftbar/worktrees.10s.sh each derive the same three again with `jq`. Move the default
+ * port and only the daemon follows — every surface that reaches it keeps talking to 7788.
  *
  * NOTHING here runs at import time: no file is read, no directory is created, nothing is
  * cached. That is a requirement, not tidiness — bin/wt-studio.ts imports this module on
