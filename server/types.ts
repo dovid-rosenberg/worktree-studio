@@ -149,6 +149,14 @@ export interface ConcurrencyConfig {
   enabled: boolean;
   offsetStep: number;
   maxSlots: number;
+  /**
+   * How a slot is chosen when the caller does not name one.
+   *   'free-ports' — lowest slot whose ports are all unbound (default). Skips a slot that
+   *                  a process Studio does not track is sitting on, which is otherwise a
+   *                  launch that fails only after you have committed to it.
+   *   'lowest'     — lowest slot no feature holds, regardless of what is listening.
+   */
+  slotPolicy?: 'free-ports' | 'lowest';
   /** Ships EMPTY — the port map is one organisation's, not a default. */
   repos: Record<string, RepoConcurrency>;
 }

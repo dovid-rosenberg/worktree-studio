@@ -16,6 +16,7 @@ import * as worktree from './worktree.ts';
 import { openEditor, resolveEditor, shq } from './util.ts';
 import * as startReport from './start-report.ts';
 import type { StartOutcome } from './start-report.ts';
+import type { SlotReport } from './servers.ts';
 
 // The collaborators below are typed by the surface these routes touch, not by the
 // concrete objects server.ts hands over — the same rule server/routes-review.ts
@@ -58,7 +59,15 @@ type LaunchOpts = unknown;
 
 interface Servers {
   featureFor(worktreePath: string): string;
-  allocSlotFor(feature: string): { slot?: number; error?: string };
+  allocSlotFor(
+    feature: string,
+    opts?: { requested?: number; members?: Array<{ repo: string; worktreePath: string }> },
+  ): Promise<{ slot?: number; error?: string }>;
+  /** Every slot's availability for this feature's repos. Reads only. */
+  slotReport(
+    feature: string,
+    members: Array<{ repo: string; worktreePath: string }>,
+  ): Promise<SlotReport[]>;
   /**
    * Release only when nothing of the feature is still listening. Replaces the bare
    * releaseSlot() these routes used to call: stopping every member this route knows about
@@ -76,7 +85,10 @@ interface Servers {
    * Allocate every slot, then launch every target. One implementation of a sequence three
    * routes used to spell out independently — see servers.ts.
    */
-  startAll(targets: Array<{ repo: string; worktreePath: string }>): Promise<
+  startAll(
+    targets: Array<{ repo: string; worktreePath: string }>,
+    opts?: { slot?: number },
+  ): Promise<
     | { ok: false; slotError: string }
     | {
         ok: true;
@@ -290,8 +302,15 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // dropped here too, and a restart that silently brings back less than was asked for
     // is the same lie in a different verb.
     const skipped = startReport.toSkip(g.members);
+    // Reuse the feature's slot across the restart. Members are grouped by feature so the
+    // availability judgement sees every port the feature needs, not one repo's worth.
     for (const m of toRestart) {
-      const alloc = servers.allocSlotFor(servers.featureFor(m.path)); // reuse the feature's slot across the restart
+      const feature = servers.featureFor(m.path);
+      const alloc = await servers.allocSlotFor(feature, {
+        members: toRestart
+          .filter((x) => servers.featureFor(x.path) === feature)
+          .map((x) => ({ repo: x.repo, worktreePath: x.path })),
+      });
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     }
     /*

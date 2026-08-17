@@ -327,21 +327,67 @@ class Servers {
     return this._concEnabled() && !!this._repoConc(repo);
   }
 
-  // Allocate (or reuse) the slot for a feature. Returns { slot } or { error } when
-  // all slots are busy. Slot 0 semantics when concurrency is off / no feature name.
-  allocSlotFor(feature: string): SlotAllocation {
+  /**
+   * Allocate (or reuse) the slot for a feature. Slot 0 semantics when concurrency is off
+   * or there is no feature name.
+   *
+   * `requested` is the user naming a slot in the picker. It is honored when free and
+   * REFUSED with a reason otherwise — never silently moved to a different slot, because
+   * landing somewhere specific is the entire point of asking.
+   *
+   * With nothing requested, `slotPolicy` decides. 'free-ports' consults live port state,
+   * so a slot some untracked process is sitting on is skipped rather than handed out and
+   * failed on at launch. When EVERY slot is blocked it falls back to the lowest unheld
+   * one: refusing to start at all would be worse than starting and hitting the port
+   * pre-check in start(), which names the pid.
+   *
+   * Async because the policy reads reality. All three callers already await.
+   */
+  async allocSlotFor(
+    feature: string,
+    opts: {
+      requested?: number;
+      members?: Array<{ repo: string; worktreePath: string }>;
+    } = {},
+  ): Promise<SlotAllocation> {
     const conc = this.cfg.concurrency;
     // Without a concurrency block `_concEnabled()` is already false, so the second
     // test is that same condition restated where the type checker can see it.
     if (!this._concEnabled() || !conc || !feature) return { slot: 0 };
-    const held = this.slots.get(feature);
-    if (held !== undefined) return { slot: held };
     const max = conc.maxSlots || 1;
+    const held = this.slots.get(feature);
+    const { requested, members = [] } = opts;
+    if (requested === undefined && held !== undefined) return { slot: held };
+
+    const take = (slot: number): SlotAllocation => {
+      this.slots.set(feature, slot);
+      this._save();
+      return { slot };
+    };
+
+    if (requested !== undefined) {
+      if (!Number.isInteger(requested) || requested < 0 || requested >= max) {
+        return { error: `slot ${requested} does not exist (0–${max - 1})` };
+      }
+      if (held === requested) return { slot: held };
+      const r = (await this.slotReport(feature, members))[requested];
+      if (r.state === 'held') return { error: `slot ${requested} is held by ${r.heldBy}` };
+      if (r.state === 'blocked') {
+        return {
+          error: `slot ${requested}: port ${r.blockedBy?.port} is in use by pid ${r.blockedBy?.pid}`,
+        };
+      }
+      return take(requested);
+    }
+
+    if ((conc.slotPolicy ?? 'free-ports') === 'free-ports') {
+      const free = (await this.slotReport(feature, members)).find((r) => r.state === 'free');
+      if (free) return take(free.slot);
+      // Every slot blocked or held — fall through to the held-only view below.
+    }
     const slot = allocSlot(new Set(this.slots.values()), max);
     if (slot === null) return { error: `no free concurrency slot (max ${max} running)` };
-    this.slots.set(feature, slot);
-    this._save();
-    return { slot };
+    return take(slot);
   }
 
   /**
@@ -1061,11 +1107,22 @@ class Servers {
    */
   async startAll(
     targets: Array<{ repo: string; worktreePath: string }>,
+    opts: { slot?: number } = {},
   ): Promise<
     { ok: false; slotError: string } | { ok: true; results: Array<{ repo: string } & StartResult> }
   > {
+    // Group by feature first. A slot belongs to a FEATURE, and allocSlotFor now judges
+    // availability against that feature's member repos — allocating per target asked the
+    // same question once per repo and could never see the whole port set at once.
+    const byFeature = new Map<string, Array<{ repo: string; worktreePath: string }>>();
     for (const t of targets) {
-      const alloc = this.allocSlotFor(this.featureFor(t.worktreePath));
+      const f = this.featureFor(t.worktreePath);
+      const list = byFeature.get(f);
+      if (list) list.push(t);
+      else byFeature.set(f, [t]);
+    }
+    for (const [feature, members] of byFeature) {
+      const alloc = await this.allocSlotFor(feature, { requested: opts.slot, members });
       if (alloc.error) return { ok: false, slotError: alloc.error };
     }
     const results = await Promise.all(

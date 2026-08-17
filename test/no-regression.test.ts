@@ -109,19 +109,19 @@ const identity = createIdentity(OWNER_CONFIG);
 
 // ---------------------------------------------------------------- identity --
 
-test("the owner's config resolves to the historical layout and strategy", () => {
+test("the owner's config resolves to the historical layout and strategy", async () => {
   assert.equal(identity.strategy, 'basename');
   assert.equal(identity.warning, null, 'no config warning is emitted');
   assert.deepEqual(identity.layout, { mode: 'nested', dir: '.worktrees', root: '' });
 });
 
-test('slot keying is byte-identical to the old featureFromPath() over the whole corpus', () => {
+test('slot keying is byte-identical to the old featureFromPath() over the whole corpus', async () => {
   for (const w of CORPUS) {
     assert.equal(identity.ofPath(w.path), oldFeatureFromPath(w.path), `differs for ${w.path}`);
   }
 });
 
-test('slot keying is still identical after the scan index is fed', () => {
+test('slot keying is still identical after the scan index is fed', async () => {
   const repos: Array<{
     name: string;
     worktrees: Array<{ path: string; name: string; branch: string | null }>;
@@ -138,7 +138,7 @@ test('slot keying is still identical after the scan index is fed', () => {
   for (const w of CORPUS) assert.equal(identity.ofPath(w.path), oldFeatureFromPath(w.path));
 });
 
-test('slot keying matches the old function for the awkward paths too', () => {
+test('slot keying matches the old function for the awkward paths too', async () => {
   const odd = [
     `${BASE}/ab-be/accept-blue/.worktrees/feat/src/lib`, // a cwd deep inside a worktree
     `${BASE}/ab-be/accept-blue`, // main checkout
@@ -152,13 +152,13 @@ test('slot keying matches the old function for the awkward paths too', () => {
   }
 });
 
-test('grouping keys are byte-identical to the old wtname key', () => {
+test('grouping keys are byte-identical to the old wtname key', async () => {
   for (const w of CORPUS) assert.equal(identity.of(w), oldGroupKey(w), `differs for ${w.repo}/${w.wtname}`);
 });
 
 // ------------------------------------------------ grouping AND slotting agree --
 
-test('grouping and slot keying give the same answer for every worktree', () => {
+test('grouping and slot keying give the same answer for every worktree', async () => {
   for (const w of CORPUS) {
     assert.equal(
       identity.of(w),
@@ -168,7 +168,7 @@ test('grouping and slot keying give the same answer for every worktree', () => {
   }
 });
 
-test("computeFeatures under the owner's config equals grouping by wtname", () => {
+test("computeFeatures under the owner's config equals grouping by wtname", async () => {
   const { features, groups } = computeFeatures(
     CORPUS,
     (OWNER_CONFIG as { groups?: GroupConfig[] }).groups || [],
@@ -206,7 +206,7 @@ test("computeFeatures under the owner's config equals grouping by wtname", () =>
   );
 });
 
-test('main checkouts are still never features', () => {
+test('main checkouts are still never features', async () => {
   const { features } = computeFeatures(CORPUS, [], identity);
   for (const name of ['accept-blue', 'merchant-v3', 'ab-iso-fe', 'ab-su']) {
     assert.equal(
@@ -219,7 +219,7 @@ test('main checkouts are still never features', () => {
 
 // --------------------------------------------------------- worktree creation --
 
-test('worktree creation resolves to the same destination as before', () => {
+test('worktree creation resolves to the same destination as before', async () => {
   const layout = layoutMod.resolve(OWNER_CONFIG);
   for (const repoPath of [`${BASE}/ab-be/accept-blue`, `${BASE}/ab-merchant/merchant-v3`]) {
     for (const name of ['custom-reports', 'fix-recurring-deleted-pm', 'a-b-c']) {
@@ -229,7 +229,7 @@ test('worktree creation resolves to the same destination as before', () => {
   assert.equal(layoutMod.ignorePath(layout), '.worktrees', 'the gitignore warning still checks .worktrees');
 });
 
-test("the owner's copyPatterns still reach create(), and run configs are still copied", () => {
+test("the owner's copyPatterns still reach create(), and run configs are still copied", async () => {
   const opts = worktree.worktreeCopyOpts(OWNER_CONFIG, 'accept-blue');
   for (const p of OWNER_CONFIG.copyPatterns.default) {
     assert.ok(opts.copyPatterns.includes(p), `lost ${p}`);
@@ -243,7 +243,7 @@ test("the owner's copyPatterns still reach create(), and run configs are still c
 
 // ------------------------------------------------- concurrency slot registry --
 
-test('the Servers slot registry keys on the same feature names as before', () => {
+test('the Servers slot registry keys on the same feature names as before', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-noreg-'));
   const cfg = {
     ...OWNER_CONFIG,
@@ -265,12 +265,12 @@ test('the Servers slot registry keys on the same feature names as before', () =>
     keys,
     feature.map((m) => oldFeatureFromPath(m.path)),
   );
-  for (const k of keys) servers.allocSlotFor(k);
+  for (const k of keys) await servers.allocSlotFor(k);
   assert.equal(servers.slots.size, 1, 'one slot for the whole feature');
   assert.equal(servers.slots.get('custom-reports'), 0);
 
   // a second, unrelated feature gets its own slot
-  servers.allocSlotFor(servers.featureFor(`${BASE}/ab-be/accept-blue/.worktrees/merchant-mfa`));
+  await servers.allocSlotFor(servers.featureFor(`${BASE}/ab-be/accept-blue/.worktrees/merchant-mfa`));
   assert.equal(servers.slots.get('merchant-mfa'), 1);
 
   // reconcileSlots agrees with the same key function
@@ -283,7 +283,7 @@ test('the Servers slot registry keys on the same feature names as before', () =>
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
-test('launch ports for a slotted repo are unchanged at slot 0', () => {
+test('launch ports for a slotted repo are unchanged at slot 0', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-noreg2-'));
   const cfg = {
     ...OWNER_CONFIG,
@@ -307,7 +307,7 @@ test('launch ports for a slotted repo are unchanged at slot 0', () => {
     },
   };
   const servers = new Servers(cfg, createIdentity(cfg));
-  servers.allocSlotFor('custom-reports'); // slot 0
+  await servers.allocSlotFor('custom-reports'); // slot 0
   const { env, ports } = servers.launchOpts('accept-blue', 'custom-reports');
   assert.deepEqual(ports, [1231, 1232, 1233, 1239, 1999], 'slot 0 is the configured ports, untouched');
   assert.equal(env.redis__db, '0');

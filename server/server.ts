@@ -1051,7 +1051,8 @@ async function main() {
       return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
     }
     const feature = servers.featureFor(worktreePath);
-    const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
+    // reuse the feature's slot across the restart
+    const alloc = await servers.allocSlotFor(feature, { members: [{ repo, worktreePath }] });
     if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
     const out = await servers.restart(
       repo,
@@ -1146,7 +1147,9 @@ async function main() {
       // Long-lived, so it is tracked exactly like a dev server: a pid, a log, and Stop
       // stack reaches it. Only the command differs.
       const feature = servers.featureFor(String(worktreePath));
-      const alloc = servers.allocSlotFor(feature);
+      const alloc = await servers.allocSlotFor(feature, {
+        members: [{ repo: String(repo), worktreePath: String(worktreePath) }],
+      });
       if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
       const out = await servers.start(String(repo), String(worktreePath), {
         ...servers.launchOpts(String(repo), feature),
