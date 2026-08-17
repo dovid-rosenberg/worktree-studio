@@ -435,9 +435,7 @@ class Servers {
         }
         if (blockedBy) break;
       }
-      out.push(
-        blockedBy ? { slot, state: 'blocked', ports, blockedBy } : { slot, state: 'free', ports },
-      );
+      out.push(blockedBy ? { slot, state: 'blocked', ports, blockedBy } : { slot, state: 'free', ports });
     }
     return out;
   }

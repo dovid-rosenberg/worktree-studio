@@ -201,12 +201,39 @@ concurrency existed.
 "concurrency": {
   "enabled": true,
   "offsetStep": 100,
-  "maxSlots": 3,
+  "maxSlots": 5,
+  "slotPolicy": "free-ports",   // or "lowest"
   "repos": {}          // ships EMPTY — see the worked example below
 }
 ```
 
 `repos` is empty by design: the port map is one organisation's, not a default.
+
+### Choosing a slot
+
+A slot is normally assigned for you, but you can name one. The caret beside
+**▶** on the action bar opens a picker listing every slot with the ports that
+feature would use there and whether it can have it; the slot badge on a running
+feature opens the same list to **move** it. Moving is a restart — ports come
+from environment variables read at launch and the `configPatch` rewrite happens
+before spawn, so nothing can change ports in place.
+
+A slot is judged **for the feature asking**, never globally. Only the ports that
+feature's member repos derive are checked, so a frontend-only feature is happy
+on a slot whose backend ports are taken. Three states:
+
+| State | Meaning |
+|---|---|
+| free | Nothing holds the slot and every port this feature needs is unbound |
+| in use | Another feature holds the slot |
+| blocked | No feature holds it, but a process Studio does not track is on one of the ports. The row names the port and pid — Studio never signals a process it did not start, so clearing it is yours to do |
+
+`slotPolicy` decides what happens when you *don't* choose:
+
+| Value | Behaviour |
+|---|---|
+| `free-ports` (default) | Lowest slot whose ports are all unbound. Skips a slot something untracked is sitting on, rather than handing it out and failing at launch. If every slot is blocked it falls back to the lowest unheld one and lets the launch report the real port conflict |
+| `lowest` | Lowest slot no feature holds, regardless of what is listening — the behaviour before `slotPolicy` existed |
 
 Per-repo wiring:
 

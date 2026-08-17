@@ -75,7 +75,8 @@ test('defaults() ships no concurrency repos at all', () => {
   assert.deepEqual(d.concurrency.repos, {}, 'no organisation-specific ports in the shipped defaults');
   assert.equal(d.concurrency.enabled, true);
   assert.equal(d.concurrency.offsetStep, 100);
-  assert.equal(d.concurrency.maxSlots, 3);
+  assert.equal(d.concurrency.maxSlots, 5);
+  assert.equal(d.concurrency.slotPolicy, 'free-ports');
 });
 
 test('the shipped convention defaults name no company port, repo or file', () => {

@@ -64,10 +64,7 @@ interface Servers {
     opts?: { requested?: number; members?: Array<{ repo: string; worktreePath: string }> },
   ): Promise<{ slot?: number; error?: string }>;
   /** Every slot's availability for this feature's repos. Reads only. */
-  slotReport(
-    feature: string,
-    members: Array<{ repo: string; worktreePath: string }>,
-  ): Promise<SlotReport[]>;
+  slotReport(feature: string, members: Array<{ repo: string; worktreePath: string }>): Promise<SlotReport[]>;
   /**
    * Release only when nothing of the feature is still listening. Replaces the bare
    * releaseSlot() these routes used to call: stopping every member this route knows about

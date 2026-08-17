@@ -130,7 +130,11 @@ function defaults(): ShippedConfig {
     concurrency: {
       enabled: true,
       offsetStep: 100,
-      maxSlots: 3,
+      // Five, not three. The slot picker makes the ceiling visible — you now see that one
+      // stuck slot leaves you two — and the ports are free either way; a slot costs
+      // nothing until a feature is actually running on it.
+      maxSlots: 5,
+      slotPolicy: 'free-ports',
       repos: {},
     },
   };

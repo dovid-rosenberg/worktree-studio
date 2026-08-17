@@ -54,9 +54,7 @@ describe('SlotMenu', () => {
 
   it('shows the ports a free slot would use', async () => {
     await open();
-    expect(screen.getByRole('menuitem', { name: /slot 2/i }).textContent).toMatch(
-      /accept-blue 1431/,
-    );
+    expect(screen.getByRole('menuitem', { name: /slot 2/i }).textContent).toMatch(/accept-blue 1431/);
   });
 
   it('calls onpick with the chosen slot', async () => {

@@ -649,10 +649,9 @@ export function moveSummary(
       const from = now.get(repo) || [];
       return from.length ? `${repo}: ${from.join(' ')} → ${to.join(' ')}` : `${repo}: → ${to.join(' ')}`;
     });
-  return [
-    'The dev servers restart. Your session, terminal, and working tree are untouched.',
-    ...lines,
-  ].join('\n');
+  return ['The dev servers restart. Your session, terminal, and working tree are untouched.', ...lines].join(
+    '\n',
+  );
 }
 
 /**

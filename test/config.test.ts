@@ -103,3 +103,16 @@ test('an empty config.json is treated as absent — there is nothing in it to lo
   assert.ok(Array.isArray(cfg.baseDirs));
   assert.ok(JSON.parse(fs.readFileSync(FILE, 'utf8')).baseDirs, 'seeded');
 });
+
+/*
+ * Five slots, not three.
+ *
+ * The picker makes the ceiling visible in a way the automatic allocator never did — you
+ * now SEE that a stuck slot leaves you two — so the number itself wanted raising.
+ */
+test('defaults ship five slots and the free-ports policy', () => {
+  writeConfig({ baseDirs: ['~/x'] });
+  const cfg = load();
+  assert.equal(cfg.concurrency.maxSlots, 5);
+  assert.equal(cfg.concurrency.slotPolicy, 'free-ports');
+});

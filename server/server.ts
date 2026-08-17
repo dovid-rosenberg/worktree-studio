@@ -74,6 +74,7 @@ interface SettingsBody {
   editors?: unknown;
   defaultEditor?: unknown;
   groups?: unknown;
+  concurrency?: unknown;
 }
 
 async function main() {
@@ -191,16 +192,17 @@ async function main() {
 
   // The state payload lives in state.ts; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
-  const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } = createState({
-    cfg,
-    manager,
-    servers,
-    mux,
-    identity,
-    repos: () => repos,
-    running: () => runningCache,
-    runs: () => runner.runs,
-  });
+  const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } =
+    createState({
+      cfg,
+      manager,
+      servers,
+      mux,
+      identity,
+      repos: () => repos,
+      running: () => runningCache,
+      runs: () => runner.runs,
+    });
 
   // ---- SSE live state ----
   // Two named event types with very different rates (see broadcast.ts).
@@ -399,6 +401,12 @@ async function main() {
       groups: cfg.groups || [],
       // The MANUAL run configurations only; an editor's own are discovered per worktree.
       runConfigs: cfg.runConfigs || {},
+      // Only the two knobs the form edits. `repos` is a port map nobody should be able to
+      // rewrite through a settings round-trip.
+      concurrency: {
+        maxSlots: cfg.concurrency?.maxSlots ?? 1,
+        slotPolicy: cfg.concurrency?.slotPolicy ?? 'free-ports',
+      },
       enabled: sources.enabled(cfg),
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
@@ -491,7 +499,22 @@ async function main() {
       defaultEditor,
       groups,
       runConfigs: runCfgs,
+      concurrency,
     } = body;
+    /*
+     * A MERGE of two known keys, not a replace.
+     *
+     * `concurrency.repos` is the port map that makes slots work at all, and it is not on
+     * this form. Assigning the posted object wholesale would drop it — the same way a
+     * one-key write through this route once deleted two repos' start commands.
+     */
+    if (isRecord(concurrency)) {
+      const max = Number(concurrency.maxSlots);
+      const policy = concurrency.slotPolicy;
+      cfg.concurrency = cfg.concurrency || { enabled: true, offsetStep: 100, maxSlots: 1, repos: {} };
+      if (Number.isInteger(max) && max >= 1 && max <= 16) cfg.concurrency.maxSlots = max;
+      if (policy === 'free-ports' || policy === 'lowest') cfg.concurrency.slotPolicy = policy;
+    }
     if (isRecord(srcs)) {
       cfg.sources = cfg.sources || {};
       for (const k of Object.keys(srcs)) {
@@ -949,9 +972,9 @@ async function main() {
     if (out.ok) {
       broadcastTopology();
       ciFeed.poke({ force: true });
-    // The same trigger, for the same reason: a rescan means refs moved, and refs moving
-    // is the only thing that can change an overlap or a drift count.
-    void refreshOverlap();
+      // The same trigger, for the same reason: a rescan means refs moved, and refs moving
+      // is the only thing that can change an overlap or a drift count.
+      void refreshOverlap();
     }
     res.json(out);
   });
@@ -1198,7 +1221,9 @@ async function main() {
   api.post('/groups', async (req, res) => {
     const body = isRecord(req.body) ? req.body : {};
     const name = String(body.name || '').trim();
-    const members = Array.isArray(body.members) ? body.members.map((m) => String(m).trim()).filter(Boolean) : [];
+    const members = Array.isArray(body.members)
+      ? body.members.map((m) => String(m).trim()).filter(Boolean)
+      : [];
     // Two members is what a group MEANS — one worktree is a feature on its own and
     // already groups itself. Saying so beats writing a row that changes nothing.
     if (!name || members.length < 2) {

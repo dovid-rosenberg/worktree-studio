@@ -54,6 +54,11 @@
   let gl = $state({ enabled: false, host: 'https://gitlab.com', project: '', token: '' });
   let as = $state({ enabled: false, token: '', workspace: '' });
   let nt = $state({ waiting: true, sound: true, idle: false });
+  /** Concurrency knobs the form owns. `repos` (the port map) is not editable here. */
+  let conc = $state<{ maxSlots: number; slotPolicy: 'free-ports' | 'lowest' }>({
+    maxSlots: 5,
+    slotPolicy: 'free-ports',
+  });
 
   // Editable row lists. Each row carries a stable `key` so `{#each}` can be keyed —
   // otherwise deleting row 2 of 4 re-seeds the inputs of rows 3 and 4 with each other's
@@ -219,6 +224,7 @@
         githubAuthed = !!d.githubAuthed;
         gl = { enabled: false, host: 'https://gitlab.com', project: '', token: '', ...(src.gitlab || {}) };
         as = { enabled: false, token: '', workspace: '', ...(src.asana || {}) };
+        conc = { maxSlots: 5, slotPolicy: 'free-ports', ...(d.concurrency || {}) };
         nt = { waiting: true, sound: true, idle: false, ...(d.notify || {}) };
         notify.prefs = { ...notify.prefs, ...nt }; // keep the live prefs in step with disk
         /*
@@ -287,6 +293,7 @@
           asana: { enabled: as.enabled, token: as.token.trim(), workspace: as.workspace.trim() },
         },
         baseDirs: rootRows.map((r) => r.path.trim()).filter(Boolean),
+        concurrency: { maxSlots: Number(conc.maxSlots), slotPolicy: conc.slotPolicy },
         // Grouped back into { repo: [config] }, which is the shape on disk. A row missing
         // the fields that make it runnable is dropped, exactly as the server would.
         runConfigs: runRows.reduce<Record<string, { name: string; cmd: string; kind: string }[]>>((acc, r) => {
@@ -468,6 +475,51 @@
           </div>
         {/each}
         <button class="btn ghost xs add" onclick={() => (startRows = [...startRows, { key: ++rowKey, repo: '', cmd: '', ports: '' }])}>＋ add server</button>
+      </div>
+
+      <!--
+        Concurrency lives in this tab rather than a sixth one: a slot is a property of how
+        dev servers get launched, and two fields do not earn their own section in the rail.
+      -->
+      <div class="setsec">
+        <span class="lbl">Concurrency <span class="lbl-note">— running several features' servers at once</span></span>
+        <p class="secnote">
+          Each feature gets a <b>slot</b>; slot <i>n</i> offsets every dev-server port by
+          <i>n</i>×100 and sets per-slot values like <code>redis__db</code>. Slot 0 is the
+          base ports. Pick a slot explicitly from the caret beside <b>▶</b>, or move a
+          running feature from its slot badge.
+        </p>
+
+        <label class="fieldrow">
+          <span class="fieldlbl">Max slots</span>
+          <input
+            class="num"
+            type="number"
+            min="1"
+            max="16"
+            bind:value={conc.maxSlots}
+            aria-label="Maximum concurrency slots"
+          />
+          <span class="lbl-note">how many features may run dev servers at once</span>
+        </label>
+
+        <fieldset class="radios">
+          <legend class="fieldlbl">When no slot is chosen</legend>
+          <label>
+            <input type="radio" bind:group={conc.slotPolicy} value="lowest" />
+            <span>
+              <b>Lowest free slot</b>
+              <span class="lbl-note">— ignores what is listening; a slot is free if no feature holds it.</span>
+            </span>
+          </label>
+          <label>
+            <input type="radio" bind:group={conc.slotPolicy} value="free-ports" />
+            <span>
+              <b>Lowest slot whose ports are actually free</b>
+              <span class="lbl-note">— skips a slot some untracked process is sitting on, instead of failing at launch.</span>
+            </span>
+          </label>
+        </fieldset>
       </div>
 
       <div class="setsec">
@@ -756,5 +808,19 @@
   .picker { display:flex; align-items:center; gap:9px; margin-top:4px; font-family:var(--mono); font-size:12px; color:var(--muted); }
   .secnote { margin:0 0 4px; font-size:12.5px; line-height:1.5; color:var(--muted); }
   .secnote code { font-family:var(--mono); font-size:11.5px; }
+
+  /* ---- concurrency ---- */
+  .fieldrow { display:flex; align-items:center; gap:10px; font-size:13px; }
+  .fieldlbl { font-size:12px; font-weight:600; color:var(--muted); }
+  .num {
+    width:66px; font-family:var(--mono); font-variant-numeric:tabular-nums;
+    font-size:13px; padding:5px 8px; border-radius:7px;
+    border:1px solid var(--border-strong); background:var(--elevated); color:var(--ink);
+  }
+  .radios { border:0; margin:6px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .radios legend { padding:0; margin-bottom:2px; }
+  .radios label { display:flex; align-items:flex-start; gap:8px; font-size:13px; cursor:pointer; }
+  .radios label input { margin-top:3px; }
+  .radios label span { display:block; }
   .srvcfg-row input { background:var(--panel); border:1px solid var(--border-strong); border-radius:7px; padding:6px 9px; color:var(--ink); font-family:var(--mono); font-size:12.5px; width:100%; }
 </style>
