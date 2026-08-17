@@ -352,8 +352,12 @@ and the PR/CI pills. No buttons.
 **The action bar** (bottom) — every verb for whatever is selected. The rule: the top says
 what you are looking at, the bottom does something to it.
 
-**Insights** (**⌘\\** or ◔ in the ⋮ menu) — the state of the transcript index that
-**⌘⇧F** searches over: which backend, how much is indexed, and a rebuild button.
+**Transcript search** (**⌘⇧F**, or “Search transcripts” in the ⋮ menu) — an overlay, not
+a region. It also
+states the health of the index it searches: a quiet line under the results saying which
+backend answered and how much is indexed, and — only when an empty result set would be
+misleading, because the index is cold, degraded or missing — a banner saying so with a
+rebuild button.
 
 ---
 
@@ -363,7 +367,6 @@ what you are looking at, the bottom does something to it.
 |-----|--------|
 | `⌘K` | Command palette (works even while typing) |
 | `⌘N` | New session |
-| `⌘\` | Insights (transcript-index status) |
 | `⌥1`–`⌥9` | Jump to the Nth row in the rail |
 | `⌘⇧F` | Search every transcript |
 | `⌘D` | Review changes (open the ✎ Changes tab) |
@@ -373,6 +376,8 @@ what you are looking at, the bottom does something to it.
 | `Esc` | Close the topmost overlay — or, with nothing open, interrupt the agent |
 | `⌘↵` / `⇧↵` | Terminal: newline without submitting |
 | `⌘←` / `⌘→` | Terminal: start / end of line |
+| `⌘⌫` | Terminal: delete to start of line |
+| `⌥←` / `⌥→` | Terminal: move by word |
 
 Shortcuts never fire while you’re typing in the terminal/inputs or when an overlay is up
 (except `⌘K` and `Esc`). On non-Mac, `Ctrl` substitutes for `⌘`.
@@ -410,6 +415,23 @@ database** is intentionally still shared across slots.
 
 > The **job scheduler** must only ever run in one stack. Only the primary/`job_schedule`
 > stack runs jobs; never start more than one job-running instance.
+
+Studio enforces that when the repo declares it. Add `scheduler` to the repo's
+concurrency block and one slot is told it owns the scheduler while every other slot is
+told to stand down:
+
+```jsonc
+"accept-blue": {
+  "portEnv": { "api__port": 1233 },
+  "slotEnv": ["redis__db"],
+  "scheduler": { "env": "job_schedule", "slot": 0, "on": "true", "off": "false" }
+}
+```
+
+Opt-in, and deliberately so: without the key no slot is told anything, exactly as before.
+It is worth adding because duplicate scheduled jobs do not fail — they succeed, twice,
+which is the kind of failure this app exists to make visible. See `docs/config.md` for
+the field.
 
 ---
 

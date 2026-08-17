@@ -389,6 +389,30 @@ function buildApp(deps: AppDeps): express.Express {
       (i) => identity.of(i),
     );
 
+  /*
+   * Accept the reconcile offer: attach every feature worktree this session lacks.
+   *
+   * The gap itself is reported on the topology payload, deliberately without being healed
+   * — attaching sends /add-dir into a live agent, widening what it may read and write. So
+   * the detection is passive and this route is the moment somebody decides.
+   *
+   * A partial success is still a success: attachRepos works serially because each
+   * /add-dir types into the same pane, and stopping at the first failure would leave the
+   * caller unable to tell which repos made it. It reports both lists and rolls nothing
+   * back.
+   */
+  api.post('/sessions/:id/attach-repos', async (req, res) => {
+    const found = requireSession(res, getSession, req.params.id);
+    if (!found.ok) return;
+    const targets = attachableFor(found.value);
+    if (!targets.length) return res.json({ ok: true, attached: [], failed: [] });
+    const out = await manager.attachRepos(req.params.id, targets);
+    if (!out.ok && !out.attached?.length) return res.status(400).json(out);
+    await rescan();
+    broadcastTopology();
+    res.json(out);
+  });
+
   // Add a repo to a session's feature (creates a same-named worktree + grants access).
   // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
   api.post('/sessions/:id/add-repo', async (req, res) => {

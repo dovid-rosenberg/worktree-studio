@@ -16,7 +16,7 @@ import type { HookPayload } from './status.ts';
 import type { WorktreeCreateResult } from './worktree.ts';
 import type { ResolvedLayout } from './layout.ts';
 import type { Identity, IdentityInput } from './identity.ts';
-import type { Config, PartialDeep, Session, SourceSeed, SessionTab } from './types.ts';
+import type { AttachableWorktree, Config, PartialDeep, Session, SourceSeed, SessionTab } from './types.ts';
 import { currentBranch, originHead, porcelainStatus } from './git.ts';
 const { worktreeCopyOpts } = worktree;
 
@@ -709,6 +709,40 @@ class SessionManager extends EventEmitter {
     await this.sendWhenReady(s.muxName, `/add-dir ${worktreePath}`, s);
     this._touch(id);
     return { ok: true };
+  }
+
+  /**
+   * Accept an offer to reconcile: attach every feature worktree this session had no
+   * record of (features.ts detectSessionRepoGaps / attachableWorktrees).
+   *
+   * SERIAL, not Promise.all: each attachRepo() types `/add-dir` into the same claude
+   * pane, and sendWhenReady() backs off while the agent is mid-turn. Racing them would
+   * interleave two commands on one input line, which delivers neither.
+   *
+   * Partial success is reported, never rolled back. Attaching two of three repos leaves
+   * the session strictly better off than before, and the next scan re-offers the third —
+   * whereas an all-or-nothing answer would have to un-send an `/add-dir` it cannot recall.
+   */
+  async attachRepos(id: string, targets: AttachableWorktree[]) {
+    const s = this.get(id);
+    if (!s) return { ok: false as const, error: 'no such session' };
+    const attached: string[] = [];
+    const failed: Array<{ repo: string; error: string }> = [];
+    for (const t of targets || []) {
+      const r = await this.attachRepo(id, {
+        repo: t.repo,
+        repoPath: t.repoPath,
+        worktreePath: t.worktreePath,
+        branch: t.branch,
+        // The worktree's own directory name — NOT the session's. A sibling made outside
+        // Studio can be named differently, and recording the name we expected instead of
+        // the one on disk is how ci.ts ends up looking up a worktree that is not there.
+        wtname: path.basename(t.worktreePath),
+      });
+      if (r.ok) attached.push(t.repo);
+      else failed.push({ repo: t.repo, error: r.error || 'attach failed' });
+    }
+    return { ok: failed.length === 0, session: s, attached, failed };
   }
 
   async create({ seed, repoPath, repoName, additionalRepos }: SessionCreateArgs): Promise<Session> {

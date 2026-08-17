@@ -898,6 +898,83 @@ test('a session persisted before worktree name and identity were told apart stil
 });
 
 // ---------------------------------------------------------------------------
+// attachRepos() — the acting half of features.ts detectSessionRepoGaps()
+//
+// The scan reports a session whose `repos` is short of its feature's worktrees; this is
+// what happens when the user accepts the offer. It attaches EXISTING worktrees, so it
+// creates nothing — the worktrees are what the detection found on disk.
+// ---------------------------------------------------------------------------
+
+test('attachRepos records every offered worktree and grants the live session access', async () => {
+  const m = manager();
+  m.sessions.set(
+    'g1',
+    session({
+      id: 'g1',
+      feature: 'feat-x',
+      worktree: 'feat-x',
+      muxName: 'mux-g1',
+      repos: [
+        sessionRepo({
+          repo: 'api',
+          repoPath: '/r/api',
+          worktree: 'feat-x',
+          worktreePath: '/r/api/.worktrees/feat-x',
+          primary: true,
+        }),
+      ],
+    }),
+  );
+  const out = await m.attachRepos('g1', [
+    { repo: 'fe', repoPath: '/r/fe', worktreePath: '/r/fe/.worktrees/feat-x', branch: 'fix/feat-x' },
+    { repo: 'lib', repoPath: '/r/lib', worktreePath: '/r/lib/.worktrees/renamed', branch: 'fix/feat-x' },
+  ]);
+  expectOk(out);
+  assert.deepEqual(out.attached, ['fe', 'lib']);
+  assert.deepEqual(
+    got(m, 'g1').repos.map((r) => r.repo),
+    ['api', 'fe', 'lib'],
+  );
+  // The name on DISK, not the session's — a sibling made outside Studio can be called
+  // something else, and recording the expected name makes ci.ts look up a worktree that
+  // is not there.
+  assert.equal(present(got(m, 'g1').repos.find((r) => r.repo === 'lib')).worktree, 'renamed');
+  assert.equal(present(got(m, 'g1').repos.find((r) => r.repo === 'lib')).branch, 'fix/feat-x');
+  const sent = (m as SessionManager & { _sent: string[] })._sent;
+  assert.deepEqual(sent, ['/add-dir /r/fe/.worktrees/feat-x', '/add-dir /r/lib/.worktrees/renamed']);
+});
+
+test('attachRepos is a no-op for a worktree the session already has', async () => {
+  const m = manager();
+  m.sessions.set(
+    'g2',
+    session({
+      id: 'g2',
+      muxName: 'mux-g2',
+      repos: [
+        sessionRepo({
+          repo: 'fe',
+          repoPath: '/r/fe',
+          worktreePath: '/r/fe/.worktrees/feat-x',
+          primary: true,
+        }),
+      ],
+    }),
+  );
+  const out = await m.attachRepos('g2', [
+    { repo: 'fe', repoPath: '/r/fe', worktreePath: '/r/fe/.worktrees/feat-x', branch: null },
+  ]);
+  expectOk(out);
+  assert.equal(got(m, 'g2').repos.length, 1, 'no duplicate repo row');
+  assert.deepEqual((m as SessionManager & { _sent: string[] })._sent, [], 'no second /add-dir');
+});
+
+test('attachRepos refuses an unknown session rather than answering ok', async () => {
+  const out = await manager().attachRepos('nope', []);
+  assert.equal(out.ok, false);
+});
+
+// ---------------------------------------------------------------------------
 // restore()
 // ---------------------------------------------------------------------------
 

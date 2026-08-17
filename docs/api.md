@@ -540,6 +540,27 @@ session as `wt-studio add-repo <repo>`.
 the repo is already attached, or `{ ok: true, …, attached: true }` when the
 worktree already existed and was adopted instead of created. `400` on failure.
 
+### `POST /sessions/:id/attach-repos`
+
+No body. Attach every worktree of this session's feature that the session has no
+record of, granting the agent access to each via `/add-dir`.
+
+This exists because the two records can disagree. `attachableWorktrees()` runs at
+promote, so a worktree created afterwards — by `wt` in another terminal, or by
+another session of the same feature — joins the **feature** but not the
+**session**. Changes is session-scoped, so it then draws an empty diff of a branch
+that genuinely has changes. The topology payload reports the disagreement as
+`sessionRepoGaps`; this route is how it gets closed.
+
+Reported rather than healed automatically, deliberately: `/add-dir` widens what a
+live agent may read and write, possibly mid-turn, and that is a decision a person
+should make rather than a scan.
+
+`{ ok, attached: [...], failed: [...] }`. Attaching is serial — each `/add-dir`
+types into the same pane — and a partial success is reported as one, not rolled
+back. `{ ok: true, attached: [] }` when there is nothing to attach; `404` for an
+unknown session.
+
 ### `POST /sessions/:id/rename`
 
 `{ title }` → `{ ok: true }`, or `{ ok: false, error: 'invalid title' }` for a

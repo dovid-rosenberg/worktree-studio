@@ -183,7 +183,41 @@ export interface RepoConcurrency {
    * frontend to run two of it.
    */
   portFlag?: string;
+  /**
+   * Which slot owns the job scheduler, and how a slot is told.
+   *
+   * MANUAL.md states it as a hard rule — "the job scheduler must only ever run in one
+   * stack" — and until this key existed nothing in code knew it. Slots are handed out and
+   * reclaimed freely, so two features each ran a backend that believed it was the
+   * scheduler. Duplicate scheduled jobs do not error; they SUCCEED, twice. Double-charged
+   * cards and doubled emails are the only report you get, hours later.
+   *
+   * OPT-IN. Absent (the default) means no slot is told anything and every repo behaves
+   * exactly as it did — the env var a backend reads for this is that backend's own name
+   * (`job_schedule`, `RUN_JOBS`, `SCHEDULER_ENABLED`…), unknowable from here, so guessing
+   * one would set a variable nothing reads and claim the rule was enforced.
+   */
+  scheduler?: SchedulerOwnership;
   configPatch?: ConfigPatch;
+}
+
+/**
+ * `concurrency.repos.<repo>.scheduler` — e.g.
+ * `{ "env": "job_schedule", "slot": 0, "on": "true", "off": "false" }`.
+ *
+ * `env` is the only required key: which variable the backend actually reads is a property
+ * of that codebase, exactly like `portEnv`'s keys, and hardcoding a guess here would be a
+ * setting that silently does nothing.
+ */
+export interface SchedulerOwnership {
+  /** The env var the backend reads to decide whether it runs jobs. */
+  env: string;
+  /** The owning slot. Defaults to 0 — the slot whose ports are the repo's configured ones. */
+  slot?: number;
+  /** Value for the owner. Default `'true'`. */
+  on?: string;
+  /** Value for every other slot — the stand-down. Default `'false'`. */
+  off?: string;
 }
 
 export interface ConcurrencyConfig {
@@ -645,6 +679,37 @@ export interface SplitFeature {
   members: Array<{ repo: string; wtname: string; path: string; feature: string }>;
 }
 
+/**
+ * A feature worktree a session could be granted, as features.ts attachableWorktrees()
+ * reports it. Exactly the arguments `SessionManager.attachRepo()` takes, so what is
+ * offered and what gets attached cannot describe different worktrees.
+ */
+export interface AttachableWorktree {
+  repo: string;
+  repoPath: string;
+  worktreePath: string;
+  branch: string | null;
+}
+
+/**
+ * A session whose `repos` is a strict subset of its feature's worktrees — see
+ * features.ts detectSessionRepoGaps().
+ *
+ * Reported, not healed. Attaching sends `/add-dir` into a LIVE agent, widening what it
+ * may read and write mid-turn; doing that from a background scan would mean the set of
+ * directories an agent can edit changes because someone ran `wt` in another terminal.
+ * The acting half is POST /sessions/:id/attach-repos, on a button.
+ */
+export interface SessionRepoGap {
+  sessionId: string;
+  /** For naming the session in the offer without a second lookup. */
+  title: string;
+  /** The feature identity both records were compared under. */
+  feature: string;
+  /** Non-empty by construction: a session with nothing missing is not a gap. */
+  missing: AttachableWorktree[];
+}
+
 export interface Feature {
   name: string;
   /** false for a manual group from config.groups, true for a derived one. */
@@ -718,6 +783,13 @@ export interface TopologyPayload {
   groups: Feature[];
   /** Features that look like one piece of work under names that do not group. */
   splitFeatures: SplitFeature[];
+  /**
+   * Sessions that know fewer repos than their feature has worktrees.
+   *
+   * OPTIONAL because it arrived after the payload did: a client built against an older
+   * shape reads `undefined` and renders nothing, which is exactly what it did before.
+   */
+  sessionRepoGaps?: SessionRepoGap[];
 }
 
 // ---- session state ----------------------------------------------------------

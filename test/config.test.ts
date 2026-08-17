@@ -13,7 +13,20 @@ process.env.WT_STUDIO_STATE = path.join(TMP, 'state');
 
 // Dynamic on purpose: a static import is hoisted above the env assignments above,
 // which would aim load() at the real user config instead of TMP.
-const { load } = await import('../server/config.ts');
+const { load, validateConcurrency } = await import('../server/config.ts');
+
+/** Run `fn` with console.warn captured, and return what it warned. */
+function warnings(fn: () => void): string[] {
+  const out: string[] = [];
+  const real = console.warn;
+  console.warn = (...args: unknown[]) => void out.push(args.join(' '));
+  try {
+    fn();
+  } finally {
+    console.warn = real;
+  }
+  return out;
+}
 
 function writeConfig(obj: unknown): void {
   fs.writeFileSync(FILE, JSON.stringify(obj, null, 2));
@@ -49,6 +62,48 @@ test('load() leaves per-repo copyPatterns overrides untouched', () => {
   const cfg = load();
   assert.deepEqual(cfg.copyPatterns['merchant-v3'], ['special/only-here.js']);
   for (const p of SHIPPED) assert.ok(cfg.copyPatterns.default.includes(p), `missing shipped pattern ${p}`);
+});
+
+// ---------------------------------------------------------------------------
+// The scheduler owner has to be a slot that exists
+//
+// deriveEnv() answers the stand-down value for every slot that is not the owner, so an
+// owner outside 0..maxSlots-1 tells every running stack not to run jobs and tells none of
+// them to. Jobs then simply never run — the opposite failure to the duplicate-jobs one
+// the key exists to prevent, and just as quiet.
+// ---------------------------------------------------------------------------
+
+const conc = (scheduler?: { env: string; slot?: number }) => ({
+  enabled: true,
+  offsetStep: 100,
+  maxSlots: 3,
+  repos: { api: { portEnv: { api__port: 1233 }, scheduler } },
+});
+
+test('a scheduler.slot outside the slot range is warned about by name', () => {
+  const w = warnings(() => validateConcurrency({ concurrency: conc({ env: 'job_schedule', slot: 3 }) }));
+  assert.equal(w.length, 1);
+  assert.match(w[0], /scheduler\.slot=3/);
+  assert.match(w[0], /job_schedule/);
+  assert.match(w[0], /'api'/);
+});
+
+test('an in-range owner (and the default slot 0) warns about nothing', () => {
+  assert.deepEqual(
+    warnings(() => validateConcurrency({ concurrency: conc({ env: 'job_schedule' }) })),
+    [],
+  );
+  assert.deepEqual(
+    warnings(() => validateConcurrency({ concurrency: conc({ env: 'job_schedule', slot: 2 }) })),
+    [],
+  );
+});
+
+test('a repo that declares no scheduler is not warned about — the key is opt-in', () => {
+  assert.deepEqual(
+    warnings(() => validateConcurrency({ concurrency: conc(undefined) })),
+    [],
+  );
 });
 
 // ---------------------------------------------------------------------------

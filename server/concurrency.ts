@@ -7,7 +7,8 @@ import type { RepoConcurrency } from './types.ts';
 
 // deriveEnv(repoConc, slot, offsetStep) → { env, ports }
 //   portEnv keys become env[KEY] = basePort + slot*offsetStep (and a port);
-//   slotEnv keys become env[KEY] = slot (e.g. redis__db — an index, not a port).
+//   slotEnv keys become env[KEY] = slot (e.g. redis__db — an index, not a port);
+//   scheduler.env becomes on/off depending on whether this slot owns the job scheduler.
 function deriveEnv(
   repoConc: RepoConcurrency | null | undefined,
   slot: number,
@@ -23,6 +24,31 @@ function deriveEnv(
     ports.push(port);
   }
   for (const key of slotEnv) env[key] = String(slot);
+  /*
+   * Exactly one slot may run the job scheduler, and every other slot is told to stand down.
+   *
+   * MANUAL.md has always stated this as a hard rule ("the job scheduler must only ever run
+   * in one stack") and nothing in code knew it: slots are handed out and reclaimed by
+   * allocSlot/reconcileSlots with no notion of a privileged one, so two features each ran a
+   * backend that believed it was the scheduler. Duplicate scheduled jobs do not fail — they
+   * succeed, twice — so the report is a doubled charge or a doubled email, hours later, with
+   * nothing in any log calling it an error.
+   *
+   * Both halves are written, not just the owner's. Setting only `on` would leave slot 1's
+   * backend on whatever its own config defaults to, which for a repo whose default is "yes,
+   * run jobs" is the entire bug. The stand-down is the half that enforces the rule.
+   *
+   * Rides deriveEnv because this is the same kind of fact as `redis__db`: a value that
+   * depends on nothing but the slot. A second mechanism would be a second place for a
+   * launch path to forget to consult.
+   *
+   * Opt-in: no `scheduler` key → no variable set → today's behavior, byte for byte.
+   */
+  const sched = repoConc?.scheduler;
+  if (sched?.env) {
+    const owner = sched.slot ?? 0;
+    env[sched.env] = slot === owner ? (sched.on ?? 'true') : (sched.off ?? 'false');
+  }
   return { env, ports };
 }
 
