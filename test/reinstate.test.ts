@@ -114,7 +114,7 @@ test('a missing worktree with NO branch is refused, and says why', () => {
   );
   assert.equal(o.recoverable, false);
   assert.match(o.reason || '', /both gone/);
-  assert.match(o.reason || '', /still readable/, 'and points at what CAN be done');
+  assert.match(o.reason || '', /still searchable/, 'and points at what CAN be done');
   fs.rmSync(p.dir, { recursive: true, force: true });
 });
 

@@ -16,7 +16,6 @@ import * as orchestrator from '../server/orchestrator.ts';
 import { createForge } from '../server/forge.ts';
 import { createIdentity } from '../server/identity.ts';
 import * as crash from '../server/crash.ts';
-import * as pricing from '../server/pricing.ts';
 import { EventEmitter } from 'node:events';
 import * as routesReview from '../server/routes-review.ts';
 import * as transcriptRoutes from '../server/transcript-routes.ts';
@@ -838,65 +837,17 @@ test('the transcript routes answer identically under /api and /api/v1', async ()
   const { app, cleanup } = routeModules();
   try {
     await serving(app, async (get) => {
-      for (const route of [
-        '/sessions/nope/transcript',
-        '/sessions/nope/transcript/search',
-        '/sessions/nope/transcript/usage',
-      ]) {
+      for (const route of ['/sessions/nope/transcript', '/sessions/nope/transcript/search']) {
         const { status, body } = await bothPrefixes(get, route);
         assert.equal(status, 404);
         assert.deepEqual(body, { error: 'no such session' });
       }
-      for (const route of ['/transcripts/status', '/transcripts/usage', '/transcripts/search']) {
+      for (const route of ['/transcripts/status', '/transcripts/search']) {
         const { status } = await bothPrefixes(get, route);
         assert.equal(status, 200, `${route} is registered under both prefixes`);
       }
       const { status } = await bothPrefixes(get, '/transcripts/reindex', post({}));
       assert.equal(status, 200);
-    });
-  } finally {
-    cleanup();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// The cache-billing multipliers are PUBLISHED, not re-typed by the client
-// ---------------------------------------------------------------------------
-//
-// server/pricing.ts exported CACHE_WRITE_5M / CACHE_WRITE_1H / CACHE_READ, nothing
-// imported them, and no endpoint published them — so the insights UI hardcoded a copy.
-// Change one and the API's dollars move while the client's "billed weight" chart keeps
-// the old ratios, and the same screen answers "where did the money go" two ways.
-//
-// These tests fail if the numbers stop coming from pricing.ts, which is the only way
-// the duplication can come back.
-
-test('/transcripts/status publishes the cache multipliers straight from pricing.ts', async () => {
-  const { app, cleanup } = routeModules();
-  try {
-    await serving(app, async (get) => {
-      const { status, body } = await bothPrefixes(get, '/transcripts/status');
-      assert.equal(status, 200);
-      assert.deepEqual(body.pricing.cacheMultipliers, {
-        input: 1, // stated, not implied, so a client can consume the map wholesale
-        cacheWrite5m: pricing.CACHE_WRITE_5M,
-        cacheWrite1h: pricing.CACHE_WRITE_1H,
-        cacheRead: pricing.CACHE_READ,
-      });
-      assert.equal(body.pricing.verifiedAt, pricing.PRICING_VERIFIED);
-    });
-  } finally {
-    cleanup();
-  }
-});
-
-test('every cost-bearing response carries the same pricing block', async () => {
-  const { app, cleanup } = routeModules();
-  try {
-    await serving(app, async (get) => {
-      const status = (await bothPrefixes(get, '/transcripts/status')).body.pricing;
-      const fleet = (await bothPrefixes(get, '/transcripts/usage')).body.pricing;
-      assert.deepEqual(fleet, status, 'the fleet rollup must not quote different multipliers');
     });
   } finally {
     cleanup();

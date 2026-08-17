@@ -1,4 +1,4 @@
-// Thin wrappers over the transcript search + telemetry endpoints.
+// Thin wrappers over the transcript search endpoints.
 //
 // Same-origin by construction: in dev Vite proxies /api to the daemon, in production
 // the daemon serves this bundle itself. No base URL, no config.
@@ -11,31 +11,15 @@
 // $lib/api.js's `request` — this module used to re-implement all three.
 
 import { request } from '$lib/api.js';
-import { adoptPricing } from './pricing.svelte.js';
-import type { FleetUsage, SearchResponse, StateSession, TranscriptStatus, Usage } from './types';
+import type { SearchResponse, StateSession, TranscriptStatus } from './types';
 
 const V1 = '/api/v1';
 
-// Every cost-bearing response carries a `pricing` block, and that block is where the
-// cache-billing multipliers come from (pricing.svelte.js explains why the client must
-// not keep its own copy). Adopting it HERE rather than at each call site means a new
-// endpoint cannot forget to — there is no call site to remember it at.
-// Generic pass-through: every endpoint answers a different shape, and this only ever
-// reads `.pricing` off it. Returning T rather than any keeps each caller's declared
-// return type intact instead of laundering it back to any on the way out.
-function adopt<T>(json: T): T {
-  const p = (json as { pricing?: unknown } | null)?.pricing;
-  if (p) adoptPricing(p as Parameters<typeof adoptPricing>[0]);
-  return json;
-}
-
-// Transport comes from $lib/api.js; these two add the one thing that is this module's
-// own — adopting the pricing block off every response.
 const get = async (url: string, signal?: AbortSignal): Promise<any> =>
-  adopt(await request('GET', url, { signal, strictJson: true }));
+  request('GET', url, { signal, strictJson: true });
 
 const post = async (url: string, body: unknown, signal?: AbortSignal): Promise<any> =>
-  adopt(await request('POST', url, { body: body || {}, signal }));
+  request('POST', url, { body: body || {}, signal });
 
 const qs = (params: Record<string, string | number | boolean | null | undefined>): string => {
   const s = new URLSearchParams();
@@ -47,7 +31,7 @@ const qs = (params: Record<string, string | number | boolean | null | undefined>
   return out ? `?${out}` : '';
 };
 
-/** Index health: backend, whether FTS5 is available, how much is indexed, price age. */
+/** Index health: backend, whether FTS5 is available, and how much is indexed. */
 export const transcriptStatus = (signal?: AbortSignal): Promise<TranscriptStatus> =>
   get(`${V1}/transcripts/status`, signal);
 
@@ -70,16 +54,6 @@ export const searchTranscripts = (
   signal?: AbortSignal,
 ): Promise<SearchResponse> =>
   get(`${V1}/transcripts/search${qs({ q, session, role, order, limit })}`, signal);
-
-/** One session's tokens + cost. */
-export const sessionUsage = (id: string, signal?: AbortSignal): Promise<Usage> =>
-  get(`${V1}/sessions/${encodeURIComponent(id)}/transcript/usage`, signal);
-
-/** Everything: per session, rolled up per feature, plus a grand total. */
-export const fleetUsage = (
-  { refresh }: { refresh?: boolean } = {},
-  signal?: AbortSignal,
-): Promise<FleetUsage> => get(`${V1}/transcripts/usage${qs({ refresh: refresh ? 1 : null })}`, signal);
 
 export const reindex = (
   { session, full }: { session?: string | null; full?: boolean } = {},

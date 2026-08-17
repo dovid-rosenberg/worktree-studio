@@ -996,27 +996,7 @@ export interface DiffFile {
   unsupported?: 'combined';
 }
 
-// ---- transcripts and usage --------------------------------------------------
-
-/**
- * message.usage, flattened to what the price table understands.
- *
- * The per-TTL cache split is load-bearing: a 1h cache write costs 2x the base
- * input rate and a 5m write 1.25x, so pricing the lump as 5m understates any
- * session using the 1h cache.
- */
-export interface Usage {
-  input: number;
-  output: number;
-  cacheWrite5m: number;
-  cacheWrite1h: number;
-  /** The lump `cache_creation_input_tokens` — equals the two above. */
-  cacheWrite: number;
-  cacheRead: number;
-  webSearch: number;
-  webFetch: number;
-  speed: string | null;
-}
+// ---- transcripts -------------------------------------------------------------
 
 /** A normalized transcript line. Only `assistant` and `user` records become entries. */
 export interface TranscriptEntry {
@@ -1024,73 +1004,14 @@ export interface TranscriptEntry {
   role: string;
   uuid: string | null;
   parentUuid: string | null;
-  /** The API message id — the dedup key for usage, see UsageTotals. */
-  msgId: string | null;
-  requestId: string | null;
   ts: IsoTimestamp | null;
   tsMs: number | null;
   model: string | null;
-  speed: string | null;
   cwd: string | null;
   gitBranch: string | null;
   sidechain: boolean;
   /** Capped; a truncated body ends in an ellipsis. */
   text: string;
-  /** null on every user entry. */
-  usage: Usage | null;
-}
-
-/** Per-model tokens and cost. A session routinely spans models, and cost is
- *  meaningless without knowing which rate applied. */
-export interface UsageByModel {
-  model: string;
-  speed: string | null;
-  messages: number;
-  input: number;
-  output: number;
-  cacheWrite5m: number;
-  cacheWrite1h: number;
-  cacheWrite: number;
-  cacheRead: number;
-  webSearch: number;
-  webFetch: number;
-  /** null when the model is not in the price table. */
-  costUsd: number | null;
-  priced: boolean;
-}
-
-/**
- * aggregate() over one transcript.
- *
- * Usage is deduplicated on `msgId` before it is summed: Claude Code writes one
- * JSONL line per CONTENT BLOCK and repeats the identical usage on each, so summing
- * lines over-counts by ~2.9x on a tool-heavy session.
- */
-export interface UsageTotals {
-  input: number;
-  output: number;
-  cacheWrite5m: number;
-  cacheWrite1h: number;
-  cacheWrite: number;
-  cacheRead: number;
-  webSearch: number;
-  webFetch: number;
-  assistantMessages: number;
-  userMessages: number;
-  firstAt: number | null;
-  lastAt: number | null;
-  byModel: UsageByModel[];
-  costUsd: number | null;
-  /** Always true: transcripts record tokens, not billing. */
-  costIsEstimate: true;
-  /** Billable models missing from the price table — `complete` is false when non-empty. */
-  unpricedModels: string[];
-  complete: boolean;
-  file: string;
-  bytes: number;
-  offset: number;
-  malformedLines: number;
-  truncatedTail: boolean;
 }
 
 // ---- intake sources (server/sources/*) --------------------------------------

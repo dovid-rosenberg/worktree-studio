@@ -15,7 +15,7 @@ Every API route is registered once and served under two prefixes:
 | Prefix     | Status                                                                 |
 | ---------- | ---------------------------------------------------------------------- |
 | `/api/v1`  | The versioned contract. New clients should build against this.          |
-| `/api`     | Unversioned alias, byte-identical. Kept for SwiftBar, Alfred and the web UI. |
+| `/api`     | Unversioned alias, byte-identical. Kept for SwiftBar and the web UI.     |
 
 `/api/v1/state` and `/api/state` are the same handler; the tables below list
 routes without the prefix, so `/state` means `/api/v1/state` *or* `/api/state`.
@@ -51,7 +51,7 @@ stops applying, but the browser still sends the attacker's domain in `Host`.
 
 **Origin**, *when the request carries one*, must be `http(s)://<loopback>:<port>`
 for this server's port. Absent is allowed — every non-browser client (curl,
-SwiftBar, Alfred, the CLI, the hook script) sends none, and the token covers
+SwiftBar, the CLI, the hook script) sends none, and the token covers
 those. `Origin: null` is refused. Note WebSockets are exempt from CORS entirely,
 so this check on the upgrade is what stops any open browser tab from attaching a
 terminal.
@@ -61,8 +61,8 @@ terminal.
 default; `WT_STUDIO_STATE` moves it). It is stable across restarts, because live
 sessions have it baked into hook URLs. Present it as:
 
-- `x-wts-token: <token>` — preferred; what the web UI, the CLI, SwiftBar and
-  Alfred send.
+- `x-wts-token: <token>` — preferred; what the web UI, the CLI and SwiftBar
+  send.
 - `Authorization: Bearer <token>`.
 - `?token=<token>` — for the two transports that cannot set a header:
   `EventSource` (`/api/events`) and the terminal WebSocket. The generated hook
@@ -777,7 +777,7 @@ branch.
 
 `404` for an unknown session.
 
-> This route is the **on-demand** answer, for SwiftBar, Alfred and anything else
+> This route is the **on-demand** answer, for SwiftBar and anything else
 > that does not hold a stream open. Streaming clients should not poll it — the
 > same data is pushed as the `ci` SSE event, refreshed by the server on the
 > events that change it.
@@ -925,16 +925,16 @@ the start. Unknown/untracked worktrees answer `{ offset, text: "", size: 0 }`.
 
 ## Run configurations and runs
 
-A worktree's editor run configurations — JetBrains, VS Code, Zed — read out of the
+A worktree's editor run configurations — JetBrains, VS Code — read out of the
 worktree, and what happens when you run one.
 
 ### `GET /run-configs?worktreePath=<path>&repo=<name>`
 
 `{ configs: [ { name, cmd, kind, source, file, env? } ] }`, where `kind` is
-`server` (long-lived) or `task` (finite), and `source` is `jetbrains` / `vscode` /
-`zed` — or `manual` for an entry from `config.runConfigs[repo]`, whose `file` is
+`server` (long-lived) or `task` (finite), and `source` is `jetbrains` / `vscode`
+— or `manual` for an entry from `config.runConfigs[repo]`, whose `file` is
 the config file. Deduped by name, discovered entries winning a clash with a
-manual one, then JetBrains → VS Code → Zed among themselves. `400` without a
+manual one, then JetBrains → VS Code among themselves. `400` without a
 `worktreePath`.
 
 **Discovered on request, not imported and not part of the topology payload.** An
@@ -1130,40 +1130,35 @@ merged?" without starting one. Same shape, so a client renders both the same way
 
 ---
 
-## Transcripts (search + token/cost telemetry)
+## Transcripts (search)
 
 Claude Code appends a JSONL transcript per session to
-`~/.claude/projects/<slugified-cwd>/<claudeSessionId>.jsonl`. These routes search
-it and cost it. `server/transcript-routes.ts`.
+`~/.claude/projects/<slugified-cwd>/<claudeSessionId>.jsonl`. These routes index
+and search it. `server/transcript-routes.ts`.
 
-Two things to know before reading the shapes:
+One thing to know before reading the shapes: **the index is optional, but the
+fallback is not uniform.** Storage is `node:sqlite` (built into Node 22).
+`backend` always says which layer answered:
 
-- **Transcripts record tokens, never money.** Every dollar figure here is derived
-  from a maintained price table (`server/pricing.ts`) and is an **estimate**.
-  Responses that carry a cost also carry `costIsEstimate: true` and a `pricing`
-  block saying how old the table is.
-- **The index is optional, but the fallback is not uniform.** Storage is
-  `node:sqlite` (built into Node 22). `backend` always says which layer answered:
+| `backend` | when | search is |
+| --- | --- | --- |
+| `sqlite-fts5` | normal | FTS5 `MATCH`, ranked |
+| `sqlite-like` | sqlite present, FTS5 missing | `LIKE` over the same table |
+| `file-scan` | `node:sqlite` itself unavailable | substring scan of the files |
 
-  | `backend` | when | search is |
-  | --- | --- | --- |
-  | `sqlite-fts5` | normal | FTS5 `MATCH`, ranked |
-  | `sqlite-like` | sqlite present, FTS5 missing | `LIKE` over the same table |
-  | `file-scan` | `node:sqlite` itself unavailable | substring scan of the files |
-
-  Note that a missing FTS5 does **not** mean file scanning — it is still sqlite.
-  Only the two search routes and `GET /sessions/:id/transcript/usage` fall back to
-  `file-scan`. **`GET /transcripts/usage` does not**: with no sqlite it reports
-  every session as all-zero with `indexed: false` rather than reading the
-  transcripts. And `POST /transcripts/reindex` simply refuses (`ok: false`).
+Note that a missing FTS5 does **not** mean file scanning — it is still sqlite.
+Only the two search routes fall back to `file-scan`; `POST /transcripts/reindex`
+simply refuses (`ok: false`).
 
 Indexing is incremental — the byte offset of the last pass is remembered and only
 appended bytes are read — and is triggered by the `Stop` / `SubagentStop` /
 `SessionEnd` hooks. A burst of hooks (parallel subagents) coalesces into one
-follow-up pass. The three routes that report on **one** session's search or usage
-refresh that session's index first, so a caller never sees stale numbers because no
-hook has fired yet; `GET /sessions/:id/transcript` does not (it only locates the
-file), and `GET /transcripts/usage` only does so with `?refresh=1`.
+follow-up pass. Both search routes refresh the session they are scoped to first, so
+a caller never misses the last turn because no hook has fired yet;
+`GET /sessions/:id/transcript` does not (it only locates the file).
+
+A session that is deleted keeps its indexed messages: the corpus is an archive, and
+"which session touched `helpers/mfa.js`" is asked most often about finished work.
 
 A `claudeSessionId` that is not a uuid is refused before it is joined into a path;
 it arrives from a hook payload, and `../../..` would otherwise escape the
@@ -1171,32 +1166,18 @@ transcript root.
 
 ### `GET /transcripts/status`
 
-Index health, and the pricing metadata every cost-bearing response repeats.
+Index health.
 
 ```jsonc
 { "ready": true, "backend": "sqlite-fts5", "fts5": true,
   "file": "~/.local/state/worktree-studio/transcripts.db", "error": null,
-  "sessions": 12, "messages": 48213,
-  "pricing": {
-    "verifiedAt": "2026-07-27",
-    "note": "Costs are estimates derived from a maintained price table …",
-    "cacheMultipliers": { "input": 1, "cacheWrite5m": 1.25, "cacheWrite1h": 2, "cacheRead": 0.1 }
-  } }
+  "sessions": 12, "messages": 48213 }
 ```
-
-`cacheMultipliers` is the multiple of a model's **input** rate that each
-input-family token class bills at. It is published because the API prices a
-*model*, never a token class — a client that wants to show *which class* the money
-went to cannot derive it, and must not hardcode it: change a multiplier and the
-dollar figures here move, while a client holding its own copy silently keeps the
-old ratios. Output tokens are deliberately absent — they bill on a separate output
-rate whose ratio to the input rate is a per-model price, not a structural
-multiplier.
 
 ### `GET /sessions/:id/transcript`
 
 Which transcript a session maps to, and whether the server can see it. Useful on
-its own when a session's numbers look empty — it says *why*.
+its own when a session turns up no hits — it says *why*.
 
 ```jsonc
 { "session": { "id": "…", "title": "…", "feature": "feat-a", "branch": "feature/a",
@@ -1275,60 +1256,6 @@ On that backend `limit` clamps to 1–500, not 1–200.
 > Prefer the global endpoint with `?session=<id>` when rendering a results list:
 > it carries per-hit session meta, which is what lets a hit from an unknown
 > session render at all.
-
-### `GET /sessions/:id/transcript/usage`
-
-One session's tokens and derived cost.
-
-```jsonc
-{ "session": { … }, "source": "index",
-  "input": 982, "output": 41203,
-  "cacheWrite5m": 120400, "cacheWrite1h": 88000, "cacheWrite": 208400,
-  "cacheRead": 576324491, "webSearch": 2, "webFetch": 0,
-  "messages": 214, "firstAt": 1785…, "lastAt": 1785…,
-  "byModel": [ { "model": "claude-opus-5", "speed": null, "messages": 190,
-                 "input": 900, "output": 40000, "…": "…",
-                 "costUsd": 12.4413, "priced": true } ],
-  "costUsd": 12.4413, "costIsEstimate": true, "unpricedModels": [],
-  "pricing": { … } }
-```
-
-- `source` is `index` (from sqlite), `transcript` (read directly — no sqlite, or
-  not indexed yet) or `none` (no transcript found, with `reason`). The two live
-  sources differ in their extra fields: `index` reports `messages`, while
-  `transcript` reports `assistantMessages` + `userMessages`, a `complete` flag
-  (true when every model in the file had a rate), and `file`, `bytes`, `offset`,
-  `malformedLines` and `truncatedTail` about the read itself.
-- Cache writes are split by TTL because a 1 h write bills at 2× the input rate and
-  a 5 m write at 1.25×. Pricing the lump as 5 m would understate any session using
-  the 1 h cache.
-- `costUsd` is `null`, never `0`, for a model with no rate in the table — the two
-  mean opposite things. Such models are named in `unpricedModels`, so the gap is
-  visible rather than silently wrong. `<synthetic>` (Claude Code's locally
-  generated notices) is not reported as unpriced; it carries no real cost.
-- Token totals are deduped on the API message id. Claude Code writes **one JSONL
-  line per content block** and repeats the identical `usage` on each, so summing
-  lines over-counts by ~2.9× on a tool-heavy session.
-
-`404` for an unknown session.
-
-### `GET /transcripts/usage`
-
-Everything at once: per session, rolled up per **feature**, plus a grand total.
-Feature is the unit worth costing — it is what ties a feature's worktrees together
-across repos.
-
-```jsonc
-{ "sessions": [ { "session": { … }, "…": "…", "costUsd": 12.44, "indexed": true } ],
-  "features": [ { "feature": "feat-a", "sessions": 2, "…": "…",
-                  "costUsd": 18.90, "unpricedModels": [] } ],
-  "totals": { "…": "…", "costUsd": 31.34, "unpricedModels": [] },
-  "costIsEstimate": true, "pricing": { … }, "backend": "sqlite-fts5" }
-```
-
-`sessions` and `features` are sorted by cost, descending. `?refresh=1` brings
-every session's index up to date first — that is a read of every appended byte, so
-it is opt-in rather than the default.
 
 ### `POST /transcripts/reindex`
 

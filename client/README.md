@@ -51,14 +51,14 @@ client/
           DiffViewport.svelte  the windowed diff surface + keyboard navigation
           model.js             blocks → flat fixed-height item list (pure)
           api.js               the four review routes, typed
-        insights/           transcript search + cost/token telemetry, mounted by
-                            dock/InsightsMount
+        insights/           transcript search (SearchPanel/SearchHit, ⌘⇧F) plus the
+                            index-status view the dock's Insights mounts
     routes/
       +layout.js            ssr = false, prerender = false
       +layout.svelte        theme, the SSE connection, global keys, every overlay
       +page.svelte          the single screen: Work (rail + dock) and Fleet
       review/+page.svelte   Changes-panel harness — session picker + <ReviewPanel>
-      search/, usage/       insights harnesses
+      search/               search harness
 ```
 
 
@@ -128,7 +128,7 @@ Two panels are built separately and are deliberately not imported anywhere in th
 | tab | mount | becomes |
 | --- | --- | --- |
 | ✎ Changes | `dock/ReviewMount.svelte` | `$lib/components/review/` — commits, diff, hunk staging |
-| ◔ Insights | `dock/InsightsMount.svelte` | `$lib/components/insights/` — transcript search, cost/token telemetry |
+| ◔ Insights | `dock/InsightsMount.svelte` | `$lib/components/insights/` — transcript search, transcript-index status |
 
 Each mount is a placeholder whose header comment states the contract it guarantees
 (when it renders, what `session` is, what height it owns). Integration is one import

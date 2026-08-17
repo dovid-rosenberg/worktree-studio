@@ -1,41 +1,69 @@
 <script lang="ts">
 /*
- * Insights: ONE destination — a fleet overview you drill down from.
+ * Insights: the dock's one fleet-wide destination (⌘\).
  *
- * There used to be two, sharing the word and the ◔ glyph: this fleet view, and a
- * session-scoped tab in the dock's tab strip (InsightsMount, now deleted). They
- * overlapped — `SessionUsage` rendered in both — and nothing on screen said which was
- * which, so "Insights" named two different places depending on where you clicked.
+ * WHAT IS LEFT HERE, AND WHY IT IS THIN. This view used to be the cost overview —
+ * a hero spend figure, a per-feature cost ranking and a per-session token mix. All
+ * of that derived from a hand-maintained price table that went stale on its own and
+ * produced a dollar ESTIMATE nobody was billed for, so it was removed. Search, the
+ * other thing that lived under this word, is its own overlay now: ⌘⇧F, or "Search
+ * transcripts" in the palette and the ⋮ menu.
  *
- * The overview is the cost ranking; picking a row is the drill-down, and it happens
- * HERE rather than by navigating. It used to call `goToSession`, which resets dockView
- * to 'term' — so inspecting the second-biggest spender threw you out of the view you
- * were reading.
- *
- * Search does NOT live here. It was a section of the old session-scoped Insights tab,
- * and moving it into this drill-down buried it one level out instead of fixing it —
- * still something you reach only after arriving somewhere else for a different reason.
- * It is its own overlay now: ⌘⇧F, or "Search transcripts" in the palette and the ⋮ menu.
- * This view is cost and tokens, which is one subject.
+ * What genuinely remains fleet-wide and true is the state of the transcript index
+ * that search runs on — which backend, how much is indexed, and a way to rebuild it.
+ * That is what this renders. Whether Insights should keep its own dock view for that
+ * is an open product question, deliberately not answered here.
  */
-import UsagePanel from '$lib/components/insights/UsagePanel.svelte';
-import { ui } from '$lib/stores/ui.svelte.js';
+import IndexStatus from '$lib/components/insights/IndexStatus.svelte';
+import { transcriptStatus, reindex } from '$lib/components/insights/api.js';
+import type { TranscriptStatus } from '$lib/components/insights/types';
+import { errMessage } from '$lib/errmsg.js';
 
-/*
- * Seeded from the store, then owned locally.
- *
- * `ui.insightsFocus` is what the caller asked to open on. A `$derived` would fight the
- * user — every row click would be overwritten by the seed on the next invalidation —
- * so it initialises the local value and nothing more.
- */
-let picked = $state<string | null>(ui.insightsFocus);
+let status: TranscriptStatus | null = $state(null);
+let error: string | null = $state(null);
+let busy = $state(false);
+
+async function load() {
+  try {
+    status = await transcriptStatus();
+    error = null;
+  } catch (e) {
+    error = errMessage(e);
+  }
+}
+
+// Mount only: load() reads nothing reactive in its synchronous prologue, so this
+// effect has no dependencies and cannot re-run.
+$effect(() => {
+  load();
+});
+
+async function rebuild(o: { session?: string | null; full?: boolean }) {
+  busy = true;
+  try {
+    await reindex(o);
+  } catch (e) {
+    error = errMessage(e);
+  } finally {
+    busy = false;
+    await load();
+  }
+}
 </script>
 
 <div class="fleetinsights">
-  <UsagePanel sessionId={picked} onselect={(id: string) => (picked = id)} />
+  <section class="ix-view" aria-label="Transcript index">
+    <h3>Transcript index</h3>
+    <p class="sub">What ⌘⇧F searches over.</p>
+    <IndexStatus {status} {busy} {error} onreindex={rebuild} />
+    <IndexStatus {status} compact {busy} onreindex={rebuild} />
+  </section>
 </div>
 
 <style>
   /* One scroller for the whole view. */
   .fleetinsights { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); }
+  .ix-view { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+  .ix-view h3 { margin: 0; font-size: 14px; font-weight: 650; }
+  .ix-view .sub { margin: 0; font-size: 12px; color: var(--muted); }
 </style>

@@ -51,30 +51,6 @@ export interface TranscriptStatus {
   error?: string | null;
   sessions: number;
   messages: number;
-  pricing?: PricingBlock;
-}
-
-export interface Tokens {
-  input: number;
-  output: number;
-  cacheWrite5m: number;
-  cacheWrite1h: number;
-  cacheWrite: number;
-  cacheRead: number;
-  webSearch?: number;
-  webFetch?: number;
-}
-
-export interface PricingBlock {
-  /** ISO date the price table was last checked */
-  verifiedAt: string;
-  note: string;
-  cacheMultipliers?: {
-    input: number;
-    cacheWrite5m: number;
-    cacheWrite1h: number;
-    cacheRead: number;
-  };
 }
 
 export interface StateSession {
@@ -85,47 +61,4 @@ export interface StateSession {
   repoName?: string;
   state?: string;
   active?: boolean;
-}
-
-export type ModelUsage = Tokens & {
-  model: string | null;
-  speed: string | null;
-  messages: number;
-  costUsd: number | null;
-  priced: boolean;
-};
-
-export type Usage = Tokens & {
-  session?: SessionMeta;
-  source?: string;
-  reason?: string;
-  messages?: number;
-  assistantMessages?: number;
-  userMessages?: number;
-  firstAt?: number | null;
-  lastAt?: number | null;
-  byModel: ModelUsage[];
-  costUsd: number | null;
-  costIsEstimate?: boolean;
-  unpricedModels: string[];
-  indexed?: boolean;
-  pricing?: PricingBlock;
-};
-
-export type FeatureUsage = Tokens & {
-  feature: string;
-  sessions: number;
-  costUsd: number | null;
-  unpricedModels: string[];
-};
-
-export type Totals = Tokens & { costUsd: number | null; unpricedModels: string[] };
-
-export interface FleetUsage {
-  sessions: Usage[];
-  features: FeatureUsage[];
-  totals: Totals;
-  costIsEstimate: boolean;
-  pricing?: PricingBlock;
-  backend?: string;
 }
