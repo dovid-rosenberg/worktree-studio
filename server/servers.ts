@@ -82,6 +82,23 @@ export interface StartCommand {
 export type SlotAllocation = { slot: number; error?: undefined } | { slot?: undefined; error: string };
 
 /**
+ * One slot's availability, judged FOR A SPECIFIC FEATURE.
+ *
+ * `held` and `blocked` are kept apart because their remedies are different: stop the
+ * other feature, versus go deal with a process Studio does not manage.
+ */
+export interface SlotReport {
+  slot: number;
+  state: 'free' | 'held' | 'blocked' | 'current';
+  /** repo name → the ports that repo derives on this slot. Only concurrency-governed repos appear. */
+  ports: Record<string, number[]>;
+  /** Set when state === 'held': the feature holding it. */
+  heldBy?: string;
+  /** Set when state === 'blocked': the first bound port and its pid. */
+  blockedBy?: { port: number; pid: number };
+}
+
+/**
  * A config rewrite start() applies before spawning: which file, which sibling port
  * families to shift, and to which slot. Distinct from the config's own
  * `ConfigPatch`, which names the sibling REPO rather than its resolved ports.
@@ -325,6 +342,64 @@ class Servers {
     this.slots.set(feature, slot);
     this._save();
     return { slot };
+  }
+
+  /**
+   * Every slot's availability FOR THIS FEATURE.
+   *
+   * There is no global answer. `start()` pre-checks only the ports the repo being
+   * launched derives, so a slot is usable or not depending on which repos are asking:
+   * an FE-only feature is happy on a slot whose backend ports are occupied, because it
+   * never binds them. Judging slots globally would grey out starts that work.
+   *
+   * Reads only — allocates nothing, persists nothing. Uses the same `portPid` the launch
+   * pre-check uses, so the picker and the launch cannot disagree about what is free.
+   */
+  async slotReport(
+    feature: string,
+    members: Array<{ repo: string; worktreePath: string }>,
+  ): Promise<SlotReport[]> {
+    const conc = this.cfg.concurrency;
+    const on = this._concEnabled() && !!conc;
+    const max = on ? conc.maxSlots || 1 : 1;
+    const step = on ? conc.offsetStep : 0;
+    // slot → the OTHER feature holding it. The caller's own slot is `current`, not held.
+    const holder = new Map<number, string>();
+    for (const [f, s] of this.slots) if (f !== feature) holder.set(s, f);
+    const mine = this.slots.get(feature);
+
+    const out: SlotReport[] = [];
+    for (let slot = 0; slot < max; slot++) {
+      const ports: Record<string, number[]> = {};
+      for (const m of members) {
+        const rc = this._repoConc(m.repo);
+        if (rc) ports[m.repo] = deriveEnv(rc, slot, step).ports;
+      }
+      if (mine === slot) {
+        out.push({ slot, state: 'current', ports });
+        continue;
+      }
+      const heldBy = holder.get(slot);
+      if (heldBy !== undefined) {
+        out.push({ slot, state: 'held', ports, heldBy });
+        continue;
+      }
+      let blockedBy: { port: number; pid: number } | undefined;
+      for (const ps of Object.values(ports)) {
+        for (const p of ps) {
+          const pid = await this.portPid(p);
+          if (pid) {
+            blockedBy = { port: p, pid };
+            break;
+          }
+        }
+        if (blockedBy) break;
+      }
+      out.push(
+        blockedBy ? { slot, state: 'blocked', ports, blockedBy } : { slot, state: 'free', ports },
+      );
+    }
+    return out;
   }
 
   releaseSlot(feature: string): void {
