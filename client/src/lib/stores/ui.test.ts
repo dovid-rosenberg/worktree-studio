@@ -260,26 +260,11 @@ describe('selection', () => {
 
 describe('switching without losing your place', () => {
   /*
-   * The three things that made a context switch expensive. None of them was a bug in the
-   * sense of throwing — each just quietly discarded state the user had established, and
-   * the cost only shows up as "coming back is annoying", which is exactly the kind of
-   * thing nobody files.
+   * What made a context switch expensive. None of it was a bug in the sense of throwing —
+   * each case just quietly discarded state the user had established, and the cost only
+   * shows up as "coming back is annoying", which is exactly the kind of thing nobody
+   * files.
    */
-
-  it('⌘\\ into Insights and back RESTORES the selection', () => {
-    give({ features: [], sessions: [session('s1')] });
-    ui.select('s1');
-
-    ui.toggleUsage();
-    expect(ui.dockView).toBe('usage');
-    // Still cleared while Insights is up — the ActionBar must not offer Stop stack for
-    // something that is not on screen.
-    expect(ui.selectedId).toBeNull();
-
-    ui.toggleUsage();
-    expect(ui.dockView).toBe('term');
-    expect(ui.selectedId).toBe('s1');
-  });
 
   it('remembers which dock tab each selection was left on', () => {
     give({
@@ -287,21 +272,21 @@ describe('switching without losing your place', () => {
       sessions: [session('s1'), session('s2')],
     });
     ui.select('s1');
-    ui.setDockView('usage'); // stand-in for Changes/Runs: any non-terminal view
-    expect(ui.dockView).toBe('usage');
+    ui.setDockView('changes');
+    expect(ui.dockView).toBe('changes');
 
     ui.select('s2');
     expect(ui.dockView).toBe('term');
 
     // Back to s1 — you were reading something there, and that is where you land.
     ui.select('s1');
-    expect(ui.dockView).toBe('usage');
+    expect(ui.dockView).toBe('changes');
   });
 
   it('a selection never seen before opens on its terminal', () => {
     give({ features: [], sessions: [session('s1'), session('s2')] });
     ui.select('s1');
-    ui.setDockView('usage');
+    ui.setDockView('changes');
     ui.select('s2');
     expect(ui.dockView).toBe('term');
   });

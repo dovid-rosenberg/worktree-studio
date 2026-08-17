@@ -49,8 +49,8 @@ import { toast } from '$lib/stores/toasts.svelte.js';
  * working. It sends LF. Five real bindings were missing, including Escape, which is the
  * most consequential key in the app.
  *
- * Grouped, because a flat list of eleven gives no clue that half of them only do anything
- * while the terminal has focus.
+ * Grouped, because a flat list gives no clue that half of them only do anything while the
+ * terminal has focus.
  */
 const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
@@ -59,7 +59,6 @@ const ROWS: [string, string][] = [
   // level and a page cannot preventDefault it — so on macOS this may never reach us.
   // Kept rather than dropped: the binding is real, and ＋ New session is always there.
   ['⌘N', 'New session'],
-  ['⌘\\', 'Toggle Insights'],
   ['⌘D', 'Review changes'],
   ['⌘R', 'Run stack'],
   ['⌥1–9', 'Jump to the Nth rail row — the number is on the card'],
@@ -157,11 +156,6 @@ export function handleShortcut(e: KeyboardEvent): void {
   if (e.key === 'n' || e.key === 'N') {
     e.preventDefault();
     overlays.openIntake();
-    return;
-  }
-  if (e.key === '\\') {
-    e.preventDefault();
-    ui.toggleUsage();
     return;
   }
   /*

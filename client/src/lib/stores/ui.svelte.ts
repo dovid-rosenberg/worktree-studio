@@ -112,7 +112,6 @@ export function selectionKey(s: Selection, enc: (v: string) => string = (v) => v
   return `w:${enc(s.path)}`;
 }
 
-const DOCK_KEY = 'wts-dock';
 const RAIL_KEY = 'wts-rail-w';
 const SORT_KEY = 'wts-rail-sort';
 const ROOT_KEY = 'wts-root';
@@ -220,25 +219,13 @@ export const RAIL_MAX = 560;
 const RAIL_DEFAULT = 320;
 
 /**
- * `usage` (Insights) is the one view that renders with nothing selected — it is about
- * every session that ever ran. Everything else is a panel of the selected session.
- *
- * This used to be an APP_VIEWS array with `includes()` checks at four call sites, which
- * made sense when Overview was the second entry. Overview is gone; a one-element array is
- * machinery around a single comparison.
+ * Every dock view is a panel of the SELECTED session — there is no longer one that
+ * renders with nothing selected. (Two used to: Overview, which was the rail drawn wide,
+ * and Insights, whose last surviving readout is the transcript-index line inside ⌘⇧F.)
+ * That is why none of these is persisted: a view means nothing without the selection it
+ * belongs to, and the selection is not restored across a reload either.
  */
-export type DockView = 'term' | 'changes' | 'logs' | 'runs' | 'usage';
-
-/**
- * Only Insights is worth restoring: the panel views belong to a session and reset with
- * the selection anyway. Written the same way it is read, so `changes` cannot come back
- * from a reload pointing at a session that is no longer selected.
- */
-const savedDock = persisted<DockView>(
-  DOCK_KEY,
-  (raw) => (raw === 'usage' ? 'usage' : 'term'),
-  (v) => (v === 'usage' ? 'usage' : 'term'),
-);
+export type DockView = 'term' | 'changes' | 'logs' | 'runs';
 
 /** A chosen sort persists: it is a working preference, not a per-visit whim. */
 const savedRailSort = persisted<RailSort>(SORT_KEY, (raw) =>
@@ -304,8 +291,6 @@ class UI {
    * READ-ONLY projections, so the components that only ask "is this me?" are unchanged.
    */
   selection = $state<Selection>(null);
-  /** What was selected before Insights hid it, so the toggle can put it back. */
-  #beforeInsights: Selection = null;
   /**
    * Where each selection was last left: which dock tab, which terminal tab.
    *
@@ -331,7 +316,7 @@ class UI {
   /** Drift findings the user has waved off — see splitKey(). */
   splitsDismissed = $state<Set<string>>(savedSplits.load());
   /** Which dock panel is showing. 'term' keeps the live terminal mounted. */
-  dockView = $state<DockView>(savedDock.load());
+  dockView = $state<DockView>('term');
   /** Rail width in px — dragged by the splitter, persisted, clamped to [MIN, MAX]. */
   railWidth = $state(savedRailWidth.load());
   /**
@@ -341,15 +326,6 @@ class UI {
    * "whatever the session's first tab is", resolved at render.
    */
   activeTabId = $state('');
-  /**
-   * Which session Insights should open drilled into, if any.
-   *
-   * Insights used to be TWO destinations sharing one word and one glyph: a session-scoped
-   * dock tab and a fleet-wide view. They are one now — an overview that drills down — and
-   * this is how a caller (the palette's "Session insights") asks for a particular row
-   * without the view needing a selection it has just been told to clear.
-   */
-  insightsFocus = $state<string | null>(null);
 
   /** Selected session id, or null. Read-only — go through select(). */
   get selectedId(): string | null {
@@ -708,59 +684,16 @@ class UI {
    */
   selectionPending = $derived(!!this.selectedId && !this.selected);
 
-  /** True while Insights owns the dock — i.e. the view that ignores the selection. */
-  appView = $derived(this.dockView === 'usage');
-
   /**
    * THE WRITER of `dockView` — every change of dock view goes through here.
    *
    * Call sites assigned the field directly (⌘D, the palette's Review changes, each of the
-   * three panel tabs, #pick below, and the two terminal-focusing calls in ops.svelte.ts),
-   * which skipped the line under it: open Insights, ⌘D into Changes, reload, and you were
-   * back in Insights, because nothing had ever overwritten what opening Insights stored.
-   *
-   * Every production writer now comes through here. The field is still public because
-   * four component test files set it directly as a fixture; making it private behind a
-   * getter is a test-side change away, and that is what would turn this rule from
-   * remembered into enforced.
+   * three panel tabs, #pick below, and the two terminal-focusing calls in ops.svelte.ts).
+   * One writer is what keeps `#dockMemory` honest: the map is seeded on the way out of a
+   * selection, so a view set behind this method's back is a view the next visit forgets.
    */
   setDockView(v: DockView): void {
     this.dockView = v;
-    savedDock.save(v);
-  }
-
-  /**
-   * Open Insights, optionally drilled into one session.
-   *
-   * Entering CLEARS the selection: Insights is about every session that ever ran, not the
-   * one you happen to have open, and leaving a selection standing left the ActionBar
-   * offering Stop stack / Delete feature for something no longer on screen.
-   */
-  openInsights(sessionId: string | null = null): void {
-    this.insightsFocus = sessionId;
-    /*
-     * HIDDEN, not discarded. Clearing is still right while Insights is up — the reason
-     * above holds — but this used to be the end of the selection: ⌘\ to glance at usage
-     * and ⌘\ back put you on "No session selected", so a two-keystroke look cost you
-     * your place in a twelve-row rail. For a toggle-shaped shortcut that is the single
-     * most expensive lost-place event in the app.
-     */
-    if (this.selection) this.#beforeInsights = this.selection;
-    this.selection = null;
-    this.setDockView('usage');
-  }
-
-  toggleUsage(): void {
-    if (this.dockView === 'usage') {
-      this.setDockView('term');
-      // Put back what opening Insights hid, so the toggle is genuinely a toggle.
-      if (!this.selection && this.#beforeInsights) this.selection = this.#beforeInsights;
-      this.#beforeInsights = null;
-      return;
-    }
-    // Seed the drill-down with whatever is open, so opening Insights while looking at a
-    // session lands on that session's breakdown rather than nowhere.
-    this.openInsights(this.selectedId);
   }
 
   /** Is this finding still worth showing? */
@@ -800,10 +733,9 @@ class UI {
    * would mean opening the app into a stale view of a session you have not looked at in a
    * week.
    *
-   * THE RESULTING VIEW is persisted, through setDockView — this line assigned the field
-   * directly, so switching rows changed what was on screen without changing what a reload
-   * would restore. Look at Insights, click a session (dock goes to its terminal), reload:
-   * back in Insights, because the last thing that ever wrote storage was opening it.
+   * THE RESULTING VIEW goes through setDockView, the one writer, rather than being
+   * assigned here — so a future reader looking for everything that moves the dock finds
+   * it in one place.
    */
   #pick(next: Selection): void {
     const from = selectionKey(this.selection);
@@ -863,10 +795,10 @@ class UI {
   /**
    * Select the next session that is waiting on you, cycling past the one you are on.
    *
-   * The waiting count used to be a badge on the Insights button, so the one state worth
-   * interrupting someone for routed them AWAY from the thing that wanted them — and,
-   * before the fix in openInsights, cost them their selection on the way. A count is a
-   * question ("who needs me?"); this is the answer.
+   * The waiting count used to be a badge on a fleet-wide Insights button, so the one
+   * state worth interrupting someone for routed them AWAY from the thing that wanted
+   * them, and cost them their selection on the way. A count is a question ("who needs
+   * me?"); this is the answer.
    */
   goToNextWaiting(): boolean {
     // rowSession, not `r.kind === 'session'`: a PROMOTED session is a `feature` row with
@@ -896,8 +828,6 @@ class UI {
    */
   goTo(s: Selection): void {
     this.applySelection(s);
-    // Leaving Insights up would hide the thing we were just asked to go to.
-    if (this.dockView === 'usage') this.setDockView('term');
   }
 }
 

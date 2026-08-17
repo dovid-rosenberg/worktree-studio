@@ -70,8 +70,8 @@ describe('TabStrip', () => {
     expect(lists).toHaveLength(2);
     expect(within(lists[0] as HTMLElement).getAllByRole('tab')).toHaveLength(3);
     // Changes / Logs / Runs — views of the session, owning no process. (Insights used to
-    // be here too, scoped to the session, while a fleet-wide view of the same name lived
-    // behind ⌘\; they are one destination now, reached from the top bar.)
+    // be here too, scoped to the session, and a fleet-wide view of the same name lived
+    // behind ⌘\; neither exists now.)
     expect(within(lists[1] as HTMLElement).getAllByRole('tab')).toHaveLength(3);
   });
 
@@ -129,7 +129,7 @@ describe('TabStrip', () => {
     expect(screen.queryByRole('tab', { name: /Logs/ })).not.toBeInTheDocument();
   });
 
-  it('has no Insights tab — Insights is one destination, not a per-session panel', () => {
+  it('has no Insights tab — the cost view is gone and the index line lives in ⌘⇧F', () => {
     render(TabStrip, { session: session() });
     expect(screen.queryByRole('tab', { name: /Insights/ })).not.toBeInTheDocument();
   });

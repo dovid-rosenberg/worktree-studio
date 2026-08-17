@@ -101,11 +101,8 @@ const commandRows = $derived(
         // setDockView, not the field: it is the only writer that persists the choice.
         ui.setDockView('changes');
       });
-    // Opens the one Insights view already drilled into this session.
-    if (cur) add('◔', 'Session insights', '', () => ui.openInsights(cur.id));
     // Was labelled 'Run stack' while calling startSessionServers — the other verb.
     if (cur && cur.worktreePath && cur.feature) add('▶', 'Run stack', '⌘R', () => runStack(cur.feature));
-    add('◔', 'Insights', '⌘\\', () => ui.toggleUsage());
     if (cur) {
       if (cur.active === false) add('↻', 'Resume current', '', () => activateSession(cur));
       else add('⏻', 'Deactivate current', '', () => deactivateSession(cur));

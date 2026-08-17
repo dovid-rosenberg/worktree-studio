@@ -4,8 +4,8 @@
  *
  * TWO GROUPS, deliberately not one row of look-alikes. The left group is terminal
  * tabs: real multiplexer windows, each a live process you can rename and close. The
- * right group is DOM panels (Changes / Logs / Insights) — views of the same session
- * that own no process and cannot be closed. They used to sit in a single undifferentiated
+ * right group is DOM panels (Changes / Logs / Runs) — views of the same session that
+ * own no process and cannot be closed. They used to sit in a single undifferentiated
  * `role="tablist"`, so a ✕ on one meant "kill a shell" and on the next meant nothing,
  * and `＋`/`⊟ Split` were non-tab children of a tablist, which is invalid ARIA.
  *

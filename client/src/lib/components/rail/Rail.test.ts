@@ -191,7 +191,7 @@ describe('Rail', () => {
   it('carries the fleet-wide controls above that, rather than a bar across the window', () => {
     /*
      * The scope split is already drawn down the middle of the screen: the rail is the
-     * FLEET, the dock is ONE FEATURE. Insights, the waiting jump and the ⋮ menu are all
+     * FLEET, the dock is ONE FEATURE. The waiting jump and the ⋮ menu are both
      * fleet-wide, so they belong on this side of it — as a full-width header they were a
      * third horizontal stripe sitting directly above a bar that acts on one selection,
      * with nothing but a divider to say which was which.
@@ -201,9 +201,9 @@ describe('Rail', () => {
      */
     give([]);
     render(Rail);
-    // The ⋮ menu is the one that survived the head's width squeeze — Insights moved
-    // inside it (AppMenu.test.ts), and the waiting button appears only when something is
-    // waiting. So this is what "the app's own controls are in the rail" looks like now.
+    // The ⋮ menu is the one that survived the head's width squeeze — everything else
+    // either moved inside it or went, and the waiting button appears only when something
+    // is waiting. So this is what "the app's own controls are in the rail" looks like.
     expect(screen.getByLabelText('Menu')).toBeInTheDocument();
   });
 });

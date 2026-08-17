@@ -12,6 +12,10 @@
  * behaves like every editor's search-across-everything: ⌘⇧F from wherever you are,
  * over whatever is on screen, gone when you are done.
  *
+ * Insights itself no longer exists: the cost estimate it was built around was removed,
+ * and the one true thing left in it — the state of the transcript index — followed search
+ * in here, where it is read at the moment it matters. See SearchPanel's header.
+ *
  * Modal gives it the obligations an overlay has: focus cannot leave it, the backdrop
  * closes it, and focus returns where it came from — which is what lands the caret back
  * in the terminal instead of on <body>.

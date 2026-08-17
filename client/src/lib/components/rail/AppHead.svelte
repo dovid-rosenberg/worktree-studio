@@ -12,12 +12,11 @@
  * which was which.
  *
  * The cost of the move is width: a 212px column has no room for `⎇ Worktree Studio` at
- * 17px beside three buttons. The wordmark shortened, the waiting button became its own
- * count, and Insights went into the ⋮ menu — a destination among actions, but the root
- * switcher needed the space and `⌘\` still opens it directly.
+ * 17px beside three buttons. The wordmark shortened and the waiting button became its
+ * own count.
  *
- * It used to carry eleven controls: Insights, four counts, Restart all, Stop all, ⌘K,
- * ⚙, ◐ and + New session. Where the rest went, and why:
+ * It used to carry eleven controls: an Insights button, four counts, Restart all, Stop
+ * all, ⌘K, ⚙, ◐ and + New session. Where the rest went, and why:
  *   + New session  → directly below, at the head of the rail. It creates the thing the
  *                    rail lists.
  *   the counts     → the rail footer, beside the rows they count.
@@ -86,10 +85,10 @@ const anyRunning = $derived(feats.some(featureActive));
   <span class="spacer"></span>
 
   <!-- Its own button, appearing only when something IS waiting.
-       This used to be a badge on Insights, so the one state worth interrupting you for
-       took you to the usage breakdown — away from the session asking for you, and (before
-       openInsights learned to put it back) at the cost of your selection. A count is the
-       question; this button is the answer, so pressing it goes to the next waiting agent.
+       This used to be a badge on a fleet-wide Insights button, so the one state worth
+       interrupting you for took you to a usage breakdown — away from the session asking
+       for you, and at the cost of your selection. A count is the question; this button is
+       the answer, so pressing it goes to the next waiting agent.
 
        The count IS the label here rather than a badge pinned to the word "Waiting": in a
        212px column the word costs more than it says, and the badge it carried was a

@@ -14,8 +14,7 @@ sessions survive a shutdown and resume where they left off.
 One engine (this server) and one screen — there is no view to toggle:
 
 - a **rail** of everything you are working on, one row per thing, active first;
-- a **dock** showing the selected session's terminal, its changes, its logs, or —
-  with nothing selected — fleet-wide **Insights**;
+- a **dock** showing the selected session's terminal, its changes, its logs or its runs;
 - an **action bar** along the bottom holding every action for whatever is selected.
 
 Worktrees sharing a name across repos group into a **feature** (BE+FE by shared name,

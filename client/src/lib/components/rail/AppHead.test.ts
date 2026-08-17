@@ -3,13 +3,14 @@ import { render, screen } from '@testing-library/svelte';
 import type { Feature, Session } from '../../../../../server/types';
 
 /*
- * The app header is four things: brand, the waiting button, Insights and the ⋮ menu.
+ * The app header is four things: brand, the root switcher, the waiting button and the
+ * ⋮ menu.
  * Everything else moved — New session and the fleet counts to the rail below it, the rest
  * behind the menu — so what is pinned here is that the header stays EMPTY of them.
  *
- * Since it moved into a 212px rail column, two of its controls are glyph-only. That makes
- * their ACCESSIBLE NAMES load-bearing rather than decorative: `◔` and `◉ 3` say nothing to
- * a screen reader, and nothing to anyone who has not learnt them, so every test below
+ * Since it moved into a 212px rail column, its controls are glyph-only. That makes their
+ * ACCESSIBLE NAMES load-bearing rather than decorative: `⋮` and `◉ 3` say nothing to a
+ * screen reader, and nothing to anyone who has not learnt them, so every test below
  * queries by name and would fail if a label were dropped along with the visible word.
  *
  * The counting rules (per-agent, not per-member; two vocabularies said separately) are
@@ -87,13 +88,12 @@ describe('AppHead summary', () => {
     expect(screen.queryByText(/mux:/)).not.toBeInTheDocument();
   });
 
-  it('hands Insights to the ⋮ menu rather than spending head width on it', () => {
+  it('spends head width on the root switcher, and hands everything global to the ⋮ menu', () => {
     /*
      * A 212px column cannot hold a wordmark, a root switcher and three buttons, and of
      * those the root switcher earns the space: which body of work you are looking at is
-     * worth naming on screen all day. Insights is one destination among the menu's
-     * actions — AppMenu.test.ts pins that it arrived, including its ⌘\ label, so the
-     * two tests together say it moved rather than went.
+     * worth naming on screen all day. The head carried an Insights button here once; the
+     * view it opened is gone, and what survived of it is a line inside ⌘⇧F.
      */
     render(AppHead);
     expect(screen.queryByRole('button', { name: /Insights/ })).not.toBeInTheDocument();
@@ -107,8 +107,8 @@ describe('AppHead summary', () => {
 
   it('shows NO waiting button while nothing is waiting', () => {
     /*
-     * The count used to be a badge on Insights, so the one state worth interrupting you
-     * for routed you to the usage breakdown — away from the session asking for you. It
+     * The count used to be a badge on a fleet-wide Insights button, so the one state
+     * worth interrupting you for routed you away from the session asking for you. It
      * is its own button now, and an attention control that is always present is not an
      * attention control, so it is absent at zero.
      */

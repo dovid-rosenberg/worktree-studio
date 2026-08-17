@@ -129,7 +129,7 @@ describe('⌘ works where you actually are — with the terminal focused', () =>
   // isTypingTarget used to stand every shortcut down whenever xterm's textarea had
   // focus, which is nearly always. ⌘D quietly did nothing until you clicked away, and
   // that state is invisible. ⌘ never reaches a shell, so it has no reason to defer.
-  it.each(['d', 'r', 'n', '\\'])('⌘%s still fires from the terminal', (key) => {
+  it.each(['d', 'r', 'n'])('⌘%s still fires from the terminal', (key) => {
     const e = press(key, { metaKey: true }, textarea());
     expect(e.defaultPrevented).toBe(true);
   });

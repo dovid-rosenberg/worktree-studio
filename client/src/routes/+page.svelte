@@ -5,8 +5,8 @@
  * There used to be two views here — Work and Fleet — swapped by a `hidden` attribute
  * rather than a route, because a URL change would tear down the live terminal on a
  * static SPA fallback. That constraint has not gone away; what changed is that Fleet is
- * no longer a peer of Work. Its content lives in the rail (feature-keyed, so sessionless
- * worktrees are visible) and in the dock's Overview pane, alongside Insights.
+ * no longer a peer of Work. Its content lives in the rail, which is feature-keyed, so
+ * sessionless worktrees are visible in the one list.
  *
  * The action bar spans the full width rather than sitting inside the dock: it acts on
  * the rail's selection, and anchoring it to the window means selecting something never

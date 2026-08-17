@@ -12,6 +12,13 @@
 //  3. `total` from the API is the length of the returned page, not a corpus count.
 //     A full page therefore reads "first N", never "N results" — the difference
 //     matters when you are deciding whether to narrow a query.
+//
+// INDEX HEALTH LIVES HERE, and nowhere else. It used to have a dock view of its own
+// (Insights, ⌘\) — a destination you had to think to visit, about a corpus you can only
+// see through this panel. Nobody checks the index before searching; they search, get
+// nothing, and conclude the thing they remember was never said. So the health of the
+// index is stated where that conclusion is drawn: a quiet line in the footer when all is
+// well, and a banner above the results only when an empty result set would be a lie.
 import {
   searchTranscripts,
   listSessions,
@@ -74,7 +81,7 @@ let ranAt = $state(0);
 let selected = $state(-1);
 
 let ownSessions: StateSession[] = $state([]);
-let status: import('./types.js').TranscriptStatus | null = $state(null);
+let status = $state<import('./types.js').TranscriptStatus | null>(null);
 let statusError: string | null = $state(null);
 let indexing = $state(false);
 
@@ -89,6 +96,12 @@ const terms = $derived(ftsTerms(q));
 const degenerate = $derived(q.trim().length > 0 && terms.length === 0);
 const capped = $derived(hits.length >= limit);
 const scopedSession = $derived(sessionList.find((s) => s.id === scope) || null);
+/*
+ * Loud only when it changes what an empty result MEANS: no index at all, an index with
+ * nothing in it yet, or one without FTS5. A healthy index says so in one footer line
+ * instead, because "your search is working normally" is not worth a banner.
+ */
+const unhealthy = $derived(status ? !status.ready || !status.messages || status.fts5 === false : false);
 
 /** @type {ReturnType<typeof setTimeout>|undefined} */
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -325,7 +338,7 @@ function onListKey(e: KeyboardEvent) {
     {/if}
   </div>
 
-  {#if status && (!status.ready || !status.messages || status.fts5 === false)}
+  {#if unhealthy}
     <div class="banner">
       <IndexStatus {status} busy={indexing} error={statusError} onreindex={doReindex} />
     </div>
@@ -388,7 +401,10 @@ function onListKey(e: KeyboardEvent) {
   </div>
 
   <footer class="foot">
-    <IndexStatus {status} compact busy={indexing} onreindex={doReindex} />
+    <!-- The reindex error goes wherever the button the user pressed is: the banner owns it
+         while the banner is up, otherwise it has to surface here or a failed reindex is
+         silent. -->
+    <IndexStatus {status} compact busy={indexing} error={unhealthy ? null : statusError} onreindex={doReindex} />
     {#if ran && hits.length}
       <span class="asof">
         results as of {new Date(ranAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
