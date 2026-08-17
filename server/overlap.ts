@@ -18,7 +18,8 @@
  * cadence as the CI feed.
  */
 import { git } from './util.ts';
-import { currentBranch } from './git.ts';
+import { currentBranch, readDrift } from './git.ts';
+import type { DriftRead } from './git.ts';
 import { createPolledCache } from './polled-cache.ts';
 import type { Drift, FeatureOverlap } from './types.ts';
 
@@ -36,16 +37,14 @@ const TTL_MS = 0;
  */
 const ERROR_TTL_MS = 60 * 1000;
 
-/** One worktree's answer, cached against the shas it was computed from. */
-interface Entry {
-  headSha: string;
-  baseSha: string;
-  /** Files changed since the merge-base — what `conflicts` is filtered from. */
-  changed: string[];
-  behind: number;
-  ahead: number;
-  /** Of `changed`, the ones the base also touched since the merge-base. */
-  conflicts: string[];
+/**
+ * One worktree's answer, cached against the shas it was computed from.
+ *
+ * The drift half is git.DriftRead — the same read POST /group/update refuses on, rather
+ * than a parallel copy of it. What this feed adds is the one number a rebase does not
+ * care about and shipping does.
+ */
+interface Entry extends DriftRead {
   /**
    * Commits on this branch that `origin/<branch>` does not have — work that exists only
    * on this laptop. Null when the branch has never been pushed, which is a different
@@ -98,34 +97,24 @@ async function measure(previous: Entry | null, wt: string, base: string): Promis
 
   if (previous && previous.headSha === headSha && previous.baseSha === baseSha) return previous;
 
-  const mb = await git(wt, ['merge-base', headSha, baseSha]);
-  if (!mb) return null;
-
   // The branch's own name, so `origin/<branch>` can be asked about. Detached (null) has
   // no remote counterpart at all.
   const branch = await currentBranch(wt);
 
-  const [mine, theirs, behind, ahead, unpushedRaw] = await Promise.all([
-    git(wt, ['diff', '--name-only', `${mb}..${headSha}`]),
-    git(wt, ['diff', '--name-only', `${mb}..${baseSha}`]),
-    git(wt, ['rev-list', '--count', `${headSha}..${baseSha}`]),
-    git(wt, ['rev-list', '--count', `${baseSha}..${headSha}`]),
+  // The merge-base arithmetic itself lives in git.readDrift, because POST /group/update
+  // reads it too: the verb refuses a rebase this feed has already predicted will conflict,
+  // and a second implementation of that prediction would eventually disagree with the
+  // number on the chip the user pressed. The shas are handed over so the split costs no
+  // extra spawns.
+  const [drift, unpushedRaw] = await Promise.all([
+    readDrift(wt, base, { headSha, baseSha }),
     // `--` guards a branch name that could be read as a path. An unknown revision exits
     // non-zero and `git()` answers '', which is what "never pushed" looks like here.
     branch ? git(wt, ['rev-list', '--count', `origin/${branch}..HEAD`, '--']) : Promise.resolve(''),
   ]);
+  if (!drift) return null;
 
-  const changed = mine.split('\n').filter(Boolean);
-  const onBase = new Set(theirs.split('\n').filter(Boolean));
-  return {
-    headSha,
-    baseSha,
-    changed,
-    behind: Number(behind) || 0,
-    ahead: Number(ahead) || 0,
-    conflicts: changed.filter((f) => onBase.has(f)),
-    unpushed: unpushedRaw === '' ? null : Number(unpushedRaw) || 0,
-  };
+  return { ...drift, unpushed: unpushedRaw === '' ? null : Number(unpushedRaw) || 0 };
 }
 
 export function createOverlapFeed(

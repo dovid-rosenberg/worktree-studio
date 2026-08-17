@@ -81,6 +81,8 @@ describe('shipVerdict', () => {
       repo: 'accept-blue',
       text: 'has 3 unpushed commit(s)',
       kind: 'blocked',
+      // The one blocker here Studio can clear itself — POST /group/push.
+      action: 'push',
     });
   });
 

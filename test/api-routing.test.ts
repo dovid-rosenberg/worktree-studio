@@ -243,10 +243,12 @@ test('every group route answers identically under /api and /api/v1', async () =>
     '/group/start',
     '/group/stop',
     '/group/restart',
+    '/group/update',
     '/group/close',
     '/group/delete',
     '/group/session',
     '/group/pr',
+    '/group/push',
   ]) {
     const { app } = harness({ group: FEATURE });
     await serving(app, async (get) => {
@@ -286,10 +288,15 @@ test('every group verb answers the SAME 404, with a reason, for a feature that i
     '/group/start',
     '/group/stop',
     '/group/restart',
+    '/group/update',
     '/group/open',
     '/group/close',
     '/group/delete',
     '/group/session',
+    // The two newest verbs go through the same helper, which is the whole point of it:
+    // /group/push lives in forge.ts and /group/update in orchestrator.ts, and neither is
+    // allowed its own opinion about what a missing feature answers.
+    '/group/push',
   ]) {
     const { app } = harness({ group: FEATURE });
     await serving(app, async (get) => {

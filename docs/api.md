@@ -1056,6 +1056,40 @@ Stop every running member and release the feature's slot. `{ ok: true }`.
 Restart every member that is running or `canStart`, reusing the feature's
 existing slot. `{ ok: true }`, or `409` if a slot can't be allocated.
 
+### `POST /group/update`
+
+`{ group, stopServers? }` → bring every member of the feature up to date with its
+base, by **rebase** (`git rebase origin/<default branch>`, the same ref
+`/api/worktrees` cuts new branches from and the drift feed measures against).
+
+A dev server running in a worktree being rebased is a hazard — a bundler watching
+a tree mid-replay serves whatever it happened to read — so while any member is
+running the route answers, without touching anything:
+
+```jsonc
+{ "ok": true, "needsConfirm": true, "running": [ { "repo": "api", "path": "…", "wtname": "feat-x" } ] }
+```
+
+Repeat with `stopServers: true` to stop them first. They are **not** restarted
+afterwards: the base can bring a new lockfile with it, so `/group/start` (which
+re-checks whether a member can start) is the next step.
+
+Per member, and refused before anything is touched when the worktree is detached,
+already mid-rebase, has uncommitted tracked changes, or when the drift read
+already knows which files will conflict. A rebase that fails anyway is
+`--abort`ed, so a member is never left mid-rebase.
+
+```jsonc
+{ "ok": false, "updated": 1, "total": 2, "stopped": ["api"],
+  "results": [ { "repo": "api", "base": "origin/main", "ok": true, "updated": true, "behind": 27 },
+               { "repo": "fe", "base": "origin/main", "ok": false, "updated": false, "behind": 4,
+                 "error": "3 file(s) would conflict with origin/main — rebase by hand: …",
+                 "conflicts": ["src/app.ts"] } ] }
+```
+
+Top-level `ok` is true only if *every* member succeeded. An already-current member
+is `{ ok: true, updated: false, behind: 0 }`.
+
 ### `POST /group/open`
 
 `{ group, editor? }` → open every member's path in the editor, using its
@@ -1087,6 +1121,27 @@ Otherwise the first member is adopted and the rest are attached to it via
 `/add-dir`, giving one agent access to every repo of the feature.
 `400 { error: 'feature has no members' }` if there is nothing to drive.
 
+### `POST /group/push`
+
+`{ group }` → push every member's branch to origin with the same
+`git push -u origin <branch>` `/group/pr` uses. No forge CLI is involved. This is
+the verb that clears the ship bar's "has N unpushed commit(s)".
+
+```jsonc
+{ "ok": false, "pushed": 1, "total": 2,
+  "results": [ { "repo": "api", "ok": true, "pushed": true, "upstreamSet": true },
+               { "repo": "fe", "ok": false, "pushed": false,
+                 "error": "rejected: origin/feature/x has commits this branch does not. Update from base, then push again — Studio does not force-push" } ] }
+```
+
+- `upstreamSet` — the branch had no upstream and `-u` gave it one (a first push).
+- `nothingToPush` — origin already had every commit. `ok: true`, `pushed: false`.
+- a non-fast-forward rejection is reported and never retried with `--force`;
+  `/group/update` is the fix.
+
+Top-level `ok` is true only if *every* member succeeded. A push that actually sent
+commits invalidates the CI cache, so the MR pill re-looks immediately.
+
 ### `POST /group/pr`
 
 For each member: push the branch (`git push -u origin <branch>`), then open a PR
@@ -1102,7 +1157,7 @@ with a downstream symptom.
                            { "repo": "fe",  "error": "glab: not authenticated" } ] }
 ```
 
-Top-level `ok` is true if *any* member got a URL. Unlike `/sessions/:id/ci`,
+Top-level `ok` is true only if *every* member got a URL. Unlike `/sessions/:id/ci`,
 creation shells out whether or not the CLI was detected at startup.
 
 The reported `error` is the failure that actually explains the outcome, in this

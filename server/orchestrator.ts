@@ -13,6 +13,7 @@
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 import type { Router } from 'express';
 import * as worktree from './worktree.ts';
+import { defaultBase, updateFromBase } from './git.ts';
 import { editorCommands, openEditor, requireFeature, requireRepo, resolveEditor } from './util.ts';
 import * as startReport from './start-report.ts';
 import type { StartOutcome } from './start-report.ts';
@@ -179,6 +180,8 @@ interface GroupBody {
   deleteBranches?: unknown;
   /** `git worktree remove --force` — see WorktreeRemoveOptions.force. */
   force?: unknown;
+  /** /group/update: yes, stop the dev servers running in the worktrees being rebased. */
+  stopServers?: unknown;
 }
 
 // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
@@ -340,6 +343,104 @@ function register(app: Router, deps: OrchestratorDeps): void {
     await refreshRunning();
     scheduleBroadcast();
     res.json(startReport.report(results, skipped));
+  });
+
+  /*
+   * UPDATE FROM BASE — the verb behind "behind 27".
+   *
+   * The drift chip has been able to say how far a feature has fallen behind its base
+   * since overlap.ts shipped, and acting on it meant opening a terminal in each of the
+   * feature's repos and typing the same rebase into every one. A branch 27 commits behind
+   * is also the state the wrong-branch dev-server incidents come out of, so the number was
+   * being shown at exactly the moment nothing could be done about it from here.
+   *
+   * PER MEMBER, like every other group verb: one repo of a feature can rebase cleanly
+   * while another refuses because its tree is dirty, and reporting a single boolean for
+   * the feature would hide whichever half needs the work. git.updateFromBase() owns the
+   * refusals (see its comment for why rebase and not merge); this route owns the fact
+   * that a feature is several repos, and the dev servers.
+   *
+   * THE DEV SERVERS ARE STOPPED FIRST, and only with the caller's agreement.
+   * A rebase rewrites the working tree under whatever is watching it: a bundler picks up
+   * files mid-replay, HMR pushes a module graph that matches no commit, and a server that
+   * survives to the end is serving a tree it never read. Worse, the dev server is what
+   * makes a worktree feel safe to leave running — so the failure looks like the app
+   * breaking, not like the rebase. Refusing outright would make the verb useless (the
+   * stack is usually up), and restarting automatically afterwards would be a second guess:
+   * the base can bring a new lockfile down, so the honest next step is the ▶ button, which
+   * re-checks whether the member can start at all. So: name what is running, ask, stop,
+   * rebase, and report what was stopped.
+   */
+  app.post('/group/update', async (req, res) => {
+    const { group, stopServers }: GroupBody = req.body || {};
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
+
+    const live = g.members.filter((m) => m.running);
+    if (live.length && !stopServers)
+      // The same confirm shape /group/start uses for its conflicts, so the client has one
+      // pattern to follow rather than two.
+      return res.json({
+        ok: true,
+        needsConfirm: true,
+        running: live.map((m) => ({ repo: m.repo, path: m.path, wtname: m.wtname })),
+      });
+    const stopped: string[] = [];
+    if (live.length) {
+      for (const m of live) {
+        await servers.stop(m.repo, m.path, m.ports);
+        stopped.push(m.repo);
+      }
+      // Refresh first, then release — the guard reads what is still listening, exactly as
+      // /group/stop does. A slot left held here would block the ▶ the user is about to press.
+      await refreshRunning();
+      releaseIdleSlots(g.members);
+    }
+
+    const results: Array<{
+      repo: string;
+      base?: string;
+      ok: boolean;
+      updated: boolean;
+      behind: number;
+      error?: string;
+      conflicts?: string[];
+    }> = [];
+    for (const m of g.members) {
+      const repoObj = repos().find((r) => r.name === m.repo);
+      if (!repoObj) {
+        results.push({ repo: m.repo, ok: false, updated: false, behind: 0, error: 'unknown repo' });
+        continue;
+      }
+      /*
+       * The base is resolved from the repo, not taken from the request.
+       *
+       * defaultBase() keeps the `origin/` prefix — the same ref the drift feed measures
+       * against (server.ts's baseFor) and the same one worktree.create() cuts from. A
+       * caller-supplied base would let a POST body rebase four checkouts onto anything.
+       *
+       * No fetch: the number the user pressed was computed from the refs that are already
+       * local, and a verb whose result does not match the number that invited it is worse
+       * than one that is occasionally a fetch behind. The next sweep re-reads the drift.
+       */
+      const base = await defaultBase(repoObj.path);
+      results.push({ repo: m.repo, base, ...(await updateFromBase(m.path, base)) });
+    }
+
+    // The heads moved, so every read keyed on them is stale: rescan re-describes the
+    // worktrees and the drift feed recomputes off the new shas.
+    await rescan();
+    scheduleBroadcast();
+    res.json({
+      // "No failures", the same rule /group/start and /group/pr settled on. A feature
+      // where three repos rebased and one refused is not an update that worked.
+      ok: results.every((r) => r.ok),
+      updated: results.filter((r) => r.updated).length,
+      total: results.length,
+      stopped,
+      results,
+    });
   });
 
   app.post('/group/open', async (req, res) => {

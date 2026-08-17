@@ -686,6 +686,106 @@ export async function showPrResults(r: { results?: PrResult[] }): Promise<void> 
   });
 }
 
+/* ---------------- getting a feature current, and getting it out ---------------- */
+
+/** One member's answer from POST /group/update — server/git.ts's UpdateResult, plus the repo. */
+interface UpdateResult {
+  repo: string;
+  ok: boolean;
+  updated: boolean;
+  behind: number;
+  error?: string;
+}
+
+/**
+ * REBASE EVERY REPO OF A FEATURE ONTO ITS BASE.
+ *
+ * The confirm is not ceremony: the server refuses to rebase under a running dev server
+ * unless it is told to stop it, because a bundler watching a tree being replayed serves
+ * whatever it happened to read. Same two-step /group/start uses for its port conflicts.
+ *
+ * The toast NAMES the repos that refused. A rebase that half-happens across a four-repo
+ * feature is the failure this verb exists to prevent, so "2/4" without the two reasons
+ * would leave the user opening terminals to find out which — which is the thing they
+ * pressed the button to avoid.
+ */
+export function updateFromBase(name: string) {
+  return pending.run(name, async () => {
+    try {
+      let r = await api('POST', '/api/v1/group/update', { group: name });
+      if (r.needsConfirm) {
+        const repos = [...new Set((r.running || []).map((m: { repo: string }) => m.repo))];
+        const ok = await uiConfirm(
+          `A dev server is running in ${repos.join(', ')}. Rebasing rewrites the files underneath it, so it has to be stopped first — start it again when the update is done.`,
+          { title: 'Stop servers and update?', okLabel: 'Stop & update' },
+        );
+        if (!ok) return;
+        r = await api('POST', '/api/v1/group/update', { group: name, stopServers: true });
+      }
+      const results: UpdateResult[] = r.results || [];
+      const failed = results.filter((x) => !x.ok);
+      const head = r.updated
+        ? `Updated ${r.updated}/${r.total} from base`
+        : failed.length
+          ? 'Nothing updated'
+          : 'Already up to date';
+      const detail = failed.length
+        ? ` — ${failed.map((x) => `${x.repo}: ${x.error}`).join('; ')}`
+        : r.stopped?.length
+          ? `. Stopped ${r.stopped.join(', ')} — press ▶ when ready`
+          : '';
+      toast(head + detail, !r.ok);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
+  });
+}
+
+/** One member's answer from POST /group/push — server/forge.ts's PushOutcome. */
+interface PushOutcome {
+  repo: string;
+  ok: boolean;
+  pushed: boolean;
+  upstreamSet?: boolean;
+  nothingToPush?: boolean;
+  error?: string;
+}
+
+/**
+ * PUSH EVERY BRANCH OF A FEATURE.
+ *
+ * The blocker `shipVerdict()` names — "has 3 unpushed commit(s)" — cleared by the one
+ * call that already existed on the server, rather than by asking for a pull request you
+ * may already have. A rejected push is reported, never retried with force: the fix is
+ * `Update from base` above, and the toast says so because the server's message does.
+ */
+export function pushFeature(name: string) {
+  return pending.run(name, async () => {
+    try {
+      const r = await api('POST', '/api/v1/group/push', { group: name });
+      const results: PushOutcome[] = r.results || [];
+      const failed = results.filter((x) => !x.ok);
+      if (failed.length) {
+        toast(
+          `Pushed ${r.pushed}/${r.total} — ${failed.map((x) => `${x.repo}: ${x.error}`).join('; ')}`,
+          true,
+        );
+        return;
+      }
+      // "Nothing to push" is a success, and worth saying: it means the ship blocker that
+      // sent you here was stale, not that the button did nothing.
+      const first = results.filter((x) => x.upstreamSet).map((x) => x.repo);
+      toast(
+        r.pushed
+          ? `Pushed ${r.pushed}/${r.total}${first.length ? ` — ${first.join(', ')} now tracks origin` : ''}`
+          : 'Nothing to push — origin already has every commit',
+      );
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
+  });
+}
+
 export async function closeFeature(name: string) {
   const ok = await uiConfirm(
     `Close feature “${name}”? Stops its servers and deactivates its sessions (worktrees kept).`,

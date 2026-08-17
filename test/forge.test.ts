@@ -8,6 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import express from 'express';
+import { execFileSync } from 'child_process';
 import { createForge, ghChecks, glChecks, PROVIDERS, pushFailureLine } from '../server/forge.ts';
 import type { Provider, PushResult } from '../server/forge.ts';
 import type { AddressInfo } from 'net';
@@ -565,4 +566,173 @@ test("pushFailureLine picks the complaint out of git's progress noise", () => {
     'git push exited 3',
     'a mute failure still says something',
   );
+});
+
+// ---------------------------------------------------------------------------
+// PUSH as a verb of its own (pushMember + POST /group/push), against REAL git
+// ---------------------------------------------------------------------------
+//
+// Not injected, deliberately: the three answers this verb has to tell apart —
+// "no upstream yet", "nothing to push", "rejected as a non-fast-forward" — are all
+// distinctions git makes in its own output, and a fake would be asserting the shape
+// of strings this file wrote itself. So these push into a real bare remote.
+
+const sh = (cwd: string, ...args: string[]) =>
+  execFileSync('git', args, { cwd, encoding: 'utf8', env: GIT_ENV }).trim();
+
+const GIT_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: 't',
+  GIT_AUTHOR_EMAIL: 't@t',
+  GIT_COMMITTER_NAME: 't',
+  GIT_COMMITTER_EMAIL: 't@t',
+};
+
+/** A clone of a bare origin, on `feature/a`, with one commit that has never been pushed. */
+function cloned(): { origin: string; wt: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-push-'));
+  const origin = path.join(root, 'origin.git');
+  const seed = path.join(root, 'seed');
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', origin], { env: GIT_ENV });
+  execFileSync('git', ['clone', '-q', origin, seed], { env: GIT_ENV });
+  sh(seed, 'config', 'user.email', 't@t');
+  sh(seed, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(seed, 'a.txt'), 'one\n');
+  sh(seed, 'add', '-A');
+  sh(seed, 'commit', '-qm', 'one');
+  sh(seed, 'push', '-q', 'origin', 'main');
+  sh(seed, 'checkout', '-q', '-b', 'feature/a');
+  fs.writeFileSync(path.join(seed, 'a.txt'), 'two\n');
+  sh(seed, 'commit', '-qam', 'two');
+  return { origin, wt: seed };
+}
+
+/** The real push path — no provider CLI is involved in any of these. */
+const pusher = () => createForge({ providers: [], isInstalled: () => false });
+
+test('a first push sets an upstream and says so', async () => {
+  const { origin, wt } = cloned();
+  const member = { repo: 'api', path: wt, branch: 'feature/a' };
+  assert.throws(() => sh(wt, 'rev-parse', 'feature/a@{upstream}'), 'no upstream to start with');
+
+  const r = await pusher().pushMember(member, GIT_ENV);
+
+  assert.deepEqual(
+    { ok: r.ok, pushed: r.pushed, upstreamSet: r.upstreamSet },
+    { ok: true, pushed: true, upstreamSet: true },
+    String(r.error),
+  );
+  assert.equal(sh(wt, 'rev-parse', 'feature/a@{upstream}'), sh(wt, 'rev-parse', 'HEAD'));
+  assert.equal(sh(origin, 'rev-parse', 'feature/a'), sh(wt, 'rev-parse', 'HEAD'), 'the commit landed');
+  fs.rmSync(path.dirname(origin), { recursive: true, force: true });
+});
+
+test('a second push with nothing new is a success, not a no-op nobody hears about', async () => {
+  const { origin, wt } = cloned();
+  const member = { repo: 'api', path: wt, branch: 'feature/a' };
+  const f = pusher();
+  await f.pushMember(member, GIT_ENV);
+
+  const r = await f.pushMember(member, GIT_ENV);
+
+  assert.deepEqual(
+    { ok: r.ok, pushed: r.pushed, nothingToPush: r.nothingToPush },
+    { ok: true, pushed: false, nothingToPush: true },
+    String(r.error),
+  );
+  assert.equal(r.upstreamSet, undefined, 'the upstream already existed — that is not news');
+  fs.rmSync(path.dirname(origin), { recursive: true, force: true });
+});
+
+test('a non-fast-forward is reported, and origin is left exactly as it was', async () => {
+  const { origin, wt } = cloned();
+  const member = { repo: 'api', path: wt, branch: 'feature/a' };
+  const f = pusher();
+  await f.pushMember(member, GIT_ENV);
+  // Somebody else moves origin/feature/a on, and this checkout rewrites its own history
+  // (a rebase) — the exact state a force-push would destroy work from.
+  const other = path.join(path.dirname(origin), 'other');
+  execFileSync('git', ['clone', '-q', '-b', 'feature/a', origin, other], { env: GIT_ENV });
+  sh(other, 'config', 'user.email', 't@t');
+  sh(other, 'config', 'user.name', 't');
+  fs.writeFileSync(path.join(other, 'theirs.txt'), 'theirs\n');
+  sh(other, 'add', '-A');
+  sh(other, 'commit', '-qm', 'theirs');
+  sh(other, 'push', '-q');
+  const remoteBefore = sh(origin, 'rev-parse', 'feature/a');
+  sh(wt, 'commit', '-q', '--amend', '-m', 'two, reworded');
+
+  const r = await f.pushMember(member, GIT_ENV);
+
+  assert.equal(r.ok, false);
+  assert.equal(r.pushed, false);
+  assert.match(String(r.error), /^rejected:/);
+  assert.match(String(r.error), /Update from base/, 'names the verb that fixes it');
+  assert.match(String(r.error), /does not force-push/);
+  assert.equal(sh(origin, 'rev-parse', 'feature/a'), remoteBefore, "the other commit is still origin's tip");
+  fs.rmSync(path.dirname(origin), { recursive: true, force: true });
+});
+
+test('a detached member is refused without reaching git', async () => {
+  const r = await pusher().pushMember({ repo: 'api', path: NOT_A_REPO, branch: null }, {});
+  assert.deepEqual(
+    { ok: r.ok, pushed: r.pushed, error: r.error },
+    { ok: false, pushed: false, error: 'no branch — the worktree is detached' },
+  );
+});
+
+test('POST /group/push reports per member and never claims a partial push worked', async () => {
+  const { origin, wt } = cloned();
+  const f = createForge({
+    providers: [],
+    isInstalled: () => false,
+    resolveGroup: async () => ({
+      group: {
+        members: [
+          { repo: 'api', path: wt, branch: 'feature/a' },
+          // A second repo with no git at all: one member failing must fail the feature.
+          { repo: 'web', path: NOT_A_REPO, branch: 'feature/a' },
+        ],
+      },
+    }),
+  });
+  await serving(
+    (api) => f.register(api),
+    async (post) => {
+      const r = await jsonBody(await post('/api/group/push', { group: 'feat-a' }));
+      assert.equal(r.ok, false, 'one repo still on the laptop is an unpushed feature');
+      assert.equal(r.pushed, 1);
+      assert.equal(r.total, 2);
+      const [api_, web] = r.results as Array<{ repo: string; ok: boolean; error?: string }>;
+      assert.deepEqual({ repo: api_.repo, ok: api_.ok }, { repo: 'api', ok: true });
+      assert.equal(web.ok, false);
+      assert.match(present(web.error, 'the web error'), /git push failed: fatal: not a git repository/i);
+    },
+  );
+  assert.equal(sh(origin, 'rev-parse', 'feature/a'), sh(wt, 'rev-parse', 'HEAD'));
+  fs.rmSync(path.dirname(origin), { recursive: true, force: true });
+});
+
+test('a successful push invalidates the CI cache, so the pill does not wait out the TTL', async () => {
+  const { origin, wt } = cloned();
+  let pokes = 0;
+  const f = createForge({
+    providers: [],
+    isInstalled: () => false,
+    resolveGroup: async () => ({ group: { members: [{ repo: 'api', path: wt, branch: 'feature/a' }] } }),
+    onChanged: () => {
+      pokes++;
+    },
+  });
+  await serving(
+    (api) => f.register(api),
+    async (post) => {
+      assert.equal((await jsonBody(await post('/api/group/push', { group: 'feat-a' }))).ok, true);
+      assert.equal(pokes, 1, 'a branch that just landed can have checks starting on it');
+      // Nothing left to push: no change, so nothing to re-look at.
+      assert.equal((await jsonBody(await post('/api/group/push', { group: 'feat-a' }))).ok, true);
+      assert.equal(pokes, 1);
+    },
+  );
+  fs.rmSync(path.dirname(origin), { recursive: true, force: true });
 });

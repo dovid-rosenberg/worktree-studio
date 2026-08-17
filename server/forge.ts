@@ -410,6 +410,52 @@ export interface PrResult {
   error?: string;
 }
 
+/** One member's outcome from POST /group/push. */
+export interface PushOutcome {
+  repo: string;
+  ok: boolean;
+  /** True only when commits actually left this machine. */
+  pushed: boolean;
+  /** The branch had no upstream and now has one — a first push, worth saying out loud. */
+  upstreamSet?: boolean;
+  /** origin already had everything: a no-op, and a success. */
+  nothingToPush?: boolean;
+  error?: string;
+}
+
+/**
+ * Did origin refuse this as a non-fast-forward?
+ *
+ * The one push failure with a NAME, because it is the one with a wrong answer sitting
+ * next to it: `--force`. Studio does not have that button and will not grow one — the
+ * remote branch has commits this one does not, which on a shared branch is somebody
+ * else's work and on your own is the rebase you did last time. Both are fixed by getting
+ * the commits, never by overwriting them.
+ */
+function isNonFastForward(r: PushResult): boolean {
+  const text = `${r.stderr || ''}\n${r.stdout || ''}`;
+  return /\[rejected\]|non-fast-forward|fetch first|Updates were rejected/i.test(text);
+}
+
+/** origin already had every commit — git says so and exits 0. */
+function isUpToDate(r: PushResult): boolean {
+  return /Everything up-to-date/i.test(`${r.stderr || ''}\n${r.stdout || ''}`);
+}
+
+/** Whether `branch` already tracks something. Absent = the first push, which needs `-u`. */
+async function hasUpstream(member: PrMember): Promise<boolean> {
+  if (!member.branch) return false;
+  const r = await run('git', [
+    '-C',
+    member.path,
+    'rev-parse',
+    '--abbrev-ref',
+    '--symbolic-full-name',
+    `${member.branch}@{upstream}`,
+  ]);
+  return r.code === 0 && !!r.stdout.trim();
+}
+
 // Push a member's branch to origin. Split out (and injectable via createForge) so
 // the push half of openPullRequest can be driven without a remote.
 function pushBranchToOrigin(
@@ -589,6 +635,44 @@ function createForge({
     return { repo: member.repo, error: failureReason(failures) };
   }
 
+  /*
+   * PUSH, as a verb of its own.
+   *
+   * `shipVerdict()` blocks a feature with "has 3 unpushed commit(s)" — a blocker the app
+   * could clear itself, because the push already existed: it was the first half of
+   * openPullRequest(), reachable only by asking for a pull request you may already have.
+   * So this is that same `pushBranch` (`git push -u origin <branch>`, injectable, with the
+   * same timeout), read out properly instead of being collapsed into "the PR failed".
+   *
+   * Three answers the PR path never had to distinguish, because for it they were all
+   * simply "no PR":
+   *   - no upstream yet — `-u` sets one, and a first push is worth reporting as such
+   *     rather than as an ordinary one;
+   *   - nothing to push — a success, and an important one: it means the ship blocker was
+   *     stale, not that the push silently did nothing;
+   *   - rejected as a non-fast-forward — reported, with the fix named. Never forced.
+   */
+  async function pushMember(member: PrMember, env: NodeJS.ProcessEnv = forgeEnv): Promise<PushOutcome> {
+    // Same guard, same reason as openPullRequest(): a null branch in an execFile argv is
+    // a TypeError, and this route loops members too.
+    if (!member.branch)
+      return { repo: member.repo, ok: false, pushed: false, error: 'no branch — the worktree is detached' };
+    // Asked BEFORE the push, because `-u` makes the answer yes either way afterwards.
+    const had = await hasUpstream(member);
+    const r = await pushBranch(member, env);
+    if (r.code !== 0)
+      return {
+        repo: member.repo,
+        ok: false,
+        pushed: false,
+        error: isNonFastForward(r)
+          ? `rejected: origin/${member.branch} has commits this branch does not. Update from base, then push again — Studio does not force-push`
+          : `git push failed: ${pushFailureLine(r)}`,
+      };
+    if (isUpToDate(r)) return { repo: member.repo, ok: true, pushed: false, nothingToPush: true };
+    return { repo: member.repo, ok: true, pushed: true, ...(had ? {} : { upstreamSet: true }) };
+  }
+
   // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
   function register(app: Router, deps: Pick<ForgeDeps, 'manager' | 'resolveGroup'> = {}) {
     // Each route needs its collaborator, and the one createForge() call that has
@@ -616,6 +700,36 @@ function createForge({
         }),
       );
       res.json({ repos });
+    });
+
+    // Push every one of a feature's branches to origin — see pushMember().
+    app.post('/group/push', async (req, res) => {
+      const found = await requireFeature(res, resolve, req.body?.group);
+      if (!found.ok) return;
+      const g = found.value.group;
+      // Serially, like /group/pr: a wedged remote should cost one member's timeout, not
+      // four simultaneous credential prompts on a stdin nobody is going to answer.
+      const results: PushOutcome[] = [];
+      for (const m of g.members) results.push(await pushMember(m, forgeEnv));
+      // A branch that just arrived on the forge can have a PR the cache said it did not,
+      // and its checks start the moment it lands. Same invalidation /group/pr does, for
+      // the same reason: without it the pill waits out the TTL saying the old thing.
+      if (results.some((r) => r.pushed)) {
+        invalidate();
+        try {
+          onChanged();
+        } catch {
+          /* the feed must never break the route */
+        }
+      }
+      res.json({
+        // "No failures" — the rule every group verb settled on. One repo of a feature
+        // still sitting on this laptop is an unshipped feature.
+        ok: results.every((r) => r.ok),
+        pushed: results.filter((r) => r.pushed).length,
+        total: results.length,
+        results,
+      });
     });
 
     // Open a PR (gh) / MR (glab) for each of a feature's branches.
@@ -678,7 +792,7 @@ function createForge({
     return answered ? out : null;
   }
 
-  return { register, ciForRepo, reviewsFor, openPullRequest, invalidate, installed };
+  return { register, ciForRepo, reviewsFor, openPullRequest, pushMember, invalidate, installed };
 }
 
 const TIMEOUTS = { VIEW_TIMEOUT_MS, PUSH_TIMEOUT_MS, CREATE_TIMEOUT_MS };
@@ -692,5 +806,6 @@ export {
   glChecks,
   pushFailureLine,
   pushBranchToOrigin,
+  isNonFastForward,
   TIMEOUTS,
 };

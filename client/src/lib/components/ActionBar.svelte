@@ -29,7 +29,9 @@ import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
 import OverflowMenu from '$lib/components/OverflowMenu.svelte';
 import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
 // openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
-import { openApp } from '$lib/stores/world.svelte.js';
+// `world` for the drift feed: how far behind the base this feature is, and how much of
+// it has never left this laptop — the two numbers the branch cluster below acts on.
+import { openApp, world } from '$lib/stores/world.svelte.js';
 import { orphans } from '$lib/stores/orphans.svelte.js';
 import {
   activateSession,
@@ -46,6 +48,7 @@ import {
   pending,
   prFeature,
   promote,
+  pushFeature,
   reinstateOrphan,
   replaceSharedDeps,
   restartStack,
@@ -54,6 +57,7 @@ import {
   startFeatureSession,
   stopMainServer,
   stopStack,
+  updateFromBase,
 } from '$lib/ops.svelte.js';
 
 const session = $derived(ui.selected);
@@ -92,6 +96,27 @@ const needDeps = $derived(ms.filter((m) => m.depsMissing));
 const sharedDeps = $derived(ms.filter((m) => m.sharedModules));
 const installingDeps = $derived(ms.some((m) => m.depsInstalling));
 const isPending = $derived(!!target && pending.has(target.name));
+
+/*
+ * THE TWO GIT VERBS, beside the ship chip that complains about them.
+ *
+ * The dock header has been able to say "behind 27" and "has 3 unpushed commit(s)" since
+ * the drift feed and shipVerdict() shipped, and both sentences named work that had to be
+ * done in a terminal, in each of the feature's repos, by hand — which for a branch 27
+ * commits behind is exactly the state the wrong-branch dev-server incidents come out of.
+ * Nothing else on this bar is a fact about the branch, so they get their own cluster
+ * rather than being wedged in beside the dev servers.
+ *
+ * Shown only when there is something to do: an up-to-date, fully pushed feature has no
+ * cluster at all, on the same rule as the drift chip above it.
+ */
+const lap = $derived(world.overlapFor(target?.name));
+/** The WORST repo, like the chip: one stale half of a feature is a stale feature. */
+const behind = $derived(lap?.behind || 0);
+/** Commits that exist only on this laptop, across every repo of the feature. */
+const unpushed = $derived((lap?.drift || []).reduce((n, d) => n + (d.unpushed || 0), 0));
+/** Files a rebase is already known to fight — the reason the verb may refuse. */
+const willConflict = $derived((lap?.drift || []).reduce((n, d) => n + d.conflicts.length, 0));
 
 /*
  * EVERY worktree the ▷ Run… menu reads configs from — one per repo of the feature.
@@ -169,6 +194,32 @@ async function guard(fn: () => Promise<unknown>) {
               <button class="btn sm ghost" title="Restart the dev servers" aria-label="Restart dev servers" onclick={() => restartStack(target.name)}>{'↻'}</button>
             {:else if anyStartable}
               <button class="btn sm primary" title="Start the dev servers" aria-label="Start dev servers" onclick={() => runStack(target.name)}>{'▶︎'}</button>
+            {/if}
+          </span>
+        {/if}
+
+        <!--
+          The branch cluster: bring it up to date, and get it off this laptop. Both act on
+          every repo of the feature, which is the whole reason they are worth a button.
+        -->
+        {#if behind || unpushed}
+          <span class="cluster" role="group" aria-label="Branch">
+            <span class="cluster-label">branch</span>
+            {#if behind}
+              <button
+                class="btn sm ghost"
+                aria-label="Update from base"
+                title="Rebase every repo of this feature onto its base ({behind} behind){willConflict ? ` — ${willConflict} file(s) are already known to conflict, so this may refuse and name them` : ''}. Refuses a dirty worktree, and stops any dev server first."
+                onclick={() => updateFromBase(target.name)}
+              >{'⤓'} {behind}</button>
+            {/if}
+            {#if unpushed}
+              <button
+                class="btn sm ghost"
+                aria-label="Push"
+                title="Push {unpushed} commit(s) to origin. Sets an upstream on a first push; a rejected push is reported, never forced."
+                onclick={() => pushFeature(target.name)}
+              >{'↑'} {unpushed}</button>
             {/if}
           </span>
         {/if}
