@@ -189,6 +189,8 @@ interface GroupBody {
   deleteBranches?: unknown;
   /** `git worktree remove --force` — see WorktreeRemoveOptions.force. */
   force?: unknown;
+  /** The slot the user picked, or absent for the default policy. */
+  slot?: unknown;
 }
 
 // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
@@ -216,8 +218,82 @@ function register(app: Router, deps: OrchestratorDeps): void {
     for (const m of members) servers.releaseSlotIfIdle(servers.featureFor(m.path), live);
   };
 
+  /*
+   * Every slot's availability for this feature.
+   *
+   * Deliberately a request rather than part of the topology frame: occupancy depends on
+   * live port state, and computing it for every feature several times a second would put
+   * an lsof per slot per feature on the broadcast path.
+   */
+  app.get('/group/:name/slots', async (req, res) => {
+    const { group: g } = await resolveGroup(String(req.params.name ?? ''));
+    if (!g) return res.status(404).json({ error: 'no such feature' });
+    if (!g.members.length) return res.json([]);
+    const feature = servers.featureFor(g.members[0].path);
+    const members = g.members.map((m) => ({ repo: m.repo, worktreePath: m.path }));
+    res.json(await servers.slotReport(feature, members));
+  });
+
+  /*
+   * Move a running feature to another slot.
+   *
+   * Necessarily a restart: ports come from env read at launch, and the FE config patch is
+   * written to the worktree before spawn, so nothing slides across live.
+   *
+   * The target is verified BEFORE anything is stopped. Verifying after would allow a
+   * half-moved feature — backend on the new slot, frontend dead — which is strictly worse
+   * than not moving. The re-allocation after the stop is still the authority: another
+   * feature can take the slot in the gap, and then this answers 409 with the feature down,
+   * which the client reports plainly rather than dressing up as a success.
+   */
+  app.post('/group/slot', async (req, res) => {
+    const { group, slot }: GroupBody = req.body || {};
+    const want = Number(slot);
+    if (!Number.isInteger(want) || want < 0) {
+      return res.status(400).json({ ok: false, error: 'slot must be a non-negative integer' });
+    }
+    const { group: g } = await resolveGroup(String(group ?? ''));
+    if (!g) return res.status(404).json({ error: 'no such feature' });
+    if (!g.members.length) return res.status(400).json({ ok: false, error: 'feature has no members' });
+
+    const feature = servers.featureFor(g.members[0].path);
+    const members = g.members.map((m) => ({ repo: m.repo, worktreePath: m.path }));
+
+    const target = (await servers.slotReport(feature, members))[want];
+    if (!target) return res.status(400).json({ ok: false, error: `slot ${want} does not exist` });
+    if (target.state === 'current') return res.json({ ok: true, started: 0, total: 0 });
+    if (target.state === 'held') {
+      return res.status(409).json({ ok: false, error: `slot ${want} is held by ${target.heldBy}` });
+    }
+    if (target.state === 'blocked') {
+      return res.status(409).json({
+        ok: false,
+        error: `slot ${want}: port ${target.blockedBy?.port} is in use by pid ${target.blockedBy?.pid}`,
+      });
+    }
+
+    // Only members that were running come back up. A stopped one joins the new slot
+    // whenever it is next started — starting it here would be doing something unasked.
+    const wasRunning = g.members.filter((m) => m.running);
+    for (const m of wasRunning) await servers.stop(m.repo, m.path, m.ports);
+    await refreshRunning();
+
+    servers.releaseSlot(feature);
+    const alloc = await servers.allocSlotFor(feature, { requested: want, members });
+    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
+
+    const out = await servers.startAll(
+      wasRunning.map((m) => ({ repo: m.repo, worktreePath: m.path })),
+      { slot: want },
+    );
+    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
+    await refreshRunning();
+    scheduleBroadcast();
+    res.json(startReport.report(out.results));
+  });
+
   app.post('/group/start', async (req, res) => {
-    const { group, stopConflicts }: GroupBody = req.body || {};
+    const { group, stopConflicts, slot }: GroupBody = req.body || {};
     const { group: g, flat } = await resolveGroup(String(group ?? ''));
     if (!g) return res.status(404).json({ error: 'no such feature' });
     // Both halves of the split come from server/start-report.ts, which is also what the
@@ -247,7 +323,10 @@ function register(app: Router, deps: OrchestratorDeps): void {
     // per-worktree slot each (the `manifest` strategy is what fixes that).
     // Slots first, then launches — servers.startAll owns that sequence for all three
     // routes that need it, so they cannot drift apart again.
-    const out = await servers.startAll(toStart.map((m) => ({ repo: m.repo, worktreePath: m.path })));
+    const out = await servers.startAll(
+      toStart.map((m) => ({ repo: m.repo, worktreePath: m.path })),
+      slot === undefined ? {} : { slot: Number(slot) },
+    );
     if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
 
     await refreshRunning();
