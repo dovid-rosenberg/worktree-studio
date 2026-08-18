@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { report, skipReason, toSkip, toStart } from '../server/start-report.ts';
+import { describeOwner, portBusy, report, skipReason, toSkip, toStart } from '../server/start-report.ts';
 
 const m = (repo: string, over: Record<string, unknown> = {}) => ({
   repo,
@@ -80,6 +80,65 @@ test('listening undefined — not checked — is not held against a start', () =
 
 test('nothing to start is ok: that is a no-op, not a failure', () => {
   assert.deepEqual(report([], []), { ok: true, started: 0, total: 0, skipped: [], failures: [] });
+});
+
+/*
+ * A busy port names its HOLDER.
+ *
+ * "port 1233 already in use (pid 4711)" ends the user's information and starts their
+ * investigation: ps, lsof -p, then work out which worktree that path is. The daemon has
+ * already done that walk — _resolvePid maps a pid to the git worktree it runs in, which is
+ * how the running-server scan attributes servers at all — so the only thing missing was
+ * carrying the answer into the sentence.
+ */
+test('a busy port is described by who holds it, when that is known', () => {
+  assert.equal(
+    portBusy(1233, { pid: 4711, feature: 'auth-refresh', repo: 'api' }),
+    'port 1233 is held by auth-refresh (api, pid 4711)',
+  );
+  // The pid survives the upgrade: it is what the user types into `kill` after reading it.
+  assert.equal(
+    portBusy(1233, { pid: 4711, feature: 'auth-refresh' }),
+    'port 1233 is held by auth-refresh (pid 4711)',
+  );
+  assert.equal(
+    portBusy(1233, { feature: 'auth-refresh', repo: 'api' }),
+    'port 1233 is held by auth-refresh (api)',
+  );
+});
+
+test('an UNKNOWN owner keeps the old sentence rather than inventing one', () => {
+  // A pid outside any git worktree resolves to nothing, and half the holders of a port are
+  // not dev servers at all. Claiming less is the correct answer, not a degraded one.
+  assert.equal(portBusy(1233, { pid: 4711 }), 'port 1233 already in use (pid 4711)');
+  assert.equal(portBusy(1233, null), 'port 1233 already in use');
+  assert.equal(portBusy(1233, {}), 'port 1233 already in use');
+  assert.equal(describeOwner(null), '', 'nothing known appends nothing — no "held by unknown"');
+});
+
+test('bound-elsewhere names the port it SHOULD have used, and its holder', () => {
+  // The message named only the wrong port, so the number the user needs in order to look —
+  // and the feature already sitting on it — was the part that was missing.
+  const r = report([
+    {
+      repo: 'api',
+      ok: true,
+      listening: false,
+      boundElsewhere: [3000],
+      wantedPort: 1233,
+      portOwner: { pid: 4711, feature: 'auth-refresh', repo: 'api' },
+    },
+  ]);
+  const err = r.failures[0].error || '';
+  assert.match(err, /3000/, 'still says where it actually bound');
+  assert.match(err, /Port 1233 is held by auth-refresh \(api, pid 4711\)/);
+});
+
+test('bound-elsewhere with no resolvable holder still names the expected port', () => {
+  const r = report([{ repo: 'api', ok: true, listening: false, boundElsewhere: [3000], wantedPort: 1233 }]);
+  const err = r.failures[0].error || '';
+  assert.match(err, /Its slot expects port 1233/);
+  assert.doesNotMatch(err, /held by/);
 });
 
 test('an already-running member is neither started nor skipped', () => {

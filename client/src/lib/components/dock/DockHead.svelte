@@ -1,104 +1,138 @@
 <script lang="ts">
-  import type { Session } from '../../../../../server/types';
-  /*
-   * The dock header: identity on the left of the one bar — dot, title, worktree name,
-   * links, repo chips — with the ActionBar's verbs right-aligned in the same row.
-   *
-   * It used to carry ＋repo, Promote, Open in editor, Rename, Resume/Deactivate and
-   * Delete as well. Every one of those also lives in the ActionBar, ~600px below, and
-   * two of them were worded differently in the two places (`Resume` vs `↻ Resume`) —
-   * so the same verb appeared twice on one screen and looked like two verbs.
-   *
-   * That top-informs / bottom-acts split is gone, and deliberately: it cost a whole
-   * horizontal band at the foot of the window — one that also carried a `workspace`
-   * readout repeating the repo chips already up here — and it put the ports and the
-   * buttons that start them in different places. One bar, and the terminal gets the
-   * height back. (The tab strip stays separate: its controls switch views rather than
-   * acting on the selection.)
-   */
-  import { labelForSource } from '$lib/stores/ui.svelte.js';
-  import { appUrl, webAppsFor, world } from '$lib/stores/world.svelte.js';
-  import { shipLabel, shipVerdict } from '$lib/ship.js';
-  import LinkChip from '$lib/components/LinkChip.svelte';
-  import ActionBar from '$lib/components/ActionBar.svelte';
+import type { Session } from '../../../../../server/types';
+/*
+ * The dock header: identity on the left of the one bar — dot, title, worktree name,
+ * links, repo chips — with the ActionBar's verbs right-aligned in the same row.
+ *
+ * It used to carry ＋repo, Promote, Open in editor, Rename, Resume/Deactivate and
+ * Delete as well. Every one of those also lives in the ActionBar, ~600px below, and
+ * two of them were worded differently in the two places (`Resume` vs `↻ Resume`) —
+ * so the same verb appeared twice on one screen and looked like two verbs.
+ *
+ * That top-informs / bottom-acts split is gone, and deliberately: it cost a whole
+ * horizontal band at the foot of the window — one that also carried a `workspace`
+ * readout repeating the repo chips already up here — and it put the ports and the
+ * buttons that start them in different places. One bar, and the terminal gets the
+ * height back. (The tab strip stays separate: its controls switch views rather than
+ * acting on the selection.)
+ */
+import { labelForSource } from '$lib/stores/ui.svelte.js';
+import { appUrl, webAppsFor, world } from '$lib/stores/world.svelte.js';
+import { shipLabel, shipVerdict } from '$lib/ship.js';
+import { pushFeature, updateFromBase } from '$lib/ops.svelte.js';
+import LinkChip from '$lib/components/LinkChip.svelte';
+import ActionBar from '$lib/components/ActionBar.svelte';
+import StateDot from '$lib/components/StateDot.svelte';
+import type { TermStatus } from '$lib/components/Terminal.svelte';
 
-  let { session }: { session: Session } = $props();
-
-  /*
-   * Drift for this feature — see server/overlap.ts.
-   *
-   * Read through the feature, not the session: the answer is about worktrees, and a
-   * feature is what owns those.
-   */
-
-  /** Sources that mean "typed here", which is the default and says nothing. */
-  const LOCAL_SOURCES = new Set(['text', 'freetext', '']);
-
-  /*
-   * The worktree name, when it is not already what the title says.
-   *
-   * The rail shows `session.title || feature.name` and the dock showed `session.title`
-   * alone — so after a rename the two surfaces named the same thing differently, and the
-   * worktree identity (what groups the repos, what `wt` and tmux use, what the paths are)
-   * appeared in the dock nowhere at all. Mirrors FeatureCard's second line exactly, and
-   * is absent for the untouched majority whose title IS the worktree name.
-   */
-  const feature = $derived(world.featureFor(session.id));
-  const links = $derived(world.linksFor(feature));
-  const wtname = $derived(feature?.name || '');
-  const lap = $derived(world.overlapFor(feature?.name));
-  /*
-   * CAN THIS GO OUT? — see lib/ship.ts.
-   *
-   * Composed from the two halves already on this client, so it costs nothing. Shown only
-   * once there is something to say: a feature with no merge request anywhere has not
-   * started shipping, and a verdict there would be a red badge on every new branch.
-   */
-  const ship = $derived(shipVerdict(world.ci[session.id] || [], lap));
-  const shipText = $derived(shipLabel(ship));
-  let showShip = $state(false);
-  const conflictCount = $derived(lap?.drift.reduce((n, d) => n + d.conflicts.length, 0) || 0);
-
-  /*
-   * A running repo's ports, folded into its own chip.
-   *
-   * They used to be a second row of chips — `workspace · accept-blue · merchant-v3` — at
-   * the foot of the window, naming the same repos this row already names. One list of
-   * repos, and a port is a fact ABOUT a repo, so it belongs on that repo's chip.
-   */
-  const serverRepos = $derived(world.servers[session.id]?.repos || []);
-  const portsFor = (repo: string): number[] =>
-    serverRepos.find((r) => r.repo === repo && r.running)?.ports || [];
-
+let {
+  session,
   /**
-   * The port to open in a browser, for a repo that has one.
+   * The terminal socket's state, from the Terminal the dock mounts.
    *
-   * `webAppsFor` is the same judgement the ActionBar used for its "Open <repo> ↗" buttons
-   * — config.webRepos ∩ running-with-a-port — so a chip becomes a link under exactly the
-   * condition that used to produce a button.
+   * Defaults to `open` so a mount that does not wire it up shows nothing rather than a
+   * permanent "connecting…".
    */
-  const webPorts = $derived(
-    new Map(webAppsFor(serverRepos.map((r) => ({ ...r, running: r.running }))).map((w) => [w.repo, w.port])),
-  );
-  const webPort = (repo: string, ports: number[]): number | null =>
-    ports.length ? (webPorts.get(repo) ?? null) : null;
-  const showWtname = $derived(!!wtname && wtname !== session.title.trim());
+  termStatus = 'open',
+}: { session: Session; termStatus?: TermStatus } = $props();
 
-  /** Before promote there is one implicit chip for the primary repo. */
-  const repoChips = $derived(
-    session.repos && session.repos.length
-      ? session.repos
-      : [{ repo: session.repoName, primary: true, worktreePath: session.worktreePath }],
-  );
+/*
+ * A DROPPED TERMINAL, said out loud.
+ *
+ * The Terminal writes `[disconnected — reselect to reattach]` into its own scrollback and
+ * that was the entire report: dim text, several thousand lines up once the agent carries
+ * on, and not rendered at all while the dock is on Changes, Logs or Runs. So the pane
+ * would sit dead and the only symptom was that typing did nothing.
+ *
+ * Nothing at all while it is `open`, which is almost always — a chip that is up
+ * permanently is a chip nobody reads.
+ */
+const CONNECTION: Record<TermStatus, { text: string; tone: string } | null> = {
+  open: null,
+  connecting: { text: 'connecting…', tone: 'wait' },
+  reconnecting: { text: 'reconnecting…', tone: 'wait' },
+  closed: { text: 'terminal disconnected', tone: 'bad' },
+};
+const conn = $derived(CONNECTION[termStatus]);
 
+/*
+ * Drift for this feature — see server/overlap.ts.
+ *
+ * Read through the feature, not the session: the answer is about worktrees, and a
+ * feature is what owns those.
+ */
 
+/** Sources that mean "typed here", which is the default and says nothing. */
+const LOCAL_SOURCES = new Set(['text', 'freetext', '']);
+
+/*
+ * The worktree name, when it is not already what the title says.
+ *
+ * The rail shows `session.title || feature.name` and the dock showed `session.title`
+ * alone — so after a rename the two surfaces named the same thing differently, and the
+ * worktree identity (what groups the repos, what `wt` and tmux use, what the paths are)
+ * appeared in the dock nowhere at all. Mirrors FeatureCard's second line exactly, and
+ * is absent for the untouched majority whose title IS the worktree name.
+ */
+const feature = $derived(world.featureFor(session.id));
+const links = $derived(world.linksFor(feature));
+const wtname = $derived(feature?.name || '');
+const lap = $derived(world.overlapFor(feature?.name));
+/*
+ * CAN THIS GO OUT? — see lib/ship.ts.
+ *
+ * Composed from the two halves already on this client, so it costs nothing. Shown only
+ * once there is something to say: a feature with no merge request anywhere has not
+ * started shipping, and a verdict there would be a red badge on every new branch.
+ */
+const ship = $derived(shipVerdict(world.ci[session.id] || [], lap));
+const shipText = $derived(shipLabel(ship));
+let showShip = $state(false);
+const conflictCount = $derived(lap?.drift.reduce((n, d) => n + d.conflicts.length, 0) || 0);
+
+/*
+ * A running repo's ports, folded into its own chip.
+ *
+ * They used to be a second row of chips — `workspace · accept-blue · merchant-v3` — at
+ * the foot of the window, naming the same repos this row already names. One list of
+ * repos, and a port is a fact ABOUT a repo, so it belongs on that repo's chip.
+ */
+const serverRepos = $derived(world.servers[session.id]?.repos || []);
+const portsFor = (repo: string): number[] =>
+  serverRepos.find((r) => r.repo === repo && r.running)?.ports || [];
+
+/**
+ * The port to open in a browser, for a repo that has one.
+ *
+ * `webAppsFor` is the same judgement the ActionBar used for its "Open <repo> ↗" buttons
+ * — config.webRepos ∩ running-with-a-port — so a chip becomes a link under exactly the
+ * condition that used to produce a button.
+ */
+const webPorts = $derived(
+  new Map(webAppsFor(serverRepos.map((r) => ({ ...r, running: r.running }))).map((w) => [w.repo, w.port])),
+);
+const webPort = (repo: string, ports: number[]): number | null =>
+  ports.length ? (webPorts.get(repo) ?? null) : null;
+const showWtname = $derived(!!wtname && wtname !== session.title.trim());
+
+/** Before promote there is one implicit chip for the primary repo. */
+const repoChips = $derived(
+  session.repos && session.repos.length
+    ? session.repos
+    : [{ repo: session.repoName, primary: true, worktreePath: session.worktreePath }],
+);
 </script>
 
 <div class="dock-head">
-  <!-- A title and a label: this dot has no accompanying text, so without them the agent's
-       state is conveyed by hue and nothing else. -->
-  <span class="dot {session.state}" role="img" aria-label="Agent is {session.state}" title="The agent is {session.state}"></span>
+  <!-- This dot has no accompanying text, so without a name the agent's state is conveyed
+       by hue and nothing else. StateDot is where that name now comes from, for all of them. -->
+  <StateDot state={session.state} />
   <span class="dock-title">{session.title}</span>
+  {#if conn}
+    <!-- aria-live, because the socket drops while you are looking somewhere else: the
+         whole point is that you are told without going to check. -->
+    <span class="conn {conn.tone}" role="status" aria-live="polite">{conn.text}</span>
+  {/if}
   {#if showWtname}<span class="wtname" title="The worktree name — what groups these repos">{wtname}</span>{/if}
   {#if session.sourceUrl}
     <a class="link" href={session.sourceUrl} target="_blank" rel="noreferrer">{labelForSource(session)}</a>
@@ -178,7 +212,17 @@
          to fix" is only useful if the three are one click away. -->
     <ul class="shiplist">
       {#each ship.blockers as b (b.repo + b.text)}
-        <li class={b.kind}><b>{b.repo}</b> {b.text}</li>
+        <!-- A blocker the app can clear gets the verb that clears it. "has 3 unpushed
+             commits", naming something you then go and do by hand, is the shape of
+             problem this panel exists to avoid. -->
+        <li class={b.kind}>
+          <b>{b.repo}</b> {b.text}
+          {#if b.action === 'push' && feature}
+            <button class="fix" onclick={() => pushFeature(feature.name)}>Push</button>
+          {:else if b.action === 'update' && feature}
+            <button class="fix" onclick={() => updateFromBase(feature.name)}>Update from base</button>
+          {/if}
+        </li>
       {/each}
     </ul>
   {/if}
@@ -193,11 +237,20 @@
   .shipchip.ready { background:var(--done); border-color:var(--done); color:var(--panel); cursor:default; }
   .shipchip.blocked { color:var(--del); border-color:var(--del); }
   .shipchip.waiting { color:var(--waiting); border-color:var(--waiting); }
+  .shiplist button.fix { font:inherit; font-size:11.5px; margin-left:6px; padding:0 6px;
+    color:var(--brand); background:none; border:1px solid var(--border); border-radius:3px; cursor:pointer; }
+  .shiplist button.fix:hover { border-color:var(--brand); }
   .shiplist { flex-basis:100%; margin:6px 0 0; padding:9px 12px; list-style:none; background:var(--bg);
               border:1px solid var(--border); border-radius:9px; display:flex; flex-direction:column; gap:4px; }
   .shiplist li { font-size:12.5px; color:var(--ink); }
   .shiplist li.waiting { color:var(--muted); }
   .shiplist li b { font-family:var(--mono); font-size:11.5px; color:var(--faint); margin-right:6px; }
+  /* Bordered rather than filled: it is a condition of the pane, not an action, and the
+     filled chips beside it (.shipchip.ready) are answers you asked for. */
+  .conn { font-family:var(--mono); font-size:11px; border-radius:6px; padding:2px 7px;
+          white-space:nowrap; border:1px solid currentColor; }
+  .conn.wait { color:var(--waiting); }
+  .conn.bad { color:var(--del); }
   .driftchip { font-family:var(--mono); font-size:11px; color:var(--faint);
                border:1px solid var(--border); border-radius:6px; padding:2px 7px; white-space:nowrap; }
   .driftchip .willconflict { color:var(--waiting); }

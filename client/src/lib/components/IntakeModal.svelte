@@ -1,109 +1,119 @@
 <script lang="ts">
-  /*
-   * New-session intake. One dialog, several pluggable sources: free text, a GitHub /
-   * GitLab issue, an Asana task. A source that is not configured is shown disabled
-   * rather than hidden, so the absence is legible instead of mysterious.
-   *
-   * A DISABLED TAB IS A BUTTON, not a dead end. It used to be an inert `<span>` whose
-   * tooltip read "Not configured — see Connections & settings" — a sentence naming a place
-   * without going there, on a control that looks pressable and does nothing. It now opens
-   * Settings on the Connections panel, which is the only thing anyone wanted from it.
-   */
-  import Modal from '$lib/components/Modal.svelte';
-  import { activatable } from '$lib/actions/activatable.js';
-  import { api } from '$lib/api.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { ui } from '$lib/stores/ui.svelte.js';
-  import { overlays } from '$lib/stores/overlays.svelte.js';
-  import { toast } from '$lib/stores/toasts.svelte.js';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * New-session intake. One dialog, several pluggable sources: free text, a GitHub /
+ * GitLab issue, an Asana task. A source that is not configured is shown disabled
+ * rather than hidden, so the absence is legible instead of mysterious.
+ *
+ * A DISABLED TAB IS A BUTTON, not a dead end. It used to be an inert `<span>` whose
+ * tooltip read "Not configured — see Connections & settings" — a sentence naming a place
+ * without going there, on a control that looks pressable and does nothing. It now opens
+ * Settings on the Connections panel, which is the only thing anyone wanted from it.
+ */
+import Modal from '$lib/components/Modal.svelte';
+import { activatable } from '$lib/actions/activatable.js';
+import { api } from '$lib/api.js';
+import { world } from '$lib/stores/world.svelte.js';
+import { ui } from '$lib/stores/ui.svelte.js';
+import { overlays } from '$lib/stores/overlays.svelte.js';
+import { toast } from '$lib/stores/toasts.svelte.js';
+import { errMessage } from '$lib/errmsg.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
-  const KNOWN = [
-    { id: 'freetext', label: 'Free text' },
-    { id: 'github', label: 'GitHub' },
-    { id: 'gitlab', label: 'GitLab' },
-    { id: 'asana', label: 'Asana' },
-  ];
+const KNOWN = [
+  { id: 'freetext', label: 'Free text' },
+  { id: 'github', label: 'GitHub' },
+  { id: 'gitlab', label: 'GitLab' },
+  { id: 'asana', label: 'Asana' },
+];
 
-  let source = $state('freetext');
-  let repo = $state('');
-  let text = $state('');
-  let name = $state('');
-    let issues: {id:string,title:string,subtitle?:string}[] = $state([]);
-  let issueId = $state<string|null>(null);
-  /** @type {Set<string>} — extra repos this feature will touch. */
-  let extra = $state(new Set());
-  let loading = $state(false);
-  let starting = $state(false);
-  let textarea = $state<HTMLTextAreaElement|null>(null);
+let source = $state('freetext');
+let repo = $state('');
+let text = $state('');
+let name = $state('');
+let issues: { id: string; title: string; subtitle?: string }[] = $state([]);
+let issueId = $state<string | null>(null);
+/** @type {Set<string>} — extra repos this feature will touch. */
+let extra = $state(new Set());
+let loading = $state(false);
+let starting = $state(false);
+let textarea = $state<HTMLTextAreaElement | null>(null);
 
-  const enabled = $derived(new Set(world.sources.map((s) => s.id)));
-  const isFree = $derived(source === 'freetext');
-  const otherRepos = $derived(world.repos.filter((r) => r.name !== repo));
-  const note = $derived(isFree
+const enabled = $derived(new Set(world.sources.map((s) => s.id)));
+const isFree = $derived(source === 'freetext');
+const otherRepos = $derived(world.repos.filter((r) => r.name !== repo));
+const note = $derived(
+  isFree
     ? 'Boots a real Claude Code session in the repo (CLAUDE.md loaded). The name is optional; the branch is chosen when you promote.'
-    : `Seeds the session from ${source}. ${world.sources.find((s) => s.id === source && s.needsRepo) ? 'Uses the selected repo.' : ''}`);
+    : `Seeds the session from ${source}. ${world.sources.find((s) => s.id === source && s.needsRepo) ? 'Uses the selected repo.' : ''}`,
+);
 
-  // Default the repo once the topology has arrived, and focus the prompt on open.
-  $effect(() => {
-    if (!repo && world.repos.length) repo = world.repos[0].name;
-  });
-  $effect(() => {
-    queueMicrotask(() => textarea?.focus());
-  });
+// Default the repo once the topology has arrived, and focus the prompt on open.
+$effect(() => {
+  if (!repo && world.repos.length) repo = world.repos[0].name;
+});
+$effect(() => {
+  queueMicrotask(() => textarea?.focus());
+});
 
-  /** @param {string} id */
-  function pickSource(id: string) {
-    source = id;
-    issues = [];
-    issueId = null;
+/** @param {string} id */
+function pickSource(id: string) {
+  source = id;
+  issues = [];
+  issueId = null;
+}
+
+async function loadIssues() {
+  if (loading) return;
+  loading = true;
+  try {
+    const out = await api('GET', `/api/v1/sources/${source}/items?repo=${encodeURIComponent(repo)}`);
+    if (!out.ok) throw new Error(out.error || 'failed');
+    issues = out.items || [];
+    if (!issues.length) toast('No items found.');
+  } catch (e) {
+    toast(errMessage(e), true);
+  } finally {
+    loading = false;
   }
+}
 
-  async function loadIssues() {
-    if (loading) return;
-    loading = true;
-    try {
-      const out = await api('GET', `/api/v1/sources/${source}/items?repo=${encodeURIComponent(repo)}`);
-      if (!out.ok) throw new Error(out.error || 'failed');
-      issues = out.items || [];
-      if (!issues.length) toast('No items found.');
-    } catch (e) { toast(errMessage(e), true); }
-    finally { loading = false; }
-  }
+/** @param {string} n */
+function toggleExtra(n: string) {
+  const next = new Set(extra);
+  if (next.has(n)) next.delete(n);
+  else next.add(n);
+  extra = next;
+}
 
-  /** @param {string} n */
-  function toggleExtra(n: string) {
-    const next = new Set(extra);
-    if (next.has(n)) next.delete(n); else next.add(n);
-    extra = next;
+async function start() {
+  if (starting) return;
+  const body: Record<string, any> = { source, repo };
+  if (isFree) {
+    if (!text.trim()) return toast('Describe what you’re working on first.', true);
+    body.text = text;
+    if (name.trim()) body.name = name.trim();
+  } else {
+    if (!issueId) return toast('Pick an item first.', true);
+    body.sourceId = issueId;
   }
-
-  async function start() {
-    if (starting) return;
-        const body: Record<string, any> = { source, repo };
-    if (isFree) {
-      if (!text.trim()) return toast('Describe what you’re working on first.', true);
-      body.text = text;
-      if (name.trim()) body.name = name.trim();
-    } else {
-      if (!issueId) return toast('Pick an item first.', true);
-      body.sourceId = issueId;
-    }
-    if (extra.size) body.additionalRepos = [...extra];
-    starting = true;
-    try {
-      const s = await api('POST', '/api/v1/sessions', body);
-      overlays.closeIntake();
-      ui.goToSession(s.id);
-      toast(`Session started — ${s.title}`);
-    } catch (e) { toast(errMessage(e), true); }
-    finally { starting = false; }
+  if (extra.size) body.additionalRepos = [...extra];
+  starting = true;
+  try {
+    const s = await api('POST', '/api/v1/sessions', body);
+    overlays.closeIntake();
+    ui.goToSession(s.id);
+    toast(`Session started — ${s.title}`);
+  } catch (e) {
+    toast(errMessage(e), true);
+  } finally {
+    starting = false;
   }
+}
 </script>
 
 <Modal label="New session" onclose={() => overlays.closeIntake()}>
   <div class="modal-head">
-    <span class="dot idle"></span><b>New session</b>
+    <StateDot state="idle" label="No agent yet" /><b>New session</b>
     <span class="spacer"></span>
     <button class="btn ghost" title="Close" aria-label="Close" onclick={() => overlays.closeIntake()}>✕</button>
   </div>

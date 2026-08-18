@@ -78,7 +78,11 @@ describe('shipVerdict', () => {
     const v = shipVerdict([pr()], drift({ unpushed: 3 }));
     expect(v.state).toBe('blocked');
     expect(v.blockers).toContainEqual({
-      repo: 'accept-blue', text: 'has 3 unpushed commit(s)', kind: 'blocked',
+      repo: 'accept-blue',
+      text: 'has 3 unpushed commit(s)',
+      kind: 'blocked',
+      // The one blocker here Studio can clear itself — POST /group/push.
+      action: 'push',
     });
   });
 

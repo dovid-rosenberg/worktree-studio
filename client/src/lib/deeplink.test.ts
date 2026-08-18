@@ -15,11 +15,46 @@ import type { Selection } from './stores/ui.svelte.js';
 
 const round = (s: Selection) => selectionFromHash(hashForSelection(s));
 
+/*
+ * ONE EXAMPLE PER SELECTION KIND, and the type is what enforces "per kind".
+ *
+ * `r:` reviews were encoded and never decoded: selecting a merge request wrote
+ * `#r:accept-blue!4821` into the URL and opening that URL selected nothing. The decoder
+ * simply had no branch for it, and nothing here noticed because the round-trip cases were
+ * a hand-written list of three.
+ *
+ * A mapped type over `Selection['kind']` cannot be a hand-written list: add a kind to
+ * Selection and this object stops compiling, so the build fails before the link does.
+ */
+type Kind = NonNullable<Selection>['kind'];
+const EVERY_KIND: { [K in Kind]: Extract<NonNullable<Selection>, { kind: K }> } = {
+  session: { kind: 'session', id: 's_abc' },
+  // Each value carries a character that does not survive a naive split — a space, a
+  // slash, a colon, a `#`, the `!` a review id is built from.
+  feature: { kind: 'feature', name: 'fix/google pay' },
+  mainserver: { kind: 'mainserver', path: '/Users/me/my code/a:b/#2 repo' },
+  review: { kind: 'review', id: 'accept-blue!4821' },
+};
+
+describe('every Selection kind survives the round trip', () => {
+  it.each(Object.entries(EVERY_KIND))('%s', (_kind, sel) => {
+    const hash = hashForSelection(sel);
+    // Not merely non-null: a decoder that returned the WRONG kind would pass that.
+    expect(selectionFromHash(hash)).toEqual(sel);
+    // …and the fragment is the rail key with the same prefix, escaped.
+    expect(hash).toBe(`#${selectionKey(sel, encodeURIComponent)}`);
+  });
+});
+
 describe('selectionFromHash', () => {
-  it('reads the three kinds', () => {
+  it('reads every kind', () => {
     expect(selectionFromHash('#s:s_abc')).toEqual({ kind: 'session', id: 's_abc' });
     expect(selectionFromHash('#f:login-fix')).toEqual({ kind: 'feature', name: 'login-fix' });
     expect(selectionFromHash('#w:/code/api')).toEqual({ kind: 'mainserver', path: '/code/api' });
+    expect(selectionFromHash('#r:accept-blue!4821')).toEqual({
+      kind: 'review',
+      id: 'accept-blue!4821',
+    });
   });
 
   it('tolerates a missing leading #, because callers disagree about it', () => {
@@ -56,14 +91,7 @@ describe('hashForSelection', () => {
     expect(hashForSelection(null)).toBe('');
   });
 
-  it('round-trips every kind', () => {
-    const cases: Selection[] = [
-      { kind: 'session', id: 's_1' },
-      { kind: 'feature', name: 'login-fix' },
-      { kind: 'mainserver', path: '/code/api' },
-    ];
-    for (const c of cases) expect(round(c)).toEqual(c);
-  });
+  // Round-tripping every kind is asserted above, from a table the type system builds.
 });
 
 /*

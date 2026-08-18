@@ -1,5 +1,8 @@
 // Discover git repos under the configured base dirs, and describe each repo's
-// worktrees (branch, head, merged-into-default).
+// worktrees (branch, head, merged-into-default) — plus the two branch-level reads the
+// rest of the app does against one worktree: how far it has drifted from its base
+// (readDrift, which server/overlap.ts caches) and bringing it back up to date
+// (updateFromBase, the verb behind POST /group/update).
 import fs from 'fs';
 import path from 'path';
 import { git, gitFull } from './util.ts';
@@ -106,6 +109,130 @@ function parseWorktrees(porcelain: string): PorcelainWorktree[] {
   return out;
 }
 
+/** One line of `git status --porcelain`, split into the two things a caller can use. */
+export interface PorcelainEntry {
+  /**
+   * The two-character status field exactly as git wrote it — index column then worktree
+   * column, e.g. ' M', 'M ', 'A ', '??', 'RM'. Kept verbatim so a caller can ask its own
+   * question of it rather than having this parser guess which distinction matters.
+   */
+  status: string;
+  /** The path, unquoted and unescaped. For a rename or copy this is the DESTINATION. */
+  path: string;
+  /** Where a rename or copy came from. Absent for every other status. */
+  from?: string;
+}
+
+/**
+ * Undo git's C-style quoting of a path.
+ *
+ * git wraps a path in double quotes and escapes it the moment it contains anything
+ * awkward — a space, a control character, or (with the default core.quotePath) any byte
+ * outside ASCII, which arrives as three-digit OCTAL escapes of the UTF-8 bytes. Decoding
+ * has to go through bytes for that reason: "\303\274" is one character, ü, not two.
+ */
+function unquotePath(field: string): string {
+  if (!field.startsWith('"') || !field.endsWith('"') || field.length < 2) return field;
+  const body = field.slice(1, -1);
+  const simple: Record<string, number> = {
+    a: 7,
+    b: 8,
+    f: 12,
+    n: 10,
+    r: 13,
+    t: 9,
+    v: 11,
+    '\\': 92,
+    '"': 34,
+  };
+  const bytes: number[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c !== '\\') {
+      for (const b of Buffer.from(c, 'utf8')) bytes.push(b);
+      continue;
+    }
+    const next = body[++i];
+    if (next === undefined) break;
+    if (next >= '0' && next <= '7') {
+      bytes.push(parseInt(body.slice(i, i + 3), 8));
+      i += 2;
+    } else if (next in simple) {
+      bytes.push(simple[next]);
+    } else {
+      for (const b of Buffer.from(next, 'utf8')) bytes.push(b);
+    }
+  }
+  return Buffer.from(bytes).toString('utf8');
+}
+
+/**
+ * Split `old -> new` without being fooled by an arrow INSIDE a quoted path.
+ *
+ * A path is only left unquoted when it holds nothing special, and " -> " holds spaces —
+ * so an unquoted first field cannot contain the separator, and a quoted one is bounded by
+ * its own closing quote. Reading the first field to its end and only then looking for the
+ * arrow is what keeps a file literally named `a -> b` from being read as a rename.
+ */
+function splitRename(rest: string): { path: string; from?: string } {
+  let end: number;
+  if (rest.startsWith('"')) {
+    end = 1;
+    while (end < rest.length && rest[end] !== '"') end += rest[end] === '\\' ? 2 : 1;
+    end++;
+  } else {
+    const arrow = rest.indexOf(' -> ');
+    end = arrow === -1 ? rest.length : arrow;
+  }
+  const tail = rest.slice(end);
+  if (!tail.startsWith(' -> ')) return { path: unquotePath(rest) };
+  return { from: unquotePath(rest.slice(0, end)), path: unquotePath(tail.slice(4)) };
+}
+
+/**
+ * Parse `git status --porcelain` (v1) output.
+ *
+ * This exists because the same parse was written three times with three different
+ * contracts — one stripped the status prefix, one did not, and a third stripped it a
+ * SECOND time off an already-stripped line. That third one was a guard against stashing
+ * away a sibling worktree, and comparing `rktrees/foo` against `.worktrees/` meant it
+ * could never fire. One parser, one contract: status and path, both honest.
+ */
+export function parsePorcelain(stdout: string): PorcelainEntry[] {
+  const out: PorcelainEntry[] = [];
+  for (const line of stdout.split('\n')) {
+    // Every record is `XY<space><path>`; anything shorter is not one.
+    if (line.length < 4) continue;
+    const status = line.slice(0, 2);
+    const rest = line.slice(3);
+    // Only R and C carry a source; for every other status an arrow is part of the name.
+    const paths =
+      status.startsWith('R') || status.startsWith('C') ? splitRename(rest) : { path: unquotePath(rest) };
+    out.push({ status, ...paths });
+  }
+  return out;
+}
+
+/**
+ * What `git status` says about a repo, parsed.
+ *
+ * `untracked: false` passes `--untracked-files=no`, which is a genuinely different
+ * question rather than a filter over the same answer: a checkout carries untracked files
+ * across a branch switch unharmed, so a caller deciding whether a switch is safe must not
+ * see them, while a caller deciding what a stash would sweep up must.
+ */
+export async function porcelainStatus(
+  repoPath: string,
+  { untracked = true }: { untracked?: boolean } = {},
+): Promise<PorcelainEntry[]> {
+  const r = await gitFull(repoPath, [
+    'status',
+    '--porcelain',
+    ...(untracked ? [] : ['--untracked-files=no']),
+  ]);
+  return r.code === 0 ? parsePorcelain(r.stdout) : [];
+}
+
 /*
  * "What is this repo's default branch" — asked THREE ways, answered three ways.
  *
@@ -161,6 +288,196 @@ async function defaultBranch(repoPath: string): Promise<string> {
 async function defaultBase(repoPath: string): Promise<string> {
   const sym = await originHead(repoPath);
   return sym || guessDefault(repoPath);
+}
+
+/**
+ * One worktree measured against its base — the arithmetic server/overlap.ts caches.
+ *
+ * It lives HERE rather than in overlap.ts because there are now two readers of it: the
+ * drift feed, and updateFromBase() below, which must refuse a rebase that overlap has
+ * already established will conflict. A second implementation of "which files will fight"
+ * is exactly the kind of copy this codebase keeps paying for — the two would disagree,
+ * and the disagreement would show up as a verb that starts a rebase the UI said was safe.
+ */
+export interface DriftRead {
+  headSha: string;
+  baseSha: string;
+  /** Files this branch changed since the merge-base. */
+  changed: string[];
+  behind: number;
+  ahead: number;
+  /** Of `changed`, the ones the base also touched since the merge-base. */
+  conflicts: string[];
+}
+
+/**
+ * Read a worktree's drift from `base`, or null when it cannot be read at all.
+ *
+ * `known` lets a caller that has already resolved both shas — overlap.ts resolves them to
+ * decide whether its cached answer still stands — skip two `rev-parse` spawns per sweep.
+ */
+export async function readDrift(
+  worktreePath: string,
+  base: string,
+  known?: { headSha: string; baseSha: string },
+): Promise<DriftRead | null> {
+  const headSha = known?.headSha || (await git(worktreePath, ['rev-parse', 'HEAD']));
+  if (!headSha) return null;
+  // The base is resolved IN THE WORKTREE, so `origin/master` means that worktree's own
+  // remote-tracking ref rather than whatever the main checkout last fetched.
+  const baseSha = known?.baseSha || (await git(worktreePath, ['rev-parse', base]));
+  if (!baseSha) return null;
+  const mb = await git(worktreePath, ['merge-base', headSha, baseSha]);
+  if (!mb) return null;
+
+  const [mine, theirs, behind, ahead] = await Promise.all([
+    git(worktreePath, ['diff', '--name-only', `${mb}..${headSha}`]),
+    git(worktreePath, ['diff', '--name-only', `${mb}..${baseSha}`]),
+    git(worktreePath, ['rev-list', '--count', `${headSha}..${baseSha}`]),
+    git(worktreePath, ['rev-list', '--count', `${baseSha}..${headSha}`]),
+  ]);
+  const changed = mine.split('\n').filter(Boolean);
+  const onBase = new Set(theirs.split('\n').filter(Boolean));
+  return {
+    headSha,
+    baseSha,
+    changed,
+    behind: Number(behind) || 0,
+    ahead: Number(ahead) || 0,
+    conflicts: changed.filter((f) => onBase.has(f)),
+  };
+}
+
+/** What POST /group/update reports for one worktree. */
+export interface UpdateResult {
+  /** False means NOTHING was attempted or the attempt was fully undone — never half-done. */
+  ok: boolean;
+  /** True only when commits were actually replayed. An already-current branch is ok+false. */
+  updated: boolean;
+  /** How far behind the base it was before the attempt — 0 when already current. */
+  behind: number;
+  /** Why it was refused, or what the rebase said before it was aborted. */
+  error?: string;
+  /** The files that made a refusal certain, when the refusal was a predicted conflict. */
+  conflicts?: string[];
+}
+
+const refuse = (error: string, behind = 0, conflicts?: string[]): UpdateResult => ({
+  ok: false,
+  updated: false,
+  behind,
+  error,
+  ...(conflicts ? { conflicts } : {}),
+});
+
+/**
+ * BRING ONE WORKTREE UP TO DATE WITH ITS BASE — by REBASE, not by merge.
+ *
+ * Rebase, because that is how this repo's branches are actually managed. Every merge in
+ * `git log --merges` is an integration merge OF a branch INTO the default branch
+ * ("Merge feat/offslot-ports: …"); there is not one merge of the default branch back into
+ * a feature branch, and every branch's first commit hangs directly off the tip of main at
+ * the moment it was cut. worktree.create() cuts new branches from `origin/HEAD`
+ * (git.defaultBase) for the same reason. A merge here would put the first merge commit
+ * anybody has ever made on the branch side into a history whose whole shape is "one clean
+ * line per feature, one merge commit per integration", and it would do it to four repos at
+ * once. readDrift's `conflicts` is already defined as what a REBASE will fight, and it is
+ * what the UI has been showing all along.
+ *
+ * It REFUSES rather than half-succeeding. Four refusals, all decided before git touches
+ * the working tree:
+ *
+ *   - a detached worktree has no branch to replay;
+ *   - a rebase (or an am) already in progress — resuming somebody else's half-finished
+ *     conflict resolution is not this verb's job;
+ *   - a dirty tree: `git rebase` would refuse anyway, but the interesting part is that a
+ *     user with `rebase.autoStash` set would NOT get a refusal, they would get their
+ *     uncommitted work stashed and replayed by a button they pressed to update a branch;
+ *   - a predicted conflict, from the same read the "27 behind · 3 will conflict" chip
+ *     comes from. The whole value of the verb is that it cannot leave you in a conflicted
+ *     rebase across four repos, and that is knowable before it starts.
+ *
+ * And if git fails anyway — a conflict the file-level prediction could not see, since two
+ * branches can conflict inside one file that only one of them "changed" by name, or a
+ * hook that rejects the replay — the rebase is ABORTED and the failure is reported. The
+ * worktree is left exactly as it was found.
+ */
+export async function updateFromBase(worktreePath: string, base: string): Promise<UpdateResult> {
+  /*
+   * FIRST, and before the detached check — because a stopped rebase IS detached.
+   *
+   * A user who hit a conflict in a terminal and came back here has a worktree whose HEAD
+   * is on no branch, and answering "the worktree is detached" would describe the symptom
+   * while hiding the cause and the fix. `--git-path` answers per-worktree (a linked
+   * worktree's state lives under .git/worktrees/<name>/), which is what makes this work
+   * on a worktree at all.
+   */
+  for (const dir of ['rebase-merge', 'rebase-apply']) {
+    const p = await git(worktreePath, ['rev-parse', '--git-path', dir]);
+    if (p && fs.existsSync(path.resolve(worktreePath, p)))
+      return refuse('a rebase is already in progress here — finish or abort it first');
+  }
+
+  const branch = await currentBranch(worktreePath);
+  if (!branch) return refuse('the worktree is detached — there is no branch to rebase');
+
+  // untracked: false, deliberately. A rebase carries untracked files through untouched,
+  // so counting them would refuse the very common "npm wrote a log file" worktree for no
+  // reason. Tracked modifications are the ones that get stashed or lost.
+  const dirty = await porcelainStatus(worktreePath, { untracked: false });
+  if (dirty.length)
+    return refuse(
+      `${dirty.length} uncommitted change(s) — commit or stash them first (${dirty
+        .slice(0, 3)
+        .map((e) => e.path)
+        .join(', ')}${dirty.length > 3 ? ', …' : ''})`,
+    );
+
+  const drift = await readDrift(worktreePath, base);
+  if (!drift) return refuse(`cannot read this worktree against ${base}`);
+  if (!drift.behind) return { ok: true, updated: false, behind: 0 };
+  if (drift.conflicts.length)
+    return refuse(
+      `${drift.conflicts.length} file(s) would conflict with ${base} — rebase by hand: ${drift.conflicts
+        .slice(0, 5)
+        .join(', ')}${drift.conflicts.length > 5 ? ', …' : ''}`,
+      drift.behind,
+      drift.conflicts,
+    );
+
+  // GIT_EDITOR/GIT_SEQUENCE_EDITOR: a plain rebase does not open an editor, but a repo
+  // configured with `rebase.autoSquash` and a sequence editor could — and an editor
+  // waiting on a stdin nobody will ever answer is the hang util.ts's timeout exists to
+  // survive rather than a failure worth having. `--no-autostash` makes the dirty refusal
+  // above mean what it says regardless of the user's config.
+  const r = await gitFull(worktreePath, ['rebase', '--no-autostash', base], {
+    env: { ...process.env, GIT_EDITOR: 'true', GIT_SEQUENCE_EDITOR: 'true' },
+  });
+  if (r.code === 0) return { ok: true, updated: true, behind: drift.behind };
+
+  // NEVER leave the tree mid-rebase. This is the difference between a verb that failed
+  // and a verb that broke four checkouts: without the abort, the next thing the user sees
+  // is a detached HEAD in a directory their dev server was serving from.
+  await gitFull(worktreePath, ['rebase', '--abort']);
+  return refuse(
+    `rebase onto ${base} failed and was aborted: ${rebaseFailureLine(r.stderr, r.stdout)}`,
+    drift.behind,
+  );
+}
+
+/**
+ * The one line of a failed rebase worth showing.
+ *
+ * Same reasoning as forge.pushFailureLine(): git interleaves progress ("First, rewinding
+ * head to replay your work on top of it…") with the complaint, and the complaint is
+ * rarely the first line.
+ */
+function rebaseFailureLine(stderr: string, stdout: string): string {
+  const lines = `${stderr || ''}\n${stdout || ''}`
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines.find((l) => /^(?:error|fatal|CONFLICT|hint: )/i.test(l)) || lines[0] || 'git rebase failed';
 }
 
 async function describeRepo(repoPath: string): Promise<ScannedRepo> {

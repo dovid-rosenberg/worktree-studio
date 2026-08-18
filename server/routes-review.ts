@@ -9,7 +9,7 @@
 import type { Request, Response, Router } from 'express';
 import * as review from './review.ts';
 import * as hunks from './hunks.ts';
-import { qs } from './util.ts';
+import { defaultBranchOf, qs } from './util.ts';
 
 // The injected collaborators are typed by the surface these routes touch, not by the
 // classes server.ts happens to hand over: `manager` is one lookup and a session is two
@@ -49,6 +49,10 @@ type Resolution =
 
 // Resolve :id + ?repo (or body.repo) to the worktree the operation runs in. Returns
 // { entry } or { status, error } so each handler bails the same way.
+//
+// Module-private: it was exported and nothing outside this file — not even a test — ever
+// imported it, and an exported helper is one somebody keeps in step with callers that do
+// not exist. The three handlers below are the whole of its audience.
 function resolveWorktree(deps: ReviewDeps, req: { params: { id: string } }, repoName: unknown): Resolution {
   const session = deps.manager.get(req.params.id);
   if (!session) return { status: 404, error: 'no such session' };
@@ -88,14 +92,10 @@ function register(api: Router, deps: ReviewDeps): void {
   const { repos } = deps || {};
   if (!deps?.manager) throw new Error('routes-review: deps.manager is required');
   const broadcast = deps.broadcast || (() => {});
-  const defaultBranchOf = (name: string): string => {
-    const list = typeof repos === 'function' ? repos() : repos || [];
-    const hit = list.find((r) => r.name === name);
-    // A repo the scan cache has not seen (outside every baseDir, or a rescan that has
-    // not landed) has no default branch to report; 'main' is the floor git.ts falls
-    // back to for exactly the same reason.
-    return hit?.defaultBranch || 'main';
-  };
+  // `repos` may be the scan-cache array or a getter for it; the fallback rule itself is
+  // shared with routes-commits.ts, which carried a second spelling of this same closure.
+  const defaultBranch = (name: string): string =>
+    defaultBranchOf(typeof repos === 'function' ? repos() : repos || [], name);
 
   // The structured per-file diff for one commit, or for the working tree when
   // sha=uncommitted (the default). Each file carries the raw patch AND the parsed
@@ -114,7 +114,7 @@ function register(api: Router, deps: ReviewDeps): void {
     // an argv (see review.ts). A bad request is a 400, not a 500.
     if (!review.isValidSha(sha))
       return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
-    const detail = await review.commitDetail(r.entry.worktreePath, defaultBranchOf(r.entry.repo), sha);
+    const detail = await review.commitDetail(r.entry.worktreePath, defaultBranch(r.entry.repo), sha);
     res.json({ repo: r.entry.repo, worktreePath: r.entry.worktreePath, sha, files: detail.files });
   });
 
@@ -151,4 +151,4 @@ function register(api: Router, deps: ReviewDeps): void {
   api.post('/sessions/:id/hunks/unstage', applyRoute('unstage'));
 }
 
-export { register, selection, resolveWorktree };
+export { register, selection };

@@ -14,13 +14,12 @@ sessions survive a shutdown and resume where they left off.
 One engine (this server) and one screen — there is no view to toggle:
 
 - a **rail** of everything you are working on, one row per thing, active first;
-- a **dock** showing the selected session's terminal, its changes, its logs, or —
-  with nothing selected — fleet-wide **Insights**;
+- a **dock** showing the selected session's terminal, its changes, its logs or its runs;
 - an **action bar** along the bottom holding every action for whatever is selected.
 
 Worktrees sharing a name across repos group into a **feature** (BE+FE by shared name,
 plus manual groups), which is what start / stop / restart / stop&switch act on. The
-SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
+SwiftBar menubar reads the same `/api/state` (no more `core.sh`).
 
 ## What it does
 
@@ -39,7 +38,7 @@ SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
   delete. A **⚙ Connections** panel configures GitHub (via `gh`) / GitLab / Asana.
 - **Sessions are real `claude` processes** inside **tmux** (dedicated socket, chrome-free
   config so it reads native). Embedded xterm terminal, multiple tabs addressed by their
-  tmux window id, and a split pane that is its own independent shell in the same worktree.
+  tmux window id.
 - **Baked-in worktrees.** No external `wt` script — creation is native: `git worktree add`
   off the default branch, plus copying the gitignored bits a plain add drops
   (`.idea/runConfigurations/*.xml`, `.env`, `config/*-config.js`).
@@ -48,7 +47,9 @@ SwiftBar menubar and Alfred read the same `/api/state` (no more `core.sh`).
   waiting / idle / stopped, pushed live over SSE. Your global settings are untouched.
 - **Resume after shutdown.** A `{ session → id }` registry + `claude --resume`; tmux
   sessions persist and are reattached (tabs reconciled). Restart the app and sessions come back.
-- **Dev servers per worktree** — start / stop / status via `lsof` on configured ports.
+- **Dev servers per worktree** — start / stop / status. Discovery is by `lsof`→cwd for
+  any listening port, not only the configured ones, so a server started by hand outside
+  Studio still shows up on its worktree's row.
 
 ## Requirements
 
@@ -66,8 +67,7 @@ npm start            # → http://127.0.0.1:7788
 
 To have it running whenever your Mac is, install the launchd agent instead —
 `./install.sh --autostart` starts the server at login, restarts it if it dies, and
-links the SwiftBar menubar plugin. `./uninstall.sh` reverses both. Alfred users:
-double-click `alfred/Worktree Studio.alfredworkflow`, then type `wt`. See
+links the SwiftBar menubar plugin. `./uninstall.sh` reverses both. See
 [MANUAL.md](MANUAL.md#start-it-at-login-macos).
 
 The UI is the SvelteKit app in `client/`, built to static files that the daemon serves
@@ -120,8 +120,7 @@ server/
   identity.ts          which worktrees are "the same feature"
   broadcast.ts         the SSE fan-out (topology · session-state · ci)
   review.ts hunks.js diff.js   commits, structured diffs, hunk-level staging
-  transcripts.ts transcript-index.js   transcript reader + sqlite search/telemetry
-  pricing.ts           the maintained price table every dollar figure derives from
+  transcripts.ts transcript-index.js   transcript reader + sqlite/FTS5 search index
   sources/             freetext · github · gitlab · asana adapters
   webui.ts             which frontend is served, and the boot-token injector
 client/                the served UI (SvelteKit → client/build); see client/README.md

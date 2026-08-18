@@ -34,8 +34,14 @@ export interface LogTail {
   skipped: number;
 }
 
-/** Read a byte range [start, end) as UTF-8. */
-export function readRange(file: string, start: number, end: number): string {
+/**
+ * Read a byte range [start, end) as UTF-8.
+ *
+ * Module-private: it was exported and only ever called by the two readers below, and a
+ * raw byte-range read is precisely the thing this module exists to stop callers doing —
+ * an arbitrary offset lands mid-UTF-8 sequence, which is what readTail() clips for.
+ */
+function readRange(file: string, start: number, end: number): string {
   const len = end - start;
   if (len <= 0) return '';
   const fd = fs.openSync(file, 'r');

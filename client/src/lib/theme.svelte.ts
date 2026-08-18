@@ -6,6 +6,8 @@
 // the tokens have to apply to portalled things like the modal backdrop and the
 // scrollbar, and it keeps the old and new UIs byte-identical in how they theme.
 
+import { persisted } from '$lib/persisted.js';
+
 const STORAGE_KEY = 'wts-theme'; // unchanged from the pre-port UI so a user's choice survives the switch
 
 export type ThemeName = 'dark' | 'light';
@@ -115,14 +117,15 @@ export function toggleTheme(): void {
   setTheme(theme.current === 'light' ? 'dark' : 'light');
 }
 
+/* The same reader/writer pair the five preferences in ui.svelte.ts use. The READ half
+   lives in app.html, which has to run before first paint or the page flashes the wrong
+   theme; this is the write. */
+const stored = persisted<ThemeName>(STORAGE_KEY, (raw) => (raw === 'light' ? 'light' : 'dark'));
+
 export function setTheme(next: ThemeName): void {
   theme.current = next;
   document.documentElement.setAttribute('data-theme', next);
-  try {
-    localStorage.setItem(STORAGE_KEY, next);
-  } catch {
-    /* private mode — theme just won't persist */
-  }
+  stored.save(next);
 }
 
 /*

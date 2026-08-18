@@ -5,8 +5,32 @@
 // to satisfy the real interfaces, so a contract that grows a member breaks HERE, in
 // one place, instead of in thirty test files or, worse, in nothing at all.
 import assert from 'node:assert';
+import { execFile } from 'node:child_process';
 import type { Session, SessionRepo } from '../server/types.ts';
 import type { SessionMux } from '../server/sessions.ts';
+
+// ---- environment gates ------------------------------------------------------
+
+/**
+ * Skip the calling test when there is no tmux to drive. Returns true when it skipped,
+ * so the caller's first line can be `if (await requireTmux(t)) return;`.
+ *
+ * Every test that spawns a real tmux session has to go through here rather than writing
+ * its own probe. CI's comment already claimed "a handful of tests skip themselves when
+ * tmux is absent" while exactly one of them did; the rest would have failed on a machine
+ * without it, and the failure reads as a broken multiplexer rather than a missing binary.
+ *
+ * Deliberately does NOT import the tmux driver to ask it: that module writes tmux.conf
+ * into CONFIG_DIR at evaluation, and helpers.ts is imported by most of the suite.
+ */
+export function requireTmux(t: { skip(message?: string): void }): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('tmux', ['-V'], (err) => {
+      if (err) t.skip('tmux not installed');
+      resolve(!!err);
+    });
+  });
+}
 
 // ---- narrowing assertions ---------------------------------------------------
 //

@@ -77,6 +77,7 @@ import type {
   SessionStatePayload,
   TopologyPayload,
   Worktree,
+  SessionRepoGap,
 } from '../../../../server/types';
 
 /** The two halves as received, plus the CI half, all optional before first frame. */
@@ -92,6 +93,7 @@ export interface WorldView extends WorldFrames {
   groups: Feature[];
   /** Features that look like one piece of work under names that do not group. */
   splitFeatures: SplitFeature[];
+  sessionRepoGaps?: SessionRepoGap[];
   webRepos: string[];
   baseDirs: string[];
   editors: string[];
@@ -108,6 +110,7 @@ const EMPTY = {
   features: [] as Feature[],
   groups: [] as Feature[],
   splitFeatures: [] as SplitFeature[],
+  sessionRepoGaps: [] as SessionRepoGap[],
   webRepos: [] as string[],
   baseDirs: [] as string[],
   editors: [] as string[],
@@ -166,6 +169,16 @@ class World {
   ciHalf = $state.raw<Partial<CiPayload>>({});
   /** True once the first frame of either kind has landed. */
   connected = $state(false);
+  /**
+   * A coarse wall clock, ticked by connectStream.
+   *
+   * Anything that renders ELAPSED time needs a reason to re-render, and the rail's only
+   * other reason is a frame arriving — which is precisely what has stopped happening in
+   * the case `quietFor` below exists to show. One timer for the whole app rather than one
+   * per card: the rail draws a card per session, and a set of intervals that grows with
+   * the session list is a thing to have to reason about later.
+   */
+  now = $state(Date.now());
   /** Set when the stream has errored and not yet re-delivered a frame. */
   streamError = $state('');
 
@@ -195,6 +208,10 @@ class World {
   }
   get splitFeatures(): SplitFeature[] {
     return this.view.splitFeatures ?? [];
+  }
+  /** Sessions whose repos are a strict subset of their feature's worktrees — see features.ts. */
+  get sessionRepoGaps(): SessionRepoGap[] {
+    return this.view.sessionRepoGaps ?? [];
   }
   get webRepos(): string[] {
     return this.view.webRepos;
@@ -307,6 +324,60 @@ export interface StreamHooks {
  * period — it is a connection that is gone without having said so.
  */
 const SILENCE_MS = 60_000;
+
+/**
+ * How long a BUSY session may go without a hook event before its status is disowned.
+ *
+ * Twelve minutes, and the number is not a guess. Every state a card shows comes from a
+ * Claude Code hook (server/status.ts maps them), and the longest legitimate gap between
+ * two of them is one tool call — PostToolUse cannot fire until the tool returns. The
+ * longest tool call Claude Code can make is a Bash one, and its timeout is capped at ten
+ * minutes; the twelfth minute is slack for hook delivery and the daemon's own scheduling.
+ *
+ * So past this point "working · running Bash" is not a slow tool, it is a report that
+ * stopped arriving: the settings file was removed, report.sh is failing, the agent is
+ * wedged. `reconcile()` does not catch any of those — it asks whether the tmux WINDOW is
+ * alive, and in every one of these cases it still is, so the card glows `working` for as
+ * long as you leave it. This clock is the only thing that notices.
+ */
+export const STALE_AFTER_MS = 12 * 60_000;
+
+/** The states a session is only in while an agent is mid-turn — i.e. while hooks are due. */
+const BUSY_STATES = new Set(['working', 'thinking']);
+
+/**
+ * How long this session has been silent, or 0 when silence is not yet suspicious.
+ *
+ * Only BUSY sessions are judged. `idle` and `waiting` mean the agent has finished and is
+ * waiting on a human, and a session can sit there legitimately for a working day — an
+ * elapsed counter on those would be noise on every card, and noise is what stops the one
+ * card that matters from being read.
+ *
+ * A session with no `lastEventAt` at all predates `_agentLaunched` seeding it and cannot
+ * be judged: no origin, no elapsed time. Saying nothing is the honest answer.
+ */
+export function quietFor(
+  /*
+   * `active` optional, because the two shapes that reach this are Session and the
+   * EmbeddedSession the rail hangs off a worktree — and the latter carries no `active`
+   * field at all, being by construction a session attached to a live worktree. Requiring
+   * it would have meant this could only judge the sessions nobody had promoted yet: the
+   * uninteresting half.
+   */
+  s: Pick<Session, 'state' | 'lastEventAt'> & { active?: boolean },
+  now: number,
+): number {
+  if (s.active === false || !BUSY_STATES.has(s.state)) return 0;
+  if (!s.lastEventAt) return 0;
+  const quiet = now - s.lastEventAt;
+  return quiet >= STALE_AFTER_MS ? quiet : 0;
+}
+
+/** `14m`, `3h` — coarse on purpose: the point is the order of magnitude, not the second. */
+export function quietLabel(ms: number): string {
+  const mins = Math.floor(ms / 60_000);
+  return mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h${mins % 60 ? ` ${mins % 60}m` : ''}`;
+}
 
 export function connectStream(hooks: StreamHooks = {}): () => void {
   /*
@@ -421,8 +492,19 @@ export function connectStream(hooks: StreamHooks = {}): () => void {
     }
   }, 15_000);
 
+  /*
+   * The stale clock (world.now). Separate from the watchdog above, which returns early
+   * while a reconnect is pending — the elapsed readout must keep advancing exactly then,
+   * because a dead stream is one of the ways a card goes quiet. 15s: the threshold is
+   * minutes, so this is fine-grained enough and costs one re-render a tick.
+   */
+  const ticker = setInterval(() => {
+    world.now = Date.now();
+  }, 15_000);
+
   return () => {
     closed = true;
+    clearInterval(ticker);
     if (watchdog) clearInterval(watchdog);
     if (retry) clearTimeout(retry);
     try {

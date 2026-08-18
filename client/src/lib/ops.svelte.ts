@@ -13,7 +13,7 @@
 
 import { api } from '$lib/api.js';
 import { toast } from '$lib/stores/toasts.svelte.js';
-import type { Feature, SplitFeature, PinnedLink, Session } from '../../../server/types';
+import type { Feature, SplitFeature, PinnedLink, Session, SessionRepoGap } from '../../../server/types';
 import type { DialogField } from '$lib/stores/dialog.svelte.js';
 import { uiConfirm, uiDialog, uiPrompt } from '$lib/stores/dialog.svelte.js';
 import { world } from '$lib/stores/world.svelte.js';
@@ -189,7 +189,7 @@ export async function addTab(s: Session, title = 'shell') {
      * rather than clearing the highlight to a tab that does not exist.
      */
     if (r?.id) {
-      ui.dockView = 'term';
+      ui.setDockView('term');
       ui.activeTabId = r.id;
     }
   } catch (e) {
@@ -198,7 +198,7 @@ export async function addTab(s: Session, title = 'shell') {
 }
 
 export async function selectTab(s: Session, tab: string) {
-  ui.dockView = 'term';
+  ui.setDockView('term');
   ui.activeTabId = tab;
   try {
     await api('POST', `/api/v1/sessions/${s.id}/select-tab`, { tab });
@@ -668,17 +668,121 @@ export interface PrResult {
 
 export async function showPrResults(r: { results?: PrResult[] }): Promise<void> {
   const html = (r.results || [])
-    .map((x) =>
-      x.url
-        ? `<div>${esc(x.repo)}: <a href="${esc(x.url)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`
-        : `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`,
-    )
+    .map((x) => {
+      // A URL we will not link is still shown, as text: the repo answered with
+      // something, and silently dropping it would read as "no result".
+      const href = safeHref(x.url);
+      if (href)
+        return `<div>${esc(x.repo)}: <a href="${esc(href)}" target="_blank" rel="noreferrer" class="link">${esc(x.url)}</a></div>`;
+      if (x.url) return `<div>${esc(x.repo)}: ${esc(x.url)}</div>`;
+      return `<div>${esc(x.repo)}: <span style="color:var(--waiting)">${esc(x.error)}</span></div>`;
+    })
     .join('');
   await uiDialog({
     title: 'Pull / merge requests',
     messageHtml: html || 'No results',
     okLabel: 'Done',
     cancelLabel: '',
+  });
+}
+
+/* ---------------- getting a feature current, and getting it out ---------------- */
+
+/** One member's answer from POST /group/update — server/git.ts's UpdateResult, plus the repo. */
+interface UpdateResult {
+  repo: string;
+  ok: boolean;
+  updated: boolean;
+  behind: number;
+  error?: string;
+}
+
+/**
+ * REBASE EVERY REPO OF A FEATURE ONTO ITS BASE.
+ *
+ * The confirm is not ceremony: the server refuses to rebase under a running dev server
+ * unless it is told to stop it, because a bundler watching a tree being replayed serves
+ * whatever it happened to read. Same two-step /group/start uses for its port conflicts.
+ *
+ * The toast NAMES the repos that refused. A rebase that half-happens across a four-repo
+ * feature is the failure this verb exists to prevent, so "2/4" without the two reasons
+ * would leave the user opening terminals to find out which — which is the thing they
+ * pressed the button to avoid.
+ */
+export function updateFromBase(name: string) {
+  return pending.run(name, async () => {
+    try {
+      let r = await api('POST', '/api/v1/group/update', { group: name });
+      if (r.needsConfirm) {
+        const repos = [...new Set((r.running || []).map((m: { repo: string }) => m.repo))];
+        const ok = await uiConfirm(
+          `A dev server is running in ${repos.join(', ')}. Rebasing rewrites the files underneath it, so it has to be stopped first — start it again when the update is done.`,
+          { title: 'Stop servers and update?', okLabel: 'Stop & update' },
+        );
+        if (!ok) return;
+        r = await api('POST', '/api/v1/group/update', { group: name, stopServers: true });
+      }
+      const results: UpdateResult[] = r.results || [];
+      const failed = results.filter((x) => !x.ok);
+      const head = r.updated
+        ? `Updated ${r.updated}/${r.total} from base`
+        : failed.length
+          ? 'Nothing updated'
+          : 'Already up to date';
+      const detail = failed.length
+        ? ` — ${failed.map((x) => `${x.repo}: ${x.error}`).join('; ')}`
+        : r.stopped?.length
+          ? `. Stopped ${r.stopped.join(', ')} — press ▶ when ready`
+          : '';
+      toast(head + detail, !r.ok);
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
+  });
+}
+
+/** One member's answer from POST /group/push — server/forge.ts's PushOutcome. */
+interface PushOutcome {
+  repo: string;
+  ok: boolean;
+  pushed: boolean;
+  upstreamSet?: boolean;
+  nothingToPush?: boolean;
+  error?: string;
+}
+
+/**
+ * PUSH EVERY BRANCH OF A FEATURE.
+ *
+ * The blocker `shipVerdict()` names — "has 3 unpushed commit(s)" — cleared by the one
+ * call that already existed on the server, rather than by asking for a pull request you
+ * may already have. A rejected push is reported, never retried with force: the fix is
+ * `Update from base` above, and the toast says so because the server's message does.
+ */
+export function pushFeature(name: string) {
+  return pending.run(name, async () => {
+    try {
+      const r = await api('POST', '/api/v1/group/push', { group: name });
+      const results: PushOutcome[] = r.results || [];
+      const failed = results.filter((x) => !x.ok);
+      if (failed.length) {
+        toast(
+          `Pushed ${r.pushed}/${r.total} — ${failed.map((x) => `${x.repo}: ${x.error}`).join('; ')}`,
+          true,
+        );
+        return;
+      }
+      // "Nothing to push" is a success, and worth saying: it means the ship blocker that
+      // sent you here was stale, not that the button did nothing.
+      const first = results.filter((x) => x.upstreamSet).map((x) => x.repo);
+      toast(
+        r.pushed
+          ? `Pushed ${r.pushed}/${r.total}${first.length ? ` — ${first.join(', ')} now tracks origin` : ''}`
+          : 'Nothing to push — origin already has every commit',
+      );
+    } catch (e) {
+      toast(errMessage(e), true);
+    }
   });
 }
 
@@ -768,11 +872,43 @@ export async function deleteFeature(f: Feature) {
  * promote keeps promote fast for the many features that never run a server.
  */
 export async function installDeps(w: { repo: string; path: string }): Promise<void> {
+  return runInstall(w, `Installing dependencies in ${w.repo}…`, `${w.repo} is ready`);
+}
+
+/**
+ * Give a worktree its OWN node_modules: drop the shared symlink, then install.
+ *
+ * The verb for the finding `sharedModules` has been reporting all along. The rail could
+ * say "node_modules is a symlink to /elsewhere — replace it with a real install" and
+ * there was no button anywhere that did that; the two commands it takes are not
+ * guessable, and getting the first one wrong deletes another checkout's dependency tree.
+ *
+ * The same endpoint as Install deps, deliberately — the server unlinks a shared symlink
+ * before installing whichever button you pressed, because installing THROUGH the link
+ * rewrites the tree every other worktree of that repo is running against. Only the
+ * wording differs, because only the reason for pressing it differs.
+ */
+export async function replaceSharedDeps(w: { repo: string; path: string }): Promise<void> {
+  return runInstall(
+    w,
+    `Replacing ${w.repo}'s shared node_modules…`,
+    `${w.repo} has its own dependencies now`,
+  );
+}
+
+/**
+ * One install call, two labels.
+ *
+ * Keyed on the worktree path (not the repo) exactly as the two callers were: a multi-repo
+ * feature installs its members concurrently, and one key per repo would let a two-repo
+ * feature's second click be swallowed as a duplicate of the first.
+ */
+function runInstall(w: { repo: string; path: string }, starting: string, done: string): Promise<void> {
   return pending.run(`deps:${w.path}`, async () => {
-    toast(`Installing dependencies in ${w.repo}…`);
+    toast(starting);
     try {
       const r = await api('POST', '/api/v1/worktrees/install-deps', { worktreePath: w.path });
-      toast(r.ok ? `${w.repo} is ready` : r.error || 'install failed', !r.ok);
+      toast(r.ok ? done : r.error || 'install failed', !r.ok);
     } catch (e) {
       toast(errMessage(e), true);
     }
@@ -796,6 +932,27 @@ export async function stopMainServer(w: { repo: string; path: string }): Promise
  * you meant, and picking one silently is how the naming convention became load-bearing
  * without anyone deciding it should be. The first name is offered as the default.
  */
+/**
+ * Accept the offer to attach a session's missing feature worktrees.
+ *
+ * Confirmed rather than one-click, because this is not bookkeeping: each attach sends
+ * `/add-dir` into the running agent, widening what it may read and write, possibly
+ * mid-turn. The server detects the gap and deliberately does not close it; this is where
+ * a person decides.
+ */
+export async function attachSessionRepos(gap: SessionRepoGap) {
+  const repos = gap.missing.map((m) => m.repo).join(', ');
+  if (!(await uiConfirm(`Give this session access to ${repos}?`))) return;
+  try {
+    const out = await api('POST', `/api/v1/sessions/${encodeURIComponent(gap.sessionId)}/attach-repos`);
+    const n = (out as { attached?: unknown[] })?.attached?.length ?? 0;
+    const failed = (out as { failed?: unknown[] })?.failed?.length ?? 0;
+    toast(failed ? `Attached ${n}, ${failed} failed` : `Attached ${n} repo(s)`, !!failed);
+  } catch (e) {
+    toast(errMessage(e), true);
+  }
+}
+
 export async function groupSplitFeature(d: SplitFeature) {
   const name = await uiPrompt('Group these worktrees as one feature', d.features[0] || '');
   if (!name) return;
@@ -808,6 +965,33 @@ export async function groupSplitFeature(d: SplitFeature) {
   } catch (e) {
     toast(errMessage(e), true);
   }
+}
+
+/**
+ * A URL we are willing to put in an `href`, or null.
+ *
+ * Escaping is not enough here. `esc()` neutralises quotes and angle brackets, so the
+ * attribute cannot be broken out of — but `href="javascript:…"` needs none of that: it
+ * runs on click, in the origin that holds the boot token, and every character in it
+ * survives escaping untouched. Feature links come back from the API (a ticket URL, a
+ * merge request, a pin the user typed), so the value is not ours to trust.
+ *
+ * Validated on render rather than only on write, because the store already holds
+ * whatever was saved before this existed, and because render is the step that can
+ * actually execute it. Anything that is not an absolute http/https URL becomes inert
+ * text — a scheme-less value is refused rather than resolved against our own origin,
+ * because a link that navigates the tab back into the studio is never what was meant.
+ */
+export function safeHref(url: unknown): string | null {
+  const raw = String(url ?? '').trim();
+  if (!raw) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
 }
 
 /** Minimal escaper for the one place we still hand a dialog raw HTML. */

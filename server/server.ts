@@ -1,13 +1,22 @@
+/*
+ * The daemon: everything that needs a real process.
+ *
+ * Config off disk, a state directory, the multiplexer, the repo scan cache, the pulled
+ * feeds, the SSE bus, filesystem watchers, an http server with the WebSocket upgrade
+ * handler in front of it, crash policy, and session restore. It builds the collaborators
+ * and hands them to buildApp() (server/app.ts), which owns every route and every piece
+ * of middleware.
+ *
+ * The split is not cosmetic. This file ends in `main().catch(…)`, so importing it boots
+ * a daemon — which is why the routes could not be reached from a test while they lived
+ * here. server/app.ts has no side effects at import and no process concerns at all, so
+ * test/app-surface.test.ts assembles the REAL app in-process and asks the router what it
+ * mounted. Anything added below is wiring; anything added to app.ts is surface.
+ */
 import http from 'http';
-import express from 'express';
 import { WebSocketServer } from 'ws';
 import * as gitMod from './git.ts';
 import * as watchMod from './watch.ts';
-import * as worktree from './worktree.ts';
-const { worktreeCopyOpts } = worktree;
-import * as review from './review.ts';
-import * as sources from './sources/index.ts';
-import * as asana from './sources/asana.ts';
 import { SessionManager } from './sessions.ts';
 import { Servers } from './servers.ts';
 import { createIdentity } from './identity.ts';
@@ -18,63 +27,22 @@ import { createCiFeed } from './ci.ts';
 import { createTaskStatusFeed } from './task-status.ts';
 import { createOverlapFeed } from './overlap.ts';
 import { createReviewFeed } from './reviews.ts';
-import * as orchestrator from './orchestrator.ts';
 import { createGuard } from './security.ts';
 import { createTerminalHandler } from './term.ts';
 import { createRescan } from './rescan.ts';
 import { createAdopter, describeAdoption } from './adopt.ts';
-import { attachableWorktrees } from './features.ts';
-import * as runConfigs from './run-configs.ts';
-// isRecord too: this file had a byte-identical copy, docstring included, of a
-// predicate settings.ts already exported — and already imports four symbols from.
-import {
-  coerceEditors,
-  coerceGroups,
-  coerceRunConfigs,
-  coerceStart,
-  isRecord,
-  upsertGroup,
-} from './settings.ts';
 import { Runner } from './runner.ts';
 import * as webui from './webui.ts';
 import * as crash from './crash.ts';
-import { run, has, openEditor, qs, realpath, resolveEditor, shq, slug, expandTilde } from './util.ts';
+import { fire, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
 import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
-import * as transcriptRoutes from './transcript-routes.ts';
-import * as routesReview from './routes-review.ts';
-import * as reinstate from './reinstate.ts';
-import { browse } from './browse.ts';
-import { handoff } from './run-handoff.ts';
-import * as layoutMod from './layout.ts';
+import { buildApp } from './app.ts';
 import type { ScannedRepo } from './git.ts';
-import { FEATURE_COLORS } from './types.ts';
-import type { Session, SessionRepo } from './types.ts';
-import * as startReport from './start-report.ts';
 import fs from 'fs';
 
 /** A thrown value's message. `catch` binds `unknown`, and not everything thrown is an Error. */
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/**
- * A session repo that has been promoted. Everything that starts, stops or slots a
- * dev server needs the worktree path, and `SessionRepo.worktreePath` is null until
- * promote() runs — so the filter that drops the unpromoted ones says so in the type.
- */
-type PromotedRepo = SessionRepo & { worktreePath: string };
-const promoted = (r: SessionRepo): r is PromotedRepo => !!r.worktreePath;
-
-/** The POST /settings body. Every field is `unknown` until it has been checked. */
-interface SettingsBody {
-  sources?: unknown;
-  runConfigs?: unknown;
-  baseDirs?: unknown;
-  notify?: unknown;
-  start?: unknown;
-  editors?: unknown;
-  defaultEditor?: unknown;
-  groups?: unknown;
-}
 
 async function main() {
   const cfg = configMod.load();
@@ -142,22 +110,14 @@ async function main() {
     ciFeed.poke({ force: true });
     // The same trigger, for the same reason: a rescan means refs moved, and refs moving
     // is the only thing that can change an overlap or a drift count.
-    void refreshOverlap();
+    fire(refreshOverlap());
   });
 
   // Cached lsof discovery — refreshed on a timer and after mutations, not on
   // every SSE broadcast (which fires per Claude hook → per tool call).
   let runningCache = new Map();
   let runningSig = '';
-  /**
-   * Where a worktree's server was last seen listening, for servers.stop().
-   *
-   * Not the same question as "which ports should it be on": a server started outside
-   * Studio, or by a start command that ignored the slot env, binds somewhere else
-   * entirely, and stop()'s sweep would never look there. Discovery already knows —
-   * this is the one line that tells stop() what it knows.
-   */
-  const seenPorts = (worktreePath: string): number[] => runningCache.get(realpath(worktreePath))?.ports ?? [];
+
   async function refreshRunning() {
     try {
       runningCache = await servers.discoverRunning();
@@ -191,16 +151,17 @@ async function main() {
 
   // The state payload lives in state.ts; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
-  const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } = createState({
-    cfg,
-    manager,
-    servers,
-    mux,
-    identity,
-    repos: () => repos,
-    running: () => runningCache,
-    runs: () => runner.runs,
-  });
+  const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } =
+    createState({
+      cfg,
+      manager,
+      servers,
+      mux,
+      identity,
+      repos: () => repos,
+      running: () => runningCache,
+      runs: () => runner.runs,
+    });
 
   // ---- SSE live state ----
   // Two named event types with very different rates (see broadcast.ts).
@@ -240,15 +201,6 @@ async function main() {
   };
 
   /*
-   * Which features are changing the same files, and how far each has drifted.
-   *
-   * Rides the `ci` frame for the same reason taskStatus does: it is pulled rather than
-   * pushed, it costs a handful of git reads per worktree, and it changes on the order of
-   * commits — not on the order of file saves, which is what the topology tracks. The feed
-   * caches on (head sha, base sha), so a sweep where nothing has been committed costs one
-   * `rev-parse` per worktree and no diffs at all.
-   */
-  /*
    * Merge requests awaiting your review, across every scanned repo.
    *
    * Asked from each repo's MAIN checkout: a worktree is on a feature branch and the
@@ -262,6 +214,15 @@ async function main() {
     }
   };
 
+  /*
+   * Which features are changing the same files, and how far each has drifted.
+   *
+   * Rides the `ci` frame for the same reason taskStatus does: it is pulled rather than
+   * pushed, it costs a handful of git reads per worktree, and it changes on the order of
+   * commits — not on the order of file saves, which is what the topology tracks. The feed
+   * caches on (head sha, base sha), so a sweep where nothing has been committed costs one
+   * `rev-parse` per worktree and no diffs at all.
+   */
   const overlapFeed = createOverlapFeed();
   const refreshOverlap = async () => {
     const t = topology();
@@ -307,24 +268,9 @@ async function main() {
   manager.on('change', scheduleBroadcast);
 
   // ---- express ----
-  const app = express();
-
-  // Everything below sits behind the Host/Origin allowlist — see security.ts for
-  // what each gate stops. It runs before the body parsers so a rejected request is
-  // never given the chance to make us buffer 8 MB of its JSON.
-  const guard = createGuard({ cfg, token: cfg._token });
-  app.use(guard.browser);
-
-  app.use(express.json({ limit: '8mb' }));
-  app.use(express.text({ type: 'text/*', limit: '8mb' }));
-
-  // The browser tab cannot be handed a header before it exists, so the boot token is
-  // injected into the one document we hand it. That is safe precisely because of the
-  // gate above: a cross-origin page cannot read this response body, and a rebinding
-  // page is refused before there is a body to read. See webui.ts for which UI this is
-  // which UI this is; its SPA fallback is mounted after every route below.
   // A UI that isn't on disk is a boot failure, not a 404 the user has to reverse-
-  // engineer: say what is missing and how to get it, and stop.
+  // engineer: say what is missing and how to get it, and stop. Resolved here rather
+  // than in buildApp because `process.exit` is a process decision.
   let ui: webui.ResolvedUi;
   try {
     ui = webui.resolve();
@@ -333,1127 +279,53 @@ async function main() {
     process.exit(1);
   }
   console.log(`[wt-studio] serving the ${ui.label}`);
-  webui.mount(app, { ui, token: cfg._token });
 
-  // Every API route needs the boot token. The Origin/Host gate above only constrains
-  // browsers; this is what stops any other local process — or a browser request that
-  // carries no Origin at all — from driving the studio. It goes on the /api PREFIX
-  // rather than on the router below, so it covers everything served under it however
-  // it got there; /api/v1 is nested under /api, so one line covers both prefixes.
-  app.use('/api', guard.authed);
+  const guard = createGuard({ cfg, token: cfg._token });
 
-  // Every route below is registered once on this router and served at BOTH
-  // /api/v1/* (the versioned contract new clients should use) and /api/* (the
-  // unversioned aliases SwiftBar, Alfred and the current web UI already call).
-  // Feature modules register onto the same router — one line each, see below.
-  const api = express.Router();
-  app.use('/api', api);
-  app.use('/api/v1', api);
-
-  // attention.seen(): SwiftBar and Alfred poll this route instead of subscribing to
-  // /api/events, so a poll is what tells the watcher someone is still looking.
-  api.get('/state', async (_req, res) => {
-    attention.seen();
-    res.json(await buildState());
-  });
-
-  api.get('/events', (req, res) => {
-    res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.flushHeaders();
-    // subscribe() writes the full snapshot (one `topology` + one `session-state`)
-    // before this client joins the fan-out, so it can never miss the snapshot or
-    // see an event that predates it.
-    const unsubscribe = bus.subscribe(res);
-    // Someone started looking. While nobody was, the CI feed deliberately did
-    // nothing at all, so its snapshot may be stale or empty — this is what makes an
-    // opened dashboard fill in within a second rather than at the next safety net.
-    ciFeed.poke();
-    // Same reason, and equally cheap: with no ticket configured, or nothing stale, this
-    // is a filter over a small object and no request at all.
-    void refreshTaskStatus();
-    void refreshOverlap();
-    void refreshReviews();
-    const hb = setInterval(() => {
-      try {
-        res.write(':hb\n\n');
-      } catch {
-        /* */
-      }
-    }, 25000);
-    req.on('close', () => {
-      clearInterval(hb);
-      unsubscribe();
-    });
-  });
-
-  // ---- settings / connections ----
-  api.get('/settings', async (_req, res) => {
-    const gh = await run('gh', ['auth', 'status'], {});
-    res.json({
-      sources: cfg.sources || {},
-      baseDirs: cfg.baseDirs || [],
-      notify: cfg.notify || {},
-      start: cfg.start || {},
-      editors: cfg.editors || {},
-      defaultEditor: cfg.defaultEditor || '',
-      groups: cfg.groups || [],
-      // The MANUAL run configurations only; an editor's own are discovered per worktree.
-      runConfigs: cfg.runConfigs || {},
-      enabled: sources.enabled(cfg),
-      tools: { gh: has('gh'), glab: has('glab') },
-      githubAuthed: gh.code === 0,
-    });
-  });
-  /*
-   * A feature's colour tag. Its OWN route, deliberately not a field on POST /settings.
-   *
-   * /settings is a full replace for the maps it carries, and the last thing that wrote a
-   * single value through it deleted two repos' start commands on the way past. Setting a
-   * colour is a one-key write, so it does one-key work: no coercion runs, and nothing the
-   * body did not mention can be dropped. An empty colour clears the tag rather than
-   * storing a blank, so the map only ever holds live entries.
-   */
-  api.post('/features/:name/color', async (req, res) => {
-    const name = String(req.params.name || '').trim();
-    if (!name) return res.status(400).json({ ok: false, error: 'no feature named' });
-    const color = String(req.body?.color || '').trim();
-    if (color && !(FEATURE_COLORS as readonly string[]).includes(color)) {
-      return res.status(400).json({ ok: false, error: `unknown colour: ${color}` });
-    }
-    cfg.featureColors = { ...(cfg.featureColors || {}) };
-    if (color) cfg.featureColors[name] = color;
-    else delete cfg.featureColors[name];
-    configMod.save(cfg);
-    broadcastTopology();
-    res.json({ ok: true, color });
-  });
-
-  /*
-   * A feature's links: its tracker URL and anything pinned by hand.
-   *
-   * Its own narrow route for the same reason the colour has one — /settings is a full
-   * replace for the maps it carries, and the last single value written through it deleted
-   * two repos' start commands on the way past.
-   *
-   * Keyed by FEATURE, deliberately, not by session: a ticket outlives the agent working
-   * on it, and `session.sourceUrl` died whenever the session did.
-   */
-  api.post('/features/:name/links', async (req, res) => {
-    const name = String(req.params.name || '').trim();
-    if (!name) return res.status(400).json({ ok: false, error: 'no feature named' });
-    const body = req.body || {};
-
-    const ticket = typeof body.ticket === 'string' ? body.ticket.trim() : undefined;
-    // Every pin needs a url; a label is optional and falls back to the provider's name.
-    // Anything without a url is dropped rather than stored as a link to nowhere.
-    const pins = Array.isArray(body.pins)
-      ? body.pins
-          .filter(isRecord)
-          .map((x: Record<string, unknown>) => ({
-            label: String(x.label || '').trim(),
-            url: String(x.url || '').trim(),
-          }))
-          .filter((x: { url: string }) => !!x.url)
-          .map((x: { label: string; url: string }) => (x.label ? x : { url: x.url }))
-      : undefined;
-
-    const next = { ...((cfg.featureLinks || {})[name] || {}) };
-    if (ticket !== undefined) {
-      if (ticket) next.ticket = ticket;
-      else delete next.ticket;
-    }
-    if (pins !== undefined) {
-      if (pins.length) next.pins = pins;
-      else delete next.pins;
-    }
-
-    cfg.featureLinks = { ...(cfg.featureLinks || {}) };
-    // An entry with nothing left in it is removed, so the map only holds live values.
-    if (Object.keys(next).length) cfg.featureLinks[name] = next;
-    else delete cfg.featureLinks[name];
-
-    configMod.save(cfg);
-    broadcastTopology();
-    res.json({ ok: true, links: next });
-  });
-
-  api.post('/settings', async (req, res) => {
-    // Every field is `unknown`: a JSON body can carry anything, so nothing here is a
-    // string, an object or an array until it has been checked — the same rule
-    // server/orchestrator.ts's GroupBody follows.
-    const body: SettingsBody = req.body || {};
-    const {
-      sources: srcs,
-      baseDirs,
-      notify,
-      start,
-      editors,
-      defaultEditor,
-      groups,
-      runConfigs: runCfgs,
-    } = body;
-    if (isRecord(srcs)) {
-      cfg.sources = cfg.sources || {};
-      for (const k of Object.keys(srcs)) {
-        const prev = cfg.sources[k];
-        cfg.sources[k] = { ...(isRecord(prev) ? prev : {}), ...(isRecord(srcs[k]) ? srcs[k] : {}) };
-      }
-    }
-    if (isRecord(notify)) {
-      cfg.notify = { ...(cfg.notify || {}), ...notify };
-    }
-    let rescanNeeded = false;
-    let missingDirs: string[] = [];
-    if (Array.isArray(baseDirs)) {
-      cfg.baseDirs = baseDirs.map((s) => expandTilde(String(s).trim())).filter(Boolean);
-      /*
-       * A directory that does not exist is REPORTED, not silently accepted.
-       *
-       * The save answered ok:true and echoed the new dirs back, the scan then found
-       * nothing there, and the dashboard emptied — with the three facts connected
-       * nowhere. A typo in a path is the single most likely thing to go wrong in this
-       * form, and it looked exactly like a successful save.
-       *
-       * Saved anyway rather than rejected: the directory may be on a volume that is not
-       * mounted right now, and refusing the whole save over one row would be worse.
-       */
-      missingDirs = cfg.baseDirs.filter((d) => !fs.existsSync(d));
-      rescanNeeded = true;
-    }
-    // Dev-server launch config { "<repo>": { cmd, ports:[…] } } — full replace, drop blank rows.
-    if (isRecord(start)) {
-      cfg.start = coerceStart(start);
-      rescanNeeded = true;
-    }
-    /*
-     * Hand-written run configurations, `{ "<repo>": [{ name, cmd, kind }] }` — full
-     * replace, blank rows dropped, exactly as `start` and `editors` are handled.
-     *
-     * These are the MANUAL half only. Whatever an editor declares in a worktree is
-     * discovered live (server/run-configs.ts) and is not stored here, so saving this
-     * cannot delete a config that came from a file.
-     */
-    if (isRecord(runCfgs)) cfg.runConfigs = coerceRunConfigs(runCfgs);
-    // Editors { "<name>": { open, openGroup? } } — full replace, drop blank rows.
-    if (isRecord(editors)) cfg.editors = coerceEditors(editors);
-    if (typeof defaultEditor === 'string' && defaultEditor.trim()) cfg.defaultEditor = defaultEditor.trim();
-    // Manual feature groups [{ name, members:[…] }] — full replace, drop blank rows.
-    if (Array.isArray(groups)) cfg.groups = coerceGroups(groups);
-    configMod.save(cfg);
-    if (rescanNeeded) await rescan();
-    else broadcastTopology();
-    res.json({
-      ok: true,
-      // Present only when something is wrong, so the quiet path stays quiet.
-      ...(missingDirs.length ? { warnings: [`these folders do not exist: ${missingDirs.join(', ')}`] } : {}),
-      sources: cfg.sources,
-      baseDirs: cfg.baseDirs,
-      runConfigs: cfg.runConfigs,
-      notify: cfg.notify,
-      start: cfg.start,
-      editors: cfg.editors,
-      defaultEditor: cfg.defaultEditor,
-      groups: cfg.groups,
-      enabled: sources.enabled(cfg),
-    });
-  });
-
-  /*
-   * Directory listing for the base-directory picker (server/browse.ts).
-   *
-   * Read-only and shape-only: directory names and whether each is a git checkout. The
-   * daemon is the thing that will scan the folder, so the daemon is the thing that can
-   * say what folders there are — a browser cannot hand back a path.
-   */
-  api.get('/fs/dirs', (req, res) => res.json(browse(qs(req.query.path))));
-
-  /*
-   * Check a merge request out and point an agent at it.
-   *
-   * The whole reason a REVIEW queue belongs in a tool that runs agents: this turns "four
-   * merge requests are waiting" into "four agents have read them". It is the only route
-   * that creates a worktree for somebody else's branch.
-   *
-   * The branch is the MR's SOURCE branch and it lives on the remote, so the worktree is
-   * cut from `origin/<branch>` — `worktree.create` fetches first, then adds a local branch
-   * at the remote tip. Naming the worktree after the MR rather than the branch keeps a
-   * review from being auto-grouped into a FEATURE with your own work: `feature/mfa-totp`
-   * would collide by name with the worktree you already have.
-   */
-  api.post('/reviews/checkout', async (req, res) => {
-    const { repo: repoName, branch, number, title, url } = req.body || {};
-    if (!repoName || !branch || !number) {
-      return res.status(400).json({ error: 'repo, branch and number are required' });
-    }
-    const repoObj = repos.find((r) => r.name === String(repoName));
-    if (!repoObj) return res.status(400).json({ error: `unknown repo '${repoName}'` });
-
-    const wtname = `review-${number}`;
-    const made = await worktree.create(repoObj.path, String(branch), wtname, {
-      base: `origin/${branch}`,
-      layout: layoutMod.resolve(cfg),
-      ...worktreeCopyOpts(cfg, repoObj.name),
-    });
-    // An existing review worktree is not a failure — it is the one you made last time.
-    if (!made.ok && !/already exists/i.test(made.error || '')) return res.status(400).json(made);
-    const worktreePath = made.path!;
-
-    const seed = {
-      source: 'review',
-      id: String(number),
-      title: `Review !${number}: ${String(title || branch)}`,
-      body:
-        `You are reviewing merge request !${number}${title ? ` — "${title}"` : ''} in ${repoObj.name}` +
-        `${url ? ` (${url})` : ''}. This worktree is checked out at its source branch, \`${branch}\`. ` +
-        `Read the diff against the target branch, then report what you find: correctness ` +
-        `problems first, then anything that would be hard to maintain. Do not change the code ` +
-        `unless I ask you to — this is a review.`,
-      url: url ? String(url) : null,
-    };
-
-    const session = await manager.adopt({
-      worktreePath,
-      repoName: repoObj.name,
-      repoPath: repoObj.path,
-      branch: String(branch),
-      wtname,
-      seed,
-    });
-    await rescan();
-    res.json({ ok: true, session, worktree: { name: wtname, path: worktreePath }, reused: !made.ok });
-  });
-
-  // ---- sources ----
-  api.get('/sources', (_req, res) => res.json(sources.enabled(cfg)));
-  /*
-   * Check a token the user has just typed, and report who it belongs to.
-   *
-   * Takes the token in the BODY rather than reading config, because it is asked BEFORE
-   * anything is saved — proving the token works is what the user is doing when they press
-   * Connect. Nothing is persisted here.
-   */
-  api.post('/sources/asana/verify', async (req, res) => {
-    const token = String(req.body?.token || '').trim();
-    if (!token) return res.status(400).json({ ok: false, error: 'a token is required' });
-    try {
-      res.json({ ok: true, ...(await asana.verify(token)) });
-    } catch (e) {
-      // Asana answers 401 for a bad token, which is much the commonest thing to get wrong.
-      const m = msg(e);
-      res.status(400).json({
-        ok: false,
-        error: /401/.test(m) ? 'Asana rejected that token' : m,
-      });
-    }
-  });
-  api.get('/sources/:source/items', async (req, res) => {
-    const repo = repos.find((r) => r.name === req.query.repo);
-    const out = await sources.list(cfg, req.params.source, { repoPath: repo?.path, q: req.query.q });
-    res.json(out);
-  });
-
-  // ---- sessions ----
-  api.post('/sessions', async (req, res) => {
-    try {
-      const { source, sourceId, text, name, repo, additionalRepos } = req.body || {};
-      const repoObj = repos.find((r) => r.name === repo);
-      if (!repoObj) return res.status(400).json({ error: `unknown repo '${repo}'` });
-      const seed = await sources.seed(cfg, source || 'freetext', {
-        repoPath: repoObj.path,
-        id: sourceId,
-        text,
-        name,
-      });
-      const extra = (Array.isArray(additionalRepos) ? additionalRepos : [])
-        .map((rn: unknown) => repos.find((r) => r.name === rn))
-        .filter((r): r is ScannedRepo => !!r)
-        .map((r) => ({ repo: r.name, repoPath: r.path }));
-      const session = await manager.create({
-        seed,
-        repoPath: repoObj.path,
-        repoName: repoObj.name,
-        additionalRepos: extra,
-      });
-      res.json(session);
-    } catch (e) {
-      res.status(500).json({ error: msg(e) });
-    }
-  });
-
-  api.post('/sessions/:id/rename', async (req, res) => {
-    res.json(await manager.rename(req.params.id, req.body?.title || ''));
-  });
-  // Kill the mux session and relaunch it, keeping the conversation — see restartTerminal.
-  api.post('/sessions/:id/restart-terminal', async (req, res) => {
-    const out = await manager.restartTerminal(req.params.id);
-    res.json(out);
-  });
-  api.post('/sessions/:id/deactivate', async (req, res) => {
-    res.json(await manager.deactivate(req.params.id));
-  });
-  api.post('/sessions/:id/activate', async (req, res) => {
-    res.json(await manager.activate(req.params.id));
-  });
-
-  /** Feature worktrees this session has no record of — see features.ts for why. */
-  const attachableFor = (s: Session | undefined) =>
-    attachableWorktrees(
-      repos,
-      s?.feature,
-      new Set((s?.repos || []).map((r: SessionRepo) => r.repoPath)),
-      (i) => identity.of(i),
-    );
-
-  // Add a repo to a session's feature (creates a same-named worktree + grants access).
-  // Used by the UI button and the `wt-studio add-repo` CLI (David or claude).
-  api.post('/sessions/:id/add-repo', async (req, res) => {
-    const repoObj = repos.find((r) => r.name === req.body?.repo);
-    if (!repoObj) return res.status(400).json({ error: `unknown repo '${req.body?.repo}'` });
-    const out = await manager.addRepo(req.params.id, { repo: repoObj.name, repoPath: repoObj.path });
-    if (!out.ok) return res.status(400).json(out);
-    await rescan(); // pick up the sibling worktree so the feature updates immediately
-    res.json(out);
-  });
-
-  api.post('/sessions/:id/promote', async (req, res) => {
-    const out = await manager.promote(req.params.id, req.body || {});
-    // Dirty-main warning: 200 (not 400) so the client can read needsConfirm and re-prompt.
-    if (out.needsConfirm) return res.json(out);
-    if (!out.ok) return res.status(400).json(out);
-    await rescan(); // pick up the new worktree(s) so features update immediately
-    /*
-     * The ticket becomes the FEATURE's, at the one moment a session becomes a feature.
-     *
-     * `assemble()` also falls back to `session.sourceUrl`, so the chip renders without
-     * this — but only for as long as the session exists, and the whole point of keying
-     * links by feature is that they outlive the agent. Copying it here is the moment
-     * that has a feature to copy it to. Never overwrites: a ticket the user set by hand
-     * outranks the one intake guessed.
-     */
-    const promotedSession = manager.get(req.params.id);
-    const wtName = promotedSession?.worktree;
-    if (wtName && promotedSession?.sourceUrl) {
-      const existing = (cfg.featureLinks || {})[wtName];
-      if (!existing?.ticket) {
-        cfg.featureLinks = { ...(cfg.featureLinks || {}) };
-        cfg.featureLinks[wtName] = { ...(existing || {}), ticket: promotedSession.sourceUrl };
-        configMod.save(cfg);
-      }
-    }
-    /*
-     * Feature membership and SESSION membership are two different records, and nothing
-     * kept them in step. A feature groups worktrees by identity; a session's `repos` is
-     * what the agent was granted with /add-dir. Promote into a feature whose other
-     * worktrees were made outside Studio (a plain `wt`), and the feature card shows
-     * every repo while the session knows only its own — so Changes, which is
-     * session-scoped, renders an empty diff of a genuinely empty worktree, and the
-     * agent cannot write to the repos it was started for.
-     *
-     * Report the gap rather than closing it silently: attaching sends /add-dir into a
-     * live session, which is the user's call.
-     */
-    res.json({ ...out, attachable: attachableFor(out.session) });
-  });
-
-  api.post('/sessions/:id/tabs', async (req, res) => {
-    res.json(await manager.addTab(req.params.id, req.body || {}));
-  });
-
-  // `tab` is the multiplexer window id; `index` is the legacy positional form, kept so
-  // an older client keeps working. The manager resolves either.
-  api.post('/sessions/:id/select-tab', async (req, res) => {
-    const b = req.body || {};
-    res.json(await manager.selectTab(req.params.id, b.tab ?? b.index ?? 0));
-  });
-
-  api.post('/sessions/:id/rename-tab', async (req, res) => {
-    const b = req.body || {};
-    res.json(await manager.renameTab(req.params.id, b.tab ?? b.index ?? 0, b.title));
-  });
-
-  api.post('/sessions/:id/close-tab', async (req, res) => {
-    const b = req.body || {};
-    res.json(await manager.closeTab(req.params.id, b.tab ?? b.index ?? 0));
-  });
-
-  // Start / stop ALL dev servers of a session's shared workspace (every repo it owns).
-  api.post('/sessions/:id/servers/start', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    /*
-     * The same judgement /group/start makes, from the same module.
-     *
-     * This route was the third, unfixed copy of it, and it carried every defect the
-     * group route was hardened against: it filtered on `startCfg` (a start command
-     * EXISTS) rather than `canStart` (starting will WORK), so it launched into a
-     * worktree with no node_modules and the command died on the spot; it never named
-     * the repos it declined to launch; it answered `some(r.ok)`, so one repo of three
-     * was a success; and it never looked at `listening`, so a process that spawned and
-     * bound nothing counted as up. Pressing this button reproduced, exactly, the
-     * "the BE does not seem to be running" report that /group/start was fixed for.
-     */
-    const owned = (s.repos || []).filter(promoted).map((r) => ({
-      repo: r.repo,
-      path: r.worktreePath,
-      ...servers.decorate({ repo: r.repo, path: r.worktreePath }, runningCache),
-    }));
-    const skipped = startReport.toSkip(owned);
-    const launch = startReport.toStart(owned);
-    // Slot keys come from the per-worktree feature identity (server/identity.ts) inside
-    // startAll — the one canonical key used everywhere.
-    const out = await servers.startAll(launch.map((m) => ({ repo: m.repo, worktreePath: m.path })));
-    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
-    await refreshRunning();
-    broadcastTopology();
-    res.json({ ...startReport.report(out.results, skipped), results: out.results });
-  });
-  api.post('/sessions/:id/servers/stop', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    const owned = (s.repos || []).filter(promoted);
-    for (const r of owned) await servers.stop(r.repo, r.worktreePath, seenPorts(r.worktreePath));
-    // Refresh BEFORE releasing: the guard reads what is still listening, so it has to see
-    // the world after the stops. A session's repos can be a strict subset of its feature's
-    // members, so "I stopped mine" is not "the feature is down" — see releaseSlotIfIdle.
-    await refreshRunning();
-    for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), runningCache);
-    broadcastTopology();
-    res.json({ ok: true });
-  });
-
-  api.delete('/sessions/:id', async (req, res) => {
-    // Capture the session BEFORE close (close deletes it). Mirror /api/group/delete's
-    // orphan cleanup: stop each owned worktree's dev servers + release its slot, else a
-    // running server is orphaned and its concurrency slot leaks.
-    const s = manager.get(req.params.id);
-    const owned: PromotedRepo[] = s ? (s.repos || []).filter(promoted) : [];
-    for (const r of owned) await servers.stop(r.repo, r.worktreePath, seenPorts(r.worktreePath));
-    const out = await manager.close(req.params.id, { kill: req.query.kill !== 'false' });
-    if (owned.length) {
-      await refreshRunning(); // the guard below reads the post-stop world
-      for (const r of owned) servers.releaseSlotIfIdle(servers.featureFor(r.worktreePath), runningCache);
-      broadcastTopology();
-    }
-    res.json(out);
-  });
-
-  // A repo's default branch, or 'main' when the scan cache doesn't know it — the same
-  // fallback server/routes-review.ts uses, and the one git.ts already guarantees for
-  // a repo it HAS scanned. Only a repo absent from the cache reaches the literal.
-  const defaultBranchOf = (name: string): string =>
-    repos.find((r) => r.name === name)?.defaultBranch || 'main';
-
-  // ---- review (commits, per-commit diffs & commit) ----
-  // The branch's commits per repo (+ an uncommitted summary), and one commit's inline
-  // per-file diffs on demand.
-  /*
-   * The same rollup for a FEATURE rather than a session.
-   *
-   * /sessions/:id/commits is keyed on a session, so a feature with no agent — the exact
-   * case the dock's feature pane exists for — could not answer "what is in here, and is
-   * it merged?" without starting one. Same shape, so the client renders both the same
-   * way.
-   */
-  /**
-   * One repo's review rollup: its commits, its base, and what is uncommitted.
-   *
-   * Extracted because `/group/:name/commits` and `/sessions/:id/commits` were two copies
-   * of the same 25 lines that differed only in where they got the path from — so a fix
-   * to one (a vanished worktree being reported as a clean empty review) had to be applied
-   * to both, or one of them would go on lying.
-   */
-  async function reviewRollup(repo: string, worktreePath: string, branch?: string | null) {
-    /*
-     * A worktree that is gone is REPORTED, not reviewed as empty.
-     *
-     * util.git() returns '' for any non-zero exit, including a missing cwd — so every git
-     * call quietly answered nothing and the response was byte-for-byte identical to a
-     * healthy branch with no changes: zero commits, zero files, and a fabricated `base`
-     * that no command had produced. If your work was in that worktree, the Review pane
-     * told you everything was fine and empty.
-     */
-    if (!fs.existsSync(worktreePath)) {
-      return {
-        repo,
-        worktreePath,
-        branch,
-        error: 'this worktree is no longer on disk',
-        commits: [],
-        uncommitted: { fileCount: 0, added: 0, deleted: 0 },
-      };
-    }
-    const def = defaultBranchOf(repo);
-    const { base, commits } = await review.commits(worktreePath, def);
-    const wc = await review.working(worktreePath);
-    return {
-      repo,
-      worktreePath,
-      branch,
-      base,
-      defaultBranch: def,
-      commits,
-      uncommitted: {
-        fileCount: wc.files.length,
-        added: wc.files.reduce((n, f) => n + (f.added || 0), 0),
-        deleted: wc.files.reduce((n, f) => n + (f.deleted || 0), 0),
-      },
-    };
-  }
-
-  api.get('/group/:name/commits', async (req, res) => {
-    const { group: g } = await resolveGroup(String(req.params.name || ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const out = [];
-    for (const m of g.members) {
-      if (!m.path) continue;
-      out.push(await reviewRollup(m.repo, m.path, m.branch));
-    }
-    res.json({ repos: out });
-  });
-
-  api.get('/sessions/:id/commits', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    const out = [];
-    for (const entry of s.repos || []) {
-      if (!entry.worktreePath) continue;
-      out.push(await reviewRollup(entry.repo, entry.worktreePath, entry.branch));
-    }
-    res.json({ repos: out });
-  });
-
-  api.get('/sessions/:id/commit-detail', async (req, res) => {
-    const s = manager.get(req.params.id);
-    if (!s) return res.status(404).json({ error: 'no such session' });
-    const entry = (s.repos || []).find((r) => r.repo === qs(req.query.repo));
-    if (!entry?.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
-    const sha = qs(req.query.sha) || 'uncommitted';
-    // Same boundary check as routes-review.ts: `sha` reaches a git argv, so it has
-    // to be an object name and not an option (see server/review.ts).
-    if (!review.isValidSha(sha))
-      return res.status(400).json({ error: 'sha must be a hex object name or "uncommitted"' });
-    res.json(await review.commitDetail(entry.worktreePath, defaultBranchOf(entry.repo), sha));
-  });
-
-  api.post('/sessions/:id/commit', async (req, res) => {
-    const s = manager.get(req.params.id);
-    const { repo, message, paths, amend } = req.body || {};
-    if (!s) return res.status(400).json({ error: 'no such session' });
-    const entry = (s.repos || []).find((r) => r.repo === repo);
-    if (!entry?.worktreePath) return res.status(400).json({ error: 'unknown repo or no worktree' });
-    if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
-    const out = await review.commit(entry.worktreePath, message, { amend, paths });
-    // A commit made through the UI writes refs/heads/<branch>, so the watcher would
-    // find it anyway — but it can take a debounce plus a scan to get here, and we
-    // already know. Poke directly rather than wait to be told what we just did.
-    if (out.ok) {
-      broadcastTopology();
-      ciFeed.poke({ force: true });
-    // The same trigger, for the same reason: a rescan means refs moved, and refs moving
-    // is the only thing that can change an overlap or a drift count.
-    void refreshOverlap();
-    }
-    res.json(out);
-  });
-
-  // ---- worktrees (manual) ----
-  api.post('/worktrees', async (req, res) => {
-    const { repo, branch, name } = req.body || {};
-    if (!branch && !name) return res.status(400).json({ error: 'branch or name is required' });
-    const repoObj = repos.find((r) => r.name === repo);
-    if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
-    // `name` alone is a documented request (the guard above accepts it), but an absent
-    // branch reached `git worktree add -b undefined` and created a branch literally
-    // named "undefined". Name-only means "branch after the name".
-    const out = await worktree.create(repoObj.path, branch || slug(name), name, {
-      layout: identity.layout,
-      ...worktreeCopyOpts(cfg, repo),
-    });
-    await rescan();
-    res.json(out);
-  });
-
-  api.delete('/worktrees', async (req, res) => {
-    const { repo, worktreePath, branch, deleteBranch, force } = req.body || {};
-    const repoObj = repos.find((r) => r.name === repo);
-    if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
-    // Its three siblings all guard this; this one passed the value straight into a git
-    // argv, so an omitted field became the literal string "undefined" in an error that
-    // was then reported with a 200.
-    if (!worktreePath || typeof worktreePath !== 'string') {
-      return res.status(400).json({ ok: false, error: 'worktreePath is required' });
-    }
-    const out = await worktree.remove(repoObj.path, worktreePath, { branch, deleteBranch, force: !!force });
-    await rescan();
-    res.json(out);
-  });
-
-  // ---- dev servers ----
-  // Install a worktree's dependencies. Long-running by nature — the response is the
-  // OUTCOME, not an acknowledgement, so the client can report success or the npm exit
-  // code rather than guessing from a later sweep.
-  api.post('/worktrees/install-deps', async (req, res) => {
-    const { worktreePath } = req.body || {};
-    if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
-    const r = await servers.installDeps(String(worktreePath));
-    // The worktree's canStart/depsMissing just changed, so push the topology half.
-    await refreshRunning();
-    broadcastTopology();
-    res.json(r);
-  });
-
-  api.post('/servers/start', async (req, res) => {
-    /*
-     * Validate, like every neighbouring route already does.
-     *
-     * With no body, `startAll` had nothing to start, `results` was empty, and
-     * `res.json(undefined)` is a zero-length 200 in express@5 — so a client calling
-     * `await r.json()` got a parse error instead of the message. It also skipped the
-     * canStart gate that /sessions/:id/servers/start applies, so it would happily launch
-     * into a worktree with no dependencies or none at all.
-     */
-    const repo = String(req.body?.repo || '').trim();
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!repo || !worktreePath) {
-      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
-    }
-    const member = {
-      repo,
-      path: worktreePath,
-      ...servers.decorate({ repo, path: worktreePath }, runningCache),
-    };
-    const skipped = startReport.toSkip([member]);
-    if (skipped.length) return res.status(409).json(startReport.report([], skipped));
-
-    const out = await servers.startAll([{ repo, worktreePath }]);
-    if (!out.ok) return res.status(409).json({ ok: false, error: out.slotError });
-    await refreshRunning();
-    broadcastTopology();
-    res.json(startReport.report(out.results));
-  });
-  api.post('/servers/stop', async (req, res) => {
-    const repo = String(req.body?.repo || '').trim();
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!repo || !worktreePath) {
-      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
-    }
-    const out = await servers.stop(repo, worktreePath, seenPorts(worktreePath));
-    await refreshRunning();
-    // This route already had the right rule; it is now the shared one (releaseSlotIfIdle).
-    servers.releaseSlotIfIdle(servers.featureFor(worktreePath), runningCache);
-    broadcastTopology();
-    res.json(out);
-  });
-  api.post('/servers/restart', async (req, res) => {
-    const repo = String(req.body?.repo || '').trim();
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!repo || !worktreePath) {
-      return res.status(400).json({ ok: false, error: 'repo and worktreePath are required' });
-    }
-    const feature = servers.featureFor(worktreePath);
-    const alloc = servers.allocSlotFor(feature); // reuse the feature's slot across the restart
-    if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-    const out = await servers.restart(
-      repo,
-      worktreePath,
-      servers.launchOpts(repo, feature),
-      seenPorts(worktreePath),
-    );
-    await refreshRunning();
-    broadcastTopology();
-    res.json(out);
-  });
-  api.get('/servers/logs', (req, res) => {
-    const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
-    res.json(servers.logs(qs(req.query.worktreePath), { offset }));
-  });
-
-  /*
-   * ---- run configurations ----
-   *
-   * DISCOVERED from the worktree on request, not imported and not part of the topology
-   * payload. Two reasons: an imported copy goes stale the moment the editor's config
-   * changes, and the topology half is broadcast on every git rescan — putting a
-   * per-worktree directory scan on that path would cost a handful of stats per worktree
-   * per broadcast for something only opened when a menu is.
-   *
-   * `config.runConfigs[repo]` is merged in as the MANUAL half: anything no editor config
-   * can express. Discovered entries win a name clash, since they are the live truth.
-   */
-  api.get('/run-configs', async (req, res) => {
-    const worktreePath = qs(req.query.worktreePath);
-    const repo = qs(req.query.repo);
-    if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
-    const found = await runConfigs.discover(worktreePath, { startCmd: servers.startCfg(repo)?.cmd });
-    const names = new Set(found.map((c) => c.name));
-    const manual = ((cfg.runConfigs || {})[repo] || [])
-      .filter((c) => c && c.name && c.cmd && !names.has(c.name))
-      .map((c) => ({ ...c, source: 'manual' as const, file: cfg._file }));
-    res.json({ configs: [...found, ...manual] });
-  });
-
-  api.get('/runs', (req, res) => {
-    const worktreePath = qs(req.query.worktreePath);
-    res.json({ runs: worktreePath ? runner.forWorktree(worktreePath) : runner.runs });
-  });
-
-  api.get('/runs/:id/log', (req, res) => {
-    const offset = req.query.offset !== undefined ? Number(req.query.offset) : undefined;
-    res.json(runner.logs(req.params.id, { offset }));
-  });
-
-  api.post('/runs/:id/stop', (req, res) => res.json(runner.stop(req.params.id)));
-  api.post('/runs/:id/rerun', (req, res) => res.json(runner.rerun(req.params.id)));
-  api.delete('/runs/:id', (req, res) => res.json(runner.remove(req.params.id)));
-
-  /*
-   * Hand a finished run to the agent working in that worktree.
-   *
-   * The session is looked up FROM THE RUN's worktree rather than taken from the request:
-   * a run belongs to a worktree, exactly one session owns a worktree, and letting the
-   * client name the target would let a stale tab send a failure to whichever agent it
-   * last had selected.
-   */
-  api.post('/runs/:id/to-agent', async (req, res) => {
-    const out = await handoff(
-      {
-        getRun: (id) => runner.get(id),
-        sessionFor: (p) => manager.sessionForWorktree(p),
-        send: (mux, text, session) => manager.sendWhenReady(mux, text, session as never),
-      },
-      req.params.id,
-    );
-    // 200 for "the agent is not ready", 400 for "there is nothing to send": the first is
-    // a state the client should explain, not an error it should report as a failure.
-    if (!out.ok && !out.skipped) return res.status(400).json(out);
-    res.json(out);
-  });
-
-  api.post('/run-configs/run', async (req, res) => {
-    const { repo, worktreePath, name } = req.body || {};
-    if (!worktreePath || !name) return res.status(400).json({ error: 'worktreePath and name are required' });
-
-    const found = await runConfigs.discover(String(worktreePath), {
-      startCmd: servers.startCfg(String(repo))?.cmd,
-    });
-    const manual = (cfg.runConfigs || {})[String(repo)] || [];
-    const pick = found.find((c) => c.name === name) || manual.find((c) => c && c.name === name);
-    if (!pick) return res.status(404).json({ error: `no run configuration named '${name}'` });
-
-    const kind = 'kind' in pick && pick.kind === 'server' ? 'server' : 'task';
-
-    if (kind === 'server') {
-      // Long-lived, so it is tracked exactly like a dev server: a pid, a log, and Stop
-      // stack reaches it. Only the command differs.
-      const feature = servers.featureFor(String(worktreePath));
-      const alloc = servers.allocSlotFor(feature);
-      if (alloc.error) return res.status(409).json({ ok: false, error: alloc.error });
-      const out = await servers.start(String(repo), String(worktreePath), {
-        ...servers.launchOpts(String(repo), feature),
-        cmd: pick.cmd,
-        // A run config names its own ports nowhere, so there is nothing to pre-check or
-        // poll — discovery finds it once it binds.
-        ports: [],
-        env: { ...(servers.launchOpts(String(repo), feature).env || {}), ...(pick.env || {}) },
-      });
-      await refreshRunning();
-      broadcastTopology();
-      return res.json({ ...out, kind });
-    }
-
-    /*
-     * Finite, so it becomes a RUN: status, duration, exit code, output, history.
-     *
-     * It used to open a tmux tab. That works, but it makes you read raw ANSI in a pane
-     * competing with the agent's tabs, and answers none of the questions you have about a
-     * test run. It also needed a session to exist, which a feature may not have — a run
-     * needs only a worktree.
-     */
-    const run = runner.start({
-      name: String(name),
-      repo: String(repo),
-      worktreePath: String(worktreePath),
-      cmd: pick.cmd,
-      env: pick.env,
-    });
-    return res.json({ ok: true, kind, runId: run.id });
-  });
-
-  /*
-   * Group worktrees that ended up under different names.
-   *
-   * `drift` on the topology payload reports features that look like one piece of work
-   * under two names (see features.ts detectSplitFeatures). This is the half that acts on it, and
-   * it is a SINGLE-GROUP write on purpose: the user is answering one question about one
-   * card, and POST /settings — a full replace of the whole map — would let a payload
-   * built from that card delete every group they had made by hand.
-   *
-   * The groups live in Studio's own config.json. They are SEEDED from worktree-dash's
-   * file on first run and never read from it again, so writing here is Studio editing
-   * its own state, not reaching into another tool's.
-   */
-  api.post('/groups', async (req, res) => {
-    const body = isRecord(req.body) ? req.body : {};
-    const name = String(body.name || '').trim();
-    const members = Array.isArray(body.members) ? body.members.map((m) => String(m).trim()).filter(Boolean) : [];
-    // Two members is what a group MEANS — one worktree is a feature on its own and
-    // already groups itself. Saying so beats writing a row that changes nothing.
-    if (!name || members.length < 2) {
-      return res.status(400).json({ ok: false, error: 'name and at least two members are required' });
-    }
-    cfg.groups = upsertGroup(cfg.groups, { name, members });
-    configMod.save(cfg);
-    // The grouping changes the topology (two features become one), so the payload has to
-    // be rebuilt rather than merely re-sent.
-    broadcastTopology();
-    res.json({ ok: true, groups: cfg.groups });
-  });
-
-  // ---- feature/group orchestration (run whole stack · stop & switch) ----
-  orchestrator.register(api, {
+  const app = buildApp({
     cfg,
-    // Deleting a feature strips its colour and links, which live in the config file.
     saveConfig: () => configMod.save(cfg),
-    servers,
+    guard,
+    ui,
     manager,
+    servers,
+    runner,
+    identity,
+    forge,
     repos: () => repos,
+    running: () => runningCache,
+    buildState,
     resolveGroup,
     conflictsFor,
-    refreshRunning,
-    // A getter, not the Map: refreshRunning() REPLACES runningCache rather than mutating
-    // it, so a captured reference would be the pre-refresh map every time.
-    running: () => runningCache,
-    scheduleBroadcast: broadcastTopology,
+    subscribe: (res) => bus.subscribe(res),
+    attentionSeen: () => attention.seen(),
     rescan,
+    refreshRunning,
+    broadcastTopology,
+    scheduleBroadcast,
+    forgetFeature: (name: string) => {
+      taskFeed.forget(name);
+      overlapFeed.forget(name);
+    },
+    onEventsSubscribed: () => {
+      // Someone started looking. While nobody was, the CI feed deliberately did
+      // nothing at all, so its snapshot may be stale or empty — this is what makes an
+      // opened dashboard fill in within a second rather than at the next safety net.
+      ciFeed.poke();
+      // Same reason, and equally cheap: with no ticket configured, or nothing stale, this
+      // is a filter over a small object and no request at all.
+      fire(refreshTaskStatus());
+      fire(refreshOverlap());
+      fire(refreshReviews());
+    },
+    onCommit: () => {
+      broadcastTopology();
+      ciFeed.poke({ force: true });
+      // The same trigger, for the same reason: a rescan means refs moved, and refs moving
+      // is the only thing that can change an overlap or a drift count.
+      fire(refreshOverlap());
+    },
   });
-
-  // GET /sessions/:id/ci (still an on-demand answer for SwiftBar/Alfred and any
-  // external caller) + POST /group/pr. Created above, next to the feed it feeds.
-  forge.register(api);
-
-  // Start a session in an existing worktree (Fleet: "Start session here")
-  /*
-   * ---- reinstating a closed session ----
-   *
-   * Closing a session deletes Studio's pointer; the CONVERSATION belongs to Claude Code
-   * and stays on disk. These two routes find those orphans and bring one back.
-   *
-   * Candidates are built HERE rather than in reinstate.ts because only this scope knows
-   * the repo scan, the layout and which sessions are live — and because the lookup can
-   * only go forwards, from a path to its transcript. The slug is lossy (see reinstate.ts),
-   * so walking a transcript directory back to a worktree path is not possible at all.
-   */
-  async function orphanCandidates() {
-    const taken = new Set(
-      manager
-        .all()
-        .flatMap((s) => [s.worktreePath, ...(s.repos || []).map((r) => r.worktreePath)])
-        .filter((p): p is string => !!p)
-        .map((p) => realpath(p)),
-    );
-    const out: Array<{
-      worktreePath: string;
-      repo: string;
-      name: string;
-      branch: string;
-      branchExists: boolean;
-      repoPath: string;
-    }> = [];
-
-    for (const r of repos) {
-      // Worktrees that exist right now and have no session — the common orphan.
-      for (const w of r.worktrees || []) {
-        if (w.isMain || !w.path || taken.has(realpath(w.path))) continue;
-        out.push({
-          worktreePath: w.path,
-          repo: r.name,
-          name: w.name || '',
-          branch: w.branch || '',
-          branchExists: true, // it is checked out, so it exists by definition
-          repoPath: r.path,
-        });
-      }
-      /*
-       * And worktrees that are GONE: for every local branch with no worktree, the path one
-       * WOULD occupy. Deterministic from the layout, which is what makes this findable at
-       * all — the transcript itself cannot be mapped back to a path (the slug is lossy).
-       *
-       * Enumerated LAZILY, here, rather than added to ScannedRepo: that would put a git
-       * call per repo on every scan — which fires whenever a file changes — to answer a
-       * question nobody asks until they open this list.
-       */
-      const raw = await run('git', ['-C', r.path, 'branch', '--format=%(refname:short)']);
-      const live = new Set((r.worktrees || []).map((w) => w.path));
-      for (const b of raw.stdout
-        .split('\n')
-        .map((x) => x.trim())
-        .filter(Boolean)) {
-        const name = b.split('/').pop() || b;
-        const dest = layoutMod.destFor(identity.layout, r.path, name);
-        if (live.has(dest) || taken.has(realpath(dest))) continue;
-        out.push({ worktreePath: dest, repo: r.name, name, branch: b, branchExists: true, repoPath: r.path });
-      }
-    }
-    return out;
-  }
-
-  api.get('/orphans', async (_req, res) => {
-    const cands = await orphanCandidates();
-    res.json({ orphans: reinstate.findOrphans(cands) });
-  });
-
-  /**
-   * Bring one back: recreate the worktree if it is missing, then adopt with `--resume`.
-   *
-   * Refuses rather than improvises when the branch is gone — recreating then would give an
-   * empty branch off the default with a transcript attached, i.e. an agent resuming into a
-   * directory that does not hold the code it is discussing.
-   */
-  api.post('/orphans/reinstate', async (req, res) => {
-    const worktreePath = String(req.body?.worktreePath || '').trim();
-    if (!worktreePath) return res.status(400).json({ ok: false, error: 'worktreePath is required' });
-
-    const cand = (await orphanCandidates()).find((c) => c.worktreePath === worktreePath);
-    if (!cand) return res.status(404).json({ ok: false, error: 'nothing to reinstate at that path' });
-    const [orphan] = reinstate.findOrphans([cand]);
-    if (!orphan)
-      return res.status(404).json({ ok: false, error: 'no conversation was found for that worktree' });
-    if (!orphan.recoverable) return res.status(409).json({ ok: false, error: orphan.reason });
-
-    if (!fs.existsSync(worktreePath)) {
-      // The branch exists — that is what `recoverable` checked — so this checks it out at
-      // the path the transcript is keyed to, which is what makes --resume find it.
-      const made = await worktree.create(cand.repoPath, cand.branch, cand.name, {
-        fetch: false,
-        layout: identity.layout,
-        ...worktreeCopyOpts(cfg, cand.repo),
-      });
-      if (!made.ok) return res.status(400).json({ ok: false, error: made.error });
-      await rescan();
-    }
-
-    const s = await manager.adopt({
-      worktreePath,
-      repoName: cand.repo,
-      repoPath: cand.repoPath,
-      branch: cand.branch,
-      wtname: cand.name,
-      resumeId: orphan.claudeSessionId,
-    });
-    broadcastTopology();
-    if (!s)
-      return res.status(409).json({ ok: false, error: 'a session for that worktree is already opening' });
-    res.json({ ok: true, session: s });
-  });
-
-  api.post('/worktrees/adopt', async (req, res) => {
-    const { repo, worktreePath, branch, wtname } = req.body || {};
-    if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
-    const repoObj = repos.find((r) => r.name === repo);
-    if (!repoObj) return res.status(400).json({ error: 'unknown repo' });
-    let s = await manager.adopt({ worktreePath, repoName: repo, repoPath: repoObj.path, branch, wtname });
-    if (!s) s = manager.sessionForWorktree(worktreePath); // an adopt was already in flight
-    broadcastTopology();
-    res.json(s || { error: 'session is already being opened' });
-  });
-
-  /*
-   * ---- editor open ----
-   *
-   * Takes `path` (one) or `paths` (many). A feature spans several repos, so a session
-   * driving it has several worktrees to look at, and this route could only ever open
-   * one — the caller's only option was to open the primary and go find the rest by hand.
-   *
-   * `paths` uses the editor's `openGroup` template when it has one (Zed takes every path
-   * as a single workspace) and otherwise loops `open`, which is exactly what
-   * /group/open does — WebStorm has no openGroup, so it gets one window per repo.
-   */
-  api.post('/open', async (req, res) => {
-    const { path: p, paths, editor } = req.body || {};
-    // Splits "did not name one" from "named one that does not exist" — the old
-    // `editors[x] || editors[default]` silently opened the default for a typo.
-    const pick = resolveEditor(cfg.editors, editor, cfg.defaultEditor);
-    if (!pick.ok) return res.status(400).json({ ok: false, error: pick.error });
-    const ed = pick.editor;
-    // Dedupe: two repos of one feature are distinct worktrees, but a caller that passed
-    // the same path twice must not open two windows on it.
-    const list = [
-      ...new Set(
-        (Array.isArray(paths) ? paths : [p]).filter((x): x is string => typeof x === 'string' && !!x),
-      ),
-    ];
-    if (!list.length) return res.status(400).json({ error: 'path or paths is required' });
-    // split/join, not replace(): `$&`/`` $` ``/`$'`/`$$` in a REPLACEMENT string expand
-    // after shq() quoted the path, so such a path would open the wrong file.
-    const cmds =
-      list.length > 1 && ed.openGroup
-        ? [ed.openGroup.split('{paths}').join(list.map(shq).join(' '))]
-        : list.map((one) => ed.open.split('{path}').join(shq(one)));
-    // The exit code, not a hardcoded ok — see openEditor().
-    const opened = await openEditor(cmds);
-    if (!opened.ok) return res.status(500).json({ ok: false, error: `editor failed: ${opened.error}` });
-    res.json({ ok: true, opened: list.length });
-  });
-
-  transcriptRoutes.register(api, { manager, cfg });
-  routesReview.register(api, { manager, repos: () => repos, broadcast: scheduleBroadcast });
-
-  // ---- Claude Code hook receiver ----
-  // Not under /api: the URL is baked into every session's generated settings file.
-  // Those files are read once, at claude's launch — so a session that was already
-  // running when this build first started still POSTs a tokenless URL and cannot be
-  // told otherwise without killing it. `hookAuth` marks the sessions whose settings
-  // file we have since written *with* a token; anything else is grandfathered in.
-  // The exemption is narrow (this route only sets a session's state/activity string)
-  // and self-clearing (activate/restore rewrites the file and sets the flag).
-  app.post('/hook/:event', (req, res) => {
-    // `?wts=a&wts=b` (or `?wts[x]=y`) hands express an array/object, not a string —
-    // same hazard transcript-routes.ts collapses for its query params. Here it made
-    // the lookup miss and the hook get dropped in silence. Collapse to the first
-    // value, which is what a client sending one session id meant.
-    const raw = req.query.wts;
-    const id = raw == null ? '' : String(Array.isArray(raw) ? raw[0] : raw);
-    const known = id ? manager.get(id) : null;
-    const deny = guard.denyToken(req);
-    if (deny && !(known && known.hookAuth !== true))
-      return res.status(deny.status).json({ error: deny.error });
-    let payload = req.body;
-    if (typeof payload === 'string') {
-      try {
-        payload = JSON.parse(payload);
-      } catch {
-        payload = { raw: payload };
-      }
-    }
-    /*
-     * A dropped hook says so. This answered ok:true for an empty or unknown `wts`, which
-     * is indistinguishable from an applied one — the exact failure mode the array
-     * coercion just above was added to fix, left in place one line further down. The
-     * session's state simply stops updating and nothing anywhere says why.
-     *
-     * Still a 200: the hook runs inside the user's claude process and a non-2xx there is
-     * noise in their terminal for a condition they cannot act on mid-session. `applied`
-     * is for the log and for anyone debugging a card that has gone quiet.
-     */
-    if (!known) {
-      console.warn(
-        `[wt-studio] hook ${req.params.event} dropped: ${id ? `unknown session ${id}` : 'no session id'}`,
-      );
-      return res.json({ ok: true, applied: false, reason: id ? 'unknown session' : 'no session id' });
-    }
-    manager.applyHook(id, req.params.event, payload || {});
-    res.json({ ok: true, applied: true });
-  });
-
-  // Client-side routes (/review, /search, /usage) reach the daemon on a deep link or a
-  // reload, and the daemon knows nothing about them. Last, so it shadows no route above.
-  webui.mountFallback(app, { ui, token: cfg._token });
-
-  // Truly last: the net every route above falls into. express@5 awaits handlers, so a
-  // handler that throws — or a body parser that refuses a body — lands here and gets an
-  // answer, instead of escaping as the unhandled rejection crash.install() treats as
-  // fatal. This is why no handler above needs a wrapper around it.
-  app.use(crash.routeErrors());
 
   // ---- HTTP + WS ----
   const server = http.createServer(app);
@@ -1516,6 +388,17 @@ async function main() {
     rescan,
     refreshRunning,
     reconcile: () => manager.reconcile(),
+    /*
+     * The pulled feeds get a heartbeat, which three of the four never had.
+     *
+     * ci.ts carried its own tick; reviews, ticket status and overlap were driven only by
+     * an SSE subscribe, a rescan and a commit. Leave one tab open and none of those fire
+     * again — so the review queue's five-minute TTL and ticket status's ten were
+     * decorative, and the data on screen could be hours stale while looking live. The
+     * scheduler here already knows whether anyone is watching, which is the thing that
+     * makes polling three subprocess-spawning feeds affordable.
+     */
+    feeds: { reviews: refreshReviews, taskStatus: refreshTaskStatus, overlap: refreshOverlap },
     hasViewers: attention.active,
   });
   // restore() guards each session on its own, so a rejection here means the whole
@@ -1529,8 +412,22 @@ async function main() {
   if (restored) console.log(`[wt-studio] restored ${restored} session(s)`);
 
   server.listen(cfg.web.port, cfg.web.host, () => {
+    /*
+     * The printed URL carries the token, because the bare one no longer opens anything.
+     *
+     * The document is gated now — serving the shell to anyone who asked was how the
+     * token reached any local process on the machine. The cost is that every habitual
+     * way in (this line, a bookmark, the menubar) had to learn to hand it over once;
+     * the page swaps it for a cookie and strips it from the address bar immediately.
+     *
+     * Yes, this puts the token in the daemon's log. That log is written to the state
+     * directory alongside the token file itself, and anything that can read one can
+     * read the other — so it gives away nothing new, and the alternative is printing a
+     * link that lands the user on a challenge page with no explanation.
+     */
+    const base = `http://${cfg.web.host}:${cfg.web.port}`;
     console.log(
-      `[wt-studio] http://${cfg.web.host}:${cfg.web.port}  (${repos.length} repos, mux=${mux ? mux.name : 'none'})`,
+      `[wt-studio] ${base}/?token=${cfg._token}  (${repos.length} repos, mux=${mux ? mux.name : 'none'})`,
     );
     /*
      * Zero repos is a DEAD END, and it used to be announced as a number.

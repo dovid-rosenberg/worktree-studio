@@ -15,10 +15,10 @@ class Overlays {
    * Transcript search.
    *
    * An OVERLAY, not a destination. Search was previously a section inside the
-   * session-scoped Insights tab, and then a drill-down inside fleet Insights — buried
-   * both times, because in both it was something you reached only after arriving
-   * somewhere else for a different reason. It is its own verb: ⌘⇧F from anywhere,
-   * like every editor's search-across-everything.
+   * session-scoped Insights tab, and then a drill-down inside the fleet-wide Insights
+   * view — buried both times, because in both it was something you reached only after
+   * arriving somewhere else for a different reason. Insights is gone entirely now; search
+   * is its own verb: ⌘⇧F from anywhere, like every editor's search-across-everything.
    */
   search = $state(false);
 

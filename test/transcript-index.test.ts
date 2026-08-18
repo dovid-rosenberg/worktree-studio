@@ -6,7 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import * as transcripts from '../server/transcripts.ts';
-import { TranscriptIndex, summarize, ftsQuery, likePattern } from '../server/transcript-index.ts';
+import { TranscriptIndex, ftsQuery, likePattern } from '../server/transcript-index.ts';
 
 // Each test gets its own fake ~/.claude/projects root and its own on-disk db, so the
 // incremental-offset behaviour is exercised against real files rather than mocks.
@@ -47,23 +47,10 @@ function append(file: string, records: unknown[]) {
   fs.appendFileSync(file, `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
 }
 
-function usage(over: Record<string, unknown> = {}) {
-  return {
-    input_tokens: 10,
-    output_tokens: 100,
-    cache_creation_input_tokens: 1000,
-    cache_read_input_tokens: 5000,
-    cache_creation: { ephemeral_5m_input_tokens: 1000, ephemeral_1h_input_tokens: 0 },
-    server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
-    ...over,
-  };
-}
-
 interface AsstOpts {
   msgId: string;
   text: string;
   model?: string | null;
-  use?: ReturnType<typeof usage>;
   blockType?: 'text' | 'thinking';
   ts?: string;
 }
@@ -71,7 +58,6 @@ function asst({
   msgId,
   text,
   model = 'claude-opus-5',
-  use = usage(),
   blockType = 'text',
   ts = '2026-07-27T12:00:00.000Z',
 }: AsstOpts) {
@@ -84,7 +70,7 @@ function asst({
     cwd: CWD,
     gitBranch: 'feat/x',
     requestId: `req-${msgId}`,
-    message: { id: msgId, role: 'assistant', model, content: [block], usage: use },
+    message: { id: msgId, role: 'assistant', model, content: [block] },
   };
 }
 
@@ -140,12 +126,14 @@ test('re-indexing the same bytes is idempotent', async () => {
   append(file, [user('hello'), asst({ msgId: 'm1', text: 'hi' })]);
   await index.index(session());
   const before = index.status().messages;
-  const usageBefore = summarize(index.usageRows('s_1'));
 
   await index.index(session(), { full: true }); // force a full re-read from offset 0
   assert.equal(index.status().messages, before, 'unique(session,uuid) absorbs the replay');
-  const after = summarize(index.usageRows('s_1'));
-  assert.equal(after.output, usageBefore.output, 'usage is not double counted on a full re-index');
+  assert.equal(
+    expectOk(index.search('hi')).total,
+    1,
+    'and the FTS shadow table does not gain a duplicate hit either',
+  );
   index.close();
 });
 
@@ -162,7 +150,7 @@ test('a truncated tail is indexed only once it is complete', async () => {
   fs.appendFileSync(file, `${rec.slice(30)}\n`);
   const p2 = expectOk(await index.index(session()));
   assert.equal(p2.added, 1, 'the completed line is picked up on the next pass');
-  assert.equal(summarize(index.usageRows('s_1')).output, 100);
+  assert.equal(expectOk(index.search('complete answer')).total, 1, 'and is searchable');
   index.close();
 });
 
@@ -186,7 +174,6 @@ test('a relocated transcript is re-read from the start, not from a stale offset'
   const p = expectOk(await index.index(session({ home: CWD })));
   assert.equal(p.file, newFile);
   assert.equal(p.added, 3, 'the moved file is read whole rather than sliced at the old offset');
-  assert.equal(summarize(index.usageRows('s_1')).messages, 2, 'but usage still dedupes to two responses');
   index.close();
 });
 
@@ -205,84 +192,6 @@ test('malformed lines are counted and skipped without stalling the offset', asyn
   assert.equal(p.added, 2);
   assert.equal(p.malformedLines, 1);
   assert.equal(p.offset, fs.statSync(file).size, 'a bad line does not pin the offset');
-  index.close();
-});
-
-// ---- usage / telemetry ------------------------------------------------------
-
-test('the index dedupes per-content-block usage the same way the reader does', async () => {
-  const { root, index } = fixture();
-  const file = transcriptFile(root);
-  const use = usage({
-    input_tokens: 2,
-    output_tokens: 1017,
-    cache_creation_input_tokens: 0,
-    cache_read_input_tokens: 20576,
-    cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
-  });
-  // one API response → four JSONL lines, identical usage on each
-  append(file, [
-    asst({ msgId: 'msg_A', text: 'thinking', use, blockType: 'thinking' }),
-    asst({ msgId: 'msg_A', text: 'answer', use }),
-    asst({ msgId: 'msg_A', text: 'more', use }),
-    asst({ msgId: 'msg_A', text: 'even more', use }),
-  ]);
-  await index.index(session());
-  const s = summarize(index.usageRows('s_1'));
-  assert.equal(index.status().messages, 4, 'all four lines are searchable');
-  assert.equal(s.messages, 1, 'but they bill as one response');
-  assert.equal(s.output, 1017);
-  assert.equal(s.cacheRead, 20576);
-  index.close();
-});
-
-test('index telemetry matches a direct read of the same transcript', async () => {
-  const { root, index } = fixture();
-  const file = transcriptFile(root);
-  append(file, [
-    user('go'),
-    asst({
-      msgId: 'm1',
-      text: 'a',
-      use: usage({
-        output_tokens: 111,
-        cache_creation_input_tokens: 2000,
-        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 2000 },
-      }),
-    }),
-    asst({ msgId: 'm2', text: 'b', model: 'claude-haiku-4-5', use: usage({ output_tokens: 222 }) }),
-  ]);
-  await index.index(session());
-  const fromIndex = summarize(index.usageRows('s_1'));
-  const fromFile = await transcripts.aggregate(file);
-  assert.equal(fromIndex.output, fromFile.output);
-  assert.equal(fromIndex.input, fromFile.input);
-  assert.equal(fromIndex.cacheWrite1h, fromFile.cacheWrite1h);
-  assert.equal(fromIndex.cacheRead, fromFile.cacheRead);
-  assert.equal(fromIndex.costUsd, fromFile.costUsd, 'the two code paths must never disagree on cost');
-  assert.equal(fromIndex.costIsEstimate, true);
-  index.close();
-});
-
-test('usage rolls up per model and flags gaps in the price table', async () => {
-  const { root, index } = fixture();
-  const file = transcriptFile(root);
-  append(file, [
-    asst({ msgId: 'm1', text: 'a', use: usage({ output_tokens: 100 }) }),
-    asst({ msgId: 'm2', text: 'b', model: 'claude-unreleased-9', use: usage({ output_tokens: 100 }) }),
-  ]);
-  await index.index(session());
-  const s = summarize(index.usageRows('s_1'));
-  assert.equal(s.byModel.length, 2);
-  assert.deepEqual(s.unpricedModels, ['claude-unreleased-9']);
-  assert.equal(
-    present(
-      s.byModel.find((m) => m.model === 'claude-unreleased-9'),
-      'the unpriced model row',
-    ).costUsd,
-    null,
-  );
-  assert.ok(present(s.costUsd, 'a cost') > 0);
   index.close();
 });
 
@@ -381,13 +290,4 @@ test('ftsQuery quotes every term and returns null for an empty query', () => {
 test('likePattern escapes sql wildcards so they are searched, not matched', () => {
   assert.equal(likePattern('100%'), '%100\\%%');
   assert.equal(likePattern('a_b'), '%a\\_b%');
-});
-
-test('summarize of nothing is a zeroed total, not a crash', () => {
-  const s = summarize([]);
-  assert.equal(s.input, 0);
-  assert.equal(s.output, 0);
-  assert.equal(s.messages, 0);
-  assert.equal(s.costUsd, 0);
-  assert.deepEqual(s.byModel, []);
 });

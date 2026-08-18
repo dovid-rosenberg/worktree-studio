@@ -13,7 +13,8 @@
 //     stopped before this one can bind the same ports (unless the repo is slotted).
 import type { Router } from 'express';
 import * as worktree from './worktree.ts';
-import { openEditor, resolveEditor, shq } from './util.ts';
+import { defaultBase, updateFromBase } from './git.ts';
+import { editorCommands, openEditor, requireFeature, requireRepo, resolveEditor } from './util.ts';
 import * as startReport from './start-report.ts';
 import type { StartOutcome } from './start-report.ts';
 
@@ -154,12 +155,14 @@ interface OrchestratorDeps {
   manager: Manager;
   repos: () => RepoRef[];
   /**
-   * `name` arrives straight off the wire, so every call site coerces it with
-   * String() first — the resolver only ever compares it against a feature name.
+   * `name` arrives straight off the wire; requireFeature() is what coerces it, so no
+   * route below spells String() — the resolver only ever compares it against a name.
    */
   resolveGroup: (name: string) => Promise<{ group: ResolvedGroup | null; flat: Member[] }>;
   conflictsFor: (member: Member, flat: Member[]) => Member[];
   refreshRunning: () => Promise<unknown>;
+  /** Drop a deleted feature from the pulled feeds that are keyed by feature name. */
+  forgetFeature?: (name: string) => void;
   /** The discovered running map, read AFTER refreshRunning() so slot release can be guarded. */
   running: () => Map<string, { pid: number; ports: number[] }>;
   scheduleBroadcast: () => void;
@@ -177,6 +180,8 @@ interface GroupBody {
   deleteBranches?: unknown;
   /** `git worktree remove --force` — see WorktreeRemoveOptions.force. */
   force?: unknown;
+  /** /group/update: yes, stop the dev servers running in the worktrees being rebased. */
+  stopServers?: unknown;
 }
 
 // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
@@ -190,6 +195,7 @@ function register(app: Router, deps: OrchestratorDeps): void {
     resolveGroup,
     conflictsFor,
     refreshRunning,
+    forgetFeature,
     running,
     scheduleBroadcast,
     rescan,
@@ -206,8 +212,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/start', async (req, res) => {
     const { group, stopConflicts }: GroupBody = req.body || {};
-    const { group: g, flat } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const { group: g, flat } = found.value;
     // Both halves of the split come from server/start-report.ts, which is also what the
     // session route uses — that shared rule is the whole reason this cannot drift again.
     const toStart = startReport.toStart(g.members);
@@ -226,8 +233,24 @@ function register(app: Router, deps: OrchestratorDeps): void {
       return res.json({ ok: true, needsConfirm: true, conflicts, willStart: toStart, skipped });
     }
     if (stopConflicts) {
+      /*
+       * Stopping a conflict has to FREE ITS SLOT, or the stop is the whole of what happens.
+       *
+       * This stopped the conflicting features and released nothing. With maxSlots 2 and A
+       * and B running, agreeing to stop conflicts so C can start took A down, waited, and
+       * then found both slots still held — startAll answered "no free concurrency slot",
+       * the route returned 409, and the user was left with A stopped, C never started and
+       * an error that named neither. The slots were only reclaimed a sweep later, by
+       * reconcileSlots, long after this request had failed.
+       *
+       * The settle stays where it was and now earns its keep twice: a server that has just
+       * been SIGTERMed can hold its socket for a moment, and asking "is this feature still
+       * listening?" too early answers yes and keeps the slot anyway.
+       */
       for (const c of conflicts) await servers.stop(c.repo, c.path, c.ports);
       await new Promise((r) => setTimeout(r, 1200));
+      await refreshRunning();
+      releaseIdleSlots(conflicts);
     }
     // Key each slot on the member's own feature identity — the one canonical key.
     // Members of a real feature resolve to the same identity → one slot; under the
@@ -245,11 +268,12 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/stop', async (req, res) => {
     const { group }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const running = g.members.filter((m) => m.running);
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
+    const running_ = g.members.filter((m) => m.running);
     const stops = await Promise.all(
-      running.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path, m.ports)) })),
+      running_.map(async (m) => ({ repo: m.repo, ...(await servers.stop(m.repo, m.path, m.ports)) })),
     );
     // Refresh first, then release: the guard reads what is still listening, and this
     // released the slot BEFORE looking — so a member that refused to die still took its
@@ -283,8 +307,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
 
   app.post('/group/restart', async (req, res) => {
     const { group }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
     const toRestart = g.members.filter((m) => m.running || m.canStart);
     // Same omission /group/start had: a member that is neither running nor startable is
     // dropped here too, and a restart that silently brings back less than was asked for
@@ -320,35 +345,130 @@ function register(app: Router, deps: OrchestratorDeps): void {
     res.json(startReport.report(results, skipped));
   });
 
+  /*
+   * UPDATE FROM BASE — the verb behind "behind 27".
+   *
+   * The drift chip has been able to say how far a feature has fallen behind its base
+   * since overlap.ts shipped, and acting on it meant opening a terminal in each of the
+   * feature's repos and typing the same rebase into every one. A branch 27 commits behind
+   * is also the state the wrong-branch dev-server incidents come out of, so the number was
+   * being shown at exactly the moment nothing could be done about it from here.
+   *
+   * PER MEMBER, like every other group verb: one repo of a feature can rebase cleanly
+   * while another refuses because its tree is dirty, and reporting a single boolean for
+   * the feature would hide whichever half needs the work. git.updateFromBase() owns the
+   * refusals (see its comment for why rebase and not merge); this route owns the fact
+   * that a feature is several repos, and the dev servers.
+   *
+   * THE DEV SERVERS ARE STOPPED FIRST, and only with the caller's agreement.
+   * A rebase rewrites the working tree under whatever is watching it: a bundler picks up
+   * files mid-replay, HMR pushes a module graph that matches no commit, and a server that
+   * survives to the end is serving a tree it never read. Worse, the dev server is what
+   * makes a worktree feel safe to leave running — so the failure looks like the app
+   * breaking, not like the rebase. Refusing outright would make the verb useless (the
+   * stack is usually up), and restarting automatically afterwards would be a second guess:
+   * the base can bring a new lockfile down, so the honest next step is the ▶ button, which
+   * re-checks whether the member can start at all. So: name what is running, ask, stop,
+   * rebase, and report what was stopped.
+   */
+  app.post('/group/update', async (req, res) => {
+    const { group, stopServers }: GroupBody = req.body || {};
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
+
+    const live = g.members.filter((m) => m.running);
+    if (live.length && !stopServers)
+      // The same confirm shape /group/start uses for its conflicts, so the client has one
+      // pattern to follow rather than two.
+      return res.json({
+        ok: true,
+        needsConfirm: true,
+        running: live.map((m) => ({ repo: m.repo, path: m.path, wtname: m.wtname })),
+      });
+    const stopped: string[] = [];
+    if (live.length) {
+      for (const m of live) {
+        await servers.stop(m.repo, m.path, m.ports);
+        stopped.push(m.repo);
+      }
+      // Refresh first, then release — the guard reads what is still listening, exactly as
+      // /group/stop does. A slot left held here would block the ▶ the user is about to press.
+      await refreshRunning();
+      releaseIdleSlots(g.members);
+    }
+
+    const results: Array<{
+      repo: string;
+      base?: string;
+      ok: boolean;
+      updated: boolean;
+      behind: number;
+      error?: string;
+      conflicts?: string[];
+    }> = [];
+    for (const m of g.members) {
+      const repoObj = repos().find((r) => r.name === m.repo);
+      if (!repoObj) {
+        results.push({ repo: m.repo, ok: false, updated: false, behind: 0, error: 'unknown repo' });
+        continue;
+      }
+      /*
+       * The base is resolved from the repo, not taken from the request.
+       *
+       * defaultBase() keeps the `origin/` prefix — the same ref the drift feed measures
+       * against (server.ts's baseFor) and the same one worktree.create() cuts from. A
+       * caller-supplied base would let a POST body rebase four checkouts onto anything.
+       *
+       * No fetch: the number the user pressed was computed from the refs that are already
+       * local, and a verb whose result does not match the number that invited it is worse
+       * than one that is occasionally a fetch behind. The next sweep re-reads the drift.
+       */
+      const base = await defaultBase(repoObj.path);
+      results.push({ repo: m.repo, base, ...(await updateFromBase(m.path, base)) });
+    }
+
+    // The heads moved, so every read keyed on them is stale: rescan re-describes the
+    // worktrees and the drift feed recomputes off the new shas.
+    await rescan();
+    scheduleBroadcast();
+    res.json({
+      // "No failures", the same rule /group/start and /group/pr settled on. A feature
+      // where three repos rebased and one refused is not an update that worked.
+      ok: results.every((r) => r.ok),
+      updated: results.filter((r) => r.updated).length,
+      total: results.length,
+      stopped,
+      results,
+    });
+  });
+
   app.post('/group/open', async (req, res) => {
     const { group, editor }: GroupBody = req.body || {};
-    const { group: g } = await resolveGroup(String(group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    // String(): `editor` is whatever the body carried — it can be an array, an object,
-    // a number. A property access coerces the key exactly this way already, so naming
-    // the coercion cannot change which editor is picked.
+    const found = await requireFeature(res, resolveGroup, group);
+    if (!found.ok) return;
+    const g = found.value.group;
     // Same resolution as POST /open, from the same helper — this was the second copy of
     // an expression that could not tell an unnamed editor from an unknown one.
     const pick = resolveEditor(cfg.editors, editor, cfg.defaultEditor);
     if (!pick.ok) return res.status(400).json({ ok: false, error: pick.error });
-    const ed = pick.editor;
-    const paths = g.members.map((m) => m.path);
-    // split/join, never replace(): the shell-quoted path is the REPLACEMENT string, and
-    // `$&`, `` $` ``, `$'` and `$$` in a replacement string are expanded by the engine
-    // AFTER shq() has done its quoting — so a worktree path containing `$&` would open
-    // some other path entirely, quoting notwithstanding. split/join is literal.
-    const cmds = ed.openGroup
-      ? [ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]
-      : paths.map((p) => ed.open.split('{path}').join(shq(p)));
-    const opened = await openEditor(cmds);
+    // ...and the templating is the same helper too, for the same reason: it was the
+    // second copy, quoting hazard and all. See editorCommands().
+    const opened = await openEditor(
+      editorCommands(
+        pick.editor,
+        g.members.map((m) => m.path),
+      ),
+    );
     if (!opened.ok) return res.status(500).json({ ok: false, error: `editor failed: ${opened.error}` });
     res.json({ ok: true });
   });
 
   // Close a feature: stop its servers + deactivate its sessions (keep worktrees).
   app.post('/group/close', async (req, res) => {
-    const { group: g } = await resolveGroup(String(req.body?.group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, req.body?.group);
+    if (!found.ok) return;
+    const g = found.value.group;
     for (const m of g.members) {
       if (m.running) await servers.stop(m.repo, m.path, m.ports);
       if (m.session) await manager.deactivate(m.session.id);
@@ -364,8 +484,9 @@ function register(app: Router, deps: OrchestratorDeps): void {
   app.post('/group/delete', async (req, res) => {
     const { group, deleteBranches, force }: GroupBody = req.body || {};
     const name = String(group ?? '');
-    const { group: g } = await resolveGroup(name);
-    if (!g) return res.status(404).json({ error: 'no such feature' });
+    const found = await requireFeature(res, resolveGroup, name);
+    if (!found.ok) return;
+    const g = found.value.group;
     const results: Array<{ repo: string; ok: boolean; error?: string; branchError?: string }> = [];
     for (const m of g.members) {
       const repoObj = repos().find((r) => r.name === m.repo);
@@ -432,6 +553,16 @@ function register(app: Router, deps: OrchestratorDeps): void {
       }
     }
     if (stripped) saveConfig?.();
+    /*
+     * The in-memory feeds are keyed by feature name too, and nothing ever dropped them.
+     *
+     * reviews.ts and task-status.ts each export a `forget()` documented as the thing
+     * called when a feature is deleted "so the map cannot grow forever". Neither had a
+     * caller anywhere — the config decorations above were cleaned up and the caches were
+     * not, so a deleted feature's ticket status outlived it for as long as the daemon
+     * ran. Unbounded in the slow direction: every feature ever deleted stays resident.
+     */
+    forgetFeature?.(name);
     await rescan();
     res.json({ ok: results.every((r) => r.ok), results });
   });
@@ -439,24 +570,26 @@ function register(app: Router, deps: OrchestratorDeps): void {
   // One session per feature: return the existing one, or start a single session
   // that drives ALL the feature's worktrees (adopt the first, /add-dir the rest).
   app.post('/group/session', async (req, res) => {
-    const { group: g } = await resolveGroup(String(req.body?.group ?? ''));
-    if (!g) return res.status(404).json({ error: 'no such feature' });
-    const members = g.members;
+    const found = await requireFeature(res, resolveGroup, req.body?.group);
+    if (!found.ok) return;
+    const members = found.value.group.members;
     if (!members.length) return res.status(400).json({ error: 'feature has no members' });
     for (const m of members) {
       const s = manager.sessionForWorktree(m.path);
       if (s) return res.json({ ok: true, session: s, existed: true });
     }
     const [primary, ...rest] = members;
-    const pRepo = repos().find((r) => r.name === primary.repo);
-    // A repo the scan cache has not seen. The `rest` loop below already skips one;
-    // the primary went straight to `pRepo.path`, so the same miss was a TypeError —
-    // a 500 leaking an internal message where the caller's own 400 belongs.
-    if (!pRepo) return res.status(400).json({ error: 'unknown repo' });
+    // A repo the scan cache has not seen. The `rest` loop below already skips one; the
+    // primary went straight to `pRepo.path`, so the same miss was a TypeError — a 500
+    // leaking an internal message where the caller's own 400 belongs. THIS is the site
+    // requireRepo() exists for: the guard cannot be forgotten, because `.value` does not
+    // exist until the check has narrowed it.
+    const pRepo = requireRepo(res, repos(), primary.repo);
+    if (!pRepo.ok) return;
     const session = await manager.adopt({
       worktreePath: primary.path,
       repoName: primary.repo,
-      repoPath: pRepo.path,
+      repoPath: pRepo.value.path,
       branch: primary.branch,
       wtname: primary.wtname,
     });

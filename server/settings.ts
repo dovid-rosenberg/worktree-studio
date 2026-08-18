@@ -29,6 +29,27 @@ export function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
+/**
+ * A URL a browser may be pointed at from inside the app.
+ *
+ * Only absolute http and https. Everything the UI does with a stored link ends in an
+ * `href`, in a page that holds the boot token — so `javascript:` is not an exotic input
+ * to guard against, it is the whole attack: one click on a pinned link and the token is
+ * in someone else's query string. `data:` and `file:` are refused for the same reason.
+ *
+ * Scheme-less values ("example.com") are refused rather than helpfully prefixed. Guessing
+ * turns a typo into a link to somewhere real, and the caller who typed it is right here
+ * to be told.
+ */
+export function isFollowable(url: string): boolean {
+  try {
+    const p = new URL(url).protocol;
+    return p === 'http:' || p === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /** `[1231, 1999]`, `"1231 1999"` and `"1231,1999"` all mean the same thing. */
 export function coercePorts(v: unknown): number[] {
   return (Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\s,]+/))

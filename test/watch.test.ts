@@ -57,6 +57,12 @@ const QUIET = {
   runningIdleMs: 3600000,
   reconcileActiveMs: 3600000,
   reconcileIdleMs: 3600000,
+  reviewsActiveMs: 3600000,
+  reviewsIdleMs: 3600000,
+  taskStatusActiveMs: 3600000,
+  taskStatusIdleMs: 3600000,
+  overlapActiveMs: 3600000,
+  overlapIdleMs: 3600000,
 };
 
 // Boots a watcher over `base` with a counting rescan. Returns the handle plus the
@@ -366,6 +372,93 @@ test('the safety net still rescans when the filesystem said nothing at all', asy
   });
 
   await waitFor(() => calls.length >= 2, { label: 'the safety-net rescans' });
+});
+
+test('the pulled feeds get a heartbeat, and it is paced by whether anyone is looking', async (t) => {
+  /*
+   * Three of the four pulled feeds had no heartbeat at all. The review queue, the ticket
+   * statuses and the branch drift ran on an SSE subscribe, a rescan and a commit — so with
+   * one browser tab left open and nobody committing, their TTLs expired into nothing and
+   * the rail showed the same answer for the life of that connection.
+   *
+   * They are jobs here for the same reason `running` and `reconcile` are: the pacing and
+   * the re-entrancy are one implementation, and the idle arm is what keeps a `glab` per
+   * repo from running for an audience of nobody.
+   */
+  const base = tempBase();
+  makeRepo(path.join(base, 'alpha'));
+  let viewers = false;
+  const ran = { reviews: 0, taskStatus: 0, overlap: 0 };
+  const { h } = await boot(base, {
+    intervals: {
+      tickMs: 15,
+      reviewsActiveMs: 40,
+      reviewsIdleMs: 3600000,
+      taskStatusActiveMs: 40,
+      taskStatusIdleMs: 3600000,
+      overlapActiveMs: 40,
+      overlapIdleMs: 3600000,
+    },
+    feeds: {
+      reviews: async () => {
+        ran.reviews += 1;
+      },
+      taskStatus: async () => {
+        ran.taskStatus += 1;
+      },
+      overlap: async () => {
+        ran.overlap += 1;
+      },
+    },
+    hasViewers: () => viewers,
+  });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  assert.deepEqual(ran, { reviews: 0, taskStatus: 0, overlap: 0 }, 'boot spawns nothing for nobody');
+  await sleep(300);
+  assert.deepEqual(ran, { reviews: 0, taskStatus: 0, overlap: 0 }, 'and neither does an idle daemon');
+
+  viewers = true;
+  await waitFor(() => ran.reviews >= 2 && ran.taskStatus >= 2 && ran.overlap >= 2, {
+    label: 'every feed to refresh on the clock alone, with no fs event and no subscribe',
+  });
+  assert.ok(h.stats().reviews >= 2, 'and each one is countable in stats()');
+});
+
+test('a slow feed is never started twice, and a throwing one does not stop the scheduler', async (t) => {
+  // The re-entrancy guard the feeds would each have grown their own copy of. A sweep that
+  // outlasts its interval must miss ticks, not overlap itself — these are subprocesses.
+  const base = tempBase();
+  makeRepo(path.join(base, 'alpha'));
+  let inFlight = 0;
+  let peak = 0;
+  let overlaps = 0;
+  const { h } = await boot(base, {
+    intervals: { tickMs: 15, reviewsActiveMs: 20, overlapActiveMs: 20 },
+    feeds: {
+      reviews: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await sleep(120);
+        inFlight -= 1;
+      },
+      overlap: async () => {
+        overlaps += 1;
+        throw new Error('the tracker exploded');
+      },
+    },
+    hasViewers: () => true,
+  });
+  t.after(() => {
+    h.stop();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  await waitFor(() => overlaps >= 3, { label: 'a throwing feed to keep being retried' });
+  assert.equal(peak, 1, 'a slow feed is never running twice at once');
 });
 
 test('a failing rescan does not take the watcher down', async (t) => {

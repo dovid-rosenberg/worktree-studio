@@ -35,7 +35,6 @@
  */
 
 import { ui } from '$lib/stores/ui.svelte.js';
-import { world } from '$lib/stores/world.svelte.js';
 import { overlays } from '$lib/stores/overlays.svelte.js';
 import { uiDialog } from '$lib/stores/dialog.svelte.js';
 import { runStack } from '$lib/ops.svelte.js';
@@ -50,8 +49,8 @@ import { toast } from '$lib/stores/toasts.svelte.js';
  * working. It sends LF. Five real bindings were missing, including Escape, which is the
  * most consequential key in the app.
  *
- * Grouped, because a flat list of eleven gives no clue that half of them only do anything
- * while the terminal has focus.
+ * Grouped, because a flat list gives no clue that half of them only do anything while the
+ * terminal has focus.
  */
 const ROWS: [string, string][] = [
   ['⌘K', 'Command palette'],
@@ -60,7 +59,6 @@ const ROWS: [string, string][] = [
   // level and a page cannot preventDefault it — so on macOS this may never reach us.
   // Kept rather than dropped: the binding is real, and ＋ New session is always there.
   ['⌘N', 'New session'],
-  ['⌘\\', 'Toggle Insights'],
   ['⌘D', 'Review changes'],
   ['⌘R', 'Run stack'],
   ['⌥1–9', 'Jump to the Nth rail row — the number is on the card'],
@@ -138,12 +136,17 @@ export function handleShortcut(e: KeyboardEvent): void {
    */
   if (e.altKey && !e.metaKey && !e.ctrlKey && /^Digit[1-9]$/.test(e.code) && !overlays.any) {
     e.preventDefault();
-    // The rail draws agents then features, and a feature may have no session — so a row
-    // is picked by what it IS, not by a session id it might not have.
+    /*
+     * A row is picked by WHAT IT IS — the tagged selection railOrder carries — not by a
+     * name looked up in a list.
+     *
+     * The lookup was `world.features.find(f => f.name === pick.name)`, and a review row
+     * came through as a feature named after a merge-request title. Nothing matched, so
+     * `selectFeature(undefined)` fell through to clearing the selection: ⌥ on any review
+     * row wiped whatever you had open.
+     */
     const pick = ui.railOrder[Number(e.code.slice(5)) - 1];
-    if (!pick) return;
-    if (pick.id) ui.goToSession(pick.id);
-    else ui.selectFeature(world.features.find((f) => f.name === pick.name));
+    if (pick) ui.goTo(pick);
     return;
   }
 
@@ -153,11 +156,6 @@ export function handleShortcut(e: KeyboardEvent): void {
   if (e.key === 'n' || e.key === 'N') {
     e.preventDefault();
     overlays.openIntake();
-    return;
-  }
-  if (e.key === '\\') {
-    e.preventDefault();
-    ui.toggleUsage();
     return;
   }
   /*
@@ -185,7 +183,8 @@ export function handleShortcut(e: KeyboardEvent): void {
       return;
     }
     ui.goToSession(s.id);
-    ui.dockView = 'changes';
+    // setDockView, not the field: it is the only writer that persists the choice.
+    ui.setDockView('changes');
     return;
   }
   // ⌘R is 'Run stack' in the cheatsheet, so it runs the stack — it used to call the

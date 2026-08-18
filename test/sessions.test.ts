@@ -313,6 +313,71 @@ test('applyHook SessionEnd deactivates the session and marks it stopped', () => 
   assert.equal(s.state, 'stopped');
 });
 
+test('applyHook stamps the silence clock the rail reads', () => {
+  const m = manager();
+  m.sessions.set('h6', session({ id: 'h6', muxName: 'm', state: 'idle', active: true, createdAt: 1 }));
+  const before = Date.now();
+  m.applyHook('h6', 'PreToolUse', { tool_name: 'Bash' });
+  assert.ok((got(m, 'h6').lastEventAt || 0) >= before, 'every hook re-starts the clock');
+});
+
+/*
+ * A LAUNCH seeds that clock, and this is the case the whole readout exists for.
+ *
+ * `lastEventAt` used to be written by applyHook alone, so a session whose hooks never fire
+ * at all — settings file deleted, report.sh no longer executable, a token the receiver
+ * rejects — carried no timestamp ever, and the rail could not tell it from a session
+ * launched a second ago. Silence needs an origin to be measured from; the launch is it.
+ */
+test('activate() seeds lastEventAt, so a session whose hooks NEVER fire is measurable', async () => {
+  const m = manager();
+  const repo = tempRepo('launchclock');
+  m.sessions.set(
+    'l1',
+    session({
+      id: 'l1',
+      repoName: 'a',
+      repoPath: repo,
+      home: repo,
+      muxName: 'mux-l1',
+      state: 'stopped',
+      active: false,
+      createdAt: Date.now(),
+    }),
+  );
+  const before = Date.now();
+  expectOk(await m.activate('l1'), 'activate()');
+  assert.ok((got(m, 'l1').lastEventAt || 0) >= before, 'the clock starts at the launch');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('a launch that FAILED does not seed it — there is no agent to be silent', async () => {
+  const repo = tempRepo('launchfail');
+  const failing = new SessionManager(
+    {
+      _stateDir: fs.mkdtempSync(path.join(os.tmpdir(), 'wts-state-')),
+      web: { port: 0 },
+      claude: { cmd: 'claude' },
+      baseDirs: [],
+      copyPatterns: {},
+    },
+    muxStub({
+      async ensure() {
+        return { error: 'tmux: no server running' };
+      },
+    }),
+  );
+  failing.sessions.set(
+    'l2',
+    session({ id: 'l2', repoName: 'a', repoPath: repo, home: repo, muxName: 'mux-l2', active: false }),
+  );
+  await failing.activate('l2');
+  const s = present(failing.get('l2'), 'session l2');
+  assert.equal(s.lastEventAt, undefined, 'nothing was launched, so nothing is overdue to report');
+  assert.equal(s.state, 'stopped');
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
 test('claudeCmd appends the seed as the final positional arg on a FRESH launch, and omits it on resume', () => {
   const m = manager();
   const s = session({
@@ -408,6 +473,53 @@ test('activate/restore resume cwd resolves to home (transcript dir) for a promot
 
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(wt, { recursive: true, force: true });
+});
+
+/*
+ * The fallback half of the same rule, and the reason it is worth one test rather than
+ * none: tmux refuses `-c` on a directory that is not there, so a session whose recorded
+ * home has since been deleted or moved does not come back at all — it fails to launch and
+ * says "failed to start", which reads as a broken tmux rather than a stale path. The rule
+ * lived in activate() and in restore() as two copies and was fixed in one at a time; it is
+ * now `_launchDir`, so this pins it once for every launch there is.
+ */
+test('a session whose home no longer exists launches from repoPath instead of failing', async () => {
+  const m = manager();
+  const repo = tempRepo('fallback');
+  const goneHome = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-gone-'));
+  fs.rmSync(goneHome, { recursive: true, force: true });
+  let cwd: string | null = null;
+  m.mux = muxStub({
+    async ensure(_n, opts) {
+      cwd = opts?.cwd ?? null;
+      return {};
+    },
+  });
+  m.sessions.set(
+    'h1',
+    session({
+      id: 'h1',
+      muxName: 'mux-h1',
+      repoName: 'a',
+      repoPath: repo,
+      home: goneHome,
+      // Not promoted: a session WITH a missing worktree is refused outright a few lines
+      // earlier in activate(), so this is the shape the fallback actually stands behind.
+      worktreePath: null,
+      settingsFile: '/tmp/h1.settings.json',
+      repos: [sessionRepo({ repo: 'a', primary: true })],
+      claudeSessionId: 'sid-h1',
+      active: false,
+      state: 'stopped',
+      createdAt: Date.now(),
+    }),
+  );
+
+  expectOk(await m.activate('h1'), 'activate()');
+  assert.equal(cwd, repo, 'the launch falls back to the repo checkout');
+  assert.equal(m._launchDir(got(m, 'h1')), repo, 'and _launchDir says so on its own');
+
+  fs.rmSync(repo, { recursive: true, force: true });
 });
 
 test('restore flags a promoted session whose worktree dir is gone instead of faking a resume', async () => {
@@ -783,6 +895,83 @@ test('a session persisted before worktree name and identity were told apart stil
     'falls back to the stored feature exactly as before',
   );
   fs.rmSync(repoB, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// attachRepos() — the acting half of features.ts detectSessionRepoGaps()
+//
+// The scan reports a session whose `repos` is short of its feature's worktrees; this is
+// what happens when the user accepts the offer. It attaches EXISTING worktrees, so it
+// creates nothing — the worktrees are what the detection found on disk.
+// ---------------------------------------------------------------------------
+
+test('attachRepos records every offered worktree and grants the live session access', async () => {
+  const m = manager();
+  m.sessions.set(
+    'g1',
+    session({
+      id: 'g1',
+      feature: 'feat-x',
+      worktree: 'feat-x',
+      muxName: 'mux-g1',
+      repos: [
+        sessionRepo({
+          repo: 'api',
+          repoPath: '/r/api',
+          worktree: 'feat-x',
+          worktreePath: '/r/api/.worktrees/feat-x',
+          primary: true,
+        }),
+      ],
+    }),
+  );
+  const out = await m.attachRepos('g1', [
+    { repo: 'fe', repoPath: '/r/fe', worktreePath: '/r/fe/.worktrees/feat-x', branch: 'fix/feat-x' },
+    { repo: 'lib', repoPath: '/r/lib', worktreePath: '/r/lib/.worktrees/renamed', branch: 'fix/feat-x' },
+  ]);
+  expectOk(out);
+  assert.deepEqual(out.attached, ['fe', 'lib']);
+  assert.deepEqual(
+    got(m, 'g1').repos.map((r) => r.repo),
+    ['api', 'fe', 'lib'],
+  );
+  // The name on DISK, not the session's — a sibling made outside Studio can be called
+  // something else, and recording the expected name makes ci.ts look up a worktree that
+  // is not there.
+  assert.equal(present(got(m, 'g1').repos.find((r) => r.repo === 'lib')).worktree, 'renamed');
+  assert.equal(present(got(m, 'g1').repos.find((r) => r.repo === 'lib')).branch, 'fix/feat-x');
+  const sent = (m as SessionManager & { _sent: string[] })._sent;
+  assert.deepEqual(sent, ['/add-dir /r/fe/.worktrees/feat-x', '/add-dir /r/lib/.worktrees/renamed']);
+});
+
+test('attachRepos is a no-op for a worktree the session already has', async () => {
+  const m = manager();
+  m.sessions.set(
+    'g2',
+    session({
+      id: 'g2',
+      muxName: 'mux-g2',
+      repos: [
+        sessionRepo({
+          repo: 'fe',
+          repoPath: '/r/fe',
+          worktreePath: '/r/fe/.worktrees/feat-x',
+          primary: true,
+        }),
+      ],
+    }),
+  );
+  const out = await m.attachRepos('g2', [
+    { repo: 'fe', repoPath: '/r/fe', worktreePath: '/r/fe/.worktrees/feat-x', branch: null },
+  ]);
+  expectOk(out);
+  assert.equal(got(m, 'g2').repos.length, 1, 'no duplicate repo row');
+  assert.deepEqual((m as SessionManager & { _sent: string[] })._sent, [], 'no second /add-dir');
+});
+
+test('attachRepos refuses an unknown session rather than answering ok', async () => {
+  const out = await manager().attachRepos('nope', []);
+  assert.equal(out.ok, false);
 });
 
 // ---------------------------------------------------------------------------

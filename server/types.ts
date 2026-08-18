@@ -120,6 +120,47 @@ export interface ConfigPatch {
 }
 
 /**
+ * Which backend the config file above currently points at, and whose it is.
+ *
+ * `ConfigPatch` is written and never read back, and that asymmetry cost a day: an MFA
+ * frontend was patched to `localhost:1439`, the process answering on 1439 belonged to
+ * a different feature on a different branch, and `POST /merchant/api/totp/600/register`
+ * came back 404 from a checkout that simply has no such route. Nothing on screen was
+ * wrong — Studio had never looked at what it wrote.
+ *
+ * `offSlot` answers the adjacent question ("is this server on its own slot's ports?")
+ * and cannot answer this one, because this fact lives in a file rather than in a socket.
+ */
+export type WiredStatus =
+  /** The backend on that port belongs to this same feature. What you want. */
+  | 'mine'
+  /** It belongs to a DIFFERENT feature — a different branch is answering the calls. */
+  | 'foreign'
+  /** Nothing is listening there. Requests fail, but at least they fail loudly. */
+  | 'dead'
+  /** The file was read and names no port of the sibling's families — no claim to make. */
+  | 'unknown';
+
+export interface WiredTo {
+  status: WiredStatus;
+  /** Every sibling-repo port the config file names right now, ascending. */
+  ports: number[];
+  /** The one port the verdict is about; null only when `status` is 'unknown'. */
+  port: number | null;
+  /** The feature owning `port`. Null unless something is listening there. */
+  feature: string | null;
+  /**
+   * The repo owning `port` — best-effort, and null when Studio did not launch it.
+   * Discovery maps a socket to a worktree PATH; only `servers.json` knows which repo
+   * a launch was for, so a server started by hand outside Studio has no repo name to
+   * give. Named as unknown rather than guessed from the directory layout.
+   */
+  repo: string | null;
+  /** The worktree owning `port`. Null unless something is listening there. */
+  path: string | null;
+}
+
+/**
  * One repo's concurrency mapping: which env vars carry ports, and which carry
  * the slot index itself.
  */
@@ -142,7 +183,41 @@ export interface RepoConcurrency {
    * frontend to run two of it.
    */
   portFlag?: string;
+  /**
+   * Which slot owns the job scheduler, and how a slot is told.
+   *
+   * MANUAL.md states it as a hard rule — "the job scheduler must only ever run in one
+   * stack" — and until this key existed nothing in code knew it. Slots are handed out and
+   * reclaimed freely, so two features each ran a backend that believed it was the
+   * scheduler. Duplicate scheduled jobs do not error; they SUCCEED, twice. Double-charged
+   * cards and doubled emails are the only report you get, hours later.
+   *
+   * OPT-IN. Absent (the default) means no slot is told anything and every repo behaves
+   * exactly as it did — the env var a backend reads for this is that backend's own name
+   * (`job_schedule`, `RUN_JOBS`, `SCHEDULER_ENABLED`…), unknowable from here, so guessing
+   * one would set a variable nothing reads and claim the rule was enforced.
+   */
+  scheduler?: SchedulerOwnership;
   configPatch?: ConfigPatch;
+}
+
+/**
+ * `concurrency.repos.<repo>.scheduler` — e.g.
+ * `{ "env": "job_schedule", "slot": 0, "on": "true", "off": "false" }`.
+ *
+ * `env` is the only required key: which variable the backend actually reads is a property
+ * of that codebase, exactly like `portEnv`'s keys, and hardcoding a guess here would be a
+ * setting that silently does nothing.
+ */
+export interface SchedulerOwnership {
+  /** The env var the backend reads to decide whether it runs jobs. */
+  env: string;
+  /** The owning slot. Defaults to 0 — the slot whose ports are the repo's configured ones. */
+  slot?: number;
+  /** Value for the owner. Default `'true'`. */
+  on?: string;
+  /** Value for every other slot — the stand-down. Default `'false'`. */
+  off?: string;
 }
 
 export interface ConcurrencyConfig {
@@ -436,6 +511,17 @@ export interface Worktree {
   missing?: false;
   /** package.json present, node_modules absent — the start command cannot succeed. */
   depsMissing?: boolean;
+  /**
+   * package-lock.json is NEWER than the installed tree (npm's own
+   * `node_modules/.package-lock.json`) — the worktree is running dependencies from
+   * before the last lockfile change.
+   *
+   * A warning, never a blocker: `canStart` stays true because it does start. That is the
+   * point of reporting it. A worktree installed weeks ago and since rebased resolves its
+   * imports, boots its dev server and then fails from inside a package nobody edited —
+   * which reads as a bug in the branch, and is where the afternoon goes.
+   */
+  depsStale?: boolean;
   /** An install is running for this worktree right now. */
   depsInstalling?: boolean;
   /** No `config.start` entry for this repo — the other reason `canStart` is false. */
@@ -468,6 +554,41 @@ export interface Worktree {
    * A warning, not a blocker — `canStart` stays true, because it does start.
    */
   sharedModules?: string | null;
+  /**
+   * Which backend this worktree's patched config file points at, and whose it is —
+   * or null when there is nothing to read (the repo declares no `configPatch`, or the
+   * file is absent/unreadable). See WiredStatus: null means "did not look", and is
+   * deliberately not the same value as "looked and found nothing".
+   */
+  wiredTo?: WiredTo | null;
+  /**
+   * This worktree's dev server was up on the previous discovery sweep and is not up now,
+   * and nobody asked it to stop — see Servers._noteDeaths(). Null in the ordinary case.
+   *
+   * The only field on this object that describes a TRANSITION rather than the present.
+   * Everything else here is a fact about the world as the sweep found it, and a server
+   * dying is invisible in such a fact: `running` simply reads false, exactly as it does
+   * for one that was never started.
+   */
+  died?: ServerDeath | null;
+}
+
+/**
+ * A dev server that stopped listening without being asked to.
+ *
+ * Everything in it describes the server as it LAST was — the pid that is gone and the
+ * ports it is no longer on — because that is what makes the mark actionable: it names
+ * the log to read and the ports whose 502s are now explained.
+ */
+export interface ServerDeath {
+  /** Epoch ms of the sweep that first found it gone (within one sweep interval of death). */
+  at: number;
+  /** The pid that had been listening, when discovery knew one. */
+  pid: number | null;
+  /** The ports it held on the last sweep that saw it. */
+  ports: number[];
+  /** The repo Studio filed the launch under, or null for one it merely discovered. */
+  repo: string | null;
 }
 
 /**
@@ -558,6 +679,37 @@ export interface SplitFeature {
   members: Array<{ repo: string; wtname: string; path: string; feature: string }>;
 }
 
+/**
+ * A feature worktree a session could be granted, as features.ts attachableWorktrees()
+ * reports it. Exactly the arguments `SessionManager.attachRepo()` takes, so what is
+ * offered and what gets attached cannot describe different worktrees.
+ */
+export interface AttachableWorktree {
+  repo: string;
+  repoPath: string;
+  worktreePath: string;
+  branch: string | null;
+}
+
+/**
+ * A session whose `repos` is a strict subset of its feature's worktrees — see
+ * features.ts detectSessionRepoGaps().
+ *
+ * Reported, not healed. Attaching sends `/add-dir` into a LIVE agent, widening what it
+ * may read and write mid-turn; doing that from a background scan would mean the set of
+ * directories an agent can edit changes because someone ran `wt` in another terminal.
+ * The acting half is POST /sessions/:id/attach-repos, on a button.
+ */
+export interface SessionRepoGap {
+  sessionId: string;
+  /** For naming the session in the offer without a second lookup. */
+  title: string;
+  /** The feature identity both records were compared under. */
+  feature: string;
+  /** Non-empty by construction: a session with nothing missing is not a gap. */
+  missing: AttachableWorktree[];
+}
+
 export interface Feature {
   name: string;
   /** false for a manual group from config.groups, true for a derived one. */
@@ -631,6 +783,13 @@ export interface TopologyPayload {
   groups: Feature[];
   /** Features that look like one piece of work under names that do not group. */
   splitFeatures: SplitFeature[];
+  /**
+   * Sessions that know fewer repos than their feature has worktrees.
+   *
+   * OPTIONAL because it arrived after the payload did: a client built against an older
+   * shape reads `undefined` and renders nothing, which is exactly what it did before.
+   */
+  sessionRepoGaps?: SessionRepoGap[];
 }
 
 // ---- session state ----------------------------------------------------------
@@ -909,27 +1068,7 @@ export interface DiffFile {
   unsupported?: 'combined';
 }
 
-// ---- transcripts and usage --------------------------------------------------
-
-/**
- * message.usage, flattened to what the price table understands.
- *
- * The per-TTL cache split is load-bearing: a 1h cache write costs 2x the base
- * input rate and a 5m write 1.25x, so pricing the lump as 5m understates any
- * session using the 1h cache.
- */
-export interface Usage {
-  input: number;
-  output: number;
-  cacheWrite5m: number;
-  cacheWrite1h: number;
-  /** The lump `cache_creation_input_tokens` — equals the two above. */
-  cacheWrite: number;
-  cacheRead: number;
-  webSearch: number;
-  webFetch: number;
-  speed: string | null;
-}
+// ---- transcripts -------------------------------------------------------------
 
 /** A normalized transcript line. Only `assistant` and `user` records become entries. */
 export interface TranscriptEntry {
@@ -937,73 +1076,14 @@ export interface TranscriptEntry {
   role: string;
   uuid: string | null;
   parentUuid: string | null;
-  /** The API message id — the dedup key for usage, see UsageTotals. */
-  msgId: string | null;
-  requestId: string | null;
   ts: IsoTimestamp | null;
   tsMs: number | null;
   model: string | null;
-  speed: string | null;
   cwd: string | null;
   gitBranch: string | null;
   sidechain: boolean;
   /** Capped; a truncated body ends in an ellipsis. */
   text: string;
-  /** null on every user entry. */
-  usage: Usage | null;
-}
-
-/** Per-model tokens and cost. A session routinely spans models, and cost is
- *  meaningless without knowing which rate applied. */
-export interface UsageByModel {
-  model: string;
-  speed: string | null;
-  messages: number;
-  input: number;
-  output: number;
-  cacheWrite5m: number;
-  cacheWrite1h: number;
-  cacheWrite: number;
-  cacheRead: number;
-  webSearch: number;
-  webFetch: number;
-  /** null when the model is not in the price table. */
-  costUsd: number | null;
-  priced: boolean;
-}
-
-/**
- * aggregate() over one transcript.
- *
- * Usage is deduplicated on `msgId` before it is summed: Claude Code writes one
- * JSONL line per CONTENT BLOCK and repeats the identical usage on each, so summing
- * lines over-counts by ~2.9x on a tool-heavy session.
- */
-export interface UsageTotals {
-  input: number;
-  output: number;
-  cacheWrite5m: number;
-  cacheWrite1h: number;
-  cacheWrite: number;
-  cacheRead: number;
-  webSearch: number;
-  webFetch: number;
-  assistantMessages: number;
-  userMessages: number;
-  firstAt: number | null;
-  lastAt: number | null;
-  byModel: UsageByModel[];
-  costUsd: number | null;
-  /** Always true: transcripts record tokens, not billing. */
-  costIsEstimate: true;
-  /** Billable models missing from the price table — `complete` is false when non-empty. */
-  unpricedModels: string[];
-  complete: boolean;
-  file: string;
-  bytes: number;
-  offset: number;
-  malformedLines: number;
-  truncatedTail: boolean;
 }
 
 // ---- intake sources (server/sources/*) --------------------------------------

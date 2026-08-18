@@ -608,7 +608,14 @@ function twoRepoFeature(): StateRepo[] {
       defaultBranch: 'develop',
       worktrees: [
         { path: '/code/api', name: 'api', branch: 'develop', isMain: true, detached: false, merged: false },
-        { path: '/code/api/.worktrees/mfa', name: 'mfa', branch: 'feature/api-mfa', isMain: false, detached: false, merged: false },
+        {
+          path: '/code/api/.worktrees/mfa',
+          name: 'mfa',
+          branch: 'feature/api-mfa',
+          isMain: false,
+          detached: false,
+          merged: false,
+        },
       ],
     },
     {
@@ -617,7 +624,14 @@ function twoRepoFeature(): StateRepo[] {
       defaultBranch: 'develop',
       worktrees: [
         { path: '/code/web', name: 'web', branch: 'develop', isMain: true, detached: false, merged: false },
-        { path: '/code/web/.worktrees/mfa', name: 'mfa', branch: 'feature/web-mfa', isMain: false, detached: false, merged: false },
+        {
+          path: '/code/web/.worktrees/mfa',
+          name: 'mfa',
+          branch: 'feature/web-mfa',
+          isMain: false,
+          detached: false,
+          merged: false,
+        },
       ],
     },
   ];
@@ -655,10 +669,7 @@ test('the CI sweep covers every worktree of the feature, not just the session’
     state.topology().features.find((f) => f.name === 'mfa'),
     'the mfa feature',
   );
-  assert.deepEqual(
-    feature.members.map((m) => (m && 'repo' in m ? m.repo : '')).sort(),
-    ['api', 'web'],
-  );
+  assert.deepEqual(feature.members.map((m) => (m && 'repo' in m ? m.repo : '')).sort(), ['api', 'web']);
 
   const subject = present(
     state.ciSubjects().find((x) => x.id === 's_mfa'),
@@ -690,7 +701,10 @@ test('the CI sweep keeps a repo the session owns but no feature claims', () => {
     repos: twoRepoFeature(),
     manager: fakeManager([s], { '/code/api/.worktrees/mfa': s }),
   });
-  const subject = present(state.ciSubjects().find((x) => x.id === 's_mfa'), 'the mfa subject');
+  const subject = present(
+    state.ciSubjects().find((x) => x.id === 's_mfa'),
+    'the mfa subject',
+  );
   assert.ok(
     (subject.repos || []).some((r) => r.worktreePath === '/elsewhere/odd-name'),
     'a session-owned worktree outside the feature must still be looked up',
@@ -708,7 +722,11 @@ test('the CI sweep asks about each worktree once, and never about a main checkou
     repos: twoRepoFeature(),
     manager: fakeManager([s], { '/code/api/.worktrees/mfa': s }),
   });
-  const repos = present(state.ciSubjects().find((x) => x.id === 's_mfa'), 'the mfa subject').repos || [];
+  const repos =
+    present(
+      state.ciSubjects().find((x) => x.id === 's_mfa'),
+      'the mfa subject',
+    ).repos || [];
   const paths = repos.map((r) => r.worktreePath);
   assert.equal(new Set(paths).size, paths.length, 'no worktree asked about twice');
   assert.ok(!paths.includes('/code/api'), 'the main checkout is not part of the feature');
@@ -720,6 +738,9 @@ test('a session with no worktree yet still gets a subject, with nothing to look 
   // CI half at all"), but it must not vanish before it gets there.
   const s = session({ id: 's_new', feature: 'brand-new', repos: [] });
   const { state } = build({ repos: twoRepoFeature(), manager: fakeManager([s], {}) });
-  const subject = present(state.ciSubjects().find((x) => x.id === 's_new'), 'the new session');
+  const subject = present(
+    state.ciSubjects().find((x) => x.id === 's_new'),
+    'the new session',
+  );
   assert.deepEqual(subject.repos, []);
 });

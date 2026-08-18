@@ -26,7 +26,7 @@ import type { LogTail } from './log-tail.ts';
 const ENV = CHILD_ENV;
 
 /** How many finished runs to keep. History is for "what did the last one say", not an archive. */
-const KEEP_RUNS = 60;
+export const KEEP_RUNS = 60;
 
 export type RunStatus = 'running' | 'passed' | 'failed' | 'stopped';
 
@@ -85,10 +85,38 @@ export class Runner extends EventEmitter {
         ? { ...r, status: 'stopped' as const, endedAt: r.endedAt ?? Date.now(), pid: undefined }
         : r,
     );
+    this.#reapOrphanLogs();
   }
 
+  /*
+   * Every run record is a claim on a file, so a record that goes has to take its file
+   * with it. Eviction never did — history has always been trimmed to KEEP_RUNS and the
+   * logs of the trimmed runs stayed in the directory, unreferenced and unreachable,
+   * accumulating for the life of the installation. remove() was the only path that
+   * unlinked anything.
+   *
+   * Done at load, once, because that is the only moment the run list is complete and
+   * nothing is being written: whatever is in the directory and not named by a run is
+   * left over from an eviction that predates the reaping below (or from a daemon that
+   * died between the two).
+   */
+  #reapOrphanLogs(): void {
+    try {
+      const kept = new Set(this.runs.map((r) => r.log));
+      for (const name of fs.readdirSync(this.logDir)) {
+        const file = path.join(this.logDir, name);
+        if (!kept.has(file)) fs.rmSync(file, { force: true });
+      }
+    } catch {
+      /* a log we cannot list or delete is wasted disk, never a reason not to boot */
+    }
+  }
+
+  // Write the list WHOLE. This wrote `slice(0, KEEP_RUNS)`, which is the same eviction
+  // bug #trim describes, one layer down: a run past the cut vanished from disk on the
+  // next save regardless of whether it was still running. #trim is what bounds the file.
   #save(): void {
-    writeJson(this.file, { runs: this.runs.slice(0, KEEP_RUNS) });
+    writeJson(this.file, { runs: this.runs });
   }
 
   #changed(): void {
@@ -151,9 +179,7 @@ export class Runner extends EventEmitter {
     run.pid = child.pid;
     this.#children.set(id, child);
     this.runs.unshift(run);
-    // Keep the list bounded here as well as on save, so a long-lived daemon does not grow
-    // an unbounded array in memory between writes.
-    if (this.runs.length > KEEP_RUNS) this.runs.length = KEEP_RUNS;
+    this.#trim();
 
     child.once('error', (e) => this.#finish(id, null, `failed to start: ${e.message}`));
     child.once('exit', (code, signal) => {
@@ -163,6 +189,33 @@ export class Runner extends EventEmitter {
 
     this.#changed();
     return run;
+  }
+
+  /*
+   * Bound the history — by dropping FINISHED runs only.
+   *
+   * This was `this.runs.length = KEEP_RUNS`, which truncates the tail, and the tail is
+   * exactly where a long-lived run sits: a `npm run dev`-shaped task, or a suite that
+   * takes minutes, gets pushed down by sixty short runs and then silently deleted while
+   * it is still executing. Everything downstream then failed quietly — stop(id) answered
+   * "no such run", #finish returned early on the missing record and never removed the
+   * child, and the process went on running with nothing tracking it or its log.
+   *
+   * So the newest is never the eviction candidate simply for being sixty-first; the
+   * OLDEST FINISHED run is. When every run is still running the list is allowed to exceed
+   * the cap, because the alternative is losing a process.
+   */
+  #trim(): void {
+    while (this.runs.length > KEEP_RUNS) {
+      const i = this.runs.findLastIndex(isFinished);
+      if (i < 0) return;
+      const [dropped] = this.runs.splice(i, 1);
+      try {
+        fs.rmSync(dropped.log, { force: true });
+      } catch {
+        /* the record going is what matters — same rule remove() follows */
+      }
+    }
   }
 
   #finish(id: string, code: number | null, note?: string, signalled = false): void {
@@ -180,6 +233,9 @@ export class Runner extends EventEmitter {
         /* the outcome matters more than the note */
       }
     }
+    // A run that has just finished may be the eviction #trim could not perform earlier,
+    // when every run in an over-cap list was still going.
+    this.#trim();
     this.#changed();
   }
 

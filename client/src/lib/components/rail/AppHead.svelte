@@ -1,55 +1,54 @@
 <script lang="ts">
-  /*
-   * The application header: the root switcher (or the wordmark), the waiting button and
-   * the ⋮ menu. Everything here is about the WHOLE FLEET.
-   *
-   * IT SITS AT THE HEAD OF THE RAIL, not across the top of the window. That is the point:
-   * the rail is the fleet and the dock is one feature, so the split by scope is already
-   * drawn down the middle of the screen and these controls belong on the rail's side of
-   * it. As a full-width band it was a third horizontal stripe — app bar, then the dock's
-   * feature bar, then the tab strip — before any content, and it put fleet-wide verbs
-   * directly above a bar that acts on one selection, with nothing but a divider to say
-   * which was which.
-   *
-   * The cost of the move is width: a 212px column has no room for `⎇ Worktree Studio` at
-   * 17px beside three buttons. The wordmark shortened, the waiting button became its own
-   * count, and Insights went into the ⋮ menu — a destination among actions, but the root
-   * switcher needed the space and `⌘\` still opens it directly.
-   *
-   * It used to carry eleven controls: Insights, four counts, Restart all, Stop all, ⌘K,
-   * ⚙, ◐ and + New session. Where the rest went, and why:
-   *   + New session  → directly below, at the head of the rail. It creates the thing the
-   *                    rail lists.
-   *   the counts     → the rail footer, beside the rows they count.
-   *   Restart / Stop all, ⌘K, ⚙, ◐ → the ⋮ menu. Rare, or fleet-wide and destructive.
-   */
-  import AppMenu from '$lib/components/AppMenu.svelte';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { uiConfirm } from '$lib/stores/dialog.svelte.js';
-  import { ui, featureActive, liveMembers } from '$lib/stores/ui.svelte.js';
-  import { notify } from '$lib/stores/notify.svelte.js';
-  import { restartStack, stopStack } from '$lib/ops.svelte.js';
+/*
+ * The application header: the root switcher (or the wordmark), the waiting button and
+ * the ⋮ menu. Everything here is about the WHOLE FLEET.
+ *
+ * IT SITS AT THE HEAD OF THE RAIL, not across the top of the window. That is the point:
+ * the rail is the fleet and the dock is one feature, so the split by scope is already
+ * drawn down the middle of the screen and these controls belong on the rail's side of
+ * it. As a full-width band it was a third horizontal stripe — app bar, then the dock's
+ * feature bar, then the tab strip — before any content, and it put fleet-wide verbs
+ * directly above a bar that acts on one selection, with nothing but a divider to say
+ * which was which.
+ *
+ * The cost of the move is width: a 212px column has no room for `⎇ Worktree Studio` at
+ * 17px beside three buttons. The wordmark shortened and the waiting button became its
+ * own count.
+ *
+ * It used to carry eleven controls: an Insights button, four counts, Restart all, Stop
+ * all, ⌘K, ⚙, ◐ and + New session. Where the rest went, and why:
+ *   + New session  → directly below, at the head of the rail. It creates the thing the
+ *                    rail lists.
+ *   the counts     → the rail footer, beside the rows they count.
+ *   Restart / Stop all, ⌘K, ⚙, ◐ → the ⋮ menu. Rare, or fleet-wide and destructive.
+ */
+import AppMenu from '$lib/components/AppMenu.svelte';
+import { world } from '$lib/stores/world.svelte.js';
+import { uiConfirm } from '$lib/stores/dialog.svelte.js';
+import { ui, featureActive, liveMembers } from '$lib/stores/ui.svelte.js';
+import { notify } from '$lib/stores/notify.svelte.js';
+import { restartStack, stopStack } from '$lib/ops.svelte.js';
 
-  const feats = $derived(world.features);
-  /*
-   * Fleet-wide and irreversible, so it asks — as every other destructive verb in
-   * ops.svelte.ts already does (closeSession, deleteFeature, closeFeature,
-   * deactivateSession all go through uiConfirm). This one fired on a single click, from a
-   * 32px menu row directly below "Restart all servers", so a mis-aimed click killed every
-   * dev server running anywhere.
-   */
-  async function stopAllServers() {
-    const feats = runningFeats();
-    if (!feats.length) return;
-    const ok = await uiConfirm(
-      `Stop the dev servers of all ${feats.length} running feature(s): ${feats.map((f) => f.name).join(', ')}?`,
-      { title: 'Stop all servers', okLabel: 'Stop all', danger: true },
-    );
-    if (ok) for (const f of feats) stopStack(f.name);
-  }
+const feats = $derived(world.features);
+/*
+ * Fleet-wide and irreversible, so it asks — as every other destructive verb in
+ * ops.svelte.ts already does (closeSession, deleteFeature, closeFeature,
+ * deactivateSession all go through uiConfirm). This one fired on a single click, from a
+ * 32px menu row directly below "Restart all servers", so a mis-aimed click killed every
+ * dev server running anywhere.
+ */
+async function stopAllServers() {
+  const feats = runningFeats();
+  if (!feats.length) return;
+  const ok = await uiConfirm(
+    `Stop the dev servers of all ${feats.length} running feature(s): ${feats.map((f) => f.name).join(', ')}?`,
+    { title: 'Stop all servers', okLabel: 'Stop all', danger: true },
+  );
+  if (ok) for (const f of feats) stopStack(f.name);
+}
 
-  const runningFeats = () => feats.filter((f) => liveMembers(f).some((m) => m.running));
-  const anyRunning = $derived(feats.some(featureActive));
+const runningFeats = () => feats.filter((f) => liveMembers(f).some((m) => m.running));
+const anyRunning = $derived(feats.some(featureActive));
 </script>
 
 <header class="apphead">
@@ -86,10 +85,10 @@
   <span class="spacer"></span>
 
   <!-- Its own button, appearing only when something IS waiting.
-       This used to be a badge on Insights, so the one state worth interrupting you for
-       took you to the usage breakdown — away from the session asking for you, and (before
-       openInsights learned to put it back) at the cost of your selection. A count is the
-       question; this button is the answer, so pressing it goes to the next waiting agent.
+       This used to be a badge on a fleet-wide Insights button, so the one state worth
+       interrupting you for took you to a usage breakdown — away from the session asking
+       for you, and at the cost of your selection. A count is the question; this button is
+       the answer, so pressing it goes to the next waiting agent.
 
        The count IS the label here rather than a badge pinned to the word "Waiting": in a
        212px column the word costs more than it says, and the badge it carried was a

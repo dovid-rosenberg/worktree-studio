@@ -290,10 +290,7 @@ test('attaching an existing sibling records the branch on disk, not the one crea
   assert.ok(out.ok, `addRepo failed: ${JSON.stringify(out)}`);
   // `addRepo` answers with a union of six shapes and only one of them carries `attached`,
   // so the flag has to be read off a widened view rather than off the union.
-  assert.ok(
-    (out as { attached?: boolean }).attached,
-    'the existing worktree was attached, not created',
-  );
+  assert.ok((out as { attached?: boolean }).attached, 'the existing worktree was attached, not created');
 
   const s = present(m.get('s4'), 'session s4');
   const added = present(

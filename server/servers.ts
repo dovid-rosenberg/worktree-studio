@@ -8,10 +8,19 @@ import crypto from 'crypto';
 import { spawn } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { CHILD_ENV, run, readJsonState, writeJson, realpath, slug } from './util.ts';
-import { deriveEnv, allocSlot, rewriteAllSiblingPorts } from './concurrency.ts';
+import { deriveEnv, allocSlot, rewriteAllSiblingPorts, siblingPortsIn } from './concurrency.ts';
+import { portBusy } from './start-report.ts';
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
-import type { ConcurrencyConfig, Config, PartialDeep, RepoConcurrency, Worktree } from './types.ts';
+import type {
+  ConcurrencyConfig,
+  Config,
+  PartialDeep,
+  RepoConcurrency,
+  ServerDeath,
+  WiredTo,
+  Worktree,
+} from './types.ts';
 import { TAIL_MAX_BYTES, readTail, tailFile } from './log-tail.ts';
 
 /**
@@ -66,9 +75,36 @@ export interface PidInfo {
   top: string;
 }
 
+/**
+ * A cached PidInfo, plus the start time of the process it was resolved for.
+ *
+ * The start time is what makes the entry belong to a PROCESS rather than to a number —
+ * see _pidInfoCache. Optional because `ps` can lose the race with a process that exits
+ * between the LISTEN scan and the lookup; an entry with no stamp simply never validates
+ * and is re-resolved, which costs a scan and cannot be wrong.
+ */
+interface CachedPidInfo extends PidInfo {
+  startedAt?: number;
+}
+
 /** One discovered dev server: the listening pid and every non-ephemeral port it holds. */
 export interface RunningServer {
   pid: number;
+  ports: number[];
+}
+
+/**
+ * A parsed FE config file, stamped with what it was parsed from.
+ *
+ * decorate() runs on every topology build, so the parse is memoised on the file's
+ * (mtime, size) rather than repeated. Both, not mtime alone: HFS+/APFS report mtime at
+ * one-second granularity for some writes, and a rewrite within the same second that
+ * changes the length would otherwise read as unchanged. applyConfigPatch's own write is
+ * what usually invalidates this, and it always changes at least one digit.
+ */
+interface CachedWiredPorts {
+  mtimeMs: number;
+  size: number;
   ports: number[];
 }
 
@@ -145,10 +181,33 @@ export type StartResult =
       boundElsewhere?: number[];
     };
 
+/**
+ * What a stop demonstrated.
+ *
+ * `ok` is a constant — a stop is always attempted. `stillListening` is the real verdict:
+ * the ports that were still bound after SIGTERM, a settle and SIGKILL.
+ */
+export interface StopResult {
+  ok: true;
+  killed: boolean;
+  stillListening: number[];
+}
+
 /** A record pruneTracked() dropped, for the boot-time log. */
 export interface DroppedRecord {
   worktreePath: string;
   pid?: number;
+}
+
+/** How an install should treat a `node_modules` that is a symlink — see installDeps(). */
+export interface InstallOptions {
+  /**
+   * Remove a shared node_modules symlink before installing. Defaults to TRUE: installing
+   * through the link rewrites the tree it points at, which belongs to another checkout.
+   * The flag exists so a caller can say it means the old behaviour, not so the safe path
+   * has to be asked for.
+   */
+  unlinkShared?: boolean;
 }
 
 export interface LogsOptions {
@@ -165,7 +224,15 @@ export interface LogTail {
   skipped: number;
 }
 
-const ENV = CHILD_ENV;
+/*
+ * `LC_ALL: 'C'` because this module PARSES tool output.
+ *
+ * `ps -o lstart=` writes weekday and month names in the caller's locale, and _psInfo
+ * matches the C-locale shape of a ctime. Leaving the locale to the environment made the
+ * parse depend on a setting nothing here controls, and the failure was silent rather
+ * than loud — see _psInfo.
+ */
+const ENV = { ...CHILD_ENV, LC_ALL: 'C' };
 const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
 
 // How far a process's real start time may sit from the moment we recorded spawning
@@ -173,6 +240,35 @@ const EPHEMERAL = 49152; // ports at/above this are ephemeral — ignore
 // of the spawn, so a few seconds of slack is required; a pid the OS handed to
 // somebody else is off by hours, or by a reboot.
 const PID_START_SKEW_MS = 10000;
+
+// How long start() and stop() wait for the other's per-worktree lock before giving up on
+// it — see _lock, and stop() for the interleave this closes.
+//
+// Deliberately SHORTER than a launch: start() holds the lock for as long as its port poll
+// runs, up to ~8 s. So two launches of one worktree still refuse each other exactly as
+// they always have, while a Stop followed by a Start — a sequence a user performs in well
+// under a second, and the one that orphaned servers — simply queues. And it is a wait,
+// not a gate: a stop the user asked for must happen even if the wait expires, because the
+// alternative is a Stop button that reports failure and leaves the server up.
+const LOCK_WAIT_MS = 2000;
+
+/*
+ * How long a death stays on the decoration, and how long a stop we performed suppresses
+ * one — see _noteDeaths().
+ *
+ * DEATH_TTL_MS is a ceiling, not the usual exit: a death is cleared the moment the
+ * worktree is seen listening again, and by start() before that can even be observed. The
+ * ceiling exists because there is no route to dismiss one, and a banner about a crash
+ * from this morning is noise by the afternoon. Fifteen minutes is long enough that a
+ * server which died while you were in another window is still explained when you come
+ * back.
+ *
+ * STOP_GRACE_MS is the window in which a vanished server is attributed to the stop that
+ * asked for it. A SIGTERM that has not taken effect in a minute did not work, and a
+ * disappearance long after that is a different event.
+ */
+const DEATH_TTL_MS = 15 * 60 * 1000;
+const STOP_GRACE_MS = 60 * 1000;
 
 // Feature identity of a worktree, from a path alone. Kept as a free function for
 // the callers that have nothing but a path and no resolver to hand; it answers
@@ -243,8 +339,12 @@ class Servers {
   file: string;
   tracked: TrackedMap;
   slots: Map<string, number>;
-  _pidInfoCache: Map<string, PidInfo>;
+  _pidInfoCache: Map<string, CachedPidInfo>;
   _starting: Map<string, number>;
+  _wiredCache: Map<string, CachedWiredPorts>;
+  _lastRunning: Map<string, RunningServer>;
+  _stopRequested: Map<string, number>;
+  deaths: Map<string, ServerDeath>;
 
   // `identity` is the shared server/identity.ts resolver (server.ts builds one and
   // hands the same instance to state.ts/orchestrator.ts). Passing it is what makes
@@ -269,8 +369,10 @@ class Servers {
     // featureName → slot (concurrency: one slot per feature, shared by its repos). Persisted
     // so a Studio restart while features run doesn't re-slot a running feature to slot 0.
     this.slots = new Map(Object.entries(saved.slots || {}).map(([k, v]): [string, number] => [k, Number(v)]));
-    // pid (string) → { cwd, top } — a process's cwd/git-toplevel never change, so we
-    // resolve each listening pid once and reuse it across discoverRunning scans.
+    // pid (string) → { cwd, top, startedAt } — a process's cwd/git-toplevel never change,
+    // so we resolve each listening pid once and reuse it across discoverRunning scans.
+    // The start time rides along because the PID does not identify the process: see
+    // discoverRunning for the reuse this guards against.
     this._pidInfoCache = new Map();
     // feature → number of launches currently in flight. start() polls up to ~8 s for
     // ports to bind, and the periodic sweep runs every ~3 s, so a feature that is
@@ -282,6 +384,21 @@ class Servers {
     // Deliberately in-memory: a launch cannot outlive the process that is polling it,
     // so persisting this could only ever resurrect a guard for a start that is over.
     this._starting = new Map();
+    // config file path → its parsed backend ports, keyed on (mtime,size). See
+    // wiredPorts(): decorate() is on the topology-build path, so the read has to be
+    // cheap in the steady state. One entry per frontend worktree — bounded by the
+    // number of worktrees that exist, and never written for a repo with no configPatch.
+    this._wiredCache = new Map();
+    // The previous discovery result, kept so a sweep can be compared with the one before
+    // it — see _noteDeaths(). Discovery is a map of the world RIGHT NOW, and a
+    // disappearance is not in it; only the diff is.
+    this._lastRunning = new Map();
+    // realpath → when a stop was asked for. What tells "we stopped it" from "it died".
+    this._stopRequested = new Map();
+    // realpath → the death the last diff found. Deliberately in memory: a dev server
+    // cannot outlive the daemon, so on a restart there is nothing left to announce, and a
+    // persisted death would be re-announced for a server nobody remembers.
+    this.deaths = new Map();
   }
 
   _save(): void {
@@ -462,16 +579,40 @@ class Servers {
     }
   }
 
-  // { startedAt, command } for a live pid, or null when there is no such process.
-  // `lstart` is a fixed-width ctime string — "Mon Jul 27 22:46:40 2026", 24 chars —
-  // so the command is simply the rest of the line.
+  /**
+   * { startedAt, command } for a live pid, or null when there is no such process.
+   *
+   * MATCHED, not sliced. `lstart` is a ctime string — "Mon Jul 27 22:46:40 2026" — and
+   * this took the first 24 characters on the grounds that ctime is fixed width. It is
+   * fixed width in the C locale on BSD ps. It is not fixed width when the column is
+   * padded (GNU ps right-aligns to the widest row in its output) or when the locale
+   * writes longer weekday and month names, and nothing in the child environment pinned
+   * the locale.
+   *
+   * The failure mode is what makes this worth a regex: a shifted field does not throw
+   * and does not return null — `Date.parse` accepts the truncated remains and answers a
+   * WRONG time. One leading space yields the year 202; two yield 2020, which is a
+   * perfectly plausible timestamp that nothing downstream can tell from a real reading.
+   * The digits pushed off the end then reappear glued to the front of the command.
+   *
+   * Downstream that means `_trackedPidState` compares a bogus start time against the one
+   * stamped at spawn and calls the daemon's own dev server a 'stranger'. Fail-safe in
+   * direction — a stranger is never signalled, so nothing else gets killed — but on such
+   * a machine Studio can never stop a server it started: the record is pruned and the
+   * process is orphaned holding its port.
+   *
+   * So: anchor on the shape of a ctime and take the command from what follows, and pin
+   * the locale in ENV so the field is the one this pattern describes.
+   */
   async _psInfo(pid: number): Promise<PsInfo | null> {
     const r = await run('ps', ['-o', 'lstart=,command=', '-p', String(pid)], { env: ENV });
     const line = (r.stdout || '').split('\n').find((l) => l.trim());
     if (!line) return null;
-    const at = Date.parse(line.slice(0, 24));
+    const m = line.match(/^\s*(\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4})\s+(.*)$/);
+    if (!m) return null;
+    const at = Date.parse(m[1]);
     if (!Number.isFinite(at)) return null;
-    return { startedAt: at, command: line.slice(24).trim() };
+    return { startedAt: at, command: m[2].trim() };
   }
 
   // What a tracked record's pid actually names right now:
@@ -487,7 +628,9 @@ class Servers {
   // check at all from DELETE /sessions/:id and POST /sessions/:id/servers/stop.
   // A process's start time is fixed at exec and cannot be inherited with the pid,
   // which is what makes the record self-validating.
-  async _trackedPidState(t?: TrackedServer | null): Promise<TrackedPidState> {
+  // `worktreePath` is the path the record is filed under. Only the legacy branch needs
+  // it, and only to answer "is this pid living in THAT worktree" — see below.
+  async _trackedPidState(t?: TrackedServer | null, worktreePath?: string): Promise<TrackedPidState> {
     if (!t?.pid) return 'gone';
     const info = await this._psInfo(t.pid);
     if (!info) return 'gone';
@@ -497,7 +640,22 @@ class Servers {
     // start time, but it still tells a dev server from someone else's daemon, and
     // it is strictly better than trusting the bare number.
     const sc = t.repo ? this.startCfg(t.repo) : null; // a record with no repo has no command to match either
-    return sc?.cmd && info.command.includes(sc.cmd) ? 'ours' : 'stranger';
+    if (!sc?.cmd || !info.command.includes(sc.cmd)) return 'stranger';
+    /*
+     * The command is not an identity. Two worktrees of one repo run the SAME
+     * `bash -lc npm run dev`, byte for byte, so a recycled pid that now belongs to a
+     * sibling worktree's dev server passed the command test and was blessed as ours —
+     * and stop() then SIGTERMed its whole process group, taking down a feature the user
+     * was working in and had not touched. Where the process actually lives is the part
+     * that differs between the two, so that is what has to agree.
+     *
+     * A pid we cannot place — no cwd, or a cwd outside any git worktree — is somebody
+     * else's, and so is a record filed under no path at all: neither can be shown to be
+     * ours, and this decides who gets signalled.
+     */
+    if (!worktreePath) return 'stranger';
+    const where = await this._resolvePid(String(t.pid));
+    return where && where.top === realpath(worktreePath) ? 'ours' : 'stranger';
   }
 
   // Drop every tracked record that no longer names a process we launched. Called at
@@ -506,7 +664,7 @@ class Servers {
   async pruneTracked(): Promise<DroppedRecord[]> {
     const dropped: DroppedRecord[] = [];
     for (const [wt, t] of Object.entries(this.tracked)) {
-      if ((await this._trackedPidState(t)) === 'ours') continue;
+      if ((await this._trackedPidState(t, wt)) === 'ours') continue;
       dropped.push({ worktreePath: wt, pid: t.pid });
       delete this.tracked[wt];
     }
@@ -566,10 +724,34 @@ class Servers {
     const byPid = await this._listeningPids();
     for (const [p, ports] of byPid) {
       if (!ports.size) continue;
-      let info: PidInfo | null | undefined = this._pidInfoCache.get(p);
+      let info: CachedPidInfo | null | undefined = this._pidInfoCache.get(p);
+      if (info) {
+        /*
+         * A cache entry belongs to a PROCESS, not to a number.
+         *
+         * This was keyed on the pid alone and evicted only when the pid stopped
+         * appearing in the LISTEN scan — so a dev server that exited and had its pid
+         * handed straight to an unrelated listener before the next sweep was reported as
+         * the OLD worktree, running on the stranger's ports. The row showed a live Stop
+         * button for a server that was gone, and reconcileSlots kept the feature's slot
+         * held forever because something was always "listening" for it.
+         *
+         * The start time is fixed at exec and cannot be inherited with the pid, which is
+         * what makes it the thing to compare — the same property that makes a tracked
+         * record self-validating in _trackedPidState.
+         */
+        const now = await this._psInfo(Number(p));
+        if (!now || now.startedAt !== info.startedAt) {
+          this._pidInfoCache.delete(p);
+          info = null;
+        }
+      }
       if (!info) {
-        info = await this._resolvePid(p);
-        if (!info) continue; // not in a git worktree — retry next scan (don't cache misses)
+        const resolved = await this._resolvePid(p);
+        if (!resolved) continue; // not in a git worktree — retry next scan (don't cache misses)
+        // Stamped AFTER the resolve, so the stamp describes the process the cwd was read
+        // from rather than one that has since taken its place.
+        info = { ...resolved, startedAt: (await this._psInfo(Number(p)))?.startedAt };
         this._pidInfoCache.set(p, info);
       }
       const key = info.top;
@@ -579,7 +761,81 @@ class Servers {
     }
     // drop cache entries for pids that are no longer listening
     for (const p of [...this._pidInfoCache.keys()]) if (!byPid.has(p)) this._pidInfoCache.delete(p);
+    this._noteDeaths(out);
     return out;
+  }
+
+  /**
+   * Announce a dev server that DIED — the transition nothing was watching.
+   *
+   * Discovery is a map diff and nothing more: the sweep re-runs, decorate() flips
+   * `running` to false, the green edge on the card disappears, and that is the entire
+   * notice anybody gets. Nobody is looking at the rail at the moment it happens. So a
+   * backend that OOMed, or died on a syntax error in a file the agent had just written,
+   * announced itself as a 502 in the browser twenty minutes later — and the first guess
+   * is always the frontend, or the route, or the branch. The state was visible; the EVENT
+   * was not, and only the event says "it was up, and then it wasn't".
+   *
+   * "Tracked and listening, now neither." Both halves matter. Listening is what makes it
+   * a disappearance rather than a server that was never up. Tracked is what makes it
+   * OURS: discovery finds every listening socket on the machine, including a colleague's
+   * unrelated process in some other checkout, and Studio has no business narrating the
+   * lifecycle of a server it did not start.
+   *
+   * A DELIBERATE STOP IS NOT A DEATH, and this is the distinction the whole thing turns
+   * on — announcing one would train the user to ignore the mark within a day. Two
+   * independent things say so, because either alone has a hole:
+   *   - stop() records the request (see _stopRequested). This covers the normal path,
+   *     including a stop whose process lingered past the sweep that observed it.
+   *   - a tracked record must still exist. stop() deletes it once the stop is proven, so
+   *     a stop that completed cleanly leaves nothing to attribute a death to even after
+   *     the grace window has expired.
+   * A server killed from a terminal keeps its tracked record and was never asked to stop,
+   * so it announces — correctly. That IS a death from Studio's point of view: nothing it
+   * knows about asked for it.
+   */
+  _noteDeaths(now: Map<string, RunningServer>): void {
+    const at = Date.now();
+    for (const [p, was] of this._lastRunning) {
+      if (now.has(p)) continue;
+      // Asked for, recently: this is the stop working, not a server failing.
+      const asked = this._stopRequested.get(p);
+      if (asked !== undefined && at - asked <= STOP_GRACE_MS) {
+        this._stopRequested.delete(p);
+        continue;
+      }
+      // Studio never started anything here, or a completed stop already forgot it.
+      const repo = this._trackedRepoAt(p);
+      if (!this._trackedAt(p)) continue;
+      this.deaths.set(p, { at, pid: was.pid ?? null, ports: was.ports || [], repo });
+    }
+    // Up again — by a restart, by hand, by anything. The mark is about a server that is
+    // NOT there, so its own return is the truest possible dismissal.
+    for (const p of now.keys()) this.deaths.delete(p);
+    for (const [p, d] of this.deaths) if (at - d.at > DEATH_TTL_MS) this.deaths.delete(p);
+    for (const [p, t] of this._stopRequested) if (at - t > STOP_GRACE_MS) this._stopRequested.delete(p);
+    this._lastRunning = now;
+  }
+
+  /**
+   * The death recorded for this worktree, or null — the read side of _noteDeaths, for
+   * decorate().
+   *
+   * Keyed on realpath because the discovery map is, while callers hold the path as git
+   * printed it. The direct hit is tried first so the symlinked-checkout case is the only
+   * one that costs a syscall — the same order _trackedRepoAt uses.
+   */
+  deathAt(worktreePath: string): ServerDeath | null {
+    if (!this.deaths.size) return null;
+    return this.deaths.get(worktreePath) || this.deaths.get(realpath(worktreePath)) || null;
+  }
+
+  /** Is there a tracked record for this path, under either spelling of it? */
+  _trackedAt(worktreePath: string): TrackedServer | null {
+    const direct = this.tracked[worktreePath];
+    if (direct) return direct;
+    for (const [p, t] of Object.entries(this.tracked)) if (realpath(p) === worktreePath) return t;
+    return null;
   }
 
   /**
@@ -602,14 +858,62 @@ class Servers {
    * Logs beside the dev-server logs so a failed install is readable in the same place,
    * and resolves when npm exits so the caller can report a real outcome.
    */
-  async installDeps(worktreePath: string): Promise<{ ok: boolean; error?: string; log?: string }> {
+  async installDeps(
+    worktreePath: string,
+    opts: InstallOptions = {},
+  ): Promise<{ ok: boolean; error?: string; log?: string; unlinked?: string }> {
     if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: false, error: 'no such worktree' };
     if (!fs.existsSync(path.join(worktreePath, 'package.json')))
       return { ok: false, error: 'no package.json here' };
     if (this.installing.has(worktreePath)) return { ok: false, error: 'already installing' };
 
+    /*
+     * THE VERB FOR A SHARED node_modules, and the reason it defaults to on.
+     *
+     * sharedModules() has been able to report the symlink since it was written, with a
+     * tooltip explaining exactly why it is bad, and there was nothing anywhere to DO
+     * about it — the finding named a problem and left the user to fix it in a terminal.
+     * The fix is two steps and neither is guessable: remove the link (not the directory
+     * it points at, which is another worktree's working tree), then install.
+     *
+     * On by default because running `npm install` THROUGH the link is never the intent.
+     * That is the worst thing this button could do: npm follows the symlink and rewrites
+     * the main checkout's dependency tree — the one every other worktree of the repo is
+     * running against — so one click here restarts somebody else's dev server on
+     * different package versions. Every install that reaches this line with a shared
+     * node_modules would rather have unlinked first, so it does.
+     *
+     * Gated on sharedModules() rather than on unlinkSharedModules()'s own refusals: that
+     * method refuses a real node_modules loudly, because a caller asking it to remove a
+     * link that is not there deserves to hear so — but an ORDINARY install into a
+     * worktree with its own tree must not fail on the same fact. Asking the question
+     * that names the condition keeps the loud refusal for the caller who meant it.
+     */
+    let unlinked: string | undefined;
+    if (opts.unlinkShared !== false && this.sharedModules(worktreePath)) {
+      const r = this.unlinkSharedModules(worktreePath);
+      if (r.error) return { ok: false, error: r.error };
+      unlinked = r.unlinked ?? undefined;
+    }
+
     this.installing.add(worktreePath);
-    const log = path.join(this.logDir, `install__${path.basename(worktreePath)}.log`);
+    /*
+     * One log per WORKTREE, not per worktree name.
+     *
+     * This was `install__${basename}`, and a multi-repo feature's worktrees share a
+     * basename by construction — that is what makes them one feature. So installing the
+     * two halves of a stack (which the UI offers as one click per member) interleaved
+     * both npm runs into a single file, and each one's trimLog could truncate the other's
+     * output mid-install. The log of a failed install is the only place its reason
+     * appears, and it was the one thing being scrambled.
+     *
+     * Named by path the same way _lock is: a slug for a human to read, plus a hash of the
+     * full path so distinct worktrees can never land on one file. start() disambiguates
+     * with the repo instead, which is not available here — installDeps is handed a path
+     * and nothing else.
+     */
+    const stem = `${slug(path.basename(worktreePath), 40)}-${crypto.createHash('sha1').update(String(worktreePath)).digest('hex').slice(0, 8)}`;
+    const log = path.join(this.logDir, `install__${stem}.log`);
     try {
       trimLog(log);
       const fd = fs.openSync(log, 'a');
@@ -629,10 +933,10 @@ class Servers {
         child.once('error', () => resolve(-1));
         child.once('exit', (c) => resolve(c ?? -1));
       });
-      if (code !== 0) return { ok: false, error: `npm install exited ${code}`, log };
-      return { ok: true, log };
+      if (code !== 0) return { ok: false, error: `npm install exited ${code}`, log, unlinked };
+      return { ok: true, log, unlinked };
     } catch (e) {
-      return { ok: false, error: (e as Error).message, log };
+      return { ok: false, error: (e as Error).message, log, unlinked };
     } finally {
       this.installing.delete(worktreePath);
     }
@@ -675,6 +979,66 @@ class Servers {
   }
 
   /**
+   * Remove a shared `node_modules` SYMLINK — the link, never what it points at.
+   *
+   * The first half of the verb sharedModules() has been missing: it reports that this
+   * worktree's dependency tree belongs to somebody else and offers nothing to do about
+   * it. installDeps() supplies the second half.
+   *
+   * Every line here is a refusal, because the thing being deleted sits one resolution
+   * step away from another worktree's entire node_modules:
+   *
+   *   - a REAL directory is refused outright. `fs.unlinkSync` would fail on it (EPERM /
+   *     EISDIR) rather than delete it, but the check is explicit rather than relying on
+   *     that, because the obvious "improvement" — reaching for rm -rf when unlink fails —
+   *     is exactly the change that would turn this into a tree deletion. There is a
+   *     refusal here so the next person has to argue with it.
+   *   - a link that resolves back INSIDE the worktree is refused: sharedModules() does
+   *     not flag it, it isolates as well as a real directory, and removing it would
+   *     delete a working layout to solve a problem it does not have.
+   *   - `fs.unlinkSync` on a symlink removes the LINK. Nothing here uses fs.rmSync,
+   *     recursive anything, or a path that has been through realpath() — a resolved path
+   *     is the target, and the target is not ours.
+   *
+   * A dangling link is removed too: it is the same broken bookkeeping, npm refuses to
+   * install through it, and there is nothing on the other end to endanger.
+   */
+  unlinkSharedModules(worktreePath: string): { unlinked: string | null; error?: string } {
+    const link = path.join(worktreePath, 'node_modules');
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(link);
+    } catch {
+      return { unlinked: null }; // nothing there — an install is all that was ever needed
+    }
+    if (!st.isSymbolicLink()) {
+      // A real tree in the worktree is not shared with anybody. Refused rather than
+      // ignored: the caller asked for a link to be removed and there is none, and a
+      // silent "done" on a path that is a whole dependency tree is the wrong answer to
+      // be wrong about.
+      return { unlinked: null, error: 'node_modules is a real directory here, not a shared symlink' };
+    }
+    // Resolve for the REPORT, not to act on. `target` is only ever returned.
+    const target = this.sharedModules(worktreePath);
+    let dangling = false;
+    try {
+      dangling = !fs.existsSync(link);
+    } catch {
+      /* treated as dangling: a link we cannot follow is not one we can keep */
+      dangling = true;
+    }
+    if (!target && !dangling) {
+      return { unlinked: null, error: 'node_modules links inside this worktree — it is not shared' };
+    }
+    try {
+      fs.unlinkSync(link);
+    } catch (e) {
+      return { unlinked: null, error: `could not remove the node_modules symlink: ${(e as Error).message}` };
+    }
+    return { unlinked: target };
+  }
+
+  /**
    * Whether this worktree is missing the dependencies its start command needs.
    *
    * A worktree created by `git worktree add` has the repo's files and none of its
@@ -714,6 +1078,58 @@ class Servers {
     }
   }
 
+  /**
+   * Whether the installed tree is OLDER than the lockfile that describes it.
+   *
+   * depsMissing() is deliberately binary — a package.json with no node_modules — and that
+   * leaves the failure everybody actually loses an afternoon to. A worktree installed
+   * three weeks ago, then rebased onto a branch that bumped a dependency, has a
+   * node_modules full of the WRONG versions. Every signal on the card is green: deps
+   * resolve, the server starts, depsMissing is correctly false. What you get is a
+   * TypeError from inside a package you did not touch, or a route that 404s because the
+   * router version predates it — a failure that looks exactly like a bug in the branch
+   * you are reading, so that is where the hours go.
+   *
+   * `node_modules/.package-lock.json` is npm's own record of what it last wrote into the
+   * tree; it is rewritten on every install. So the comparison is a straight mtime
+   * ordering: lockfile newer than the tree means the tree predates the current
+   * dependency set. Nothing here parses either file — the question is "when", not "what".
+   *
+   * Three deliberate silences, because a false alarm here would be worse than the signal:
+   *   - no package-lock.json: not an npm-lockfile project, nothing to be stale against;
+   *   - no node_modules/.package-lock.json: either nothing is installed (depsMissing's
+   *     story, not this one) or the tree was written by yarn/pnpm/bun, whose bookkeeping
+   *     this cannot read — claiming staleness from a file another tool never writes would
+   *     mark every such worktree stale forever;
+   *   - equal mtimes: an install that finished in the same millisecond the lock was
+   *     written is a fresh install, not a stale one.
+   *
+   * NOT a reason canStart is false, and that is the whole point: stale deps usually run.
+   * Blocking the start would trade a confusing failure for an impossible one, and the
+   * install is a click away on the same card.
+   *
+   * Cost: two statSync per worktree per decorate, on the topology-build path. Measured at
+   * ~4.5 µs for the pair when both files exist and ~1.7 µs when the lockfile is absent
+   * (`throwIfNoEntry: false` rather than a caught ENOENT, which costs ~6.4 µs per miss —
+   * the exception, not the syscall, is the expensive half). At forty worktrees that is
+   * under 0.2 ms per topology build, against an lsof sweep measured in tens of ms.
+   */
+  depsStale(worktreePath: string): boolean {
+    try {
+      const lock = fs.statSync(path.join(worktreePath, 'package-lock.json'), { throwIfNoEntry: false });
+      if (!lock) return false;
+      const installed = fs.statSync(path.join(worktreePath, 'node_modules', '.package-lock.json'), {
+        throwIfNoEntry: false,
+      });
+      if (!installed) return false;
+      return lock.mtimeMs > installed.mtimeMs;
+    } catch {
+      // A path we cannot stat at all (permissions, a directory that vanished mid-scan).
+      // Same rule the neighbours follow: no claim, rather than a guessed one.
+      return false;
+    }
+  }
+
   // Attach running/pid/ports/canStart to a worktree object using a discovered map.
   /**
    * A running server that is on NONE of the ports its feature's slot expects — the ports
@@ -740,6 +1156,125 @@ class Servers {
     return ports.some((p) => hit.ports.includes(p)) ? [] : [...hit.ports];
   }
 
+  /**
+   * The backend ports this worktree's patched config file names RIGHT NOW — or null
+   * when there is nothing to read.
+   *
+   * The missing half of applyConfigPatch. That method rewrites a frontend's gitignored
+   * config so its API base URL lands on this feature's slot, and then nothing ever looks
+   * at the file again — not on start, not on stop, not on decorate. It is also never
+   * reverted, so the last write survives the feature that made it. The file is therefore
+   * a claim about the world that Studio authored and never checked.
+   *
+   * null and `[]` are different answers and both are load-bearing: null is "I did not
+   * look" (no configPatch, no sibling port map, file absent or unreadable), `[]` is
+   * "I read it and it names no backend of that repo". Collapsing them would let a
+   * missing file read as a config pointing nowhere, which is a claim about a file that
+   * is not there.
+   *
+   * Cost: one statSync per frontend worktree per decorate, and a readFileSync only when
+   * the file has changed since the last one (see _wiredCache). A repo with no
+   * configPatch does not touch the disk at all — the two map lookups above the stat are
+   * the whole of its cost.
+   */
+  wiredPorts(worktree: Pick<Worktree, 'path' | 'repo'>): number[] | null {
+    const conc = this.cfg.concurrency;
+    if (!this._concEnabled() || !conc) return null;
+    const cp = this._repoConc(worktree.repo)?.configPatch;
+    if (!cp?.file) return null;
+    // The same resolution launchOpts() does: the patch names a sibling REPO, and its
+    // portEnv is what supplies the port families. No portEnv, no families to look for.
+    const siblingPortEnv = this._repoConc(cp.siblingRepo)?.portEnv;
+    if (!siblingPortEnv) return null;
+    const file = path.join(worktree.path, cp.file);
+    try {
+      const st = fs.statSync(file);
+      const hit = this._wiredCache.get(file);
+      if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.ports;
+      const text = fs.readFileSync(file, 'utf8');
+      const ports = siblingPortsIn(text, siblingPortEnv, conc.offsetStep, conc.maxSlots || 1);
+      this._wiredCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, ports });
+      return ports;
+    } catch {
+      // Absent, unreadable, or a path we cannot stat. None of those is a claim about
+      // which backend this frontend talks to — the same rule sharedModules() follows.
+      return null;
+    }
+  }
+
+  /**
+   * Which backend this frontend is actually talking to, and whose it is.
+   *
+   * The incident: an MFA frontend called `POST /merchant/api/totp/600/register` and got
+   * a 404. Its config said `localhost:1439`, which was correct for the slot Studio had
+   * patched it to — but the process listening on 1439 belonged to another feature
+   * entirely, on a branch with no such route. Every surface reported green in good
+   * faith, because none of them had ever read the file back. Hours went into the 404.
+   *
+   * Three answers, three different things to do about them, so they are three statuses
+   * rather than a boolean: 'mine' (nothing to do), 'foreign' (the bug — the other
+   * feature is NAMED, because "wrong backend" without a name still leaves you hunting),
+   * 'dead' (nothing listening; the calls fail, but they fail honestly).
+   *
+   * A foreign hit OUTRANKS a matching one, deliberately. A config that names several
+   * backend ports can have some land on this feature and some on another — that is a
+   * half-wired frontend, and it is exactly as broken as a fully misdirected one for
+   * whichever call uses the wrong port. Reporting the good half would hide it.
+   *
+   * `running` is the map decorate() already holds: discoverRunning() maps every
+   * listening socket on the machine to the worktree its process runs in, so port →
+   * worktree → featureFor() is a lookup over a map, not a scan of anything.
+   */
+  wiredTo(worktree: Pick<Worktree, 'path' | 'repo'>, running: Map<string, RunningServer>): WiredTo | null {
+    const ports = this.wiredPorts(worktree);
+    if (!ports) return null;
+    if (!ports.length)
+      return { status: 'unknown', ports: [], port: null, feature: null, repo: null, path: null };
+    const mine = this.featureFor(worktree.path);
+    let own: { port: number; feature: string; path: string } | null = null;
+    let foreign: { port: number; feature: string; path: string } | null = null;
+    for (const port of ports) {
+      for (const [p, hit] of running) {
+        if (!hit.ports.includes(port)) continue;
+        const feature = this.featureFor(p);
+        const found = { port, feature, path: p };
+        if (feature === mine) own ||= found;
+        else foreign ||= found;
+        break; // one listener per port
+      }
+      if (foreign) break; // the worst answer is the answer; no need to keep looking
+    }
+    const at = foreign || own;
+    if (!at) return { status: 'dead', ports, port: ports[0], feature: null, repo: null, path: null };
+    return {
+      status: foreign ? 'foreign' : 'mine',
+      ports,
+      port: at.port,
+      feature: at.feature,
+      repo: this._trackedRepoAt(at.path),
+      path: at.path,
+    };
+  }
+
+  /**
+   * The repo name Studio filed a launch at this worktree under, or null.
+   *
+   * Discovery knows a worktree PATH and nothing else — that is its strength, it finds
+   * servers Studio never started. Only `tracked` carries a repo name, so a server
+   * started by hand has none to give and this says so instead of inferring one from the
+   * directory layout, which would be a guess dressed as a fact.
+   *
+   * `tracked` is keyed on the path as it was handed to start(); the discovery map is
+   * keyed on realpaths. The cheap comparison is tried first so the symlink case is the
+   * only one that costs a syscall.
+   */
+  _trackedRepoAt(worktreePath: string): string | null {
+    const entries = Object.entries(this.tracked);
+    for (const [p, t] of entries) if (t.repo && p === worktreePath) return t.repo;
+    for (const [p, t] of entries) if (t.repo && realpath(p) === worktreePath) return t.repo;
+    return null;
+  }
+
   decorate(
     worktree: Pick<Worktree, 'path' | 'repo'>,
     running: Map<string, RunningServer>,
@@ -750,11 +1285,14 @@ class Servers {
     | 'ports'
     | 'canStart'
     | 'depsMissing'
+    | 'depsStale'
     | 'depsInstalling'
     | 'noStartCmd'
     | 'gone'
     | 'offSlot'
     | 'sharedModules'
+    | 'wiredTo'
+    | 'died'
   > {
     const hit = running.get(realpath(worktree.path));
     /*
@@ -780,6 +1318,10 @@ class Servers {
       canStart: configured && !deps && !gone,
       gone,
       depsMissing: deps,
+      // Not folded into `deps` and not a reason canStart is false — see depsStale().
+      // A vanished directory has no files to compare, and `gone` already says the
+      // only thing worth saying about it.
+      depsStale: gone ? false : this.depsStale(worktree.path),
       depsInstalling: this.installing.has(worktree.path),
       /*
        * Why `canStart` is false, for the half that could not say so.
@@ -795,6 +1337,14 @@ class Servers {
       // Not a reason canStart is false: a shared node_modules starts perfectly well.
       // It is the reason two worktrees that each look fine interfere with each other.
       sharedModules: gone ? null : this.sharedModules(worktree.path),
+      // Not conditional on THIS worktree running: a frontend that is down is still
+      // pointed somewhere, and the moment it comes up it will talk to whatever that is.
+      // Skipped for a vanished directory only because there is no file left to read.
+      wiredTo: gone ? null : this.wiredTo(worktree, running),
+      // A server that was up on the last sweep and is not up now, and that nobody asked
+      // to stop — see _noteDeaths(). A fact about the transition, which is the one thing
+      // a map diff of the current world can never carry.
+      died: this.deathAt(worktree.path),
     };
   }
 
@@ -834,6 +1384,17 @@ class Servers {
       return null;
     }
   }
+  // The same lock, for a caller that can afford to wait a moment for a launch to
+  // finish rather than giving up the instant it is held. Null when the wait expired.
+  async _lockWaiting(worktreePath: string, timeoutMs: number): Promise<string | null> {
+    const until = Date.now() + timeoutMs;
+    for (;;) {
+      const lock = this._lock(worktreePath);
+      if (lock || Date.now() >= until) return lock;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
   _unlock(lock: string): void {
     try {
       fs.rmdirSync(lock);
@@ -855,8 +1416,12 @@ class Servers {
     const cmd = `${opts.cmd || sc!.cmd}${opts.portArgs ? ` ${opts.portArgs}` : ''}`;
     const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
     const ports = opts.ports?.length ? opts.ports : (sc?.ports ?? []);
-    const lock = this._lock(worktreePath);
-    if (!lock) return { ok: false, error: `another launch for '${repo}' at ${worktreePath} is in progress` };
+    // Waited for, briefly: the holder is usually a stop of this same worktree that is
+    // about to finish, and refusing the launch the user pressed Start for because a
+    // half-second-old Stop has not settled yet is a worse answer than waiting for it.
+    const lock = await this._lockWaiting(worktreePath, LOCK_WAIT_MS);
+    if (!lock)
+      return { ok: false, error: `another start or stop for '${repo}' at ${worktreePath} is in progress` };
     // From here until the ports are up (or we give up waiting), this feature's slot
     // must survive a reconcile sweep — the ports it was allocated for are exactly
     // the ones not bound yet.
@@ -865,7 +1430,22 @@ class Servers {
     try {
       for (const p of ports) {
         const pid = await this.portPid(p);
-        if (pid) return { ok: false, error: `port ${p} already in use (pid ${pid})` };
+        if (pid) {
+          /*
+           * Name the holder, not just its pid.
+           *
+           * This said "port 1233 already in use (pid 4711)" — a number the user then had
+           * to take to lsof and ps to turn into an answer, while _resolvePid two hundred
+           * lines away already maps a pid to the worktree it runs in and featureFor maps
+           * that to a feature. Knowing which feature is sitting on the port is the whole
+           * difference between an error and an instruction.
+           */
+          const owner = await this._resolvePid(String(pid));
+          return {
+            ok: false,
+            error: portBusy(p, { pid, feature: owner ? this.featureFor(owner.top) : null }),
+          };
+        }
       }
       // Re-point the worktree's FE config at this slot's sibling port before spawning.
       if (opts.patch) this.applyConfigPatch(worktreePath, opts.patch);
@@ -923,6 +1503,11 @@ class Servers {
         return { ok: false, error: `could not start ${repo}: ${spawnError.message}` };
       }
       this.tracked[worktreePath] = { pid: child.pid, repo, log, startedAt };
+      // Whatever died here is answered for. Clearing on the launch rather than waiting
+      // for the next sweep to see it listening means the mark does not survive the click
+      // that addresses it — including when the relaunch itself fails, where the start
+      // error is the live news and a stale death beside it is just noise.
+      this.deaths.delete(realpath(worktreePath));
       this._save();
       /*
        * Poll for the ports to bind. The verdict is REPORTED now rather than discarded:
@@ -1005,6 +1590,43 @@ class Servers {
     return { ok: true, results };
   }
 
+  /**
+   * Stop every target, then free the slots the stop really emptied — the whole sequence,
+   * once, as startAll is for launching.
+   *
+   * Five routes spelled this out independently, and the two halves that matter are the
+   * ORDER and the GUARD. Release before the refresh and a member that refused to die
+   * keeps its ports while its slot goes back in the pool; release unconditionally and a
+   * feature member the caller never enumerated keeps running on ports the next feature is
+   * about to be handed. Both mistakes shipped, in different routes, which is what a
+   * sequence copied five times produces.
+   *
+   * `running` re-discovers and hands back what is still listening — a callback rather
+   * than a map, because it must be read AFTER the stops (the guard is a question about
+   * the post-stop world) and because the caller's own cache is what the rest of its
+   * request reads. `settleMs` waits before asking: a SIGTERMed server can still hold its
+   * socket for a moment, and a caller that is about to reuse those ports (the
+   * stop-conflicts path) needs the answer to be settled rather than merely immediate.
+   */
+  async stopAll(
+    targets: Array<{ repo: string; worktreePath: string; ports?: number[] }>,
+    running: () => Promise<Map<string, RunningServer>>,
+    settleMs = 0,
+  ): Promise<Array<{ repo: string } & StopResult>> {
+    // Concurrently, as startAll launches: stop() takes a per-worktree lock, so distinct
+    // worktrees never contend, and a stack should not pay the sum of its members' settles.
+    const results = await Promise.all(
+      targets.map(async (t) => ({
+        repo: t.repo,
+        ...(await this.stop(t.repo, t.worktreePath, t.ports ?? [])),
+      })),
+    );
+    if (settleMs) await new Promise((r) => setTimeout(r, settleMs));
+    const live = await running();
+    for (const t of targets) this.releaseSlotIfIdle(this.featureFor(t.worktreePath), live);
+    return results;
+  }
+
   // Ports a server in this worktree would be listening on: the feature's
   // slot-derived ports when concurrency-slotted, else the repo's configured ports.
   /**
@@ -1052,114 +1674,164 @@ class Servers {
    * Ownership is still proven per port before anything is signalled: a caller's list
    * can be a scan old, and by now the port may belong to somebody else entirely.
    */
-  async stop(
-    repo: string,
-    worktreePath: string,
-    alsoPorts: number[] = [],
-  ): Promise<{ ok: true; killed: boolean; stillListening: number[] }> {
-    let killed = false;
-    const t = this.tracked[worktreePath];
-    // Never signal a pid we cannot still prove is ours — see _trackedPidState.
-    // `kill(-pid)` takes out a whole process group, so getting this wrong is not a
-    // near miss.
-    const state = t ? await this._trackedPidState(t) : 'gone';
-    // A record with no pid can only be 'gone', so `t.pid` here is the pid that state
-    // was decided on.
-    if (state === 'ours' && t.pid) {
-      try {
-        process.kill(-t.pid, 'SIGTERM');
-        killed = true;
-      } catch {
+  async stop(repo: string, worktreePath: string, alsoPorts: number[] = []): Promise<StopResult> {
+    /*
+     * Under the same per-worktree lock start() takes.
+     *
+     * A stop is a long asynchronous act — a `ps`, an `lsof` per port, a 600 ms settle —
+     * and it used to run entirely outside that lock. Press Stop and then Start: the stop
+     * is still waiting on its settle while start() spawns a new dev server and writes its
+     * record, and the stop then finishes by deleting that record. The new server is up
+     * and untracked forever — logs() has nothing to read, nothing can signal its process
+     * group, and the only way out is to find the pid by hand.
+     *
+     * Waited for rather than required. A stop the user asked for must not be refusable,
+     * and start() holds this lock for as long as its port poll runs, which is longer than
+     * an HTTP caller should wait. When the wait expires we proceed anyway — the record
+     * check in `forget` below is what makes that case safe.
+     */
+    const lock = await this._lockWaiting(worktreePath, LOCK_WAIT_MS);
+    /*
+     * Recorded BEFORE anything is signalled, and before the lock could have been given
+     * up on: the sweep that notices the server is gone may land at any point from here
+     * on, and a stop the user asked for must never be announced as a death (_noteDeaths).
+     * Also clears any death already on the row — stopping a server that is already gone
+     * is exactly how a user acknowledges one.
+     */
+    const key = realpath(worktreePath);
+    this._stopRequested.set(key, Date.now());
+    this.deaths.delete(key);
+    try {
+      let killed = false;
+      const t = this.tracked[worktreePath];
+      /*
+       * Drop the tracked record — but only when it is still the record this stop was
+       * deciding about, and only once the stop is proven. Two ways forgetting too eagerly
+       * hurt, and the deletion used to be unconditional and to happen up here, before the
+       * SIGKILL escalation had even run:
+       *
+       *   A start that raced this stop has written a NEW record for this worktree.
+       *   Deleting it orphans a server that is live. `startedAt` is stamped fresh on every
+       *   launch, so it is what tells the two records apart.
+       *
+       *   The stop did not work. A process that declined SIGTERM and survived SIGKILL is
+       *   still holding this feature's ports, and a record that is gone cannot be used to
+       *   kill it, or to show it. It becomes an invisible squatter on ports reconcileSlots
+       *   will hand to the next feature. Keeping it leaves it killable and visible.
+       */
+      const forget = (stillListening: number[]): void => {
+        if (stillListening.length) return;
+        const now = this.tracked[worktreePath];
+        if (!t || !now || now.pid !== t.pid || now.startedAt !== t.startedAt) return;
+        delete this.tracked[worktreePath];
+        this._save();
+      };
+      // Never signal a pid we cannot still prove is ours — see _trackedPidState.
+      // `kill(-pid)` takes out a whole process group, so getting this wrong is not a
+      // near miss.
+      const state = t ? await this._trackedPidState(t, worktreePath) : 'gone';
+      // A record with no pid can only be 'gone', so `t.pid` here is the pid that state
+      // was decided on.
+      if (state === 'ours' && t.pid) {
         try {
-          process.kill(t.pid, 'SIGTERM');
+          process.kill(-t.pid, 'SIGTERM');
           killed = true;
         } catch {
-          /* */
+          try {
+            process.kill(t.pid, 'SIGTERM');
+            killed = true;
+          } catch {
+            /* */
+          }
+        }
+      } else if (state === 'stranger') {
+        // Loud, because it means this record was about to be used to kill something
+        // that has nothing to do with Studio. The port sweep below still frees
+        // whatever is genuinely holding this worktree's ports.
+        console.warn(
+          `[wt-studio] refusing to signal pid ${t.pid} for ${worktreePath}: it is no longer the process Studio started (pid reused). Dropping the stale record.`,
+        );
+      }
+      // Also free any listener still holding one of this worktree's ports — where the slot
+      // says it should be, plus wherever it has actually been seen. A targeted per-port
+      // lookup either way, not a full lsof-all-sockets discovery scan. Deduped: each entry
+      // costs a lookup, and a drifted server is usually reported on some of its slot ports
+      // as well as the strays.
+      const sweep = [...new Set([...this._portsFor(repo, worktreePath), ...alsoPorts])];
+      const mine = realpath(worktreePath);
+      for (const p of sweep) {
+        const pid = await this.portPid(p);
+        if (!pid || (t && pid === t.pid)) continue;
+        /*
+         * Prove the listener is OURS before signalling it.
+         *
+         * The port list alone is not proof of ownership: two features run the same repo
+         * from different worktrees, and a stale or mis-derived port (see _portsFor) points
+         * straight at a sibling's dev server. `kill` here is not a near miss — it stops
+         * work in progress in a feature the user did not touch, and reported `killed:true`
+         * while doing it. Resolving the pid's own worktree is the only honest test.
+         *
+         * A pid we cannot resolve is left alone: not-in-a-git-worktree means it is not a
+         * dev server Studio started, so it is somebody else's process.
+         */
+        const info = await this._resolvePid(String(pid));
+        if (!info || realpath(info.top) !== mine) continue;
+        try {
+          process.kill(pid, 'SIGTERM');
+          killed = true;
+        } catch {
+          /* already gone — the outcome we wanted either way */
         }
       }
-    } else if (state === 'stranger') {
-      // Loud, because it means this record was about to be used to kill something
-      // that has nothing to do with Studio. The port sweep below still frees
-      // whatever is genuinely holding this worktree's ports.
-      console.warn(
-        `[wt-studio] refusing to signal pid ${t.pid} for ${worktreePath}: it is no longer the process Studio started (pid reused). Dropping the stale record.`,
-      );
-    }
-    // Also free any listener still holding one of this worktree's ports — where the slot
-    // says it should be, plus wherever it has actually been seen. A targeted per-port
-    // lookup either way, not a full lsof-all-sockets discovery scan. Deduped: each entry
-    // costs a lookup, and a drifted server is usually reported on some of its slot ports
-    // as well as the strays.
-    const sweep = [...new Set([...this._portsFor(repo, worktreePath), ...alsoPorts])];
-    const mine = realpath(worktreePath);
-    for (const p of sweep) {
-      const pid = await this.portPid(p);
-      if (!pid || (t && pid === t.pid)) continue;
-      /*
-       * Prove the listener is OURS before signalling it.
-       *
-       * The port list alone is not proof of ownership: two features run the same repo
-       * from different worktrees, and a stale or mis-derived port (see _portsFor) points
-       * straight at a sibling's dev server. `kill` here is not a near miss — it stops
-       * work in progress in a feature the user did not touch, and reported `killed:true`
-       * while doing it. Resolving the pid's own worktree is the only honest test.
-       *
-       * A pid we cannot resolve is left alone: not-in-a-git-worktree means it is not a
-       * dev server Studio started, so it is somebody else's process.
-       */
-      const info = await this._resolvePid(String(pid));
-      if (!info || realpath(info.top) !== mine) continue;
-      try {
-        process.kill(pid, 'SIGTERM');
-        killed = true;
-      } catch {
-        /* already gone — the outcome we wanted either way */
-      }
-    }
-    delete this.tracked[worktreePath];
-    this._save();
 
-    /*
-     * Did it actually stop? SIGTERM is a REQUEST, and a process may decline it.
-     *
-     * The return type was literally `{ ok: true; killed: boolean }` — `ok` was a constant
-     * and there was no failure channel at all, so a server with a `process.on('SIGTERM')`
-     * handler that keeps listening was reported as stopped while `lsof` still showed the
-     * port bound. Nothing escalated, and the group verbs discarded even `killed`.
-     *
-     * One re-check after a short settle, then SIGKILL what is left. A caller that asked
-     * for a stop is entitled to know whether it happened.
-     */
-    if (!killed || !sweep.length) return { ok: true, killed, stillListening: [] };
-
-    await new Promise((r) => setTimeout(r, 600));
-    const stubborn: number[] = [];
-    // The same list the SIGTERM pass used: a drifted server that declines a polite stop
-    // has to be escalated on the port it is actually holding, or `stillListening` says
-    // nothing is left while the squatted port is still bound.
-    for (const p of sweep) {
-      const pid = await this.portPid(p);
-      if (!pid) continue;
       /*
-       * Re-prove ownership before the SIGKILL, exactly as the SIGTERM pass does.
+       * Did it actually stop? SIGTERM is a REQUEST, and a process may decline it.
        *
-       * Six hundred milliseconds ago this port belonged to our server. It may have died
-       * in the meantime and something else may have taken the port — which is precisely
-       * what happens when a neighbouring feature is starting up into the slot this
-       * server was squatting. SIGKILL is not survivable and not a request.
+       * The return type was literally `{ ok: true; killed: boolean }` — `ok` was a constant
+       * and there was no failure channel at all, so a server with a `process.on('SIGTERM')`
+       * handler that keeps listening was reported as stopped while `lsof` still showed the
+       * port bound. Nothing escalated, and the group verbs discarded even `killed`.
+       *
+       * One re-check after a short settle, then SIGKILL what is left. A caller that asked
+       * for a stop is entitled to know whether it happened.
        */
-      const info = await this._resolvePid(String(pid));
-      if (!info || realpath(info.top) !== mine) continue;
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        /* gone between the check and the signal, which is the outcome we wanted */
+      if (!killed || !sweep.length) {
+        forget([]);
+        return { ok: true, killed, stillListening: [] };
       }
-      stubborn.push(p);
+
+      await new Promise((r) => setTimeout(r, 600));
+      const stubborn: number[] = [];
+      // The same list the SIGTERM pass used: a drifted server that declines a polite stop
+      // has to be escalated on the port it is actually holding, or `stillListening` says
+      // nothing is left while the squatted port is still bound.
+      for (const p of sweep) {
+        const pid = await this.portPid(p);
+        if (!pid) continue;
+        /*
+         * Re-prove ownership before the SIGKILL, exactly as the SIGTERM pass does.
+         *
+         * Six hundred milliseconds ago this port belonged to our server. It may have died
+         * in the meantime and something else may have taken the port — which is precisely
+         * what happens when a neighbouring feature is starting up into the slot this
+         * server was squatting. SIGKILL is not survivable and not a request.
+         */
+        const info = await this._resolvePid(String(pid));
+        if (!info || realpath(info.top) !== mine) continue;
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          /* gone between the check and the signal, which is the outcome we wanted */
+        }
+        stubborn.push(p);
+      }
+      forget(stubborn);
+      // Reported whether or not the SIGKILL landed: the caller wanted to know that a polite
+      // stop was not enough, and a port that needed killing twice is worth surfacing.
+      return { ok: true, killed, stillListening: stubborn };
+    } finally {
+      if (lock) this._unlock(lock);
     }
-    // Reported whether or not the SIGKILL landed: the caller wanted to know that a polite
-    // stop was not enough, and a port that needed killing twice is worth surfacing.
-    return { ok: true, killed, stillListening: stubborn };
   }
 
   /**

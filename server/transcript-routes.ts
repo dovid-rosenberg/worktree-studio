@@ -1,5 +1,5 @@
-// HTTP surface for transcript search + token/cost telemetry, plus the wiring that
-// keeps the index warm. Everything lives here so server.ts needs exactly one line —
+// HTTP surface for transcript search, plus the wiring that keeps the index warm.
+// Everything lives here so server.ts needs exactly one line —
 // `require('./transcript-routes').register(api, { manager, cfg })` — which is what
 // lets this land alongside an in-flight refactor of server.ts without conflicting.
 //
@@ -8,11 +8,8 @@
 import path from 'path';
 import type { Request, Response, Router } from 'express';
 import * as transcripts from './transcripts.ts';
-import * as pricing from './pricing.ts';
 import { STATE_DIR } from './config.ts';
-import { TranscriptIndex, summarize } from './transcript-index.ts';
-import type { TokenTotals } from './transcripts.ts';
-import type { UsageRow, UsageSummary } from './transcript-index.ts';
+import { TranscriptIndex } from './transcript-index.ts';
 import type { Config, PartialDeep, Session, SessionState } from './types.ts';
 
 /**
@@ -45,52 +42,11 @@ type QueryValue = Request['query'][string];
 interface SessionMeta {
   id: string;
   title: string;
-  /**
-   * Optional from here down: an ARCHIVED row — a session the index still has telemetry
-   * for but which no longer exists — can only honestly report the id and the branch its
-   * messages carried. Making these required would force the archive to invent a repo and
-   * a state for work that finished.
-   */
   feature?: string;
   branch?: string | null;
   repo?: string;
   active?: boolean;
   state?: SessionState;
-}
-
-/** One session's telemetry row in the fleet-wide rollup. */
-type SessionUsage = UsageSummary & { session: SessionMeta; indexed: boolean; archived?: boolean };
-
-/** A feature's rollup, accumulated across its sessions before pricing is rounded. */
-interface FeatureUsage extends TokenTotals {
-  feature: string;
-  sessions: number;
-  costUsd: number;
-  unpricedModels: Set<string>;
-}
-
-// What every cost-bearing response says about where its dollars came from.
-//
-// `cacheMultipliers` is here because the client cannot derive it and used to hardcode
-// a copy (client/src/lib/components/insights/format.js). The API prices a MODEL, never
-// a token class, so a UI that wants to show "which token class cost the money" has to
-// know that cache classes bill as fixed multiples of the model's input rate. When those
-// multiples changed, the server's dollars moved and the client's billed-weight chart
-// silently kept the old ratios — the same screen then answered "where did the money go"
-// two different ways. Publishing them makes server/pricing.ts the single source.
-function pricingBlock() {
-  return {
-    verifiedAt: pricing.PRICING_VERIFIED,
-    note: pricing.ESTIMATE_NOTE,
-    // Multiples of the model's INPUT rate. `input: 1` is stated rather than implied so
-    // a client can consume the map wholesale instead of special-casing one member.
-    cacheMultipliers: {
-      input: 1,
-      cacheWrite5m: pricing.CACHE_WRITE_5M,
-      cacheWrite1h: pricing.CACHE_WRITE_1H,
-      cacheRead: pricing.CACHE_READ,
-    },
-  };
 }
 
 function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptIndex; router: Router } {
@@ -150,14 +106,13 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
     enqueue(manager.get(id));
   });
   /*
-   * A removed session KEEPS its telemetry.
+   * A removed session KEEPS its indexed messages.
    *
-   * This used to call index.forget(id), which deletes the session's messages, usage and
-   * file rows. That made cost history a property of the live session list: delete a
-   * worktree and what it cost you was gone. Telemetry is the record of work that already
-   * happened — it should outlive the worktree, which is the whole reason to look at it
-   * afterwards. The index is an archive now, and /transcripts/usage renders rows with no
-   * live session as archived. index.forget() stays for a real purge.
+   * This used to call index.forget(id), which deletes the session's messages and file
+   * rows. That made the searchable corpus a property of the live session list: delete a
+   * worktree and the conversation that produced it was gone with it. "Which session
+   * touched helpers/mfa.js" is asked most often about work that has already finished, so
+   * the index is an archive. index.forget() stays for a real purge.
    */
 
   // Catch up on everything already on disk, once, off the boot path.
@@ -165,8 +120,8 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
     for (const s of manager.all()) enqueue(s);
   }, 2000).unref?.();
 
-  // Bring one session up to date before answering a query about it, so a caller
-  // never sees stale numbers just because no Stop hook has fired since the last turn.
+  // Bring one session up to date before answering a query about it, so a search
+  // never misses the last turn just because no Stop hook has fired since it.
   async function fresh(session: Session): Promise<void> {
     if (!index.ready) return;
     try {
@@ -210,11 +165,11 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
   const r = api;
 
   r.get('/transcripts/status', async (_req, res) => {
-    res.json({ ...index.status(), pricing: pricingBlock() });
+    res.json(index.status());
   });
 
   // Which transcript a session maps to, and whether we can see it. Useful on its own
-  // when a session's numbers look empty — it says WHY.
+  // when a session turns up no hits — it says WHY.
   r.get('/sessions/:id/transcript', async (req, res) => {
     const s = need(req, res);
     if (!s) return;
@@ -292,126 +247,6 @@ function register(api: Router, deps: TranscriptRoutesDeps): { index: TranscriptI
         order: str(req.query.order, 'rank'),
       }),
       session: meta(s),
-    });
-  });
-
-  // ---- telemetry ----
-  // Carries the same `pricing` block as the fleet endpoint: a client that mounts one
-  // session's telemetry on its own must still learn the cache multipliers, or its
-  // billed-weight chart falls back to whatever it last knew.
-  r.get('/sessions/:id/transcript/usage', async (req, res) => {
-    const s = need(req, res);
-    if (!s) return;
-    await fresh(s);
-    if (index.ready) {
-      const rows = index.usageRows(s.id);
-      if (rows.length)
-        return res.json({
-          session: meta(s),
-          source: 'index',
-          ...summarize(rows),
-          costIsEstimate: true,
-          pricing: pricingBlock(),
-        });
-    }
-    // Not indexed (or no sqlite) → read the transcript directly.
-    const loc = transcripts.locate(s, {});
-    if (!loc.found)
-      return res.json({
-        session: meta(s),
-        source: 'none',
-        reason: loc.reason,
-        ...summarize([]),
-        pricing: pricingBlock(),
-      });
-    const agg = await transcripts.aggregate(loc.file);
-    res.json({ session: meta(s), source: 'transcript', ...agg, pricing: pricingBlock() });
-  });
-
-  // Everything at once: per session, rolled up per feature, plus a grand total.
-  // Feature is the identity that ties a feature's worktrees together across repos,
-  // so it is the unit worth costing.
-  r.get('/transcripts/usage', async (req, res) => {
-    const sessions = manager.all();
-    if (req.query.refresh === '1') {
-      for (const s of sessions) await fresh(s);
-    }
-
-    const bySession = new Map<string, UsageRow[]>();
-    if (index.ready) {
-      for (const row of index.usageRows(null)) {
-        let rows = bySession.get(row.session_id);
-        if (!rows) {
-          rows = [];
-          bySession.set(row.session_id, rows);
-        }
-        rows.push(row);
-      }
-    }
-
-    /*
-     * The INDEX is the outer loop, not the live session list.
-     *
-     * Iterating `sessions` meant a session's spend vanished from this view the moment
-     * the session was deleted, even with its rows on disk — you could not ask what last
-     * month's finished work had cost. Every indexed session appears; one with no live
-     * counterpart is reported as archived, carrying the identity the index recorded.
-     * Live sessions with no rows yet still appear (indexed: false), as before.
-     */
-    const live = new Map(sessions.map((s) => [s.id, s]));
-    const ids = new Set<string>([...live.keys(), ...bySession.keys()]);
-
-    const out: SessionUsage[] = [];
-    for (const id of ids) {
-      const s = live.get(id);
-      const rows = bySession.get(id) || [];
-      if (!s && !rows.length) continue;
-      out.push({
-        session: s ? meta(s) : index.archivedMeta(id),
-        ...summarize(rows),
-        indexed: rows.length > 0,
-        archived: !s,
-      });
-    }
-
-    const features = new Map<string, FeatureUsage>();
-    for (const e of out) {
-      const key = e.session.feature || e.session.id;
-      let f = features.get(key);
-      if (!f) {
-        f = {
-          feature: key,
-          sessions: 0,
-          ...transcripts.blankTotals(),
-          costUsd: 0,
-          unpricedModels: new Set<string>(),
-        };
-        features.set(key, f);
-      }
-      f.sessions++;
-      transcripts.addUsage(f, e);
-      f.costUsd += e.costUsd || 0;
-      for (const m of e.unpricedModels) f.unpricedModels.add(m);
-    }
-
-    const totals = transcripts.blankTotals();
-    let costUsd = 0;
-    const unpriced = new Set<string>();
-    for (const e of out) {
-      transcripts.addUsage(totals, e);
-      costUsd += e.costUsd || 0;
-      for (const m of e.unpricedModels) unpriced.add(m);
-    }
-
-    res.json({
-      sessions: out.sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0)),
-      features: [...features.values()]
-        .map((f) => ({ ...f, costUsd: pricing.round(f.costUsd), unpricedModels: [...f.unpricedModels] }))
-        .sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0)),
-      totals: { ...totals, costUsd: pricing.round(costUsd), unpricedModels: [...unpriced] },
-      costIsEstimate: true,
-      pricing: pricingBlock(),
-      backend: index.status().backend,
     });
   });
 

@@ -14,7 +14,6 @@ import {
   parseJsonc,
   parseVsCodeLaunch,
   parseVsCodeTasks,
-  parseZed,
 } from '../server/run-configs.ts';
 
 const wt = '/code/api/.worktrees/feat';
@@ -192,21 +191,10 @@ test('VS Code launch: a runnable command is taken, a debugger session is not', (
   assert.equal(out[0].kind, 'server');
 });
 
-test('Zed tasks are a bare array of label + command', () => {
-  const out = parseZed(
-    JSON.stringify([{ label: 'lint', command: 'npm', args: ['run', 'lint'] }]),
-    wt,
-    'tasks.json',
-  );
-  assert.equal(out[0].cmd, 'npm run lint');
-  assert.equal(out[0].kind, 'task');
-});
-
 test('discover reads every editor in one worktree and dedupes by name', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-rc-'));
   fs.mkdirSync(path.join(dir, '.idea', 'runConfigurations'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.vscode'), { recursive: true });
-  fs.mkdirSync(path.join(dir, '.zed'), { recursive: true });
 
   fs.writeFileSync(
     path.join(dir, '.idea', 'runConfigurations', 'unit.xml'),
@@ -219,15 +207,16 @@ test('discover reads every editor in one worktree and dedupes by name', async ()
     path.join(dir, '.vscode', 'tasks.json'),
     '{ // written by an editor\n "tasks": [{ "label": "unit", "type": "npm", "script": "other" }] }',
   );
+  // A third file, a third parser: launch.json is read alongside tasks.json, not instead.
   fs.writeFileSync(
-    path.join(dir, '.zed', 'tasks.json'),
-    JSON.stringify([{ label: 'lint', command: 'npm run lint' }]),
+    path.join(dir, '.vscode', 'launch.json'),
+    JSON.stringify({ configurations: [{ name: 'lint', type: 'node-terminal', command: 'npm run lint' }] }),
   );
 
   const out = await discover(dir);
   assert.deepEqual(out.map((c) => c.name).sort(), ['lint', 'unit']);
   assert.equal(out.find((c) => c.name === 'unit')?.cmd, 'npm run test:unit', 'JetBrains won the name');
-  assert.equal(out.find((c) => c.name === 'lint')?.source, 'zed');
+  assert.equal(out.find((c) => c.name === 'lint')?.source, 'vscode');
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -241,10 +230,10 @@ test('a worktree with no editor configs discovers nothing, quietly', async () =>
 /*
  * "Is this a server?" must be ONE decision, applied by every parser.
  *
- * It was six different expressions: one hardcoded 'task', one testing the name but not the
- * command, one the command but not the name, one that never consulted the configured start
- * command at all — and discover() did not pass `startCmd` to the VS Code tasks or Zed
- * parsers, so those two could not have applied the rule even if they had tried.
+ * It was a different expression in every parser: one hardcoded 'task', one testing the name
+ * but not the command, one the command but not the name, one that never consulted the
+ * configured start command at all — and discover() did not pass `startCmd` to the VS Code
+ * tasks parser, which therefore could not have applied the rule even if it had tried.
  *
  * The consequence is not cosmetic: `kind` routes the command into two different
  * subsystems. A server misfiled as a task gets no concurrency slot, no port pre-check and
@@ -253,14 +242,8 @@ test('a worktree with no editor configs discovers nothing, quietly', async () =>
  */
 const START = 'npm run dev';
 
-test('a Zed task whose command IS the start command is a SERVER', () => {
-  // Zed's parser only ever tested the label, and never received startCmd at all.
-  const zed = JSON.stringify([{ label: 'boot it', command: 'npm', args: ['run', 'dev'] }]);
-  const [cfg] = parseZed(zed, '/wt', '.zed/tasks.json', START);
-  assert.equal(cfg.kind, 'server', 'the label says nothing; the command says everything');
-});
-
 test('a VS Code task whose command IS the start command is a SERVER', () => {
+  // The label says nothing; the command says everything.
   const tasks = JSON.stringify({ tasks: [{ label: 'boot it', type: 'shell', command: 'npm run dev' }] });
   const [cfg] = parseVsCodeTasks(tasks, '/wt', '.vscode/tasks.json', START);
   assert.equal(cfg.kind, 'server');
@@ -276,7 +259,7 @@ test("VS Code's own isBackground OUTRANKS the heuristics — the editor knows", 
 });
 
 test('a genuinely finite command stays a task', () => {
-  const zed = JSON.stringify([{ label: 'unit tests', command: 'npm', args: ['test'] }]);
-  const [cfg] = parseZed(zed, '/wt', '.zed/tasks.json', START);
+  const tasks = JSON.stringify({ tasks: [{ label: 'unit tests', type: 'shell', command: 'npm test' }] });
+  const [cfg] = parseVsCodeTasks(tasks, '/wt', '.vscode/tasks.json', START);
   assert.equal(cfg.kind, 'task');
 });

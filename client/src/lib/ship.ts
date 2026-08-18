@@ -25,6 +25,15 @@ export interface ShipBlocker {
   text: string;
   /** `blocked` stops a release; `waiting` resolves itself if you leave it alone. */
   kind: 'blocked' | 'waiting';
+  /**
+   * The verb that clears this blocker, when Studio has one.
+   *
+   * Naming a blocker the app can fix and offering nothing is how "has 3 unpushed
+   * commit(s)" sat here for as long as it did: the push it asked for was already in the
+   * codebase, buried in the PR path. `push` → POST /group/push, `update` → POST
+   * /group/update. Absent for everything only a human or a forge can resolve.
+   */
+  action?: 'push' | 'update';
 }
 
 export interface ShipVerdict {
@@ -76,6 +85,13 @@ export function shipVerdict(ci: CiRepo[], overlap: FeatureOverlap | null): ShipV
         repo: r.repo,
         text: `${REASON[r.blockedBy] || 'is not mergeable yet'}`,
         kind: r.blockedBy === 'checks' ? 'waiting' : 'blocked',
+        // The two the forge reports that a rebase onto the base is the answer to. Only
+        // an offer: /group/update refuses a rebase it can see will conflict, so pressing
+        // it on `conflicts` may well come back with the files to fix by hand — which is
+        // still more than the sentence alone ever said.
+        ...(r.blockedBy === 'needs-rebase' || r.blockedBy === 'conflicts'
+          ? { action: 'update' as const }
+          : {}),
       });
     } else if (r.mergeable == null) {
       // The forge did not say. Not a blocker — there is nothing to do about it — but it
@@ -93,7 +109,14 @@ export function shipVerdict(ci: CiRepo[], overlap: FeatureOverlap | null): ShipV
    */
   for (const d of overlap?.drift || []) {
     if (d.unpushed) {
-      blockers.push({ repo: d.repo, text: `has ${d.unpushed} unpushed commit(s)`, kind: 'blocked' });
+      // The one blocker in this whole function that Studio can clear in a single call —
+      // hence the action. Everything else here is somebody else's approval or a pipeline.
+      blockers.push({
+        repo: d.repo,
+        text: `has ${d.unpushed} unpushed commit(s)`,
+        kind: 'blocked',
+        action: 'push',
+      });
     }
   }
 

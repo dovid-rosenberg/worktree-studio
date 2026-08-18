@@ -127,7 +127,7 @@ export function findOrphans(
         : {
             reason: onDisk
               ? 'the worktree is there but its branch is gone'
-              : `the worktree and the branch "${c.branch}" are both gone, so the code cannot be brought back — the conversation is still readable in Insights`,
+              : `the worktree and the branch "${c.branch}" are both gone, so the code cannot be brought back — the conversation is still searchable (⌘⇧F)`,
           }),
     });
   }

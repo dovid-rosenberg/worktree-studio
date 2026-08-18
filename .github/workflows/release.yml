@@ -19,6 +19,11 @@ on:
 permissions:
   contents: write
 
+# Two tags pushed together would otherwise race on `gh release create`.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -48,12 +53,20 @@ jobs:
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
 
-      - run: npm ci
+      # Client first, from ITS lockfile, then the root build against that tree.
+      #
+      # This used to be `npm ci` (root) then `npm ci --prefix client`. Root postinstall
+      # builds the client, and with client/node_modules absent it installed freely and
+      # built from whatever resolved — after which the second line replaced that tree
+      # with the locked one and never rebuilt. The bundle shipped in the release was
+      # therefore not the bundle the lockfile describes, in the one workflow whose whole
+      # purpose is reproducibility. Ordering it this way means the build always sees the
+      # locked tree. (bin/build-client.ts now prefers `ci` too, so both halves agree.)
       - run: npm ci --prefix client
+      - run: npm ci
 
       # The same gates as CI: a tag is not a reason to ship something that fails them.
-      - run: npm run lint
-      - run: npm run format:check
+      - run: npx biome ci
       - run: npm test
 
       - name: Create the release

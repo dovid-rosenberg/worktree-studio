@@ -1,95 +1,102 @@
 <script lang="ts">
-  import type { Feature } from '../../../../../server/types';
-  /*
-   * One FEATURE in the rail — the unit the rail is keyed on.
-   *
-   * The card is a pure readout: name, state, member chips. It carries no buttons at all,
-   * and its height therefore never changes.
-   *
-   * TWO SIGNALS, NOT SIX. It used to carry a state dot, an `agent · <state>` pill with a
-   * SECOND dot encoding the same value eight pixels away, a `⇅ servers · stopped` pill, a
-   * dot per member repo, a merged badge, a slot badge and a green left edge — about six
-   * glyphs a card, so seven cards meant scanning forty to find the one waiting agent.
-   *
-   * The merged mark moved rather than went: it sat in the card's CORNER, driven by
-   * `some(merged)`, so on a four-repo feature it could mean one of four and a half-landed
-   * feature read as done. It now sits next to the branch it is about.
-   *
-   * Now: the dot is agent state, the green left edge is "dev servers up", and everything
-   * else appears only when it is NOT the default. `servers · stopped` and `agent · idle`
-   * were the two most common labels on screen and both said nothing was happening —
-   * absence says that for free, and it lets `waiting` stand out instead of queue up. That is the point. The earlier
-   * version revealed quick actions on hover, which grew the card and reflowed every row
-   * beneath it — so moving the pointer down the rail made the list jump under the cursor
-   * and the row you were aiming at moved before you clicked. Every action that used to
-   * live here (including the ⋯ menu's) is now in the bottom ActionBar, which is always
-   * present and cannot shift anything.
-   */
-  import { colorVars } from '$lib/featureColor.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+import type { Feature } from '../../../../../server/types';
+/*
+ * One FEATURE in the rail — the unit the rail is keyed on.
+ *
+ * The card is a pure readout: name, state, member chips. It carries no buttons at all,
+ * and its height therefore never changes.
+ *
+ * TWO SIGNALS, NOT SIX. It used to carry a state dot, an `agent · <state>` pill with a
+ * SECOND dot encoding the same value eight pixels away, a `⇅ servers · stopped` pill, a
+ * dot per member repo, a merged badge, a slot badge and a green left edge — about six
+ * glyphs a card, so seven cards meant scanning forty to find the one waiting agent.
+ *
+ * The merged mark moved rather than went: it sat in the card's CORNER, driven by
+ * `some(merged)`, so on a four-repo feature it could mean one of four and a half-landed
+ * feature read as done. It now sits next to the branch it is about.
+ *
+ * Now: the dot is agent state, the green left edge is "dev servers up", and everything
+ * else appears only when it is NOT the default. `servers · stopped` and `agent · idle`
+ * were the two most common labels on screen and both said nothing was happening —
+ * absence says that for free, and it lets `waiting` stand out instead of queue up. That is the point. The earlier
+ * version revealed quick actions on hover, which grew the card and reflowed every row
+ * beneath it — so moving the pointer down the rail made the list jump under the cursor
+ * and the row you were aiming at moved before you clicked. Every action that used to
+ * live here (including the ⋯ menu's) is now in the bottom ActionBar, which is always
+ * present and cannot shift anything.
+ */
+import { colorVars } from '$lib/featureColor.js';
+import { world, quietFor, quietLabel } from '$lib/stores/world.svelte.js';
+import { ui, liveMembers, selectionKey } from '$lib/stores/ui.svelte.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
-  let { feature }: { feature: Feature } = $props();
+let { feature }: { feature: Feature } = $props();
 
-  const ms = $derived(liveMembers(feature));
-  const anyRunning = $derived(ms.some((m) => m.running));
-  const sess = $derived(feature.session); // one session per feature
+const ms = $derived(liveMembers(feature));
+const anyRunning = $derived(ms.some((m) => m.running));
+const sess = $derived(feature.session); // one session per feature
 
-  /*
-   * What you called it wins over what the directory is called.
-   *
-   * `feature.name` is the WORKTREE name — the identity that groups repos, which cannot
-   * change without moving directories. Renaming a session sets `session.title`, and this
-   * card showed only `feature.name`, so a rename saved to disk and changed nothing here.
-   * A title that still equals the worktree name is the default and adds nothing, so the
-   * second line appears only once they have actually diverged.
-   */
-  const digit = $derived(ui.railDigits.get(`f:${feature.name}`));
-  /*
-   * repo → its MR tag, for the member rows.
-   *
-   * On the row rather than the card, because a merge request is a fact about ONE repo's
-   * branch. Not a link: the rail is a pure readout with no controls, and that rule is
-   * worth more than saving a click — the absence on a row is the useful part anyway.
-   */
-  const prTags = $derived(
-    new Map(
-      world
-        .linksFor(feature)
-        .filter((l) => l.kind === 'pr' && !l.empty && l.repo)
-        .map((l) => [l.repo as string, l.label.split(' ').pop() || '']),
-    ),
-  );
-  const label = $derived(sess?.title?.trim() || feature.name);
-  const renamed = $derived(label !== feature.name);
-  /** Members whose start command cannot succeed — no node_modules in the worktree. */
-  const noDeps = $derived(ms.filter((m) => m.depsMissing).length);
-  const noStart = $derived(ms.filter((m) => m.noStartCmd).length);
+/*
+ * What you called it wins over what the directory is called.
+ *
+ * `feature.name` is the WORKTREE name — the identity that groups repos, which cannot
+ * change without moving directories. Renaming a session sets `session.title`, and this
+ * card showed only `feature.name`, so a rename saved to disk and changed nothing here.
+ * A title that still equals the worktree name is the default and adds nothing, so the
+ * second line appears only once they have actually diverged.
+ */
+/* Through selectionKey, not a `f:` literal: railDigits is keyed on the row key, and a
+   prefix spelled twice is a lookup that silently misses when one of them changes. */
+const digit = $derived(ui.railDigits.get(selectionKey({ kind: 'feature', name: feature.name })));
+/*
+ * repo → its MR tag, for the member rows.
+ *
+ * On the row rather than the card, because a merge request is a fact about ONE repo's
+ * branch. Not a link: the rail is a pure readout with no controls, and that rule is
+ * worth more than saving a click — the absence on a row is the useful part anyway.
+ */
+const prTags = $derived(
+  new Map(
+    world
+      .linksFor(feature)
+      .filter((l) => l.kind === 'pr' && !l.empty && l.repo)
+      .map((l) => [l.repo as string, l.label.split(' ').pop() || '']),
+  ),
+);
+const label = $derived(sess?.title?.trim() || feature.name);
+const renamed = $derived(label !== feature.name);
+/** Members whose start command cannot succeed — no node_modules in the worktree. */
+const noDeps = $derived(ms.filter((m) => m.depsMissing).length);
+const noStart = $derived(ms.filter((m) => m.noStartCmd).length);
 
-  const selected = $derived(
-    sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name,
-  );
+const selected = $derived(sess ? ui.selectedId === sess.id : ui.selectedFeatureName === feature.name);
 
-  /**
-   * An agent state worth a label. `idle` is the resting state and `stopped` is covered
-   * by the dimmed dot, so neither earns a pill — only working/waiting do, which is what
-   * makes `waiting` findable.
-   */
-  const notable = $derived(!!sess && sess.state !== 'idle' && sess.state !== 'stopped');
+/**
+ * An agent state worth a label. `idle` is the resting state and `stopped` is covered
+ * by the dimmed dot, so neither earns a pill — only working/waiting do, which is what
+ * makes `waiting` findable.
+ */
+const notable = $derived(!!sess && sess.state !== 'idle' && sess.state !== 'stopped');
+/*
+ * How long this feature's agent has been silent, when that has stopped meaning anything
+ * good. A promoted session is drawn here rather than by SessionCard, so without this the
+ * staleness warning existed for exactly the sessions that had not been promoted yet —
+ * the least interesting half.
+ */
+const quiet = $derived(sess ? quietFor(sess, world.now) : 0);
 
-  /*
-   * How far this branch has drifted from its base — server/overlap.ts.
-   *
-   * Quiet by design, and only past a threshold: it is a condition to notice while
-   * scanning, not an alarm. A card that shouts every time you look at it stops being read,
-   * and a branch one commit behind is simply fine.
-   */
-  const lap = $derived(world.overlapFor(feature.name));
-  const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
-
+/*
+ * How far this branch has drifted from its base — server/overlap.ts.
+ *
+ * Quiet by design, and only past a threshold: it is a condition to notice while
+ * scanning, not an alarm. A card that shouts every time you look at it stops being read,
+ * and a branch one commit behind is simply fine.
+ */
+const lap = $derived(world.overlapFor(feature.name));
+const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
 </script>
 
-<div style={colorVars(feature.color)} class="fcard" class:sel={selected} class:running={anyRunning} role="listitem">
+<div style={colorVars(feature.color)} class="railcard fcard" class:sel={selected} class:running={anyRunning} role="listitem">
   <button
     class="hit"
     onclick={() => ui.selectFeature(feature)}
@@ -97,12 +104,18 @@
     aria-label="Select feature {label}"
   >
     <div class="l1">
-      <span class="dot {sess ? sess.state : (anyRunning ? 'done' : 'idle')}"></span>
+      <!-- The one mount where the name is load-bearing: the pill below is suppressed for
+           idle and stopped, so for those two states this dot is the whole signal. -->
+      {#if sess}
+        <StateDot state={sess.state} />
+      {:else}
+        <StateDot
+          state={anyRunning ? 'done' : 'idle'}
+          label={anyRunning ? 'No agent, dev servers running' : 'No agent'}
+        />
+      {/if}
       <span class="fname">{label}</span>
-      <!-- The ⌥ digit that selects this row. On the card rather than in your memory: the
-           rail sorts active-first, so starting a dev server renumbers everything below
-           it and a remembered number picks the wrong feature. A number you READ is
-           correct however the list moves. -->
+      <!-- The ⌥ digit that selects this row — see .railcard .digit in app.css. -->
       {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
       {#if !feature.auto}<span class="src" title="Grouped by config.groups, not by name">manual</span>{/if}
       {#if feature.slot != null}
@@ -112,10 +125,16 @@
 
     <!-- Only what is not the default. An idle agent and stopped servers say nothing;
          their absence says it without spending a row of attention on it. -->
-    {#if notable || noDeps || renamed || ms.length > 1 || !sess || behind}
+    {#if notable || quiet || noDeps || renamed || ms.length > 1 || !sess || behind}
       <div class="l2">
         {#if sess && notable}
           <span class="pill agent {sess.state}" title="The Claude session driving this feature">{sess.state}</span>
+        {/if}
+        {#if quiet}
+          <span
+            class="pill stale"
+            title="No hook event for {quietLabel(quiet)} — the state and activity shown are what the agent LAST reported, not what it is doing now. Its hooks may have stopped firing."
+          >no signal {quietLabel(quiet)}</span>
         {/if}
         {#if !sess}<span class="nosession">no session</span>{/if}
         {#if noDeps}
@@ -159,11 +178,62 @@
                isolated from the other worktrees of its repo. Marked whether or not a
                server is up — the damage (a shared Vite dep cache, an install that
                rewrites everyone's tree) is not conditional on this one running. -->
+          <!-- Which backend this frontend's config actually points at.
+               `offSlot` above is about a socket; this is about a FILE Studio rewrites
+               and, until now, never read back. A frontend patched to :1439 while the
+               process on 1439 belongs to another feature's branch looks perfectly
+               healthy from every other signal on this card — that is the state this
+               chip exists to make visible, so it is the one that is loud. -->
+          {#if m.wiredTo}
+            <span
+              class="wired {m.wiredTo.status}"
+              title={m.wiredTo.status === 'foreign'
+                ? `WRONG BACKEND — :${m.wiredTo.port} is served by feature '${m.wiredTo.feature}'${m.wiredTo.repo ? ` (${m.wiredTo.repo})` : ''} at ${m.wiredTo.path}. This frontend's config points there, so its API calls hit that branch's code: expect 404s on routes this branch has and that one does not. Start this feature's backend and restart this frontend to re-patch the config.`
+                : m.wiredTo.status === 'mine'
+                  ? `API config points at :${m.wiredTo.port} — this feature's own backend`
+                  : m.wiredTo.status === 'dead'
+                    ? `API config points at :${m.wiredTo.port}, where nothing is listening — every API call fails until this feature's backend is up`
+                    : `API config names no backend port of the sibling repo — cannot tell what this frontend talks to`}
+            >{m.wiredTo.status === 'foreign'
+                ? `→ ${m.wiredTo.feature}:${m.wiredTo.port}`
+                : m.wiredTo.status === 'unknown'
+                  ? '→ ?'
+                  : `→ :${m.wiredTo.port}`}</span
+            >
+          {/if}
           {#if m.sharedModules}
             <span
               class="shared"
-              title="node_modules is a symlink to {m.sharedModules} — this worktree shares its dependency tree and every cache inside it (Vite's .vite/deps above all). Replace it with a real install."
+              title="node_modules is a symlink to {m.sharedModules} — this worktree shares its dependency tree and every cache inside it (Vite's .vite/deps above all). Replace it with a real install: “Own deps” in the action bar."
             >⇄deps</span>
+          {/if}
+          <!--
+            Stale dependencies: installed, resolvable, and OLDER than the lockfile that
+            describes them. Beside ⇄deps because they are the same kind of claim — a fact
+            about this checkout's node_modules, not about whether a server is up — and it
+            is the one member-level condition where every other signal on the row is
+            green. The card's "deps missing" pill cannot cover it: that pill means the
+            server will not start, and this one starts and then misbehaves from inside a
+            package nobody edited.
+          -->
+          {#if m.depsStale && !m.depsMissing}
+            <span
+              class="staledeps"
+              title="node_modules is older than package-lock.json — this worktree is running the dependencies from before the last lockfile change. It will start, and then fail in ways that look like a bug in this branch. Install deps to resync."
+            >⌛deps</span>
+          {/if}
+          <!--
+            A dev server that DIED. Discovery is a map diff, so the only notice a crash
+            used to give was the green edge quietly going away while nobody was looking at
+            the rail — and the user found out from a 502 twenty minutes later, then blamed
+            the frontend. A stop the user asked for is never marked (the server knows the
+            difference), so this mark always means something went wrong on its own.
+          -->
+          {#if m.died}
+            <span
+              class="died"
+              title="The dev server here stopped on its own at {new Date(m.died.at).toLocaleTimeString()} — it was listening on {(m.died.ports || []).map((p: number) => ':' + p).join(' ') || 'no port we saw'}{m.died.pid ? ` as pid ${m.died.pid}` : ''}, and nothing asked it to stop. Calls to those ports fail until it is started again; its log has the reason."
+            >died</span>
           {/if}
         </span>
       {/each}
@@ -174,15 +244,17 @@
 </div>
 
 <style>
-  /* `var(--fc, <default>)` IS the precedence rule, written once: a tagged feature wears
+  /* The border, radius, margin, hover and whole-card button are `.railcard` in app.css.
+     What is left here is what a FEATURE card alone has.
+
+     `var(--fc, <default>)` IS the precedence rule, written once: a tagged feature wears
      its colour, an untagged one falls back to exactly what it looked like before. No
      conditional class, and nothing to keep in sync — --fc is set (or not) on this element
-     by colorVars() and inherited by everything below. */
-  .fcard { border:1px solid var(--border); border-radius:10px; background:var(--fc-wash, var(--panel));
-           box-shadow:inset 3px 0 0 var(--fc, transparent); margin:0 8px 6px;
-           transition:border-color .12s, background .12s; }
-  @media (prefers-reduced-motion:reduce){ .fcard { transition:none; } }
-  .fcard:hover { border-color:var(--border-strong); }
+     by colorVars() and inherited by everything below.
+
+     Qualified with `.railcard` so it outranks that rule's own `background` — a tagged
+     card keeps its wash when selected, which is the whole point of the ring below. */
+  .railcard.fcard { background:var(--fc-wash, var(--panel)); box-shadow:inset 3px 0 0 var(--fc, transparent); }
   /*
    * Selection needs a channel the colour tag is not already using.
    *
@@ -202,14 +274,7 @@
      is up. Identity has no second copy, so it gets the channel. */
   .fcard.running { box-shadow:inset 3px 0 0 var(--fc, var(--done)); }
 
-  /* min-width:0 at every level: without it a long branch name or a four-port list makes
-     the flex children refuse to shrink and the whole rail grows a horizontal scrollbar. */
-  .hit { display:block; width:100%; min-width:0; text-align:left; background:none; border:0;
-         padding:10px 11px 8px; cursor:pointer; color:inherit; font-family:inherit; overflow:hidden; }
-
   .l1 { display:flex; align-items:center; gap:7px; min-width:0; }
-  .digit { font-family:var(--mono); font-size:10px; color:var(--faint); flex:none;
-           border:1px solid var(--border); border-radius:5px; padding:1px 4px; opacity:.75; }
   .fname { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .l2 { display:flex; align-items:center; gap:6px; margin-top:6px; flex-wrap:wrap; min-width:0; }
   .l3 { display:flex; flex-direction:column; gap:3px; margin-top:6px; min-width:0; }
@@ -218,6 +283,7 @@
 
   .nosession { font-family:var(--mono); font-size:11.5px; color:var(--faint); }
   /* Waiting-hue, not an error: it is a thing to do, not a thing that broke. */
+  .pill.stale { color:var(--waiting); background:var(--waiting-bg); }
   .pill.nodeps { color:var(--waiting); background:var(--waiting-bg); }
   /* Same amber as deps: both say "configured wrong, not broken", and both are fixed
      by the user rather than by waiting. */
@@ -245,9 +311,53 @@
   /* Not a port and not a state — a property of the checkout, so it sits apart from
      both and holds its width rather than competing with the branch for space. */
   .mchip .shared { color:var(--warn, var(--working)); flex:none; cursor:help; }
+  /* Same hue and weight as ⇄deps: both are properties of this checkout's node_modules
+     that the user fixes with an install, and neither stops anything from running.
+     `.staledeps` rather than `.stale` because `.pill.stale` on this same card already
+     means "the agent has gone quiet" — one class name for two conditions is how a
+     stylesheet comes to say something it did not mean. */
+  .mchip .staledeps { color:var(--warn, var(--working)); flex:none; cursor:help; }
+  /*
+   * A server that died is the loudest thing a member row can say, and it earns it.
+   *
+   * Every other mark here is a condition you can take your time over. This one is the
+   * only one that means something that WAS working has stopped, with nothing on screen
+   * having changed to say so — the failure the mark exists for is precisely that it went
+   * unnoticed. So it is filled, in the same red as a foreign backend, rather than
+   * competing quietly with the amber conditions beside it.
+   */
+  .mchip .died { color:var(--del); background:var(--del-bg); font-weight:600;
+                 padding:0 5px; border-radius:999px; flex:none; cursor:help; }
+
+  /*
+   * Where this frontend's API calls actually go.
+   *
+   * Correct is nearly silent — `→ :1239` in the faint hue, the same weight as the branch
+   * text. It is confirmation, and confirmation that shouts is confirmation nobody reads.
+   *
+   * WRONG is the exception in this file, and on purpose. Every other mark on this card is
+   * unfilled text; this one is the only FILLED chip on a member row, in the delete red
+   * that nothing else on the rail wears, and it spells the other feature's name inline
+   * rather than hiding it in the tooltip. The failure it names is the one that is
+   * invisible by construction — the frontend is up, the backend is up, the ports match
+   * what the config says, and the answers come from the wrong branch. Nothing quieter
+   * would have beaten the four green signals sitting next to it.
+   */
+  .mchip .wired { flex:none; cursor:help; }
+  .mchip .wired.mine { color:var(--faint); }
+  .mchip .wired.foreign { color:var(--del); background:var(--del-bg); font-weight:600;
+                          padding:0 5px; border-radius:999px; max-width:100%;
+                          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; }
+  /* Amber, not red: nothing is listening there, so the calls fail loudly and nobody is
+     misled. A thing to start, not a thing that lied to you. */
+  .mchip .wired.dead { color:var(--waiting); }
+  /* "I read the file and recognised nothing" — the honest non-answer, and it is styled
+     like one rather than like a verdict. */
+  .mchip .wired.unknown { color:var(--idle); }
 
   .badge { font-family:var(--mono); font-size:11px; font-weight:600; padding:1px 6px; border-radius:999px; flex:none; }
   .badge.slot { color:var(--working); background:var(--working-bg); }
-  .src { font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
-         border:1px solid var(--border); border-radius:5px; padding:1px 5px; color:var(--muted); flex:none; }
+  /* `.src` itself is a global token (app.css, beside .grp and .link). It was re-declared
+     here at a size of its own, which is how one token came to render at three sizes. */
+  .src { flex:none; }
 </style>

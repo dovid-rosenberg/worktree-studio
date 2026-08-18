@@ -1,54 +1,54 @@
 <script lang="ts">
-  /*
-   * A merge request awaiting your review, opened in the dock.
-   *
-   * There is no terminal here and no Changes tab, because a review owns nothing on disk —
-   * until you press "Check out & review", which is the whole reason a review queue belongs
-   * in a tool that runs agents. That turns "four merge requests are waiting" into "four
-   * agents have read them": it cuts a worktree at the MR's source branch and starts a
-   * session already told what it is looking at.
-   *
-   * Everything else here is deliberately thin. Studio is not trying to be a code review
-   * UI — GitLab already is one, and the ↗ button is one click.
-   */
-  import type { ReviewItem } from '../../../../../server/types';
-  import { api } from '$lib/api.js';
-  import { ui } from '$lib/stores/ui.svelte.js';
-  import { toast } from '$lib/stores/toasts.svelte.js';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * A merge request awaiting your review, opened in the dock.
+ *
+ * There is no terminal here and no Changes tab, because a review owns nothing on disk —
+ * until you press "Check out & review", which is the whole reason a review queue belongs
+ * in a tool that runs agents. That turns "four merge requests are waiting" into "four
+ * agents have read them": it cuts a worktree at the MR's source branch and starts a
+ * session already told what it is looking at.
+ *
+ * Everything else here is deliberately thin. Studio is not trying to be a code review
+ * UI — GitLab already is one, and the ↗ button is one click.
+ */
+import type { ReviewItem } from '../../../../../server/types';
+import { api } from '$lib/api.js';
+import { ui } from '$lib/stores/ui.svelte.js';
+import { toast } from '$lib/stores/toasts.svelte.js';
+import { errMessage } from '$lib/errmsg.js';
 
-  let { review }: { review: ReviewItem } = $props();
+let { review }: { review: ReviewItem } = $props();
 
-  let busy = $state(false);
+let busy = $state(false);
 
-  /**
-   * Cut a worktree at the MR's branch and point an agent at it.
-   *
-   * The worktree is named after the MR (`review-1906`), NOT after the branch: a feature is
-   * "worktrees sharing a name", so naming it `feature/mfa-totp` would silently fold
-   * somebody else's merge request into your own feature and give them one rail row
-   * between them.
-   */
-  async function checkout() {
-    busy = true;
-    try {
-      const r = await api('POST', '/api/v1/reviews/checkout', {
-        repo: review.repo,
-        branch: review.branch,
-        number: review.number,
-        title: review.title,
-        url: review.url,
-      });
-      if (!r.ok) return toast(r.error || 'Could not check that out', true);
-      toast(r.reused ? `Reopened the worktree for !${review.number}` : `Checked out !${review.number}`);
-      // Go to the session it just made — that is what you pressed the button for.
-      if (r.session?.id) ui.select(r.session.id);
-    } catch (e) {
-      toast(errMessage(e), true);
-    } finally {
-      busy = false;
-    }
+/**
+ * Cut a worktree at the MR's branch and point an agent at it.
+ *
+ * The worktree is named after the MR (`review-1906`), NOT after the branch: a feature is
+ * "worktrees sharing a name", so naming it `feature/mfa-totp` would silently fold
+ * somebody else's merge request into your own feature and give them one rail row
+ * between them.
+ */
+async function checkout() {
+  busy = true;
+  try {
+    const r = await api('POST', '/api/v1/reviews/checkout', {
+      repo: review.repo,
+      branch: review.branch,
+      number: review.number,
+      title: review.title,
+      url: review.url,
+    });
+    if (!r.ok) return toast(r.error || 'Could not check that out', true);
+    toast(r.reused ? `Reopened the worktree for !${review.number}` : `Checked out !${review.number}`);
+    // Go to the session it just made — that is what you pressed the button for.
+    if (r.session?.id) ui.select(r.session.id);
+  } catch (e) {
+    toast(errMessage(e), true);
+  } finally {
+    busy = false;
   }
+}
 </script>
 
 <div class="rpane">
