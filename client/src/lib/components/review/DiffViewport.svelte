@@ -1,416 +1,480 @@
 <script lang="ts">
-  import type { Block, Item } from './model';
-  /*
-   * The windowed diff surface: one scroll container for the whole detail view — every
-   * file header, group label, hunk header and diff row of every file in the selected
-   * commit — rendering only the slice that is on screen.
-   *
-   * WHY IT IS WINDOWED. A single commit in this repo's own history reaches ~4k diff
-   * lines; a vendored-lockfile commit reaches far more, and side-by-side doubles the
-   * element count per row. Rendering all of it produces tens of thousands of DOM nodes,
-   * which is what locks the browser. Here the item list is flat and every item's height
-   * is known up front (see model.js), so:
-   *
-   *   scrollTop ─binary search→ first visible item ─prefix sums→ last visible item
-   *   render only [first-OVERSCAN, last+OVERSCAN], absolutely positioned at their offsets
-   *
-   * The scroll canvas is a fixed-size box (total height from the prefix sum, width from
-   * the widest line in `ch`), so the scrollbar is correct and stable from the first frame
-   * and the canvas does not resize as rows scroll in and out. Cost per frame is O(window),
-   * independent of diff size.
-   *
-   * TRADE-OFF, stated plainly: off-screen rows are not in the DOM, so the browser's own
-   * Ctrl-F cannot find them. That is why `n`/`p`/`[`/`]` navigation and the cursor exist.
-   */
-  import { tick } from 'svelte';
-  import { buildItems, indexAt, navigable, statusInfo, H } from './model.js';
-  import { activatable } from '$lib/actions/activatable.js';
-  import { trapFocus } from '$lib/actions/trapFocus.js';
+import type { Block, Item } from './model';
+/*
+ * The windowed diff surface: one scroll container for the whole detail view — every
+ * file header, group label, hunk header and diff row of every file in the selected
+ * commit — rendering only the slice that is on screen.
+ *
+ * WHY IT IS WINDOWED. A single commit in this repo's own history reaches ~4k diff
+ * lines; a vendored-lockfile commit reaches far more, and side-by-side doubles the
+ * element count per row. Rendering all of it produces tens of thousands of DOM nodes,
+ * which is what locks the browser. Here the item list is flat and every item's height
+ * is known up front (see model.js), so:
+ *
+ *   scrollTop ─binary search→ first visible item ─prefix sums→ last visible item
+ *   render only [first-OVERSCAN, last+OVERSCAN], absolutely positioned at their offsets
+ *
+ * The scroll canvas is a fixed-size box (total height from the prefix sum, width from
+ * the widest line in `ch`), so the scrollbar is correct and stable from the first frame
+ * and the canvas does not resize as rows scroll in and out. Cost per frame is O(window),
+ * independent of diff size.
+ *
+ * TRADE-OFF, stated plainly: off-screen rows are not in the DOM, so the browser's own
+ * Ctrl-F cannot find them. That is why `n`/`p`/`[`/`]` navigation and the cursor exist.
+ */
+import { tick } from 'svelte';
+import { buildItems, indexAt, navigable, statusInfo, H } from './model.js';
+import { activatable } from '$lib/actions/activatable.js';
+import { trapFocus } from '$lib/actions/trapFocus.js';
 
-  let {
-    /** @type {import('./model.js').Block[]} */
-    blocks,
-    view = ('unified' as 'unified'|'split'),
-    /** True on the uncommitted entry: hunk and file staging controls are shown. */
-    stageable = false,
-    /** @type {(file:string) => void} */
-    ontoggle = () => {},
-    /** @type {(a:{ op:'stage'|'unstage', file:string, hunks:number[], expect:string[] }) => void} */
-    onapply = () => {},
-  } = $props();
+let {
+  /** @type {import('./model.js').Block[]} */
+  blocks,
+  view = 'unified' as 'unified' | 'split',
+  /** True on the uncommitted entry: hunk and file staging controls are shown. */
+  stageable = false,
+  /** @type {(file:string) => void} */
+  ontoggle = () => {},
+  /** @type {(a:{ op:'stage'|'unstage', file:string, hunks:number[], expect:string[] }) => void} */
+  onapply = () => {},
+} = $props();
 
-  /** Extra items rendered above and below the viewport so a fast flick never shows blank. */
-  const OVERSCAN = 8;
+/** Extra items rendered above and below the viewport so a fast flick never shows blank. */
+const OVERSCAN = 8;
 
-  let scroller = $state<HTMLElement|null>(null);
-  let scrollTop = $state(0);
-  let viewH = $state(600);
-  let cursor = $state(0);
-  let focused = $state(false);
+let scroller = $state<HTMLElement | null>(null);
+let scrollTop = $state(0);
+let viewH = $state(600);
+let cursor = $state(0);
+let focused = $state(false);
 
-  /*
-   * SIDE-BY-SIDE HORIZONTAL SCROLLING. Unified has one text column, so the canvas can
-   * simply be as wide as the widest line and the pane's own scrollbar does the work.
-   * Side-by-side cannot: a canvas holding two columns of the widest line is routinely
-   * 3000px+ — ONE long line anywhere in the diff is enough — and the right-hand column
-   * then begins past the edge of the pane. Scroll to reach it and the left-hand column
-   * is gone instead. Both columns have to stay on screen at all times.
-   *
-   * So in split the canvas is exactly the pane width, each column clips its own text,
-   * and each column carries its OWN offset — `--hxl` and `--hxr` — driven by its own
-   * scrollbar under the pane. Independent by design: a 260-column line on the right is
-   * a fact about the new file, and dragging the unchanged left column sideways to read
-   * it would be pure collateral damage. Vertical stays shared and therefore exactly in
-   * step, because both sides of a row are still one element in one scroller.
-   */
-  let barL = $state<HTMLElement|null>(null);
-  let barR = $state<HTMLElement|null>(null);
-  let hxL = $state(0);
-  let hxR = $state(0);
-  /** Percent-of-travel for each scrollbar's `aria-valuenow`. */
-  let pctL = $state(0);
-  let pctR = $state(0);
-  /** One arrow-key press of sideways travel, in px. Roughly eight monospace columns. */
-  const HSTEP = 60;
+/*
+ * SIDE-BY-SIDE HORIZONTAL SCROLLING. Unified has one text column, so the canvas can
+ * simply be as wide as the widest line and the pane's own scrollbar does the work.
+ * Side-by-side cannot: a canvas holding two columns of the widest line is routinely
+ * 3000px+ — ONE long line anywhere in the diff is enough — and the right-hand column
+ * then begins past the edge of the pane. Scroll to reach it and the left-hand column
+ * is gone instead. Both columns have to stay on screen at all times.
+ *
+ * So in split the canvas is exactly the pane width, each column clips its own text,
+ * and each column carries its OWN offset — `--hxl` and `--hxr` — driven by its own
+ * scrollbar under the pane. Independent by design: a 260-column line on the right is
+ * a fact about the new file, and dragging the unchanged left column sideways to read
+ * it would be pure collateral damage. Vertical stays shared and therefore exactly in
+ * step, because both sides of a row are still one element in one scroller.
+ */
+let barL = $state<HTMLElement | null>(null);
+let barR = $state<HTMLElement | null>(null);
+let hxL = $state(0);
+let hxR = $state(0);
+/** Percent-of-travel for each scrollbar's `aria-valuenow`. */
+let pctL = $state(0);
+let pctR = $state(0);
+/** One arrow-key press of sideways travel, in px. Roughly eight monospace columns. */
+const HSTEP = 60;
 
-  const model = $derived(buildItems(blocks, view));
-  const items = $derived(model.items);
-  const split = $derived(view === 'split');
+const model = $derived(buildItems(blocks, view));
+const items = $derived(model.items);
+const split = $derived(view === 'split');
 
-  // Reset the cursor whenever the underlying list identity changes (new commit, view
-  // flip, a file collapsed) rather than leaving it pointing at an unrelated row.
-  $effect(() => {
-    const n = items.length;
-    if (cursor >= n) cursor = Math.max(0, n - 1);
-  });
+// Reset the cursor whenever the underlying list identity changes (new commit, view
+// flip, a file collapsed) rather than leaving it pointing at an unrelated row.
+$effect(() => {
+  const n = items.length;
+  if (cursor >= n) cursor = Math.max(0, n - 1);
+});
 
-  // A new commit or a layout flip starts at column 0 — carrying a horizontal offset over
-  // would open the next file scrolled halfway into a line for no reason.
-  $effect(() => {
-    void blocks; void view;
-    hxL = 0; hxR = 0; pctL = 0; pctR = 0;
-    if (barL) barL.scrollLeft = 0;
-    if (barR) barR.scrollLeft = 0;
-  });
+// A new commit or a layout flip starts at column 0 — carrying a horizontal offset over
+// would open the next file scrolled halfway into a line for no reason.
+$effect(() => {
+  void blocks;
+  void view;
+  hxL = 0;
+  hxR = 0;
+  pctL = 0;
+  pctR = 0;
+  if (barL) barL.scrollLeft = 0;
+  if (barR) barR.scrollLeft = 0;
+});
 
-  const first = $derived(Math.max(0, indexAt(model.offsets, scrollTop, items.length) - OVERSCAN));
-  const last = $derived(Math.min(items.length, indexAt(model.offsets, scrollTop + viewH, items.length) + OVERSCAN + 1));
-  /** Absolute indexes of the rendered slice — keyed by index so Svelte reuses nodes. */
-  const window_ = $derived(Array.from({ length: Math.max(0, last - first) }, (_, i) => first + i));
+const first = $derived(Math.max(0, indexAt(model.offsets, scrollTop, items.length) - OVERSCAN));
+const last = $derived(
+  Math.min(items.length, indexAt(model.offsets, scrollTop + viewH, items.length) + OVERSCAN + 1),
+);
+/** Absolute indexes of the rendered slice — keyed by index so Svelte reuses nodes. */
+const window_ = $derived(Array.from({ length: Math.max(0, last - first) }, (_, i) => first + i));
 
-  function onScroll() {
-    if (scroller) scrollTop = scroller.scrollTop;
+function onScroll() {
+  if (scroller) scrollTop = scroller.scrollTop;
+}
+
+/*
+ * WHICH FILE EACH ROW BELONGS TO — item index → index of that file's header row.
+ *
+ * Built once per model, not searched per scroll event: scrolling fires many times a
+ * second and walking backwards to the nearest header would be O(rows) each time, on a
+ * list that reaches tens of thousands of rows in a large diff.
+ *
+ * A gap keeps the file above it. It is 9px of separator, and blanking the header for
+ * those nine pixels makes it flicker once per file on a fast scroll.
+ */
+const fileOf = $derived.by(() => {
+  const out = new Int32Array(items.length);
+  let cur = -1;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].k === 'file') cur = i;
+    out[i] = cur;
   }
+  return out;
+});
 
-  /*
-   * WHICH FILE EACH ROW BELONGS TO — item index → index of that file's header row.
-   *
-   * Built once per model, not searched per scroll event: scrolling fires many times a
-   * second and walking backwards to the nearest header would be O(rows) each time, on a
-   * list that reaches tens of thousands of rows in a large diff.
-   *
-   * A gap keeps the file above it. It is 9px of separator, and blanking the header for
-   * those nine pixels makes it flicker once per file on a fast scroll.
-   */
-  const fileOf = $derived.by(() => {
-    const out = new Int32Array(items.length);
-    let cur = -1;
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].k === 'file') cur = i;
-      out[i] = cur;
+/**
+ * The file header to pin at the top edge, or -1 for none.
+ *
+ * The rows are ABSOLUTELY POSITIONED inside a fixed-height canvas — that is what makes
+ * the viewport virtual — and `position: sticky` does nothing to an absolutely positioned
+ * element. So the pinned header is not the real row behaving differently; it is a copy
+ * drawn over the scroller, from the same snippet, so the two cannot drift apart.
+ *
+ * Shown only once the real row has passed above the top edge. While it is still on
+ * screen it draws itself, and pinning as well would print the same header twice.
+ */
+const pinned = $derived.by((): { i: number; b: Block } | null => {
+  if (!items.length || !scrollTop) return null;
+  const i = Math.min(indexAt(model.offsets, scrollTop, items.length), items.length - 1);
+  const f = fileOf[i] ?? -1;
+  if (f < 0 || model.offsets[f] >= scrollTop) return null;
+  // `fileOf` only ever points at a 'file' item, but the narrowing has to be written for
+  // the compiler — `Item` is a union and a gap carries no block.
+  const it = items[f];
+  return it.k === 'gap' ? null : { i: f, b: it.b };
+});
+
+/**
+ * Collapse/expand from the PINNED header.
+ *
+ * Identical to the real row's toggle, plus a reveal: the row you pressed is off-screen
+ * above, so collapsing it would drop you into the middle of some later file with no
+ * indication of what just happened. `await tick()` because the offsets are rebuilt from
+ * the new block list, and revealing against the old ones lands in the wrong place.
+ */
+async function togglePinned(i: number, file: string) {
+  cursor = i;
+  ontoggle(file);
+  await tick();
+  reveal(i);
+}
+
+/** Publish a bar's scrollLeft to the column it drives. @param {'l'|'r'} which */
+function onBarScroll(which: 'l' | 'r') {
+  const bar = which === 'l' ? barL : barR;
+  if (!bar) return;
+  const max = bar.scrollWidth - bar.clientWidth;
+  const pct = max > 0 ? Math.round((bar.scrollLeft / max) * 100) : 0;
+  if (which === 'l') {
+    hxL = bar.scrollLeft;
+    pctL = pct;
+  } else {
+    hxR = bar.scrollLeft;
+    pctR = pct;
+  }
+}
+
+/**
+ * Trackpad sideways swipes and Shift+wheel are how people actually scroll a diff
+ * horizontally. In split the canvas itself does not scroll, so the gesture would fall
+ * on the floor — route it to the bar for the column the pointer is over, which is the
+ * only reading of "scroll this sideways" that respects two independent columns.
+ * @param {WheelEvent} e
+ */
+function onWheel(e: WheelEvent) {
+  if (!split || !scroller) return;
+  const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+  if (!dx) return;
+  const box = scroller.getBoundingClientRect();
+  const bar = e.clientX < box.left + box.width / 2 ? barL : barR;
+  if (!bar || bar.scrollWidth <= bar.clientWidth) return;
+  e.preventDefault();
+  bar.scrollLeft += dx;
+}
+
+$effect(() => {
+  if (!scroller) return;
+  const ro = new ResizeObserver(() => {
+    if (scroller) viewH = scroller.clientHeight;
+  });
+  ro.observe(scroller);
+  viewH = scroller.clientHeight;
+  return () => ro.disconnect();
+});
+
+/**
+ * Scroll an item into view. The window is derived from scrollTop, so moving the cursor
+ * and then scrolling is enough — the item is guaranteed to be rendered on the next tick.
+ * @param {number} i
+ */
+function reveal(i: number) {
+  if (!scroller || i < 0 || i >= items.length) return;
+  const top = model.offsets[i];
+  const bottom = top + H[items[i].k];
+  const pad = H.row * 2;
+  if (top - pad < scroller.scrollTop) scroller.scrollTop = Math.max(0, top - pad);
+  else if (bottom + pad > scroller.scrollTop + scroller.clientHeight) {
+    scroller.scrollTop = bottom + pad - scroller.clientHeight;
+  }
+}
+
+/**
+ * Move the cursor to the next item matching `pred`, in `dir`. Used for ↑/↓ (any
+ * navigable item), n/p (hunk headers) and [/] (file headers).
+ * @param {number} dir
+ * @param {(it:import('./model.js').Item) => boolean} pred
+ */
+function move(dir: number, pred: (it: Item) => boolean) {
+  for (let i = cursor + dir; i >= 0 && i < items.length; i += dir) {
+    if (pred(items[i])) {
+      cursor = i;
+      reveal(i);
+      return true;
     }
-    return out;
-  });
-
-  /**
-   * The file header to pin at the top edge, or -1 for none.
-   *
-   * The rows are ABSOLUTELY POSITIONED inside a fixed-height canvas — that is what makes
-   * the viewport virtual — and `position: sticky` does nothing to an absolutely positioned
-   * element. So the pinned header is not the real row behaving differently; it is a copy
-   * drawn over the scroller, from the same snippet, so the two cannot drift apart.
-   *
-   * Shown only once the real row has passed above the top edge. While it is still on
-   * screen it draws itself, and pinning as well would print the same header twice.
-   */
-  const pinned = $derived.by((): { i: number; b: Block } | null => {
-    if (!items.length || !scrollTop) return null;
-    const i = Math.min(indexAt(model.offsets, scrollTop, items.length), items.length - 1);
-    const f = fileOf[i] ?? -1;
-    if (f < 0 || model.offsets[f] >= scrollTop) return null;
-    // `fileOf` only ever points at a 'file' item, but the narrowing has to be written for
-    // the compiler — `Item` is a union and a gap carries no block.
-    const it = items[f];
-    return it.k === 'gap' ? null : { i: f, b: it.b };
-  });
-
-  /**
-   * Collapse/expand from the PINNED header.
-   *
-   * Identical to the real row's toggle, plus a reveal: the row you pressed is off-screen
-   * above, so collapsing it would drop you into the middle of some later file with no
-   * indication of what just happened. `await tick()` because the offsets are rebuilt from
-   * the new block list, and revealing against the old ones lands in the wrong place.
-   */
-  async function togglePinned(i: number, file: string) {
-    cursor = i;
-    ontoggle(file);
-    await tick();
-    reveal(i);
   }
+  return false;
+}
 
-  /** Publish a bar's scrollLeft to the column it drives. @param {'l'|'r'} which */
-  function onBarScroll(which: 'l' | 'r') {
-    const bar = which === 'l' ? barL : barR;
-    if (!bar) return;
-    const max = bar.scrollWidth - bar.clientWidth;
-    const pct = max > 0 ? Math.round((bar.scrollLeft / max) * 100) : 0;
-    if (which === 'l') { hxL = bar.scrollLeft; pctL = pct; }
-    else { hxR = bar.scrollLeft; pctR = pct; }
+/** The hunk indexes + `@@` headers a stage/unstage of `g` would send. */
+function selectionOf(g: import('./model.js').Group) {
+  return { hunks: g.hunks.map((h) => h.index), expect: g.hunks.map((h) => h.header) };
+}
+
+/**
+ * Apply the cursor's implied stage/unstage. On a hunk header that is one hunk; on a
+ * group or file header it is every hunk on the matching side — which is exactly the
+ * file-level staging the panel also exposes as a button, driven from the keyboard.
+ * @param {'stage'|'unstage'} op
+ */
+function applyAtCursor(op: 'stage' | 'unstage') {
+  const it = items[cursor];
+  if (!it || !stageable) return;
+  const side = op === 'stage' ? 'unstaged' : 'staged';
+  if (it.k === 'hunk') {
+    if (it.g.side !== side) return;
+    onapply({ op, file: it.b.file, hunks: [it.hunk.index], expect: [it.hunk.header] });
+    return;
   }
+  const b = it.k === 'gap' ? null : it.b;
+  if (!b) return;
+  const g = it.k === 'group' && it.g.side === side ? it.g : b.groups.find((x) => x.side === side);
+  if (!g || !g.hunks.length) return;
+  onapply({ op, file: b.file, ...selectionOf(g) });
+}
 
-  /**
-   * Trackpad sideways swipes and Shift+wheel are how people actually scroll a diff
-   * horizontally. In split the canvas itself does not scroll, so the gesture would fall
-   * on the floor — route it to the bar for the column the pointer is over, which is the
-   * only reading of "scroll this sideways" that respects two independent columns.
-   * @param {WheelEvent} e
-   */
-  function onWheel(e: WheelEvent) {
-    if (!split || !scroller) return;
-    const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
-    if (!dx) return;
-    const box = scroller.getBoundingClientRect();
-    const bar = e.clientX < box.left + box.width / 2 ? barL : barR;
-    if (!bar || bar.scrollWidth <= bar.clientWidth) return;
-    e.preventDefault();
-    bar.scrollLeft += dx;
-  }
+/** @param {KeyboardEvent} e */
+function onKeydown(e: KeyboardEvent) {
+  // A real control inside a rendered row owns its own keys; only the panel-wide
+  // shortcuts that cannot collide with typing are honoured from there.
+  const inControl = e.target !== scroller;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (inControl && e.key !== 'Escape') return;
 
-  $effect(() => {
-    if (!scroller) return;
-    const ro = new ResizeObserver(() => { if (scroller) viewH = scroller.clientHeight; });
-    ro.observe(scroller);
-    viewH = scroller.clientHeight;
-    return () => ro.disconnect();
-  });
-
-  /**
-   * Scroll an item into view. The window is derived from scrollTop, so moving the cursor
-   * and then scrolling is enough — the item is guaranteed to be rendered on the next tick.
-   * @param {number} i
-   */
-  function reveal(i: number) {
-    if (!scroller || i < 0 || i >= items.length) return;
-    const top = model.offsets[i];
-    const bottom = top + H[items[i].k];
-    const pad = H.row * 2;
-    if (top - pad < scroller.scrollTop) scroller.scrollTop = Math.max(0, top - pad);
-    else if (bottom + pad > scroller.scrollTop + scroller.clientHeight) {
-      scroller.scrollTop = bottom + pad - scroller.clientHeight;
+  switch (e.key) {
+    case 'ArrowDown':
+    case 'j':
+      move(1, navigable);
+      break;
+    case 'ArrowUp':
+    case 'k':
+      move(-1, navigable);
+      break;
+    // In unified the pane itself scrolls sideways, so let the browser have the key.
+    // In split, ←/→ from the diff surface walk BOTH columns — reading across a row is
+    // the common case. The two scrollbars below are in the tab order for the times the
+    // columns need to move apart.
+    case 'ArrowLeft':
+    case 'ArrowRight': {
+      if (!split) return;
+      const dx = e.key === 'ArrowRight' ? HSTEP : -HSTEP;
+      if (barL) barL.scrollLeft += dx;
+      if (barR) barR.scrollLeft += dx;
+      break;
     }
-  }
-
-  /**
-   * Move the cursor to the next item matching `pred`, in `dir`. Used for ↑/↓ (any
-   * navigable item), n/p (hunk headers) and [/] (file headers).
-   * @param {number} dir
-   * @param {(it:import('./model.js').Item) => boolean} pred
-   */
-  function move(dir: number, pred: (it: Item) => boolean) {
-    for (let i = cursor + dir; i >= 0 && i < items.length; i += dir) {
-      if (pred(items[i])) { cursor = i; reveal(i); return true; }
+    case 'PageDown':
+      jump(Math.floor(viewH / H.row));
+      break;
+    case 'PageUp':
+      jump(-Math.floor(viewH / H.row));
+      break;
+    case 'Home':
+      cursor = 0;
+      reveal(0);
+      break;
+    case 'End':
+      cursor = items.length - 1;
+      reveal(cursor);
+      break;
+    case 'n':
+      move(1, (it) => it.k === 'hunk');
+      break;
+    case 'p':
+      move(-1, (it) => it.k === 'hunk');
+      break;
+    case ']':
+      move(1, (it) => it.k === 'file');
+      break;
+    case '[':
+      move(-1, (it) => it.k === 'file');
+      break;
+    case 's':
+      applyAtCursor('stage');
+      break;
+    case 'u':
+      applyAtCursor('unstage');
+      break;
+    case 'f':
+    case '/':
+      openJump();
+      break;
+    case 'Enter':
+    case ' ': {
+      const it = items[cursor];
+      if (it && it.k === 'file') ontoggle(it.b.file);
+      else return; // let the browser have the key
+      break;
     }
-    return false;
-  }
-
-  /** The hunk indexes + `@@` headers a stage/unstage of `g` would send. */
-  function selectionOf(g: import('./model.js').Group) {
-    return { hunks: g.hunks.map((h) => h.index), expect: g.hunks.map((h) => h.header) };
-  }
-
-  /**
-   * Apply the cursor's implied stage/unstage. On a hunk header that is one hunk; on a
-   * group or file header it is every hunk on the matching side — which is exactly the
-   * file-level staging the panel also exposes as a button, driven from the keyboard.
-   * @param {'stage'|'unstage'} op
-   */
-  function applyAtCursor(op: 'stage' | 'unstage') {
-    const it = items[cursor];
-    if (!it || !stageable) return;
-    const side = op === 'stage' ? 'unstaged' : 'staged';
-    if (it.k === 'hunk') {
-      if (it.g.side !== side) return;
-      onapply({ op, file: it.b.file, hunks: [it.hunk.index], expect: [it.hunk.header] });
+    case 'Escape':
+      if (scroller) scroller.focus();
+      break;
+    default:
       return;
-    }
-    const b = it.k === 'gap' ? null : it.b;
-    if (!b) return;
-    const g = (it.k === 'group' && it.g.side === side ? it.g : b.groups.find((x) => x.side === side));
-    if (!g || !g.hunks.length) return;
-    onapply({ op, file: b.file, ...selectionOf(g) });
   }
+  e.preventDefault();
+}
 
-  /** @param {KeyboardEvent} e */
-  function onKeydown(e: KeyboardEvent) {
-    // A real control inside a rendered row owns its own keys; only the panel-wide
-    // shortcuts that cannot collide with typing are honoured from there.
-    const inControl = e.target !== scroller;
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (inControl && e.key !== 'Escape') return;
+/** @param {number} n */
+function jump(n: number) {
+  const dir = n < 0 ? -1 : 1;
+  for (let i = 0; i < Math.abs(n); i++) if (!move(dir, navigable)) break;
+}
 
-    switch (e.key) {
-      case 'ArrowDown': case 'j': move(1, navigable); break;
-      case 'ArrowUp': case 'k': move(-1, navigable); break;
-      // In unified the pane itself scrolls sideways, so let the browser have the key.
-      // In split, ←/→ from the diff surface walk BOTH columns — reading across a row is
-      // the common case. The two scrollbars below are in the tab order for the times the
-      // columns need to move apart.
-      case 'ArrowLeft': case 'ArrowRight': {
-        if (!split) return;
-        const dx = e.key === 'ArrowRight' ? HSTEP : -HSTEP;
-        if (barL) barL.scrollLeft += dx;
-        if (barR) barR.scrollLeft += dx;
-        break;
-      }
-      case 'PageDown': jump(Math.floor(viewH / H.row)); break;
-      case 'PageUp': jump(-Math.floor(viewH / H.row)); break;
-      case 'Home': cursor = 0; reveal(0); break;
-      case 'End': cursor = items.length - 1; reveal(cursor); break;
-      case 'n': move(1, (it) => it.k === 'hunk'); break;
-      case 'p': move(-1, (it) => it.k === 'hunk'); break;
-      case ']': move(1, (it) => it.k === 'file'); break;
-      case '[': move(-1, (it) => it.k === 'file'); break;
-      case 's': applyAtCursor('stage'); break;
-      case 'u': applyAtCursor('unstage'); break;
-      case 'f': case '/': openJump(); break;
-      case 'Enter': case ' ': {
-        const it = items[cursor];
-        if (it && it.k === 'file') ontoggle(it.b.file);
-        else return; // let the browser have the key
-        break;
-      }
-      case 'Escape': if (scroller) scroller.focus(); break;
-      default: return;
-    }
-    e.preventDefault();
-  }
-
-  /** @param {number} n */
-  function jump(n: number) {
-    const dir = n < 0 ? -1 : 1;
-    for (let i = 0; i < Math.abs(n); i++) if (!move(dir, navigable)) break;
-  }
-
-  /**
-   * Clicking the diff must put the keyboard ON the diff. Nothing inside the surface is
-   * focusable except the row controls, so a plain click on a diff line left focus on
-   * <body>: a mouse user who clicked a hunk and pressed `s` got nothing, and the cursor,
-   * `n`/`p` and `f` were reachable only by tabbing in from elsewhere.
-   *
-   * Deferred, and only when the press left focus on <body>, so it can never steal focus
-   * from a Stage button or a file header that legitimately took it.
-   */
-  function onPointerDown() {
-    queueMicrotask(() => {
-      if (scroller && document.activeElement === document.body) scroller.focus({ preventScroll: true });
-    });
-  }
-
-  /**
-   * Keyboard focus can be sitting on a button inside a row that the next scroll unmounts.
-   * Without this the focus falls to <body> and arrow keys stop working mid-review, which
-   * is the classic way a virtualized list breaks for keyboard users.
-   */
-  function onFocusout() {
-    queueMicrotask(() => {
-      if (!scroller || !focused) return;
-      if (!scroller.contains(document.activeElement) && document.activeElement === document.body) {
-        scroller.focus({ preventScroll: true });
-      }
-    });
-  }
-
-  /* ---------------- the file list (`f`) ----------------
-   *
-   * Windowing has one honest cost — off-screen rows are not in the DOM, so the browser's
-   * own Ctrl-F cannot find them — and `[` / `]` walk files one at a time, which is fine
-   * for the third file of five and useless for the fortieth of sixty. This is the way
-   * back: type part of a path, land on its header.
-   *
-   * It reads the same item list the viewport draws, so "jump" is just a cursor move; no
-   * second model of what is in the diff, and nothing to keep in sync.
-   */
-  let jumpOpen = $state(false);
-  let jumpQuery = $state('');
-  let jumpAt = $state(0);
-  let jumpInput = $state<HTMLInputElement|null>(null);
-
-  /** Built only while open — on a 100k-item list this is a full pass. */
-  const jumpFiles = $derived.by(() => {
-    if (!jumpOpen) return [];
-        const out: { i:number, b:import('./model.js').Block }[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      if (it.k === 'file') out.push({ i, b: it.b });
-    }
-    return out;
+/**
+ * Clicking the diff must put the keyboard ON the diff. Nothing inside the surface is
+ * focusable except the row controls, so a plain click on a diff line left focus on
+ * <body>: a mouse user who clicked a hunk and pressed `s` got nothing, and the cursor,
+ * `n`/`p` and `f` were reachable only by tabbing in from elsewhere.
+ *
+ * Deferred, and only when the press left focus on <body>, so it can never steal focus
+ * from a Stage button or a file header that legitimately took it.
+ */
+function onPointerDown() {
+  queueMicrotask(() => {
+    if (scroller && document.activeElement === document.body) scroller.focus({ preventScroll: true });
   });
-  const jumpHits = $derived.by(() => {
-    const q = jumpQuery.trim().toLowerCase();
-    return q ? jumpFiles.filter((f) => f.b.file.toLowerCase().includes(q)) : jumpFiles;
-  });
+}
 
-  function openJump() {
-    jumpQuery = '';
-    jumpAt = 0;
-    jumpOpen = true;
+/**
+ * Keyboard focus can be sitting on a button inside a row that the next scroll unmounts.
+ * Without this the focus falls to <body> and arrow keys stop working mid-review, which
+ * is the classic way a virtualized list breaks for keyboard users.
+ */
+function onFocusout() {
+  queueMicrotask(() => {
+    if (!scroller || !focused) return;
+    if (!scroller.contains(document.activeElement) && document.activeElement === document.body) {
+      scroller.focus({ preventScroll: true });
+    }
+  });
+}
+
+/* ---------------- the file list (`f`) ----------------
+ *
+ * Windowing has one honest cost — off-screen rows are not in the DOM, so the browser's
+ * own Ctrl-F cannot find them — and `[` / `]` walk files one at a time, which is fine
+ * for the third file of five and useless for the fortieth of sixty. This is the way
+ * back: type part of a path, land on its header.
+ *
+ * It reads the same item list the viewport draws, so "jump" is just a cursor move; no
+ * second model of what is in the diff, and nothing to keep in sync.
+ */
+let jumpOpen = $state(false);
+let jumpQuery = $state('');
+let jumpAt = $state(0);
+let jumpInput = $state<HTMLInputElement | null>(null);
+
+/** Built only while open — on a 100k-item list this is a full pass. */
+const jumpFiles = $derived.by(() => {
+  if (!jumpOpen) return [];
+  const out: { i: number; b: import('./model.js').Block }[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.k === 'file') out.push({ i, b: it.b });
   }
-  function closeJump() {
-    jumpOpen = false;
-    // trapFocus restores focus on destroy, but only to whatever was focused at mount —
-    // be explicit, because a jump should always leave the keyboard on the diff.
-    if (scroller) scroller.focus({ preventScroll: true });
-  }
-  /** @param {number} i */
-  function jumpTo(i: number) {
-    cursor = i;
+  return out;
+});
+const jumpHits = $derived.by(() => {
+  const q = jumpQuery.trim().toLowerCase();
+  return q ? jumpFiles.filter((f) => f.b.file.toLowerCase().includes(q)) : jumpFiles;
+});
+
+function openJump() {
+  jumpQuery = '';
+  jumpAt = 0;
+  jumpOpen = true;
+}
+function closeJump() {
+  jumpOpen = false;
+  // trapFocus restores focus on destroy, but only to whatever was focused at mount —
+  // be explicit, because a jump should always leave the keyboard on the diff.
+  if (scroller) scroller.focus({ preventScroll: true });
+}
+/** @param {number} i */
+function jumpTo(i: number) {
+  cursor = i;
+  closeJump();
+  reveal(i);
+}
+
+/** @param {KeyboardEvent} e */
+function onJumpKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
     closeJump();
-    reveal(i);
+  } else if (e.key === 'ArrowDown') {
+    jumpAt = Math.min(jumpAt + 1, jumpHits.length - 1);
+  } else if (e.key === 'ArrowUp') {
+    jumpAt = Math.max(jumpAt - 1, 0);
+  } else if (e.key === 'Enter') {
+    const hit = jumpHits[jumpAt];
+    if (hit) jumpTo(hit.i);
+  } else return;
+  e.preventDefault();
+}
+
+$effect(() => {
+  if (jumpOpen && jumpInput) jumpInput.focus();
+});
+// A query that filters everything away must not leave the highlight past the end.
+$effect(() => {
+  if (jumpAt >= jumpHits.length) jumpAt = 0;
+});
+
+/** One-line description of the cursor, for the polite live region. */
+const cursorLabel = $derived.by(() => {
+  const it = items[cursor];
+  if (!it) return '';
+  if (it.k === 'file')
+    return `file ${it.b.file}, ${statusInfo(it.b.status).label}${it.b.collapsed ? ', collapsed' : ''}`;
+  if (it.k === 'hunk')
+    return `hunk ${it.hunk.index + 1}, ${it.hunk.header}${it.g.side ? `, ${it.g.side}` : ''}`;
+  if (it.k === 'group') return it.g.label;
+  if (it.k === 'note') return it.note.text;
+  if (it.k === 'row') {
+    const l = it.right || it.left;
+    const n = it.type === 'del' ? it.left && it.left.oldLine : l && l.newLine;
+    return `${it.type} line ${n ?? ''}: ${(l && l.text) || 'empty'}`;
   }
+  return '';
+});
 
-  /** @param {KeyboardEvent} e */
-  function onJumpKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') { closeJump(); }
-    else if (e.key === 'ArrowDown') { jumpAt = Math.min(jumpAt + 1, jumpHits.length - 1); }
-    else if (e.key === 'ArrowUp') { jumpAt = Math.max(jumpAt - 1, 0); }
-    else if (e.key === 'Enter') { const hit = jumpHits[jumpAt]; if (hit) jumpTo(hit.i); }
-    else return;
-    e.preventDefault();
-  }
-
-  $effect(() => { if (jumpOpen && jumpInput) jumpInput.focus(); });
-  // A query that filters everything away must not leave the highlight past the end.
-  $effect(() => { if (jumpAt >= jumpHits.length) jumpAt = 0; });
-
-  /** One-line description of the cursor, for the polite live region. */
-  const cursorLabel = $derived.by(() => {
-    const it = items[cursor];
-    if (!it) return '';
-    if (it.k === 'file') return `file ${it.b.file}, ${statusInfo(it.b.status).label}${it.b.collapsed ? ', collapsed' : ''}`;
-    if (it.k === 'hunk') return `hunk ${it.hunk.index + 1}, ${it.hunk.header}${it.g.side ? `, ${it.g.side}` : ''}`;
-    if (it.k === 'group') return it.g.label;
-    if (it.k === 'note') return it.note.text;
-    if (it.k === 'row') {
-      const l = it.right || it.left;
-      const n = it.type === 'del' ? it.left && it.left.oldLine : l && l.newLine;
-      return `${it.type} line ${n ?? ''}: ${(l && l.text) || 'empty'}`;
-    }
-    return '';
-  });
-
-  /** @param {import('./model.js').Item} it */
-  const rowCls = (it: Item) => (it.k === 'row' ? it.type : '');
+/** @param {import('./model.js').Item} it */
+const rowCls = (it: Item) => (it.k === 'row' ? it.type : '');
 </script>
 
 <!--

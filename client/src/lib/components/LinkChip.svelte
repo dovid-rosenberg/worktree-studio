@@ -1,38 +1,49 @@
 <script lang="ts">
-  /*
-   * One link — a ticket, a merge request, or something pinned.
-   *
-   * ONE component for all three, and for all three placements. The dock header, the
-   * ActionBar overflow and anywhere else render this, so a chip cannot come to mean
-   * different things in different corners — which is exactly how the same PR ended up
-   * shown as a `cistat` pill in the ServerBar and as nothing at all on the rail.
-   *
-   * An `empty` chip (a repo in the feature with no MR yet) is a <span>, not an <a>: there
-   * is nothing to open, and a link that goes nowhere is worse than a label. The gap is
-   * still drawn, because absence is the signal — it is what tells you which half of a
-   * feature still needs a merge request opened.
-   */
-  import type { Link } from '../../../../server/links';
+/*
+ * One link — a ticket, a merge request, or something pinned.
+ *
+ * ONE component for all three, and for all three placements. The dock header, the
+ * ActionBar overflow and anywhere else render this, so a chip cannot come to mean
+ * different things in different corners — which is exactly how the same PR ended up
+ * shown as a `cistat` pill in the ServerBar and as nothing at all on the rail.
+ *
+ * An `empty` chip (a repo in the feature with no MR yet) is a <span>, not an <a>: there
+ * is nothing to open, and a link that goes nowhere is worse than a label. The gap is
+ * still drawn, because absence is the signal — it is what tells you which half of a
+ * feature still needs a merge request opened.
+ */
+import type { Link } from '../../../../server/links';
+import { safeHref } from '$lib/ops.svelte.js';
 
-  let { link }: { link: Link } = $props();
+let { link }: { link: Link } = $props();
 
-  /** Only counts worth the width: zeroes say nothing a missing chip does not. */
-  const checks = $derived(
-    [
-      { cls: 'ok', n: link.checks?.passed || 0, mark: '✓' },
-      { cls: 'run', n: link.checks?.running || 0, mark: '◴' },
-      { cls: 'x', n: link.checks?.failed || 0, mark: '✕' },
-    ].filter((c) => c.n > 0),
-  );
+/*
+ * The href, only if the stored URL is one we will navigate to.
+ *
+ * A link is server data (a ticket, an MR, a pin the user typed) and Svelte will happily
+ * bind `href="javascript:…"`, which then runs in the origin holding the boot token. A
+ * URL we refuse is drawn as the inert chip below rather than dropped, so a bad link
+ * looks like a link that does not work — which is what it is.
+ */
+const href = $derived(safeHref(link.url));
 
-  const title = $derived(
-    link.empty
-      ? `${link.repo} has no open merge request`
-      : `${link.label}${link.sub ? ` — ${link.sub}` : ''}\n${link.url}`,
-  );
+/** Only counts worth the width: zeroes say nothing a missing chip does not. */
+const checks = $derived(
+  [
+    { cls: 'ok', n: link.checks?.passed || 0, mark: '✓' },
+    { cls: 'run', n: link.checks?.running || 0, mark: '◴' },
+    { cls: 'x', n: link.checks?.failed || 0, mark: '✕' },
+  ].filter((c) => c.n > 0),
+);
+
+const title = $derived(
+  link.empty
+    ? `${link.repo} has no open merge request`
+    : `${link.label}${link.sub ? ` — ${link.sub}` : ''}\n${link.url}`,
+);
 </script>
 
-{#if link.empty}
+{#if link.empty || !href}
   <span class="chip empty" {title}>
     <span class="g">{link.glyph}</span>{link.label}<span class="sub">{link.sub}</span>
   </span>
@@ -41,7 +52,7 @@
     class="chip"
     class:merged={link.sub === 'merged'}
     class:draft={link.sub === 'draft'}
-    href={link.url}
+    {href}
     target="_blank"
     rel="noreferrer"
     {title}

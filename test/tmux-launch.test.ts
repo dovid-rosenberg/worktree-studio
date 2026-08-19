@@ -8,7 +8,7 @@ import path from 'path';
 // throwaway dir BEFORE loading the module (dynamic import for the same reason).
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-studio-tmux-'));
 process.env.WT_STUDIO_CONFIG_DIR = TMP;
-const { launchKeys } = await import('../server/multiplexer/tmux.ts');
+const { launchKeys, isIdleShell } = await import('../server/multiplexer/tmux.ts');
 
 // A shell that has not finished starting still has its tty in canonical mode, where
 // the kernel drops everything past MAX_INPUT (1024 bytes on macOS) of an unterminated
@@ -49,6 +49,43 @@ test('launchKeys gives each pane its own file and rewrites it in place', () => {
   assert.strictEqual(again, a, 'the same pane must reuse its file rather than leaking a new one');
   const file = a.replace(/^\. '/, '').replace(/'$/, '');
   assert.ok(fs.readFileSync(file, 'utf8').startsWith('claude --resume C'), 'rewritten in place');
+});
+
+/*
+ * isIdleShell decides Resume. `true` means the agent exited and left its shell, so relaunch;
+ * `false` means something is alive in that pane and must be adopted, not doubled.
+ *
+ * The direction that shipped broken is `false` for a shell: the session is then marked
+ * adopted, nothing is launched, and the button reports success forever. That is what a
+ * hardcoded list of POSIX shell names did to anyone whose $SHELL is fish or nushell —
+ * persistCmd execs $SHELL, so their idle pane says `fish`, which was not in the list.
+ */
+test("an idle pane running the user's own $SHELL is recognised as a shell, whatever it is", () => {
+  assert.equal(isIdleShell('fish', '/opt/homebrew/bin/fish'), true);
+  assert.equal(isIdleShell('nu', '/usr/local/bin/nu'), true);
+  assert.equal(isIdleShell('-fish', '/opt/homebrew/bin/fish'), true, 'a login shell carries a leading -');
+});
+
+test('the known-shell list still covers panes we did not start from $SHELL', () => {
+  for (const cmd of ['zsh', '-zsh', 'bash', 'sh', 'dash', 'tcsh', 'login', 'fish', 'pwsh']) {
+    assert.equal(isIdleShell(cmd, '/bin/zsh'), true, `${cmd} is a shell sitting at a prompt`);
+  }
+});
+
+test('a live agent is never mistaken for an idle shell', () => {
+  // claude reports itself as `node`, and reports its Bash tool's child while a tool runs —
+  // adopting is right for both, which is why anything unrecognised must answer false.
+  for (const cmd of ['node', 'claude', 'vim', 'npm', 'ssh', 'shell-thing', 'bashful']) {
+    assert.equal(isIdleShell(cmd, '/bin/zsh'), false, `${cmd} is something worth adopting`);
+  }
+  assert.equal(isIdleShell('', '/bin/zsh'), false, 'an unreadable pane command claims nothing');
+});
+
+test('an unset $SHELL falls back to the list rather than matching everything', () => {
+  // path.basename('') is '', and an empty pane command is already excluded — but a pane
+  // command must never match by accident just because the env is bare.
+  assert.equal(isIdleShell('zsh', ''), true);
+  assert.equal(isIdleShell('node', ''), false);
 });
 
 test('launchKeys sanitises the pane name into the filename', () => {

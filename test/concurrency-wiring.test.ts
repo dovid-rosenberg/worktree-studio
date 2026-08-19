@@ -11,7 +11,7 @@ import type { ConfigPatchPlan } from '../server/servers.ts';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Servers, featureFromPath } from '../server/servers.ts';
+import { Servers, featureFromPath, realpath } from '../server/servers.ts';
 import { validateConcurrency } from '../server/config.ts';
 
 // accept-blue's real port map + FE configPatch wiring — mirrors config.ts defaults.
@@ -504,6 +504,12 @@ test("stop() targets only the worktree's known ports (no full discovery scan)", 
 // discoverRunning per-pid cache — resolve each pid once, reuse across scans
 // ---------------------------------------------------------------------------
 
+// The cache is validated against each process's start time, so a scan needs `ps` to
+// answer for these invented pids. One stamp per pid, unchanging: the same process.
+function stampPids(s: Servers, startedAt: (pid: number) => number = () => 1_700_000_000_000) {
+  s._psInfo = async (pid: number) => ({ startedAt: startedAt(pid), command: `pid-${pid}` });
+}
+
 test('discoverRunning resolves each listening pid once and reuses it on the next scan', async () => {
   const s = servers();
   s._listeningPids = async () =>
@@ -511,6 +517,7 @@ test('discoverRunning resolves each listening pid once and reuses it on the next
       ['100', new Set([3000])],
       ['200', new Set([4000])],
     ]);
+  stampPids(s);
   let calls = 0;
   s._resolvePid = async (pid) => {
     calls++;
@@ -529,6 +536,7 @@ test('discoverRunning drops cache entries for pids that stop listening', async (
   const s = servers();
   let live = new Map([['100', new Set([3000])]]);
   s._listeningPids = async () => live;
+  stampPids(s);
   let calls = 0;
   s._resolvePid = async (pid) => {
     calls++;
@@ -544,6 +552,54 @@ test('discoverRunning drops cache entries for pids that stop listening', async (
   assert.equal(calls, 2, '200 resolved once');
   assert.equal(s._pidInfoCache.has('100'), false, 'stale pid pruned from the cache');
   assert.equal(s._pidInfoCache.has('200'), true, 'live pid cached');
+});
+
+/*
+ * A cached pid is a cached PROCESS, and the OS reuses the number.
+ *
+ * The cache was keyed on the pid alone and evicted only when that pid stopped appearing
+ * in the LISTEN scan. So a dev server that exited and had its pid handed to an unrelated
+ * listener before the next sweep — the same second on a busy machine — went on being
+ * reported as the old worktree, now "running" on the stranger's ports. The row kept a
+ * live Stop button for a server that was gone, and reconcileSlots never reclaimed the
+ * feature's slot because something was always listening for it.
+ */
+test('discoverRunning re-resolves a pid whose process was replaced between scans', async () => {
+  const s = servers();
+  s._listeningPids = async () => new Map([['100', new Set([3000])]]);
+  let started = 1_700_000_000_000;
+  s._psInfo = async () => ({ startedAt: started, command: 'whatever' });
+  let resolves = 0;
+  s._resolvePid = async () => {
+    resolves++;
+    return { cwd: '/cwd', top: resolves === 1 ? '/top/old-feature' : '/top/the-stranger' };
+  };
+
+  assert.deepEqual([...(await s.discoverRunning()).keys()], ['/top/old-feature']);
+  // Same pid, a process that started later: the number was recycled.
+  started += 5000;
+  const after = await s.discoverRunning();
+  assert.equal(resolves, 2, 'the entry was invalidated rather than served from cache');
+  assert.deepEqual([...after.keys()], ['/top/the-stranger'], 'reported as whoever really holds it');
+  assert.equal(after.has('/top/old-feature'), false, 'and the dead worktree is not still "running"');
+});
+
+test('a pid ps cannot stamp is re-resolved every scan rather than trusted', async () => {
+  // lsof is still the authority on what is listening, so the worktree is reported — but
+  // an entry with no start time can never be shown to be the same process next time, and
+  // the cache degrades to no cache rather than to a stale claim.
+  const s = servers();
+  s._listeningPids = async () => new Map([['100', new Set([3000])]]);
+  s._psInfo = async () => null;
+  let resolves = 0;
+  s._resolvePid = async () => {
+    resolves++;
+    return { cwd: '/cwd', top: '/top/feat' };
+  };
+
+  assert.deepEqual([...(await s.discoverRunning()).keys()], ['/top/feat']);
+  await s.discoverRunning();
+  assert.equal(resolves, 2, 'an unstampable entry is never served from cache');
 });
 
 // isSlotted — drives the "no stop & switch conflict" behavior for concurrency repos
@@ -808,4 +864,202 @@ test('start() records the moment it spawned, so its own pid validates', async ()
   assert.equal(await s._trackedPidState(t), 'ours');
   await s.stop('api', repo);
   fs.rmSync(repo, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// A stop is a long act, and a start can land in the middle of it
+//
+// stop() awaits a `ps`, an `lsof` per port and a 600 ms settle. All of that used to
+// happen outside the per-worktree lock start() takes, and it ended by deleting the
+// tracked record unconditionally — so Stop-then-Start, a sequence a user performs in
+// under a second, spawned a new dev server and then forgot it. These spawn real
+// children, because what is under test is the interleaving of two real processes.
+// ---------------------------------------------------------------------------
+
+import { execFileSync } from 'child_process';
+
+// A directory that is its own git top-level, which is what _resolvePid compares a
+// listening process's cwd against — a plain temp dir resolves to no worktree at all,
+// or worse to whatever repo contains the temp path, and the sweep then skips it.
+function gitWorktree(): string {
+  const dir = realpath(fs.mkdtempSync(path.join(os.tmpdir(), 'wts-live-')));
+  execFileSync('git', ['init', '-q', dir]);
+  return dir;
+}
+
+// A Servers whose 'api' repo runs `cmd` in a real git worktree.
+function live(cmd: string, ports: number[] = []) {
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-live-state-'));
+  const wt = gitWorktree();
+  const s = new Servers({ _stateDir: stateDir, web: { port: 0 }, start: { api: { cmd, ports } } });
+  return { s, wt, cleanup: () => fs.rmSync(wt, { recursive: true, force: true }) };
+}
+
+// `node -e`, as a start command a shell will exec into (so the tracked pid is the
+// node process itself, and its group is the thing stop() signals).
+function nodeCmd(body: string): string {
+  return `exec ${JSON.stringify(process.execPath)} -e ${JSON.stringify(body)}`;
+}
+
+test('a start racing a stop leaves exactly one tracked, killable server', async () => {
+  const { s, wt, cleanup } = live('exec sleep 30');
+  const first = expectOk(await s.start('api', wt), 'first start');
+  const oldPid = present(first.pid, 'the first pid');
+
+  // Stop takes the lock synchronously, before it returns its promise; the start that
+  // follows queues behind it instead of interleaving with it. Without the lock, start()
+  // spawned while the stop was still awaiting `ps`, and the stop then deleted the record
+  // that had just been written for the NEW process — live, untracked, unkillable.
+  const stopping = s.stop('api', wt);
+  const starting = s.start('api', wt);
+  const [, startResult] = await Promise.all([stopping, starting]);
+  const second = expectOk(startResult, 'the racing start');
+  const newPid = present(second.pid, 'the second pid');
+
+  assert.notEqual(newPid, oldPid, 'the racing start really did launch a second process');
+  const t = present(s.tracked[wt], 'the tracked record after the race');
+  assert.equal(t.pid, newPid, 'the record names the server that is actually up');
+  assert.equal(alive(newPid), true);
+  await settle();
+  assert.equal(alive(oldPid), false, 'and the one that was stopped is gone');
+
+  // Killable, which is the whole point of being tracked.
+  const out = await s.stop('api', wt);
+  assert.equal(out.killed, true);
+  await settle();
+  assert.equal(alive(newPid), false);
+  assert.equal(s.tracked[wt], undefined, 'a proven stop still forgets the record');
+  cleanup();
+});
+
+/*
+ * A dev server that DECLINES SIGTERM must be reported, and must stay tracked.
+ *
+ * `process.on('SIGTERM')` and carry on is ordinary — nodemon, a graceful-shutdown handler
+ * with a long drain, a wrapper that swallows signals. stop() escalates to SIGKILL and
+ * reports the port in `stillListening`, but it used to delete the tracked record BEFORE
+ * the settle and the escalation had even run. So if the process also outlived SIGKILL, or
+ * lsof stopped resolving it, what was left was a live server holding this feature's ports
+ * with nothing naming it: invisible in the UI, unreachable by Stop, and its slot handed to
+ * the next feature by reconcileSlots.
+ */
+test('a server that ignores SIGTERM is reported in stillListening, and is not forgotten', async () => {
+  const port = await freePort();
+  const { s, wt, cleanup } = live(
+    nodeCmd(
+      `process.on('SIGTERM', () => {}); require('http').createServer((q, r) => r.end()).listen(${port}, '127.0.0.1')`,
+    ),
+    [port],
+  );
+  const started = expectOk(await s.start('api', wt), 'start()');
+  assert.equal(started.listening, true, 'the stubborn server is genuinely up');
+  const pid = present(started.pid, 'its pid');
+
+  const out = await s.stop('api', wt);
+  assert.deepEqual(out.stillListening, [port], 'the port it refused to give up is named');
+  const t = present(s.tracked[wt], 'the tracked record');
+  assert.equal(t.pid, pid, 'a stop that had to escalate does not silently drop its record');
+
+  // And the record is not a leak either: it goes as soon as reality agrees it should.
+  await settle();
+  assert.equal(alive(pid), false, 'SIGKILL is not declinable');
+  assert.deepEqual(
+    (await s.pruneTracked()).map((d) => d.worktreePath),
+    [wt],
+  );
+  cleanup();
+});
+
+/*
+ * Two worktrees of one repo run the SAME command.
+ *
+ * A record written before `startedAt` existed is validated against the launch command,
+ * and `bash -lc npm run dev` is byte-identical across every worktree of a repo. So a
+ * recycled pid that now belongs to a SIBLING worktree's dev server passed that test and
+ * was signalled as ours — `kill(-pid)` on a process group in a feature the user was
+ * working in and had not touched. Where the process lives is what separates the two.
+ */
+test('a legacy record does not authorise killing a sibling worktree running the same command', async () => {
+  // No `exec`: bash execs the last command of a -lc script anyway, so the tracked pid
+  // ends up wearing exactly the configured command — which is the whole point here. That
+  // is what two worktrees of one repo look like to `ps`: identical.
+  const { s, wt: sibling, cleanup } = live('sleep 30');
+  const mine = gitWorktree();
+  const theirs = expectOk(await s.start('api', sibling), 'the sibling launch');
+  const theirPid = present(theirs.pid, 'the sibling pid');
+
+  // servers.json as an upgrade leaves it: our worktree, no start stamp, and a pid the OS
+  // has since handed to the identical dev server of the worktree next door.
+  s.tracked[mine] = { pid: theirPid, repo: 'api', log: '/dev/null' };
+  assert.equal(await s._trackedPidState(s.tracked[mine], mine), 'stranger', 'not ours to signal');
+
+  await s.stop('api', mine);
+  await settle();
+  assert.equal(alive(theirPid), true, "the sibling's dev server survived a stop of another worktree");
+  assert.equal(s.tracked[mine], undefined, 'and the record that would have killed it is gone');
+
+  // The same record, filed under the worktree the process really lives in, IS ours.
+  assert.equal(await s._trackedPidState({ pid: theirPid, repo: 'api' }, sibling), 'ours');
+  await s.stop('api', sibling);
+  fs.rmSync(mine, { recursive: true, force: true });
+  cleanup();
+});
+
+// ---------------------------------------------------------------------------
+// stopAll — the counterpart of startAll: stop, refresh, then release only what
+// the stop really emptied. Five routes spelled this sequence out by hand and
+// disagreed about the order and the guard.
+// ---------------------------------------------------------------------------
+
+test('stopAll frees the slot of a feature it really brought down', async () => {
+  const s = servers();
+  s.portPid = async () => null;
+  const wt = '/repo/.worktrees/feat-a';
+  s.allocSlotFor(s.featureFor(wt));
+
+  const out = await s.stopAll([{ repo: 'accept-blue', worktreePath: wt }], async () => new Map());
+  assert.deepEqual(
+    out.map((r) => r.repo),
+    ['accept-blue'],
+  );
+  assert.equal(s.slots.has('feat-a'), false, 'nothing of the feature is listening, so the slot goes back');
+});
+
+test('stopAll keeps the slot of a feature that is still listening', async () => {
+  const s = servers();
+  s.portPid = async () => null;
+  const wt = '/repo/.worktrees/feat-a';
+  s.allocSlotFor(s.featureFor(wt));
+
+  // The refresh answers with a sibling worktree of the SAME feature still up — the case
+  // an unconditional release got wrong: the caller stopped what it knew about, which is
+  // not the same as the feature being down.
+  await s.stopAll(
+    [{ repo: 'accept-blue', worktreePath: wt }],
+    // A sibling WORKTREE of the same feature — another repo, the same feature name.
+    async () => new Map([['/fe/.worktrees/feat-a', { pid: 7, ports: [3130] }]]),
+  );
+  assert.equal(s.slots.get('feat-a'), 0, 'the slot stays held while its ports are still in use');
+});
+
+test('stopAll reads the running map AFTER the stops, never before', async () => {
+  const s = servers();
+  s.portPid = async () => null;
+  const order: string[] = [];
+  s.stop = async (repo: string) => {
+    order.push(`stop:${repo}`);
+    return { ok: true as const, killed: true, stillListening: [] };
+  };
+  await s.stopAll(
+    [
+      { repo: 'accept-blue', worktreePath: '/repo/.worktrees/feat-a' },
+      { repo: 'merchant-v3', worktreePath: '/fe/.worktrees/feat-a' },
+    ],
+    async () => {
+      order.push('refresh');
+      return new Map();
+    },
+  );
+  assert.deepEqual(order.at(-1), 'refresh', 'the guard reads the post-stop world');
+  assert.equal(order.length, 3, 'one refresh for the batch, not one per member');
 });

@@ -51,6 +51,19 @@ const DEFAULTS = {
   runningIdleMs: 120000, // lsof sweep, nobody looking
   reconcileActiveMs: 6000, // tmux liveness, dashboard open (was: 4s, unconditional)
   reconcileIdleMs: 120000, // tmux liveness, nobody looking
+  // The pulled feeds (deps.feeds). Each of them already caches on its own TTL, so a job
+  // that fires more often than that TTL costs a map scan and spawns nothing — the interval
+  // is the granularity at which a TTL is allowed to become true, not the request rate.
+  // Before these existed the feeds had no heartbeat at all: they ran on an SSE subscribe,
+  // a rescan and a commit, so with one tab left open the review queue and the ticket
+  // statuses never refreshed again for the life of that connection and their TTLs were
+  // decorative.
+  reviewsActiveMs: 60000, // review queue (TTL 5m), somebody looking
+  reviewsIdleMs: 900000, // …and nobody: a `glab` per repo for an audience of nobody is the thing to avoid
+  taskStatusActiveMs: 60000, // ticket columns (TTL 10m), somebody looking
+  taskStatusIdleMs: 1800000, // …and nobody
+  overlapActiveMs: 30000, // branch drift: local git, sha-keyed, so a quiet sweep is one rev-parse per worktree
+  overlapIdleMs: 300000, // …and nobody looking, because it is still a process per worktree
   maxWatchers: 512, // refuse to arm past this — a pathological baseDir must not eat the fd table
 };
 
@@ -95,6 +108,18 @@ export interface WatchDeps {
   refreshRunning?: () => unknown;
   /** multiplexer liveness sweep */
   reconcile?: () => unknown;
+  /**
+   * The pulled feeds — review queue, ticket status, branch drift. They are event-driven
+   * everywhere else (a subscribe, a rescan, a commit) and that is exactly the problem:
+   * events stop arriving while a tab stays open, and their TTLs then never expire into
+   * anything. Handed here so one scheduler owns the pacing and the re-entrancy for every
+   * periodic job in the daemon, rather than each feed growing its own timer.
+   */
+  feeds?: {
+    reviews?: () => unknown;
+    taskStatus?: () => unknown;
+    overlap?: () => unknown;
+  };
   /**
    * true while anything is watching — see attention() (defaults to true, i.e.
    * always-active pacing, so a partial wiring degrades to the old behaviour rather
@@ -382,10 +407,14 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
 
   // ---- periodic jobs --------------------------------------------------------
   //
-  // One heartbeat drives all three. Each job declares an interval for "someone is
+  // One heartbeat drives all of them. Each job declares an interval for "someone is
   // looking" and one for "nobody is"; the tick itself spawns nothing, so the cost
   // of checking often is nil and a dashboard that opens after a long idle gets a
   // fresh sweep within one tick instead of waiting out the idle interval.
+  //
+  // `busy` is what makes this safe for a job whose work outlasts its interval: a slow
+  // sweep is never started twice, it just misses ticks until it finishes. That is the
+  // re-entrancy guard the pulled feeds would otherwise each have had to grow.
   const jobs: Job[] = [
     {
       name: 'running',
@@ -406,6 +435,33 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
       runs: 0,
     },
     { name: 'net', fn: runScan, active: o.netActiveMs, idle: o.netIdleMs, last: 0, busy: false, runs: 0 },
+    {
+      name: 'reviews',
+      fn: deps.feeds?.reviews,
+      active: o.reviewsActiveMs,
+      idle: o.reviewsIdleMs,
+      last: 0,
+      busy: false,
+      runs: 0,
+    },
+    {
+      name: 'taskStatus',
+      fn: deps.feeds?.taskStatus,
+      active: o.taskStatusActiveMs,
+      idle: o.taskStatusIdleMs,
+      last: 0,
+      busy: false,
+      runs: 0,
+    },
+    {
+      name: 'overlap',
+      fn: deps.feeds?.overlap,
+      active: o.overlapActiveMs,
+      idle: o.overlapIdleMs,
+      last: 0,
+      busy: false,
+      runs: 0,
+    },
   ].filter((j): j is Job => typeof j.fn === 'function');
 
   function runJob(j: Job): Promise<void> {
@@ -437,7 +493,9 @@ async function start(deps: WatchDeps): Promise<WatchHandle> {
     // Prime `running` exactly as boot used to (an awaited lsof sweep before listen).
     // `reconcile` is deliberately NOT run here: it flips sessions whose mux session
     // died to stopped, and manager.restore() runs after us — reconciling first would
-    // deactivate sessions restore() was about to bring back.
+    // deactivate sessions restore() was about to bring back. The pulled feeds are held
+    // back for a different reason: each one is a subprocess or a round trip per repo, and
+    // at boot nobody has looked at anything yet.
     if (j.name === 'running') await runJob(j);
     else j.last = Date.now();
   }

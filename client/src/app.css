@@ -140,6 +140,37 @@ button { font-family:inherit; }
 .btn.xs { font-size:11.5px; padding:2px 8px; font-weight:600; }
 .btn[disabled] { opacity:.5; cursor:not-allowed; }
 
+/* ---- rail cards ----
+   THE SHELL EVERY RAIL ROW WEARS, declared once.
+
+   Four components drew it — FeatureCard, SessionCard, ReviewCard, MainServerCard — and
+   four copies of a border, a radius, a background, a margin, a hover and a whole-card
+   button had drifted: the selected class was `.sel` in three and `.on` in the fourth,
+   ReviewCard's radius and margins were 9px/4px against everyone else's 10px/6px, and
+   `.digit` was byte-identical in two of them. None of that is a decision any card made on
+   purpose; it is what happens when the same block is pasted four times.
+
+   What stays in a card's own <style> is only what makes that card different: FeatureCard's
+   colour tag, the `inset 3px` edge that means "servers up" or "this is a review", and
+   ReviewCard's dimmed draft state.
+
+   `.railcard .hit`, not a bare `.hit`: RunsPanel has its own `.hit` (a grid, not a block),
+   and a global rule under that name would reach it. */
+.railcard { border:1px solid var(--border); border-radius:10px; background:var(--panel); margin:0 8px 6px;
+            transition:border-color .12s, background .12s; }
+@media (prefers-reduced-motion:reduce){ .railcard { transition:none; } }
+.railcard:hover { border-color:var(--border-strong); }
+.railcard.sel { border-color:var(--brand); background:var(--elevated); }
+/* min-width:0 at every level: without it a long branch name or a four-port list makes the
+   flex children refuse to shrink and the whole rail grows a horizontal scrollbar. */
+.railcard .hit { display:block; width:100%; min-width:0; text-align:left; background:none; border:0;
+                 padding:10px 11px 8px; cursor:pointer; color:inherit; font:inherit; overflow:hidden; }
+/* The ⌥ digit that selects the row. On the card rather than in your memory: the rail sorts
+   active-first, so starting a dev server renumbers everything below it and a remembered
+   number picks the wrong row. A number you READ is correct however the list moves. */
+.railcard .digit { font-family:var(--mono); font-size:10px; color:var(--faint); flex:none;
+                   border:1px solid var(--border); border-radius:5px; padding:1px 4px; opacity:.75; }
+
 /* ---- status vocabulary (dot + pill), shared by rail, fleet and palette ----
    FIVE states told apart by hue ALONE was the whole vocabulary: five identical 9px
    circles. In the dock header and the tab strip the dot appears with no accompanying

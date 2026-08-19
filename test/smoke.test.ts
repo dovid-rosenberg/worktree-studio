@@ -121,7 +121,15 @@ async function boot(): Promise<Daemon> {
 test('a real daemon serves the document with the token substituted', { timeout: TIMEOUT }, async () => {
   const d = await boot();
   try {
-    const res = await fetch(`${d.base}/`);
+    // Bare, first: the document is gated now, and a real daemon has to prove it end to
+    // end. Serving the shell to an unauthenticated caller is how the token leaked to
+    // any local process that asked, which no unit test can rule out for the assembled
+    // daemon.
+    const bare = await fetch(`${d.base}/`);
+    assert.equal(bare.status, 401, 'the document must not be served without the token');
+    assert.ok(!(await bare.text()).includes(d.token), 'and the refusal must not carry it');
+
+    const res = await fetch(`${d.base}/`, { headers: { 'x-wts-token': d.token } });
     assert.equal(res.status, 200);
     const html = await res.text();
     // The placeholder is how the token reaches the tab; shipping it unsubstituted 401s
@@ -174,9 +182,12 @@ test('an unknown /api path stays a 404 rather than becoming the SPA document', {
 test('a deep link falls back to the document, not a 404', { timeout: TIMEOUT }, async () => {
   const d = await boot();
   try {
-    const res = await fetch(`${d.base}/anything/deep`);
+    const res = await fetch(`${d.base}/anything/deep`, { headers: { 'x-wts-token': d.token } });
     assert.equal(res.status, 200);
     assert.ok((await res.text()).includes(d.token), 'the fallback must inject too');
+    // The fallback is a second door to the same document, so it needs the same lock.
+    const bare = await fetch(`${d.base}/anything/deep`);
+    assert.equal(bare.status, 401, 'the SPA fallback must be gated too');
   } finally {
     d.stop();
   }

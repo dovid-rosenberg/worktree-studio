@@ -26,6 +26,9 @@ export interface ResolvedLayout {
   root: string;
 }
 
+// Module-private: both were exported and neither had a single importer, here or in the
+// suite. resolve() is the only thing that may apply them, because the fallback behaviour
+// that goes with them (warn, don't throw) is what makes a typo in config.json survivable.
 const MODES: LayoutMode[] = ['nested', 'sibling', 'external'];
 const DEFAULT_DIR = '.worktrees';
 
@@ -91,4 +94,4 @@ function nameFromPath(layout: ResolvedLayout, worktreePath: string | null | unde
   return path.basename(p);
 }
 
-export { resolve, containerFor, destFor, ignorePath, nameFromPath, MODES, DEFAULT_DIR };
+export { resolve, containerFor, destFor, ignorePath, nameFromPath };

@@ -11,38 +11,120 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Three independent jobs, not three steps in one.
+#
+# This used to be a single `check` job running lint → format → test in order, and the
+# ordering was load-bearing in the worst way: a line-width reflow failed the Formatting
+# step, the job stopped, and the test suite never ran. That state persisted for twelve
+# consecutive pushes across a day of active development — CI was reporting failure for
+# a cosmetic reason while the thing it exists to protect went unexecuted. "Red" and
+# "red for a reason that matters" had become indistinguishable.
+#
+# Split, a formatting slip fails `style` and leaves `test` free to tell the truth. Both
+# still block the merge; neither can silence the other.
 jobs:
-  check:
+  style:
+    name: Lint and format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # Node 22 is a hard floor, not a preference: the transcript index is built on
-      # `node:sqlite`, and the server runs TypeScript through Node's own type stripping
-      # rather than a build step.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
 
-      # tmux is what the multiplexer drives. A handful of tests spawn a REAL tmux
-      # session (see test/sessions.test.ts) and skip themselves when it is absent —
-      # so without this, CI would report green on tests it never ran.
+      # Style needs no native build and no client build: biome reads source. Skipping
+      # postinstall here is what makes this job finish in seconds.
+      - run: npm ci --ignore-scripts
+
+      # `biome ci` is lint + format-check in one pass with CI-shaped output, which also
+      # removes any question of which of the two runs first.
+      - name: Biome
+        run: npx biome ci
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm ci --prefix client
+      # svelte-check needs the generated .svelte-kit types, which `svelte-kit sync`
+      # writes. postinstall normally does it via the client build; skipped above.
+      - run: npm --prefix client exec svelte-kit sync
+      - run: npx tsc --noEmit
+      - run: npm --prefix client run check
+
+  test:
+    name: Tests
+    # macOS, because that is what this product runs on and nothing else can prove it.
+    #
+    # Studio shells out to lsof, tmux, launchctl and `ps -o lstart=` — the last of
+    # which servers.ts parses with a fixed 24-byte slice that is only correct for BSD
+    # ps. CHILD_ENV also prepends /opt/homebrew/bin, a path that does not exist on a
+    # Linux runner, so tool resolution takes a different branch there than in
+    # production. On ubuntu this suite was proving the code works on a platform no user
+    # has. macOS runners are free for public repositories.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      # tmux is what the multiplexer drives, and several tests spawn a real session.
       - name: Install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
+        run: brew install tmux
+
+      # The tools the suite shells out to, asserted rather than assumed. A missing one
+      # does not fail loudly — it makes tests take a different branch and pass for the
+      # wrong reason.
+      - name: Preflight
+        run: |
+          tmux -V
+          lsof -v 2>&1 | head -2
+          ps -o lstart= -p $$
+          git --version
 
       # `npm ci` runs postinstall, which builds the client. That is deliberate: a build
       # failure is a failure, and the daemon refuses to boot without the built client.
       - run: npm ci
       - run: npm ci --prefix client
 
-      - name: Lint
-        run: npm run lint
+      - name: Server tests
+        run: npm run test:server
 
-      # Enforced, not advisory. A formatter nobody runs is a style guide, and a style
-      # guide is the thing this repo kept failing at.
-      - name: Formatting
-        run: npm run format:check
+      - name: Client tests
+        run: npm --prefix client test
 
-      - name: Typecheck and tests
-        run: npm test
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    # Advisory, not blocking: these are build-time dependencies of the client
+    # toolchain, and a new advisory landing overnight should not stop a bugfix from
+    # merging. It should, however, be visible — nothing had ever looked, and the client
+    # was carrying two high-severity transitive advisories.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Audit server dependencies
+        run: npm audit --audit-level=high
+      - name: Audit client dependencies
+        run: npm audit --audit-level=high --prefix client

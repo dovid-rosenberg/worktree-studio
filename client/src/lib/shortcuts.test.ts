@@ -16,6 +16,36 @@ vi.mock('$lib/ops.svelte.js', () => ({ promote: vi.fn(), runStack: vi.fn() }));
 const { handleShortcut } = await import('./shortcuts.svelte.js');
 const { overlays } = await import('$lib/stores/overlays.svelte.js');
 const { ui } = await import('$lib/stores/ui.svelte.js');
+const { world } = await import('$lib/stores/world.svelte.js');
+
+/** Drive the store the way the stream does: the same three halves the daemon sends. */
+function give(sessions: unknown[], reviews: unknown[]) {
+  world.topology = { features: [], groups: [], repos: [], webRepos: [], baseDirs: [] } as never;
+  world.sessionHalf = { sessions, servers: {} } as never;
+  world.ciHalf = { ci: {}, reviews } as never;
+  ui.repoFilter = '';
+  ui.rootFilter = '';
+}
+
+const review = (number: number, title: string) => ({
+  repo: 'accept-blue',
+  number,
+  title,
+  author: 'kim',
+  draft: false,
+  url: `https://example.invalid/${number}`,
+  updatedAt: new Date().toISOString(),
+});
+
+const session = (id: string) => ({
+  id,
+  title: id,
+  state: 'idle',
+  activity: '',
+  muxName: `m-${id}`,
+  repoName: 'accept-blue',
+  worktreePath: null,
+});
 
 /** A keydown carrying a real target, since the typing check reads it. */
 function press(key: string, opts: KeyboardEventInit = {}, target?: HTMLElement) {
@@ -99,7 +129,7 @@ describe('⌘ works where you actually are — with the terminal focused', () =>
   // isTypingTarget used to stand every shortcut down whenever xterm's textarea had
   // focus, which is nearly always. ⌘D quietly did nothing until you clicked away, and
   // that state is invisible. ⌘ never reaches a shell, so it has no reason to defer.
-  it.each(['d', 'r', 'n', '\\'])('⌘%s still fires from the terminal', (key) => {
+  it.each(['d', 'r', 'n'])('⌘%s still fires from the terminal', (key) => {
     const e = press(key, { metaKey: true }, textarea());
     expect(e.defaultPrevented).toBe(true);
   });
@@ -120,6 +150,47 @@ describe('⌥1–9 for the rail', () => {
   it('ignores ⌥ combined with another modifier', () => {
     const e = press('¡', { altKey: true, ctrlKey: true, code: 'Digit1' } as KeyboardEventInit);
     expect(e.defaultPrevented).toBe(false);
+  });
+
+  /*
+   * A REVIEW ROW IS A REAL TARGET, not a hole and not a landmine.
+   *
+   * railOrder counted reviews (a hole would shift every digit below it) but flattened
+   * them to `{kind:'feature', name:<merge-request title>}`, and the handler resolved that
+   * by looking the name up in `world.features`. No feature is named after a merge
+   * request, so `selectFeature(undefined)` cleared the selection: ⌥ on any review row
+   * discarded whatever you had open, and the card did not even show the digit.
+   */
+  describe('a review row', () => {
+    it('selects the review — it does not clear the selection', () => {
+      give([], [review(4821, 'Retry the webhook')]);
+      expect(ui.railOrder).toHaveLength(1);
+
+      press('¡', { altKey: true, code: 'Digit1' } as KeyboardEventInit);
+
+      expect(ui.selection).toEqual({ kind: 'review', id: 'accept-blue!4821' });
+    });
+
+    it('does not wipe the row above it — reviews sort last, so ⌥2 is the review', () => {
+      give([session('s1')], [review(4821, 'Retry the webhook')]);
+      press('¡', { altKey: true, code: 'Digit1' } as KeyboardEventInit);
+      expect(ui.selection).toEqual({ kind: 'session', id: 's1' });
+
+      press('™', { altKey: true, code: 'Digit2' } as KeyboardEventInit);
+      expect(ui.selection).toEqual({ kind: 'review', id: 'accept-blue!4821' });
+    });
+
+    it('the digit the card advertises is the one that selects it', () => {
+      give([session('s1')], [review(4821, 'Retry the webhook'), review(4822, 'Drop the index')]);
+      // The card looks its digit up by row key; the handler indexes railOrder. They are
+      // built from one filter, so the two have to agree for every row.
+      const rows = ui.railRows.filter((r) => r.kind !== 'mainserver');
+      expect(ui.railDigits.get(rows[2].key)).toBe(3);
+
+      press('£', { altKey: true, code: 'Digit3' } as KeyboardEventInit);
+
+      expect(ui.selection).toEqual({ kind: 'review', id: 'accept-blue!4822' });
+    });
   });
 });
 

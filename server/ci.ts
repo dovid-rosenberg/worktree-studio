@@ -230,7 +230,16 @@ function createCiFeed({ forge, sessions, streams, onChange = () => {}, intervals
    */
   function poke({ force = false }: PokeOptions = {}): void {
     if (stopped || !watching.active()) return;
-    if (force && forge && typeof forge.invalidate === 'function') forge.invalidate();
+    if (force && forge && typeof forge.invalidate === 'function') {
+      // poke() is called synchronously from the rescan and commit paths. A throw here
+      // would propagate into those callers rather than into the feed, so the one part of
+      // poke that touches a foreign object is contained like the rest of the feed is.
+      try {
+        forge.invalidate();
+      } catch {
+        /* a cache that will not clear is a stale answer, not a reason to fail a commit */
+      }
+    }
     if (timer) return;
     const wait = Math.max(o.debounceMs, o.minSweepMs - (Date.now() - lastSweepAt));
     timer = unref(

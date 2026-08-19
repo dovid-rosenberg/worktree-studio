@@ -13,7 +13,15 @@
 // behavior (group by the worktree's directory name).
 import { createIdentity } from './identity.ts';
 import type { Identity } from './identity.ts';
-import type { Feature, SplitFeature, FeatureMember, GroupConfig, Worktree } from './types.ts';
+import type {
+  AttachableWorktree,
+  Feature,
+  SessionRepoGap,
+  SplitFeature,
+  FeatureMember,
+  GroupConfig,
+  Worktree,
+} from './types.ts';
 
 /**
  * A feature as this module builds it. `session` is absent because only state.ts
@@ -99,6 +107,20 @@ function memberRunning(group: ComputedFeature): number {
 }
 
 /**
+ * The scan, narrowed to what reconciliation reads. Written structurally rather than
+ * imported from git.ts so a test can hand over four literals, as the callers' own
+ * shapes (ScannedRepo, StateRepo) both satisfy it.
+ */
+type ScannedRepos = {
+  name: string;
+  path: string;
+  worktrees?: { name?: string; branch?: string | null; path: string; isMain?: boolean }[];
+}[];
+
+/** A server/identity.ts resolver's `of()`. */
+type IdentityOf = (input: { repo: string; wtname?: string; branch?: string | null; path: string }) => string;
+
+/**
  * Worktrees belonging to `feature` that a session's `repos` does not include.
  *
  * Feature membership and SESSION membership are different records. A feature groups
@@ -117,15 +139,11 @@ function memberRunning(group: ComputedFeature): number {
  * @param of       the identity resolver's `of()`
  */
 function attachableWorktrees(
-  repos: {
-    name: string;
-    path: string;
-    worktrees?: { name?: string; branch?: string | null; path: string; isMain?: boolean }[];
-  }[],
+  repos: ScannedRepos,
   feature: string | null | undefined,
   known: Set<string>,
-  of: (input: { repo: string; wtname?: string; branch?: string | null; path: string }) => string,
-): { repo: string; repoPath: string; worktreePath: string; branch: string | null }[] {
+  of: IdentityOf,
+): AttachableWorktree[] {
   if (!feature) return [];
   const out = [];
   for (const repo of repos) {
@@ -139,6 +157,65 @@ function attachableWorktrees(
     }
   }
   return out;
+}
+
+/**
+ * Sessions whose `repos` is a strict subset of their feature's worktrees.
+ *
+ * attachableWorktrees() has only ever been asked at promote time, which is one of the
+ * three moments the two records can part company. The other two carry no such question:
+ * a session ADOPTED into an existing feature never ran promote at all, and a worktree cut
+ * later (a plain `wt`, an agent's own `git worktree add`) joins the feature long after
+ * whatever moment might have asked. In both cases the feature card shows every repo and
+ * the session knows fewer — and because Changes is session-scoped, the symptom is an
+ * empty diff of a branch that genuinely has commits. An empty diff reads as "no changes",
+ * not as "you are looking at the wrong record", so nothing on screen says the two
+ * disagree. This is the scan-path half: asked on every scan, about every session.
+ *
+ * DETECT AND OFFER, not heal.
+ *
+ * Attaching is not a bookkeeping fix — attachRepo() sends `/add-dir` into a live agent,
+ * which widens what it may read and WRITE, possibly mid-turn. Doing that automatically
+ * from a background scan means the set of directories an agent can edit changes because
+ * someone ran `wt` in another terminal, with no one having decided it should. The failure
+ * being prevented here is the silent one (nobody knows the records disagree), and naming
+ * the gap prevents it in full; closing it silently would trade a quiet wrong diff for a
+ * quiet privilege change, which is the worse of the two. So: reported here, acted on by
+ * SessionManager.attachRepos() behind an explicit button.
+ *
+ * Identity is asked, not assumed — the same resolver computeFeatures() groups by, for
+ * the same reason attachableWorktrees() takes one.
+ *
+ * @param sessions the live sessions (manager.all())
+ * @param repos    the scan — repos each carrying their worktrees
+ * @param of       the identity resolver's `of()`; defaults to the `basename` strategy
+ */
+function detectSessionRepoGaps(
+  sessions: Array<{
+    id: string;
+    title?: string;
+    feature?: string | null;
+    active?: boolean;
+    repos?: Array<{ repoPath: string }>;
+  }>,
+  repos: ScannedRepos,
+  of: IdentityOf = (i) => DEFAULT_IDENTITY.of(i),
+): SessionRepoGap[] {
+  const gaps: SessionRepoGap[] = [];
+  for (const s of sessions || []) {
+    // A deactivated session has no agent listening, so there is nothing to offer and
+    // nothing the mismatch can currently mislead: its Changes panel is not on screen.
+    // `active !== false` rather than `active`, so a caller handing over rows without the
+    // field (a fake, an older store) is not silently filtered to nothing.
+    if (s.active === false) continue;
+    const known = new Set((s.repos || []).map((r) => r.repoPath).filter(Boolean));
+    const missing = attachableWorktrees(repos, s.feature, known, of);
+    // Equal sets, and a session with no feature yet, are not gaps — attachableWorktrees
+    // answers [] for both, which is the whole test.
+    if (!missing.length) continue;
+    gaps.push({ sessionId: s.id, title: s.title || '', feature: s.feature || '', missing });
+  }
+  return gaps;
 }
 
 /**
@@ -162,7 +239,10 @@ function attachableWorktrees(
  * @param defaultBranches branch names that prove nothing — every worktree sits on one at
  *   some point, and grouping on them would propose merging a whole repo into one feature.
  */
-function detectSplitFeatures(features: ComputedFeature[], defaultBranches: Set<string> = new Set()): SplitFeature[] {
+function detectSplitFeatures(
+  features: ComputedFeature[],
+  defaultBranches: Set<string> = new Set(),
+): SplitFeature[] {
   const byBranch = new Map<string, Array<{ feature: string; member: Worktree }>>();
   for (const f of features) {
     // A manual group is the user having already answered this; proposing it back to them
@@ -197,4 +277,4 @@ function detectSplitFeatures(features: ComputedFeature[], defaultBranches: Set<s
   return splits;
 }
 
-export { computeFeatures, detectSplitFeatures, resolveRef, attachableWorktrees };
+export { computeFeatures, detectSplitFeatures, detectSessionRepoGaps, resolveRef, attachableWorktrees };

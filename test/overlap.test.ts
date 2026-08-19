@@ -15,8 +15,7 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { createOverlapFeed } from '../server/overlap.ts';
 
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
 function repo(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-overlap-'));
@@ -101,7 +100,15 @@ test('reports the WORST repo when a feature spans several', async () => {
 
   const feed = createOverlapFeed();
   await feed.refresh(
-    [{ name: 'alpha', members: [{ repo: 'one', path: a1 }, { repo: 'two', path: a2 }] }],
+    [
+      {
+        name: 'alpha',
+        members: [
+          { repo: 'one', path: a1 },
+          { repo: 'two', path: a2 },
+        ],
+      },
+    ],
     () => 'master',
   );
   const s = feed.snapshot().alpha;
@@ -123,7 +130,15 @@ test('an unchanged answer does not push a frame', async () => {
   const feed = createOverlapFeed({
     read: async () => {
       reads += 1;
-      return { headSha: 'h', baseSha: 'b', changed: ['a-only.js'], behind: 0, ahead: 1, conflicts: [], unpushed: 0 };
+      return {
+        headSha: 'h',
+        baseSha: 'b',
+        changed: ['a-only.js'],
+        behind: 0,
+        ahead: 1,
+        conflicts: [],
+        unpushed: 0,
+      };
     },
   });
   const f = { name: 'alpha', members: [{ repo: 'r', path: '/w/alpha' }] };
@@ -132,6 +147,57 @@ test('an unchanged answer does not push a frame', async () => {
   assert.equal(reads, 1, 'one read per member per sweep');
   assert.equal(await feed.refresh([f], () => 'master'), false, 'an identical answer is not news');
   assert.equal(reads, 2);
+});
+
+test('a git read that throws is contained, and remembered rather than retried every sweep', async () => {
+  /*
+   * Two bugs in one. `refresh` is called as `void refreshOverlap()` from the rescan path
+   * and from the commit route, with no .catch() — and crash.ts makes an unhandled
+   * rejection FATAL, so a spawn failure here used to exit the daemon and take every PTY
+   * and the SSE fan-out with it.
+   *
+   * And once it is caught, the failure has to be REMEMBERED: this was the feed that had
+   * no error TTL while reviews.ts and task-status.ts did, so a worktree whose git cannot
+   * be read cost a process on every single sweep, forever.
+   */
+  let reads = 0;
+  let clock = 1_000_000;
+  const feed = createOverlapFeed({
+    now: () => clock,
+    read: async () => {
+      reads += 1;
+      throw new Error('spawn git ENOENT');
+    },
+  });
+  const f = { name: 'alpha', members: [{ repo: 'r', path: '/w/alpha' }] };
+
+  assert.equal(await feed.refresh([f], () => 'master'), false, 'nothing to broadcast, and no throw');
+  assert.equal(feed.snapshot().alpha, undefined, 'unmeasurable is not "up to date"');
+  assert.equal(reads, 1);
+
+  await feed.refresh([f], () => 'master');
+  assert.equal(reads, 1, 'the failure is trusted for a while');
+
+  clock += 61 * 1000;
+  await feed.refresh([f], () => 'master');
+  assert.equal(reads, 2, 'but a broken worktree gets fixed, so it is retried');
+});
+
+test('one sweep at a time — two overlapping sweeps would double every git read', async () => {
+  let inFlight = 0;
+  let peak = 0;
+  const feed = createOverlapFeed({
+    read: async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+      return null;
+    },
+  });
+  const f = (name: string) => ({ name, members: [{ repo: 'r', path: `/w/${name}` }] });
+  await Promise.all([feed.refresh([f('a')], () => 'master'), feed.refresh([f('b')], () => 'master')]);
+  assert.equal(peak, 1);
 });
 
 test('forgets a feature whose worktree has been removed', async () => {

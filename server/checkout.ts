@@ -22,8 +22,8 @@
 //
 // Every refusal is REPORTED, not swallowed: a session that started somewhere other than
 // where you expected should say which branch it is on and why.
-import { run } from './util.ts';
-import { originHead } from './git.ts';
+import { gitFull, run } from './util.ts';
+import { originHead, porcelainStatus } from './git.ts';
 
 /** How long a fetch may hold up a session launch before we give up and carry on. */
 const FETCH_TIMEOUT_MS = 15000;
@@ -65,8 +65,6 @@ export interface PrepareOptions {
   fetchTimeoutMs?: number;
 }
 
-const git = async (repoPath: string, args: string[]) => run('git', ['-C', repoPath, ...args]);
-
 /**
  * The repo's default branch, or '' when there is no `origin/HEAD` to read.
  *
@@ -80,18 +78,14 @@ export async function defaultBranchOf(repoPath: string): Promise<string> {
 }
 
 /**
- * Tracked files with staged or unstaged modifications.
+ * Paths of tracked files with staged or unstaged modifications.
  *
  * Untracked files are deliberately NOT counted: `git checkout` carries them across
  * without complaint, so they are not a reason to refuse. Counting them would have
  * blocked the switch on a checkout whose only "changes" were six scratch scripts.
  */
 export async function trackedModifications(repoPath: string): Promise<string[]> {
-  const r = await git(repoPath, ['status', '--porcelain', '--untracked-files=no']);
-  return r.stdout
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
+  return (await porcelainStatus(repoPath, { untracked: false })).map((e) => e.path);
 }
 
 /**
@@ -146,7 +140,7 @@ export async function occupancy(
 }
 
 export async function prepareForSession(repoPath: string, opts: PrepareOptions = {}): Promise<PrepareResult> {
-  const current = async () => (await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
+  const current = async () => (await gitFull(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim();
 
   const startedOn = await current();
   const base: PrepareResult = {
@@ -192,7 +186,7 @@ export async function prepareForSession(repoPath: string, opts: PrepareOptions =
         reason: `left on ${startedOn}: ${dirty.length} uncommitted change(s) would have come along`,
       };
     }
-    const co = await git(repoPath, ['checkout', def]);
+    const co = await gitFull(repoPath, ['checkout', def]);
     if (co.code !== 0) {
       return { ...base, reason: `could not switch to ${def}: ${co.stderr.trim().split('\n')[0]}` };
     }
@@ -202,7 +196,7 @@ export async function prepareForSession(repoPath: string, opts: PrepareOptions =
 
   // Fast-forward ONLY. A diverged local default branch is a situation to report, not one
   // to resolve behind the user's back.
-  const ff = await git(repoPath, ['merge', '--ff-only', `origin/${def}`]);
+  const ff = await gitFull(repoPath, ['merge', '--ff-only', `origin/${def}`]);
   if (ff.code === 0) {
     base.updated = !/Already up to date/i.test(ff.stdout);
     return base;

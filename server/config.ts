@@ -160,6 +160,22 @@ function validateConcurrency(cfg: PartialDeep<Config> | null | undefined): void 
     );
   }
   for (const [repo, rc] of Object.entries(c.repos || {})) {
+    /*
+     * A scheduler owner outside the slot range means NO slot ever owns it.
+     *
+     * deriveEnv answers the stand-down value for every slot that is not the owner, so
+     * `slot: 3` with `maxSlots: 3` tells all three running stacks not to run jobs and
+     * nothing tells any of them to. Jobs then simply never run — the opposite failure to
+     * the one this key exists to prevent, and just as quiet: nothing errors, work merely
+     * stops happening.
+     */
+    const owner = rc?.scheduler?.slot ?? 0;
+    if (rc?.scheduler?.env && (owner < 0 || owner >= max)) {
+      console.warn(
+        `[wt-studio] concurrency: repo '${repo}' scheduler.slot=${owner} is outside slots 0..${max - 1}; ` +
+          `no slot would own the job scheduler and '${rc.scheduler.env}' would be off everywhere.`,
+      );
+    }
     const bases = Object.values(rc?.portEnv || {});
     for (let i = 0; i < bases.length; i++) {
       for (let j = i + 1; j < bases.length; j++) {

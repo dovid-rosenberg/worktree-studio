@@ -1,0 +1,32 @@
+#!/bin/sh
+#
+# The last honest moment.
+#
+# CI ran red for twelve consecutive pushes and nobody noticed, because the failure
+# was unreachable locally: `npm test` and `npm run check` both omit format:check, so
+# the documented commands pass on a tree CI rejects. This hook closes that gap — it
+# runs exactly what CI runs, at the last point where the answer still costs nothing.
+#
+# Pre-push and not pre-commit, deliberately: this repo merges locally and lands on
+# main directly, so there is no pull request to gate. A commit is cheap and frequent;
+# a push is the moment work becomes everyone's. The suite is ~25s, which is affordable
+# once per push and is not affordable once per commit.
+#
+# Escape hatch: `git push --no-verify`. Use it for a work-in-progress branch, never
+# for main.
+#
+# Activated by `npm run hooks:install` (git config core.hooksPath .githooks), which
+# install.sh runs for you. It is tracked in the repo rather than living in .git/hooks
+# so that it survives a fresh clone and can be reviewed like any other code.
+
+set -e
+
+echo "pre-push: npm run verify (lint · format · typecheck · tests)"
+
+if ! npm run verify; then
+  echo ""
+  echo "pre-push: verify failed — push aborted."
+  echo "  formatting?  npm run format"
+  echo "  in a hurry?  git push --no-verify"
+  exit 1
+fi

@@ -1,14 +1,13 @@
 // The transcript reader. Claude Code appends a JSONL transcript per session to
 // ~/.claude/projects/<slugified-cwd>/<claudeSessionId>.jsonl. This module locates
 // the file for a Studio session, stream-parses it from a byte offset, and hands
-// normalized entries to the two consumers that care: the search index and the
-// token/cost telemetry. One reader, two features — the parsing quirks below are
-// non-obvious enough that duplicating them would guarantee drift.
+// normalized entries to its two consumers: the sqlite/FTS5 search index in
+// transcript-index.ts, and the unindexed file-scan search below it. The parsing
+// quirks here are non-obvious enough that duplicating them would guarantee drift.
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import * as pricing from './pricing.ts';
-import type { IsoTimestamp, TranscriptEntry, Usage, UsageByModel, UsageTotals } from './types.ts';
+import type { IsoTimestamp, TranscriptEntry } from './types.ts';
 
 const NL = 0x0a;
 const CR = 0x0d;
@@ -25,26 +24,6 @@ const ENTRY_CAP = 12000;
 // is optional. Anything the code below inspects before using it is `unknown` here —
 // the guard, not the declaration, is what makes it safe to read.
 
-interface RawCacheCreation {
-  ephemeral_1h_input_tokens?: unknown;
-  ephemeral_5m_input_tokens?: unknown;
-}
-
-interface RawServerToolUse {
-  web_search_requests?: unknown;
-  web_fetch_requests?: unknown;
-}
-
-interface RawUsage {
-  input_tokens?: unknown;
-  output_tokens?: unknown;
-  cache_creation_input_tokens?: unknown;
-  cache_creation?: unknown;
-  cache_read_input_tokens?: unknown;
-  server_tool_use?: unknown;
-  speed?: unknown;
-}
-
 interface RawBlock {
   type?: string;
   text?: unknown;
@@ -56,10 +35,8 @@ interface RawBlock {
 
 interface RawMessage {
   role?: string;
-  id?: string;
   model?: string;
   content?: unknown;
-  usage?: unknown;
 }
 
 /** One parsed JSONL line, limited to the fields this module reads. */
@@ -69,7 +46,6 @@ export interface TranscriptRecord {
   timestamp?: unknown;
   uuid?: string;
   parentUuid?: string;
-  requestId?: string;
   cwd?: string;
   gitBranch?: string;
   isSidechain?: unknown;
@@ -323,49 +299,12 @@ function contentText(c: unknown): string {
   return parts.join('\n');
 }
 
-// ---- usage normalization ----------------------------------------------------
-
-const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-
-// message.usage → a flat shape the price table understands. The per-TTL cache
-// breakdown matters: a 1h cache write costs 2x the base input rate and a 5m write
-// 1.25x, so pricing the lump `cache_creation_input_tokens` as 5m would understate
-// any session using the 1h cache (which this codebase's sessions do).
-function normalizeUsage(u: unknown): Usage | null {
-  if (!u || typeof u !== 'object') return null;
-  const raw = u as RawUsage;
-  const totalWrite = num(raw.cache_creation_input_tokens);
-  const cc =
-    raw.cache_creation && typeof raw.cache_creation === 'object'
-      ? (raw.cache_creation as RawCacheCreation)
-      : null;
-  let w1h = cc ? num(cc.ephemeral_1h_input_tokens) : 0;
-  let w5m = cc ? num(cc.ephemeral_5m_input_tokens) : 0;
-  if (!cc) {
-    w1h = 0;
-    w5m = totalWrite;
-  } else if (w1h + w5m !== totalWrite) w5m = Math.max(0, totalWrite - w1h);
-  const st: RawServerToolUse =
-    raw.server_tool_use && typeof raw.server_tool_use === 'object'
-      ? (raw.server_tool_use as RawServerToolUse)
-      : {};
-  return {
-    input: num(raw.input_tokens),
-    output: num(raw.output_tokens),
-    cacheWrite5m: w5m,
-    cacheWrite1h: w1h,
-    cacheWrite: totalWrite,
-    cacheRead: num(raw.cache_read_input_tokens),
-    webSearch: num(st.web_search_requests),
-    webFetch: num(st.web_fetch_requests),
-    speed: typeof raw.speed === 'string' ? raw.speed : null,
-  };
-}
+// ---- entries ----------------------------------------------------------------
 
 // A raw JSONL record → the entry shape both consumers use, or null for the line
-// types that carry no searchable text and no usage (mode, permission-mode,
-// last-prompt, ai-title, file-history-snapshot, queue-operation, …). Unknown types
-// are dropped the same way — the format grows and we should not crash on it.
+// types that carry no searchable text (mode, permission-mode, last-prompt,
+// ai-title, file-history-snapshot, queue-operation, …). Unknown types are dropped
+// the same way — the format grows and we should not crash on it.
 function toEntry(rec: TranscriptRecord): TranscriptEntry | null {
   const type = rec.type;
   if (type !== 'assistant' && type !== 'user') return null;
@@ -377,24 +316,18 @@ function toEntry(rec: TranscriptRecord): TranscriptEntry | null {
   if (text.length > ENTRY_CAP) text = `${text.slice(0, ENTRY_CAP)}…`;
   const ts: IsoTimestamp | null = typeof rec.timestamp === 'string' ? rec.timestamp : null;
   const tsMs = ts ? Date.parse(ts) : NaN;
-  const usage = type === 'assistant' ? normalizeUsage(msg.usage) : null;
   return {
     kind: type,
     role: msg.role || type,
     uuid: rec.uuid || null,
     parentUuid: rec.parentUuid || null,
-    // The API message id is the dedup key for usage — see aggregate().
-    msgId: msg.id || null,
-    requestId: rec.requestId || null,
     ts,
     tsMs: Number.isFinite(tsMs) ? tsMs : null,
     model: type === 'assistant' ? msg.model || null : null,
-    speed: usage ? usage.speed : null,
     cwd: rec.cwd || null,
     gitBranch: rec.gitBranch || null,
     sidechain: rec.isSidechain === true,
     text,
-    usage,
   };
 }
 
@@ -409,120 +342,6 @@ function readTranscript(file: string, opts: ScanOptions = {}, onEntry?: EntrySin
     if (!e) return;
     return onEntry ? onEntry(e) : undefined;
   });
-}
-
-// ---- aggregation ------------------------------------------------------------
-
-/** The token counters every accumulator carries — a `Usage` with no `speed`. */
-export type TokenTotals = Omit<Usage, 'speed'>;
-
-/** A per-model accumulator, before a rate has been applied to it. */
-type ModelAccum = Omit<UsageByModel, 'costUsd' | 'priced'>;
-
-function blankTotals(): TokenTotals {
-  return {
-    input: 0,
-    output: 0,
-    cacheWrite5m: 0,
-    cacheWrite1h: 0,
-    cacheWrite: 0,
-    cacheRead: 0,
-    webSearch: 0,
-    webFetch: 0,
-  };
-}
-
-function addUsage(t: TokenTotals, u: TokenTotals): void {
-  t.input += u.input;
-  t.output += u.output;
-  t.cacheWrite5m += u.cacheWrite5m;
-  t.cacheWrite1h += u.cacheWrite1h;
-  t.cacheWrite += u.cacheWrite;
-  t.cacheRead += u.cacheRead;
-  t.webSearch += u.webSearch;
-  t.webFetch += u.webFetch;
-}
-
-// The dedup key for one API response. Claude Code writes ONE JSONL LINE PER CONTENT
-// BLOCK and repeats the identical message.usage on every one of them — a response
-// with a thinking block, a text block and two tool_use blocks appears four times.
-// Summing lines over-counts by ~2.9x on a tool-heavy session (measured). Dedup on
-// the API message id; fall back to requestId, then the line uuid (always unique, so
-// a record with neither id degrades to counting once rather than being dropped).
-function usageKey(e: TranscriptEntry): string | null {
-  return e.msgId || e.requestId || e.uuid;
-}
-
-// Total tokens + derived cost for one transcript. Returns per-model breakdowns
-// because a single session routinely spans models (opus-4-8 + fable-5 subagents),
-// and cost is meaningless without knowing which rate applied.
-async function aggregate(file: string, opts: ScanOptions = {}): Promise<UsageTotals> {
-  const seen = new Set<string>();
-  const totals = blankTotals();
-  const models = new Map<string, ModelAccum>();
-  const unpriced = new Set<string>();
-  let assistantMessages = 0;
-  let userMessages = 0;
-  let firstAt: number | null = null;
-  let lastAt: number | null = null;
-
-  const stats = await readTranscript(file, opts, (e) => {
-    if (e.tsMs) {
-      if (firstAt === null || e.tsMs < firstAt) firstAt = e.tsMs;
-      if (lastAt === null || e.tsMs > lastAt) lastAt = e.tsMs;
-    }
-    if (e.kind === 'user') {
-      userMessages++;
-      return;
-    }
-    if (!e.usage) return;
-    const key = usageKey(e);
-    if (key && seen.has(key)) return;
-    if (key) seen.add(key);
-    assistantMessages++;
-    addUsage(totals, e.usage);
-    const model = e.model || 'unknown';
-    let m = models.get(model);
-    if (!m) {
-      m = { model, speed: e.speed, messages: 0, ...blankTotals() };
-      models.set(model, m);
-    }
-    m.messages++;
-    addUsage(m, e.usage);
-  });
-
-  let costUsd = 0;
-  let allPriced = true;
-  const byModel: UsageByModel[] = [];
-  for (const m of models.values()) {
-    const { usd, priced } = pricing.costOf(m.model, m, { speed: m.speed });
-    if (!priced) {
-      if (pricing.isBillable(m.model)) {
-        allPriced = false;
-        unpriced.add(m.model);
-      }
-    } else costUsd += usd;
-    byModel.push({ ...m, costUsd: pricing.round(usd), priced });
-  }
-  byModel.sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0) || b.output - a.output);
-
-  return {
-    ...totals,
-    assistantMessages,
-    userMessages,
-    firstAt,
-    lastAt,
-    byModel,
-    costUsd: pricing.round(costUsd),
-    costIsEstimate: true,
-    unpricedModels: [...unpriced],
-    complete: allPriced,
-    file,
-    bytes: stats.size,
-    offset: stats.offset,
-    malformedLines: stats.skipped,
-    truncatedTail: stats.truncatedTail,
-  };
 }
 
 // ---- direct (unindexed) search ---------------------------------------------
@@ -577,19 +396,4 @@ function excerpt(text: string, at: number, len: number, pad = 90): string {
   return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}`;
 }
 
-export {
-  projectsRoot,
-  projectSlug,
-  isSessionId,
-  locate,
-  scan,
-  readTranscript,
-  normalizeUsage,
-  contentText,
-  aggregate,
-  search,
-  blankTotals,
-  addUsage,
-  usageKey,
-  excerpt,
-};
+export { projectsRoot, projectSlug, isSessionId, locate, scan, readTranscript, contentText, search, excerpt };

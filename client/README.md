@@ -42,7 +42,7 @@ client/
         Toasts.svelte
         rail/               Rail, SessionCard
         dock/               Dock, DockHead, TabStrip, ServerBar, SplitPane, LogsPanel,
-                            ReviewMount, InsightsMount
+                            ReviewMount
         fleet/              Fleet, FeatureRow, AgentRow, ServerRow, MainServerRow,
                             FeatureMenu
         review/             the Changes panel, mounted by dock/ReviewMount
@@ -51,14 +51,14 @@ client/
           DiffViewport.svelte  the windowed diff surface + keyboard navigation
           model.js             blocks → flat fixed-height item list (pure)
           api.js               the four review routes, typed
-        insights/           transcript search + cost/token telemetry, mounted by
-                            dock/InsightsMount
+        search/             transcript search (SearchPanel/SearchHit, ⌘⇧F) and the
+                            index-health readout it carries (IndexStatus).
     routes/
       +layout.js            ssr = false, prerender = false
       +layout.svelte        theme, the SSE connection, global keys, every overlay
       +page.svelte          the single screen: Work (rail + dock) and Fleet
       review/+page.svelte   Changes-panel harness — session picker + <ReviewPanel>
-      search/, usage/       insights harnesses
+      search/               search harness
 ```
 
 
@@ -121,18 +121,15 @@ updates in place. Measured against a live daemon: 12 `session-state` frames prod
 text-node mutations, zero `.scard` element removals, an unchanged DOM node (verified by
 an expando), retained keyboard focus and retained scroll position.
 
-## Mount points for the other two panels
-
-Two panels are built separately and are deliberately not imported anywhere in the shell:
+## Mount point for the Changes panel
 
 | tab | mount | becomes |
 | --- | --- | --- |
 | ✎ Changes | `dock/ReviewMount.svelte` | `$lib/components/review/` — commits, diff, hunk staging |
-| ◔ Insights | `dock/InsightsMount.svelte` | `$lib/components/insights/` — transcript search, cost/token telemetry |
 
-Each mount is a placeholder whose header comment states the contract it guarantees
+The mount is a placeholder whose header comment states the contract it guarantees
 (when it renders, what `session` is, what height it owns). Integration is one import
-swap per file; nothing else in the shell has to change.
+swap; nothing else in the shell has to change.
 
 ## The boot token
 

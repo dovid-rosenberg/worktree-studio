@@ -143,10 +143,26 @@ function readJsonState<T>(file: string, fallback: T): T {
   }
 }
 
+// Every file this writes is per-user state, and some of it is secret: config.json
+// holds the Asana personal access token, sessions.json holds the ids that are the
+// credential for `/ws/term`. Written with the default umask they land at 0644, i.e.
+// readable by every account on the machine — so the mode is stated here rather than
+// left to whatever umask the daemon happened to inherit from launchd or a shell.
+//
+// The mode goes on the temp file, because that is the inode the rename installs: an
+// existing 0644 file is therefore corrected by the next write, without a chmod race
+// where the new content is briefly world-readable. The explicit chmod covers the one
+// case `mode:` does not — a leftover temp file from a previous process with our pid,
+// which open(O_TRUNC) reuses at its old mode.
 function writeJson(file: string, obj: unknown): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: 0o600 });
+  try {
+    fs.chmodSync(tmp, 0o600);
+  } catch {
+    /* best effort — a wrong mode is not worth losing the write over */
+  }
   fs.renameSync(tmp, file);
 }
 
@@ -259,6 +275,24 @@ function shq(s: unknown): string {
 // rejection to the error middleware itself, so the wrapper is gone and the policy it
 // enforced lives in exactly one place: crash.routeErrors(), mounted last in server.ts.
 
+/**
+ * Start something and stop caring, without betting the daemon on it.
+ *
+ * crash.ts deliberately makes an unhandled rejection fatal, and the background refreshes
+ * this wraps were fired with a bare `void` — so a throw anywhere on the rescan path would
+ * have taken the process down, and with it every PTY and the SSE fan-out. The feeds are
+ * now total (see server/polled-cache.ts), which makes this belt as well as braces; it
+ * stays because "this callee never rejects" is an invariant maintained somewhere else,
+ * and the cost of being wrong about it is the whole daemon.
+ *
+ * Here rather than in the composition root because the split between process wiring
+ * (server.ts) and route wiring (server/app.ts) put callers on both sides of it, and two
+ * copies of a swallow-everything helper is exactly the shape that drifts.
+ */
+export function fire(p: Promise<unknown>): void {
+  void p.catch(() => {});
+}
+
 export {
   CHILD_ENV,
   HOME,
@@ -297,6 +331,179 @@ export {
 export function qs(v: unknown): string {
   const x = Array.isArray(v) ? v[0] : v;
   return x === undefined || x === null ? '' : String(x);
+}
+
+/*
+ * ---- route guards ---------------------------------------------------------
+ *
+ * The four preambles below were spelled out at some twenty-five call sites between them,
+ * and one of them was MISSING: POST /group/session looked up its primary repo in the
+ * scan cache and then read `pRepo.path` without checking, so a repo the cache had not
+ * seen was a TypeError — a 500 leaking an internal message where the caller's own 400
+ * belongs (server/orchestrator.ts still carries the note).
+ *
+ * The return shape is what stops that happening again. A guard that answered `T | null`
+ * would let a call site read the value without checking and get the same TypeError one
+ * line later; `Guarded<T>` has no `.value` to read until `ok` has been narrowed, so
+ * skipping the check is a compile error rather than the next 500.
+ *
+ * Typed structurally rather than against express, for the same reason qs() is: util.ts
+ * stays free of the framework.
+ */
+
+/** The one call a guard makes on a response. `express.Response` satisfies it. */
+export interface Responder {
+  status(code: number): { json(body: unknown): unknown };
+}
+
+/** A guard's answer: the resolved value, or nothing — because it has ALREADY replied. */
+export type Guarded<T> = { ok: true; value: T } | { ok: false };
+
+/** Send the refusal, and tell the caller to stop. */
+function refuse(res: Responder, status: number, body: unknown): { ok: false } {
+  res.status(status).json(body);
+  return { ok: false };
+}
+
+/** `['a']` → `a`; `['a','b']` → `a and b`; `['a','b','c']` → `a, b and c`. */
+function andList(xs: readonly string[]): string {
+  return xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`;
+}
+
+/** What a resolveGroup implementation answers. `flat` is optional: only /group/start reads it. */
+interface GroupResolution<G, M> {
+  /*
+   * Optional as well as nullable, because the resolvers genuinely differ: two of them
+   * always return the key and forge.ts's declares it optional. Accepting both here is
+   * what lets one guard serve every caller — narrowing it would push a cast onto the
+   * one call site that does not fit, which is how the copies started.
+   */
+  group?: G | null;
+  flat?: M[];
+}
+
+/**
+ * The feature a request names, or a 404 that says so.
+ *
+ * String(): the name arrives straight off the wire and the resolver only ever compares
+ * it against a feature name, so coercing it here is what keeps every call site from
+ * having to remember to.
+ */
+export async function requireFeature<G, M = unknown>(
+  res: Responder,
+  resolveGroup: (name: string) => Promise<GroupResolution<G, M>>,
+  name: unknown,
+): Promise<Guarded<{ group: G; flat: M[] }>> {
+  const { group, flat } = await resolveGroup(String(name ?? ''));
+  if (!group) return refuse(res, 404, { error: 'no such feature' });
+  return { ok: true, value: { group, flat: flat ?? [] } };
+}
+
+/** A scan-cache row, narrowed to the field every one of these lookups keys on. */
+export interface NamedRepo {
+  name: string;
+}
+
+/**
+ * The scan-cache row a request names, or a 400 that names what it asked for.
+ *
+ * 400 rather than 404 because that is the contract docs/api.md states for an unresolvable
+ * input, and it is what the routes that DID guard already answered. The repo name is
+ * quoted into the message: `unknown repo ''` is the first-run symptom (no baseDirs, so an
+ * empty picker), and a message that omits the name cannot say that.
+ */
+export function requireRepo<R extends NamedRepo>(res: Responder, repos: R[], name: unknown): Guarded<R> {
+  const want = qs(name);
+  const hit = repos.find((r) => r.name === want);
+  if (!hit) return refuse(res, 400, { error: `unknown repo '${want}'` });
+  return { ok: true, value: hit };
+}
+
+/**
+ * The session a request names, or a 404 that says so.
+ *
+ * Also the route half of the reasonless-failure problem: six SessionManager methods
+ * answer a bare `{ok:false}` when the session is gone, which routes forwarded verbatim
+ * with a 200 — a failure a client cannot report, explain or retry. Checking here means
+ * that answer is never reached for the case that produces it.
+ */
+export function requireSession<S>(
+  res: Responder,
+  get: (id: string) => S | null | undefined,
+  id: string,
+): Guarded<S> {
+  const s = get(id);
+  if (!s) return refuse(res, 404, { error: 'no such session' });
+  return { ok: true, value: s };
+}
+
+/**
+ * The named string fields of a POST body, or a 400 naming all of them.
+ *
+ * Only a real string counts. The three /servers/* routes coerced with
+ * `String(req.body?.x || '')`, which turns an object or an array into
+ * `"[object Object]"` / `"a,b"` and hands it on — the same class of bug DELETE
+ * /worktrees was fixed for after an omitted field reached a git argv as the literal
+ * string "undefined" and the failure came back with a 200.
+ *
+ * The message names every field, not the missing ones: it is a statement of the route's
+ * contract, and it is the message these routes already carried.
+ */
+export function requireBody<K extends string>(
+  res: Responder,
+  body: unknown,
+  fields: readonly K[],
+): Guarded<Record<K, string>> {
+  const src = (body ?? {}) as Record<string, unknown>;
+  const out = {} as Record<K, string>;
+  let missing = false;
+  for (const f of fields) {
+    const raw = src[f];
+    const v = typeof raw === 'string' ? raw.trim() : '';
+    if (!v) missing = true;
+    out[f] = v;
+  }
+  if (missing) {
+    const verb = fields.length > 1 ? 'are' : 'is';
+    return refuse(res, 400, { ok: false, error: `${andList(fields)} ${verb} required` });
+  }
+  return { ok: true, value: out };
+}
+
+/**
+ * A repo's default branch as the scan cache knows it, or 'main'.
+ *
+ * NOT server/checkout.ts's same-named function, which asks git about a checkout on disk.
+ * This one is a lookup in the scan cache and never shells out — that is why the two can
+ * both exist, and why the Review pane can answer without a subprocess per repo.
+ *
+ * 'main' is the floor git.ts falls back to, for the same reason: a repo it HAS scanned
+ * always carries one, so only a repo outside every baseDir — or one whose rescan has not
+ * landed — reaches the literal. This was a closure in routes-commits.ts and a second,
+ * differently-spelled closure in routes-review.ts.
+ */
+export function defaultBranchOf(
+  repos: ReadonlyArray<{ name: string; defaultBranch?: string | null }>,
+  name: string,
+): string {
+  return repos.find((r) => r.name === name)?.defaultBranch || 'main';
+}
+
+/**
+ * The shell commands that open `paths` in `ed`: one per path, or a single command for
+ * all of them when the editor has an `openGroup` template — Zed takes every path as one
+ * workspace, WebStorm has no such template and gets a window per repo.
+ *
+ * split/join, never replace(): the shell-quoted path is the REPLACEMENT string, and
+ * `$&`, `` $` ``, `$'` and `$$` in a replacement are expanded by the engine AFTER shq()
+ * has done its quoting — so a worktree path containing `$&` would open some other path
+ * entirely, quoting notwithstanding. This lived twice, comment and all, in POST /open
+ * and POST /group/open.
+ */
+export function editorCommands(ed: EditorLike, paths: string[]): string[] {
+  return paths.length > 1 && ed.openGroup
+    ? [ed.openGroup.split('{paths}').join(paths.map(shq).join(' '))]
+    : paths.map((p) => ed.open.split('{path}').join(shq(p)));
 }
 
 /**

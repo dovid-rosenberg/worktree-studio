@@ -3,9 +3,12 @@
 //   wt-studio                 → start the server
 //   wt-studio add-repo <repo> → add a repo to THIS session's feature
 //                               (reads $WT_STUDIO_SESSION; for claude to call)
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
+//   wt-studio endpoint        → print the API base URL and boot token, shell-eval ready
+//
+// Where any of that LIVES is server/paths.ts's answer, not this file's. This module used
+// to re-derive the config path, the 7788 default and the token location itself, which is
+// the copy the four shell integrations then copied again.
+import { baseUrl, readToken, tokenFile } from '../server/paths.ts';
 
 /** The slice of POST /sessions/:id/add-repo's answer this CLI prints. */
 interface AddRepoResponse {
@@ -16,7 +19,39 @@ interface AddRepoResponse {
 
 const [, , cmd, ...args] = process.argv;
 
-if (cmd === 'add-repo') {
+/**
+ * The token, or a refusal that says where it looked.
+ *
+ * No token means no daemon: security.ts writes the file at boot and leaves it there, so
+ * its absence is the one diagnosis worth printing rather than letting the request fail
+ * as a connection error.
+ */
+function tokenOrExit(): string {
+  const token = readToken();
+  if (!token) {
+    console.error(`no studio token at ${tokenFile()} — is the server running?`);
+    process.exit(1);
+  }
+  return token;
+}
+
+if (cmd === 'endpoint') {
+  /*
+   * Everything a shell integration needs to call the API, so it stops parsing config.json
+   * with jq to work it out. Emitted as assignments rather than two bare lines so it can be
+   * consumed without positional guessing:
+   *
+   *   eval "$(wt-studio endpoint)"
+   *   curl -H "x-wts-token: $WT_STUDIO_TOKEN" "$WT_STUDIO_BASE/api/state"
+   *
+   * Single-quoted, with any embedded quote escaped the POSIX way — the token is hex today,
+   * but a value that reaches `eval` is not the place to rely on that staying true.
+   */
+  const sh = (v: string): string => `'${v.replace(/'/g, `'\\''`)}'`;
+  const token = tokenOrExit();
+  console.log(`WT_STUDIO_BASE=${sh(baseUrl())}`);
+  console.log(`WT_STUDIO_TOKEN=${sh(token)}`);
+} else if (cmd === 'add-repo') {
   const repo = args[0];
   const sessionId = process.env.WT_STUDIO_SESSION;
   if (!repo) {
@@ -27,30 +62,11 @@ if (cmd === 'add-repo') {
     console.error('WT_STUDIO_SESSION not set — run this from inside a Worktree Studio session');
     process.exit(1);
   }
-  const cfgFile =
-    process.env.WT_STUDIO_CONFIG || path.join(os.homedir(), '.config', 'worktree-studio', 'config.json');
-  let port = 7788;
-  try {
-    port = JSON.parse(fs.readFileSync(cfgFile, 'utf8')).web?.port || 7788;
-  } catch {
-    /* */
-  }
   // The boot token lives in the state dir (mode 0600) — same place the server wrote
   // it. Reading it is the proof that we're a process of the user who owns the studio.
-  const stateDir =
-    process.env.WT_STUDIO_STATE || path.join(os.homedir(), '.local', 'state', 'worktree-studio');
-  let token = '';
-  try {
-    token = fs.readFileSync(path.join(stateDir, 'token'), 'utf8').trim();
-  } catch {
-    /* */
-  }
-  if (!token) {
-    console.error(`no studio token at ${path.join(stateDir, 'token')} — is the server running?`);
-    process.exit(1);
-  }
+  const token = tokenOrExit();
   const body = JSON.stringify({ repo });
-  fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/add-repo`, {
+  fetch(`${baseUrl()}/api/sessions/${sessionId}/add-repo`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-wts-token': token },
     body,
@@ -73,5 +89,7 @@ if (cmd === 'add-repo') {
 } else {
   // A dynamic import, not a static one: this branch is the ONLY thing that may boot
   // the daemon, and a static import at the top would run main() for `add-repo` too.
+  // server/paths.ts above is safe to import statically precisely because it does nothing
+  // at import time — see its header.
   await import('../server/server.ts');
 }

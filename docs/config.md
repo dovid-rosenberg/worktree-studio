@@ -243,10 +243,14 @@ Per-repo wiring:
 | `slotEnv` | `[ENV_VAR]` — set to the slot *index*, not a port (e.g. a Redis DB number) |
 | `portFlag` | A flag carrying this slot's port, appended to the start command. `{port}` is replaced with the first port `portEnv` derives — e.g. `"-- --port {port}"`. **Use this for any dev server that does not read an env var for its port** (vite, next, ng all take `--port`); without it, concurrency shifts the backend and every feature's frontend still fights over one port |
 | `configPatch` | `{ file, siblingRepo }` — a gitignored config file in this repo's worktree that hardcodes `siblingRepo`'s ports; on launch, every one of that sibling's port families in it is shifted to this feature's slot |
+| `scheduler` | `{ env, slot?, on?, off? }` — one slot owns scheduled jobs and every other slot is told to stand down. `env` is required and has no default: which variable the backend reads is a property of that codebase, and a guessed name would be a setting that silently does nothing. Defaults are `slot: 0`, `on: "true"`, `off: "false"`. **Both** values are written, not just the owner's — setting only the owner leaves the others on their own config default, and for a backend that runs jobs unless told otherwise, that is the duplicate-jobs bug |
 
 Two footguns Studio warns about (it warns, it never throws):
 
 - `maxSlots > 16` — `slotEnv` values are used as Redis DB indices, and Redis ships 16.
+- `scheduler.slot` outside `0..maxSlots-1` — no slot owns the scheduler, so every stack
+  stands down and scheduled jobs silently never run. The opposite failure to duplicate
+  jobs, and just as quiet.
 - Two base ports in one repo whose difference is a multiple of `offsetStep` within
   slot range — they collide at some slot. Raise `offsetStep` or lower `maxSlots`.
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import SessionCard from './SessionCard.svelte';
+import { STALE_AFTER_MS, world } from '$lib/stores/world.svelte.js';
 import type { Session } from '../../../../../server/types';
 
 /*
@@ -60,6 +61,42 @@ describe('SessionCard', () => {
     const { container } = render(SessionCard, { session: session({ state: 'stopped' }) });
     expect(container.querySelector('.scard.stoppedrow')).toBeTruthy();
     expect(screen.getByText('stopped')).toBeInTheDocument();
+  });
+
+  /*
+   * A session whose hooks have stopped firing must not keep claiming to work.
+   *
+   * Everything on this card is the LAST thing the agent reported, and nothing said how old
+   * that was — so a wedged agent, a deleted settings file or a failing report.sh left
+   * `working · running Bash` on screen indefinitely, indistinguishable from real work.
+   */
+  it('marks a busy session whose hooks have gone quiet, and says for how long', () => {
+    const t = 1_700_000_000_000;
+    world.now = t + STALE_AFTER_MS + 2 * 60_000;
+    render(SessionCard, {
+      session: session({ state: 'working', activity: 'running Bash', lastEventAt: t }),
+    });
+    expect(screen.getByText('no signal 14m')).toBeInTheDocument();
+    // Beside the state, not instead of it: the last report is still the best guess at what
+    // it was doing, and both halves are needed to know what to go and look at.
+    expect(screen.getByText('working')).toBeInTheDocument();
+    expect(screen.getByText('running Bash')).toBeInTheDocument();
+  });
+
+  it('leaves a busy session that reported recently alone', () => {
+    const t = 1_700_000_000_000;
+    world.now = t + 9 * 60_000; // a long Bash call is legitimately this quiet
+    const { container } = render(SessionCard, {
+      session: session({ state: 'working', activity: 'running Bash', lastEventAt: t }),
+    });
+    expect(container.querySelector('.pill.stale')).toBeNull();
+  });
+
+  it('never nags an idle session — waiting on a human is not a fault', () => {
+    const t = 1_700_000_000_000;
+    world.now = t + 5 * 60 * 60_000;
+    const { container } = render(SessionCard, { session: session({ state: 'idle', lastEventAt: t }) });
+    expect(container.querySelector('.pill.stale')).toBeNull();
   });
 
   it('is one selectable control and carries no action buttons', () => {

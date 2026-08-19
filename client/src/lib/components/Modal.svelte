@@ -1,31 +1,31 @@
 <script lang="ts">
-  /*
-   * The shared overlay chrome: backdrop, click-outside-to-close, focus trap, focus
-   * restore. Every overlay in the app (intake, settings, dialogs, palette) is this
-   * component plus content, so the accessibility behaviour is written once.
-   *
-   * Escape is NOT handled here — the global handler owns it, because it has to close
-   * the *topmost* overlay and only it knows what else is open.
-   */
-  import { trapFocus } from '$lib/actions/trapFocus.js';
+/*
+ * The shared overlay chrome: backdrop, click-outside-to-close, focus trap, focus
+ * restore. Every overlay in the app (intake, settings, dialogs, palette) is this
+ * component plus content, so the accessibility behaviour is written once.
+ *
+ * Escape is NOT handled here — the global handler owns it, because it has to close
+ * the *topmost* overlay and only it knows what else is open.
+ */
+import { trapFocus } from '$lib/actions/trapFocus.js';
 
-  let {
-    /** Extra classes on the backdrop, e.g. `top` for the palette's top alignment. */
-    backdropClass = '',
-    /** Extra classes on the panel. */
-    panelClass = '',
-    /** aria-label for the dialog. */
-    label = '',
-    /** Called when the backdrop itself is clicked. */
-    onclose,
-    children,
-  } = $props();
+let {
+  /** Extra classes on the backdrop, e.g. `top` for the palette's top alignment. */
+  backdropClass = '',
+  /** Extra classes on the panel. */
+  panelClass = '',
+  /** aria-label for the dialog. */
+  label = '',
+  /** Called when the backdrop itself is clicked. */
+  onclose,
+  children,
+} = $props();
 
-  /** @param {MouseEvent} e */
-  function onBackdrop(e: MouseEvent) {
-    // Only a click on the backdrop itself — not one that bubbled out of the panel.
-    if (e.target === e.currentTarget) onclose?.();
-  }
+/** @param {MouseEvent} e */
+function onBackdrop(e: MouseEvent) {
+  // Only a click on the backdrop itself — not one that bubbled out of the panel.
+  if (e.target === e.currentTarget) onclose?.();
+}
 </script>
 
 <!-- The backdrop is a click target for dismissal, not a control: keyboard users get

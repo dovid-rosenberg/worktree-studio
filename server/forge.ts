@@ -9,7 +9,8 @@
 //   create → { ok:true, url } or { ok:false, stderr }
 // Order matters: GitHub is tried first and GitLab is the fallback, which is the
 // behavior every caller has always seen.
-import { CHILD_ENV, run, has } from './util.ts';
+import { CHILD_ENV, run, has, requireFeature } from './util.ts';
+import { createPolledCache } from './polled-cache.ts';
 import type { CiChecks, CiRepo, ReviewItem, SessionRepo } from './types.ts';
 import type { Router } from 'express';
 
@@ -73,7 +74,7 @@ function cliEnv(cfg?: ForgeConfig): NodeJS.ProcessEnv {
 // gh/glab lookups are cached per worktreePath+branch for ~20s. Nothing polls them
 // on the client any more (server/ci.ts pushes instead), but the cache still bounds
 // what a burst of triggers plus an on-demand GET /sessions/:id/ci can cost, and it
-// is what makes the two paths share one answer. Value: { at, data }.
+// is what makes the two paths share one answer.
 const CI_TTL = 20000;
 
 // A lookup is a network round-trip through somebody else's CLI, and both of them
@@ -225,8 +226,13 @@ const github: Provider = {
   async view(branch, cwd, env) {
     const r = await run(
       'gh',
-      ['pr', 'view', branch, '--json',
-       'number,url,state,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft'],
+      [
+        'pr',
+        'view',
+        branch,
+        '--json',
+        'number,url,state,statusCheckRollup,mergeStateStatus,reviewDecision,isDraft',
+      ],
       {
         cwd,
         env,
@@ -250,14 +256,30 @@ const github: Provider = {
   async reviews(cwd, env) {
     const r = await run(
       'gh',
-      ['pr', 'list', '--search', 'review-requested:@me', '--state', 'open', '--limit', '50',
-       '--json', 'number,title,url,author,isDraft,headRefName,baseRefName,updatedAt'],
+      [
+        'pr',
+        'list',
+        '--search',
+        'review-requested:@me',
+        '--state',
+        'open',
+        '--limit',
+        '50',
+        '--json',
+        'number,title,url,author,isDraft,headRefName,baseRefName,updatedAt',
+      ],
       { cwd, env, timeout: VIEW_TIMEOUT_MS },
     );
     if (r.code !== 0 || !r.stdout.trim()) return [];
     const rows = JSON.parse(r.stdout) as Array<{
-      number: number; title: string; url: string; isDraft?: boolean;
-      author?: { login?: string }; headRefName?: string; baseRefName?: string; updatedAt?: string;
+      number: number;
+      title: string;
+      url: string;
+      isDraft?: boolean;
+      author?: { login?: string };
+      headRefName?: string;
+      baseRefName?: string;
+      updatedAt?: string;
     }>;
     return rows.map((j) => ({
       provider: 'github',
@@ -315,8 +337,14 @@ const gitlab: Provider = {
     });
     if (r.code !== 0 || !r.stdout.trim()) return [];
     const rows = JSON.parse(r.stdout) as Array<{
-      iid: number; title?: string; web_url?: string; draft?: boolean; work_in_progress?: boolean;
-      source_branch?: string; target_branch?: string; updated_at?: string;
+      iid: number;
+      title?: string;
+      web_url?: string;
+      draft?: boolean;
+      work_in_progress?: boolean;
+      source_branch?: string;
+      target_branch?: string;
+      updated_at?: string;
       author?: { username?: string };
     }>;
     return rows.map((j) => ({
@@ -380,6 +408,52 @@ export interface PrResult {
   repo: string;
   url?: string;
   error?: string;
+}
+
+/** One member's outcome from POST /group/push. */
+export interface PushOutcome {
+  repo: string;
+  ok: boolean;
+  /** True only when commits actually left this machine. */
+  pushed: boolean;
+  /** The branch had no upstream and now has one — a first push, worth saying out loud. */
+  upstreamSet?: boolean;
+  /** origin already had everything: a no-op, and a success. */
+  nothingToPush?: boolean;
+  error?: string;
+}
+
+/**
+ * Did origin refuse this as a non-fast-forward?
+ *
+ * The one push failure with a NAME, because it is the one with a wrong answer sitting
+ * next to it: `--force`. Studio does not have that button and will not grow one — the
+ * remote branch has commits this one does not, which on a shared branch is somebody
+ * else's work and on your own is the rebase you did last time. Both are fixed by getting
+ * the commits, never by overwriting them.
+ */
+function isNonFastForward(r: PushResult): boolean {
+  const text = `${r.stderr || ''}\n${r.stdout || ''}`;
+  return /\[rejected\]|non-fast-forward|fetch first|Updates were rejected/i.test(text);
+}
+
+/** origin already had every commit — git says so and exits 0. */
+function isUpToDate(r: PushResult): boolean {
+  return /Everything up-to-date/i.test(`${r.stderr || ''}\n${r.stdout || ''}`);
+}
+
+/** Whether `branch` already tracks something. Absent = the first push, which needs `-u`. */
+async function hasUpstream(member: PrMember): Promise<boolean> {
+  if (!member.branch) return false;
+  const r = await run('git', [
+    '-C',
+    member.path,
+    'rev-parse',
+    '--abbrev-ref',
+    '--symbolic-full-name',
+    `${member.branch}@{upstream}`,
+  ]);
+  return r.code === 0 && !!r.stdout.trim();
 }
 
 // Push a member's branch to origin. Split out (and injectable via createForge) so
@@ -478,7 +552,22 @@ function createForge({
   const forgeEnv = cliEnv(cfg);
   const installed = providers.filter(isInstalled);
   const installedSet = new Set(installed); // membership test for failure attribution
-  const ciCache = new Map<string, { at: number; data: CiRepo }>();
+  // The same TTL/one-answer-per-key cache the pulled feeds use (see polled-cache.ts).
+  // errorTtlMs is CI_TTL as well, deliberately: a lookup that blew up cost exactly as much
+  // as one that worked, so it is worth remembering exactly as long.
+  const ciCache = createPolledCache<string, CiRepo, { entry: CiEntry; env: NodeJS.ProcessEnv }>({
+    ttlMs: CI_TTL,
+    errorTtlMs: CI_TTL,
+    key: ({ entry }) => `${entry.worktreePath}\n${entry.branch}`,
+    load: async ({ entry, env }) => {
+      for (const p of installed) {
+        const found = await p.view(entry.branch as string, entry.worktreePath as string, env);
+        if (found) return { repo: entry.repo, ...found };
+      }
+      return { repo: entry.repo, hasPR: false };
+    },
+    onError: ({ entry }) => ({ repo: entry.repo, hasPR: false }),
+  });
 
   // Drop every cached answer. Called when something is known to have changed the
   // truth (a new commit, a push, a PR just opened) — without it a refresh triggered
@@ -492,23 +581,9 @@ function createForge({
   async function ciForRepo(entry: CiEntry, env: NodeJS.ProcessEnv = forgeEnv): Promise<CiRepo> {
     const { repo, worktreePath, branch } = entry;
     if (!worktreePath || !branch) return { repo, hasPR: false };
-    const key = `${worktreePath}\n${branch}`;
-    const hit = ciCache.get(key);
-    if (hit && Date.now() - hit.at < CI_TTL) return { ...hit.data, repo };
-    let data: CiRepo = { repo, hasPR: false };
-    try {
-      for (const p of installed) {
-        const found = await p.view(branch, worktreePath, env);
-        if (found) {
-          data = { repo, ...found };
-          break;
-        }
-      }
-    } catch {
-      data = { repo, hasPR: false };
-    }
-    ciCache.set(key, { at: Date.now(), data });
-    return { ...data, repo };
+    // `repo` is re-stamped on the way out: two sessions can share a worktree+branch under
+    // different repo names, and the cached answer belongs to the pair, not to the name.
+    return { ...(await ciCache.fetch({ entry, env })).value, repo };
   }
 
   // Which of several failures to report when nothing could be opened.
@@ -560,6 +635,44 @@ function createForge({
     return { repo: member.repo, error: failureReason(failures) };
   }
 
+  /*
+   * PUSH, as a verb of its own.
+   *
+   * `shipVerdict()` blocks a feature with "has 3 unpushed commit(s)" — a blocker the app
+   * could clear itself, because the push already existed: it was the first half of
+   * openPullRequest(), reachable only by asking for a pull request you may already have.
+   * So this is that same `pushBranch` (`git push -u origin <branch>`, injectable, with the
+   * same timeout), read out properly instead of being collapsed into "the PR failed".
+   *
+   * Three answers the PR path never had to distinguish, because for it they were all
+   * simply "no PR":
+   *   - no upstream yet — `-u` sets one, and a first push is worth reporting as such
+   *     rather than as an ordinary one;
+   *   - nothing to push — a success, and an important one: it means the ship blocker was
+   *     stale, not that the push silently did nothing;
+   *   - rejected as a non-fast-forward — reported, with the fix named. Never forced.
+   */
+  async function pushMember(member: PrMember, env: NodeJS.ProcessEnv = forgeEnv): Promise<PushOutcome> {
+    // Same guard, same reason as openPullRequest(): a null branch in an execFile argv is
+    // a TypeError, and this route loops members too.
+    if (!member.branch)
+      return { repo: member.repo, ok: false, pushed: false, error: 'no branch — the worktree is detached' };
+    // Asked BEFORE the push, because `-u` makes the answer yes either way afterwards.
+    const had = await hasUpstream(member);
+    const r = await pushBranch(member, env);
+    if (r.code !== 0)
+      return {
+        repo: member.repo,
+        ok: false,
+        pushed: false,
+        error: isNonFastForward(r)
+          ? `rejected: origin/${member.branch} has commits this branch does not. Update from base, then push again — Studio does not force-push`
+          : `git push failed: ${pushFailureLine(r)}`,
+      };
+    if (isUpToDate(r)) return { repo: member.repo, ok: true, pushed: false, nothingToPush: true };
+    return { repo: member.repo, ok: true, pushed: true, ...(had ? {} : { upstreamSet: true }) };
+  }
+
   // `app` here is the API router — server.ts mounts it at both /api and /api/v1.
   function register(app: Router, deps: Pick<ForgeDeps, 'manager' | 'resolveGroup'> = {}) {
     // Each route needs its collaborator, and the one createForge() call that has
@@ -589,13 +702,44 @@ function createForge({
       res.json({ repos });
     });
 
+    // Push every one of a feature's branches to origin — see pushMember().
+    app.post('/group/push', async (req, res) => {
+      const found = await requireFeature(res, resolve, req.body?.group);
+      if (!found.ok) return;
+      const g = found.value.group;
+      // Serially, like /group/pr: a wedged remote should cost one member's timeout, not
+      // four simultaneous credential prompts on a stdin nobody is going to answer.
+      const results: PushOutcome[] = [];
+      for (const m of g.members) results.push(await pushMember(m, forgeEnv));
+      // A branch that just arrived on the forge can have a PR the cache said it did not,
+      // and its checks start the moment it lands. Same invalidation /group/pr does, for
+      // the same reason: without it the pill waits out the TTL saying the old thing.
+      if (results.some((r) => r.pushed)) {
+        invalidate();
+        try {
+          onChanged();
+        } catch {
+          /* the feed must never break the route */
+        }
+      }
+      res.json({
+        // "No failures" — the rule every group verb settled on. One repo of a feature
+        // still sitting on this laptop is an unshipped feature.
+        ok: results.every((r) => r.ok),
+        pushed: results.filter((r) => r.pushed).length,
+        total: results.length,
+        results,
+      });
+    });
+
     // Open a PR (gh) / MR (glab) for each of a feature's branches.
     app.post('/group/pr', async (req, res) => {
       // String(x ?? ''): the body can carry an array, an object, a number. Every other
       // resolveGroup call site coerces — orchestrator.ts documents it as the resolver's
       // contract — and this was the one that did not.
-      const { group: g } = await resolve(String(req.body?.group ?? ''));
-      if (!g) return res.status(404).json({ error: 'no such feature' });
+      const found = await requireFeature(res, resolve, req.body?.group);
+      if (!found.ok) return;
+      const g = found.value.group;
       const results: PrResult[] = [];
       for (const m of g.members) results.push(await openPullRequest(m, forgeEnv));
       // A branch that had no PR a second ago now has one, and its cached "hasPR:
@@ -648,7 +792,7 @@ function createForge({
     return answered ? out : null;
   }
 
-  return { register, ciForRepo, reviewsFor, openPullRequest, invalidate, installed };
+  return { register, ciForRepo, reviewsFor, openPullRequest, pushMember, invalidate, installed };
 }
 
 const TIMEOUTS = { VIEW_TIMEOUT_MS, PUSH_TIMEOUT_MS, CREATE_TIMEOUT_MS };
@@ -662,5 +806,6 @@ export {
   glChecks,
   pushFailureLine,
   pushBranchToOrigin,
+  isNonFastForward,
   TIMEOUTS,
 };

@@ -1,7 +1,7 @@
-// Incremental search + telemetry index over the transcripts of sessions Studio
-// manages. Deliberately NOT an index of all of ~/.claude/projects (308MB of other
-// people's work) — only what's keyed off a session's claudeSessionId, so the index
-// stays small, fast, and always relevant.
+// Incremental search index over the transcripts of sessions Studio manages.
+// Deliberately NOT an index of all of ~/.claude/projects (308MB of other people's
+// work) — only what's keyed off a session's claudeSessionId, so the index stays
+// small, fast, and always relevant.
 //
 // Storage is node:sqlite (built into Node 22, zero new deps). Indexing is byte-offset
 // incremental, the same trick servers.ts uses to tail dev-server logs: we remember
@@ -11,9 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import * as transcripts from './transcripts.ts';
-import * as pricing from './pricing.ts';
-import type { LocatableSession, ScanStats, SearchHit, TokenTotals } from './transcripts.ts';
-import type { UsageByModel } from './types.ts';
+import type { LocatableSession, ScanStats, SearchHit } from './transcripts.ts';
 
 // node:sqlite is experimental in Node 22 (it prints an ExperimentalWarning on first
 // load). If it or FTS5 is missing we degrade to the file-scan search in
@@ -49,17 +47,7 @@ CREATE TABLE IF NOT EXISTS files (
   offset            INTEGER NOT NULL DEFAULT 0,
   size              INTEGER NOT NULL DEFAULT 0,
   entries           INTEGER NOT NULL DEFAULT 0,
-  indexed_at        INTEGER,
-  -- Who this session WAS, recorded at index time.
-  --
-  -- The index outlives the session: telemetry is the record of work that already
-  -- happened, so deleting a worktree must not delete what it cost. But without these,
-  -- an archived row could only be labelled by its id and whatever branch its messages
-  -- mentioned — so "what did last month's work cost" answered with a uuid.
-  title             TEXT,
-  feature           TEXT,
-  branch            TEXT,
-  repo              TEXT
+  indexed_at        INTEGER
 );
 CREATE TABLE IF NOT EXISTS messages (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,25 +63,6 @@ CREATE TABLE IF NOT EXISTS messages (
   UNIQUE(session_id, uuid)
 );
 CREATE INDEX IF NOT EXISTS messages_session_ts ON messages(session_id, ts_ms);
--- Usage is keyed on the API message id, not the line uuid: Claude Code writes one
--- line per content block and repeats the identical usage on each, so (session, msg)
--- as a PRIMARY KEY with INSERT OR IGNORE is what makes token totals correct AND
--- makes re-indexing the same bytes idempotent.
-CREATE TABLE IF NOT EXISTS usage (
-  session_id     TEXT NOT NULL,
-  msg_id         TEXT NOT NULL,
-  ts_ms          INTEGER,
-  model          TEXT,
-  speed          TEXT,
-  input          INTEGER NOT NULL DEFAULT 0,
-  output         INTEGER NOT NULL DEFAULT 0,
-  cache_write_5m INTEGER NOT NULL DEFAULT 0,
-  cache_write_1h INTEGER NOT NULL DEFAULT 0,
-  cache_read     INTEGER NOT NULL DEFAULT 0,
-  web_search     INTEGER NOT NULL DEFAULT 0,
-  web_fetch      INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (session_id, msg_id)
-);
 `;
 
 const FTS_SCHEMA = `
@@ -130,23 +99,6 @@ type MessageRow = {
   snippet: string | null;
 };
 
-/** One `GROUP BY session_id, model, speed` row out of the usage table. */
-export type UsageRow = {
-  session_id: string;
-  model: string | null;
-  speed: string | null;
-  messages: number;
-  input: number | null;
-  output: number | null;
-  cw5m: number | null;
-  cw1h: number | null;
-  cache_read: number | null;
-  web_search: number | null;
-  web_fetch: number | null;
-  first_at: number | null;
-  last_at: number | null;
-};
-
 // COUNT(*) always answers with exactly one row; get() is typed for the general case.
 function countOf(db: DatabaseSync, sql: string): number {
   const row = db.prepare(sql).get() as CountRow | undefined;
@@ -175,15 +127,6 @@ export interface IndexStatus {
 /** The session fields index() reads. A full `Session` satisfies it. */
 export interface IndexableSession extends LocatableSession {
   id?: string | null;
-  /*
-   * Identity, recorded alongside the transcript so an ARCHIVED row still reads as
-   * something after the session is gone. All optional: index() is also called for
-   * sessions reconstructed from disk, which may know less than a live one does.
-   */
-  title?: string;
-  feature?: string;
-  branch?: string | null;
-  repoName?: string;
 }
 
 export interface IndexOptions {
@@ -272,7 +215,6 @@ class TranscriptIndex {
       this.db = new sqlite.DatabaseSync(this.file);
       this.db.exec('PRAGMA journal_mode = WAL');
       this.db.exec(SCHEMA);
-      this._migrate(this.db); // reach databases written before the identity columns existed
       this.fts = ftsAvailable(this.db);
       if (this.fts) this.db.exec(FTS_SCHEMA);
       this.ready = true;
@@ -347,7 +289,7 @@ class TranscriptIndex {
 
     this._indexing.add(id);
     try {
-      return await this._ingest(db, id, loc.file, session.claudeSessionId, start, session);
+      return await this._ingest(db, id, loc.file, session.claudeSessionId, start);
     } finally {
       this._indexing.delete(id);
     }
@@ -356,37 +298,15 @@ class TranscriptIndex {
   // The handle is passed in rather than re-read off `this`: index() has already
   // established that the index is open, and threading it through keeps that fact
   // true by construction here.
-  /**
-   * Add columns an older index is missing.
-   *
-   * servers.json and this database both outlive upgrades, so a schema change has to
-   * reach files written before it. ALTER TABLE ADD COLUMN is a no-op-if-present here
-   * only because we swallow the duplicate-column error — sqlite has no IF NOT EXISTS
-   * for columns.
-   */
-  _migrate(db: DatabaseSync): void {
-    for (const col of ['title', 'feature', 'branch', 'repo']) {
-      try {
-        db.exec(`ALTER TABLE files ADD COLUMN ${col} TEXT`);
-      } catch {
-        /* already there */
-      }
-    }
-  }
-
   async _ingest(
     db: DatabaseSync,
     id: string,
     file: string,
     claudeSessionId: string | null | undefined,
     start: number,
-    session?: { title?: string; feature?: string; branch?: string | null; repoName?: string },
   ): Promise<IndexPass> {
     const insMsg = db.prepare(
       'INSERT OR IGNORE INTO messages (session_id, uuid, role, ts, ts_ms, model, git_branch, sidechain, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    );
-    const insUsage = db.prepare(
-      'INSERT OR IGNORE INTO usage (session_id, msg_id, ts_ms, model, speed, input, output, cache_write_5m, cache_write_1h, cache_read, web_search, web_fetch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
     // Insert inside the reader's callback rather than collecting every entry first.
     // Incrementally that made no difference — a Stop hook appends one turn — but a full
@@ -405,53 +325,15 @@ class TranscriptIndex {
           insMsg.run(id, e.uuid, e.role, e.ts, e.tsMs, e.model, e.gitBranch, e.sidechain ? 1 : 0, e.text);
           added++;
         }
-        if (e.usage) {
-          const key = transcripts.usageKey(e);
-          if (key) {
-            insUsage.run(
-              id,
-              key,
-              e.tsMs,
-              e.model,
-              e.speed,
-              e.usage.input,
-              e.usage.output,
-              e.usage.cacheWrite5m,
-              e.usage.cacheWrite1h,
-              e.usage.cacheRead,
-              e.usage.webSearch,
-              e.usage.webFetch,
-            );
-          }
-        }
       });
       db.prepare(
-        `INSERT INTO files (session_id, path, claude_session_id, offset, size, entries, indexed_at,
-                            title, feature, branch, repo)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO files (session_id, path, claude_session_id, offset, size, entries, indexed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(session_id) DO UPDATE SET
            path=excluded.path, claude_session_id=excluded.claude_session_id,
            offset=excluded.offset, size=excluded.size,
-           entries=files.entries+excluded.entries, indexed_at=excluded.indexed_at,
-           -- COALESCE, not excluded: a later pass with no session in hand must not
-           -- erase the identity an earlier one recorded.
-           title=COALESCE(excluded.title, files.title),
-           feature=COALESCE(excluded.feature, files.feature),
-           branch=COALESCE(excluded.branch, files.branch),
-           repo=COALESCE(excluded.repo, files.repo)`,
-      ).run(
-        id,
-        file,
-        claudeSessionId || null,
-        stats.offset,
-        stats.size,
-        added,
-        Date.now(),
-        session?.title || null,
-        session?.feature || null,
-        session?.branch || null,
-        session?.repoName || null,
-      );
+           entries=files.entries+excluded.entries, indexed_at=excluded.indexed_at`,
+      ).run(id, file, claudeSessionId || null, stats.offset, stats.size, added, Date.now());
       db.exec('COMMIT');
     } catch (e) {
       db.exec('ROLLBACK');
@@ -468,57 +350,19 @@ class TranscriptIndex {
     };
   }
 
-  // Drop everything for a session (its Studio session was closed).
   /**
-   * What the archive knows about a session that no longer exists.
+   * Purge one session's rows.
    *
-   * Thin on purpose: the index stores transcript rows, not session records, so the only
-   * identity it can honestly reconstruct is the id and the branch its messages carried.
-   * Better a row labelled by its branch than a spend figure that silently disappears
-   * when the worktree is deleted.
+   * Not called on session removal: the index outlives the worktree, so a search for
+   * something you discussed last month still finds it after the checkout is gone.
+   * Kept for a real purge.
    */
-  archivedMeta(sessionId: string): {
-    id: string;
-    title: string;
-    feature?: string;
-    branch?: string;
-    repo?: string;
-  } {
-    const db = this._handle();
-    if (!db) return { id: sessionId, title: sessionId };
-    const row = db
-      .prepare('SELECT title, feature, branch, repo FROM files WHERE session_id = ?')
-      .get(sessionId) as { title?: string; feature?: string; branch?: string; repo?: string } | undefined;
-    // Fall back to the branch its messages carried, for rows indexed before identity
-    // was recorded — those exist and should still read as something.
-    const legacy = row?.branch
-      ? undefined
-      : (
-          db
-            .prepare(
-              'SELECT git_branch FROM messages WHERE session_id = ? AND git_branch IS NOT NULL ORDER BY ts_ms DESC LIMIT 1',
-            )
-            .get(sessionId) as { git_branch?: string } | undefined
-        )?.git_branch;
-    const branch = row?.branch || legacy || undefined;
-    return {
-      id: sessionId,
-      title: row?.title || branch || sessionId,
-      feature: row?.feature || undefined,
-      branch,
-      repo: row?.repo || undefined,
-    };
-  }
-
-  /** Purge one session's rows. No longer called on session removal — see the note in
-   *  transcript-routes.ts: telemetry outlives the worktree. Kept for a real purge. */
   forget(sessionId: string): void {
     const db = this._handle();
     if (!db) return;
     db.exec('BEGIN');
     try {
       db.prepare('DELETE FROM messages WHERE session_id = ?').run(sessionId);
-      db.prepare('DELETE FROM usage WHERE session_id = ?').run(sessionId);
       db.prepare('DELETE FROM files WHERE session_id = ?').run(sessionId);
       db.exec('COMMIT');
     } catch {
@@ -591,83 +435,6 @@ class TranscriptIndex {
       total: rows.length,
     };
   }
-
-  // Per-model token rollup for one session (or all of them), straight out of the
-  // usage table — no transcript re-read.
-  usageRows(sessionId: string | null | undefined): UsageRow[] {
-    const db = this._handle();
-    if (!db) return [];
-    const sql = `SELECT session_id, model, speed, COUNT(*) messages,
-                        SUM(input) input, SUM(output) output,
-                        SUM(cache_write_5m) cw5m, SUM(cache_write_1h) cw1h,
-                        SUM(cache_read) cache_read,
-                        SUM(web_search) web_search, SUM(web_fetch) web_fetch,
-                        MIN(ts_ms) first_at, MAX(ts_ms) last_at
-                 FROM usage ${sessionId ? 'WHERE session_id = ?' : ''}
-                 GROUP BY session_id, model, speed`;
-    return (sessionId ? db.prepare(sql).all(sessionId) : db.prepare(sql).all()) as UsageRow[];
-  }
 }
 
-/** usageRows() rolled up and priced — the shape the telemetry API returns. */
-export interface UsageSummary extends TokenTotals {
-  messages: number;
-  firstAt: number | null;
-  lastAt: number | null;
-  byModel: UsageByModel[];
-  costUsd: number | null;
-  costIsEstimate: true;
-  unpricedModels: string[];
-}
-
-// Turn usageRows() output into the priced shape the API returns. Kept out of the
-// class so telemetry.js-style callers can roll up across sessions or features with
-// the same code path.
-function summarize(rows: UsageRow[]): UsageSummary {
-  const totals = transcripts.blankTotals();
-  const unpriced = new Set<string>();
-  let costUsd = 0;
-  let messages = 0;
-  let firstAt: number | null = null;
-  let lastAt: number | null = null;
-  const byModel: UsageByModel[] = [];
-
-  for (const r of rows) {
-    // A usage row's model is nullable (an assistant line can arrive without one).
-    // aggregate() reports that as 'unknown' and this function already did for
-    // unpricedModels, so byModel names it the same way rather than emitting null.
-    const model = r.model || 'unknown';
-    const u = {
-      input: r.input || 0,
-      output: r.output || 0,
-      cacheWrite5m: r.cw5m || 0,
-      cacheWrite1h: r.cw1h || 0,
-      cacheWrite: (r.cw5m || 0) + (r.cw1h || 0),
-      cacheRead: r.cache_read || 0,
-      webSearch: r.web_search || 0,
-      webFetch: r.web_fetch || 0,
-    };
-    transcripts.addUsage(totals, u);
-    messages += r.messages || 0;
-    if (r.first_at && (firstAt === null || r.first_at < firstAt)) firstAt = r.first_at;
-    if (r.last_at && (lastAt === null || r.last_at > lastAt)) lastAt = r.last_at;
-    const { usd, priced } = pricing.costOf(r.model, u, { speed: r.speed });
-    if (priced) costUsd += usd;
-    else if (pricing.isBillable(r.model)) unpriced.add(model);
-    byModel.push({ model, speed: r.speed, messages: r.messages, ...u, costUsd: pricing.round(usd), priced });
-  }
-  byModel.sort((a, b) => (b.costUsd || 0) - (a.costUsd || 0) || b.output - a.output);
-
-  return {
-    ...totals,
-    messages,
-    firstAt,
-    lastAt,
-    byModel,
-    costUsd: pricing.round(costUsd),
-    costIsEstimate: true,
-    unpricedModels: [...unpriced],
-  };
-}
-
-export { TranscriptIndex, summarize, ftsQuery, likePattern };
+export { TranscriptIndex, ftsQuery, likePattern };

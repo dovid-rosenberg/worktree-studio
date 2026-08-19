@@ -10,7 +10,7 @@
 // the topology half only when the shape actually changes. buildState() merges
 // them for the callers that want the whole world at once: GET /state, SwiftBar,
 // Alfred, resolveGroup.
-import { computeFeatures, detectSplitFeatures } from './features.ts';
+import { computeFeatures, detectSessionRepoGaps, detectSplitFeatures } from './features.ts';
 import { SHIPPED_PROVIDERS } from './links.ts';
 import type { ComputedFeature } from './features.ts';
 import type { CiSession } from './ci.ts';
@@ -257,8 +257,24 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       // would read as evidence of the same feature.
       splitFeatures: detectSplitFeatures(
         features,
-        new Set(repos().map((r) => r.defaultBranch).filter(Boolean)),
+        new Set(
+          repos()
+            .map((r) => r.defaultBranch)
+            .filter(Boolean),
+        ),
       ),
+      /*
+       * Sessions whose repos are a strict subset of their feature's worktrees.
+       *
+       * attachableWorktrees() ran at promote and nowhere else, so a worktree created
+       * afterwards joined the FEATURE and not the SESSION — and Changes is session-scoped,
+       * so it drew an empty diff of a branch that genuinely had changes, with nothing
+       * anywhere saying the two records disagreed.
+       *
+       * Reported, not healed: attaching sends /add-dir into a live agent and widens what
+       * it may read and write, possibly mid-turn. See features.ts.
+       */
+      sessionRepoGaps: detectSessionRepoGaps(manager.all(), repos(), ident ? (i) => ident.of(i) : undefined),
     };
   }
 

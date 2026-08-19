@@ -1,48 +1,43 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
+import { tick } from 'svelte';
 
 /*
  * The ⋮ menu holds everything global that is not worth permanent width.
  *
- * Insights moved in when the root switcher took the rail head's space: of the two, which
- * body of work you are looking at is the thing worth naming on screen all day. That makes
- * it the one item here with a STATE — every other entry is a one-shot — so it is also the
- * one that can be got wrong by a refactor that treats them all alike.
+ * Every item is a ONE-SHOT — it acts and the menu closes. That used to be untrue: Insights
+ * was a destination you could be IN, and it carried a selected state the others did not.
+ * With it gone the invariant is uniform, and these tests pin the two halves of it — an
+ * item acts, and the menu shuts behind it.
  */
 vi.mock('$lib/shortcuts.svelte.js', () => ({ showShortcuts: vi.fn() }));
 
 const { default: AppMenu } = await import('./AppMenu.svelte');
-const { ui } = await import('$lib/stores/ui.svelte.js');
+const { overlays } = await import('$lib/stores/overlays.svelte.js');
 
-const open = async () => {
+const open = async (name: RegExp) => {
   render(AppMenu);
   screen.getByLabelText('Menu').click();
-  return screen.findByRole('menuitem', { name: /Insights/ });
+  return screen.findByRole('menuitem', { name });
 };
 
 beforeEach(() => {
-  ui.dockView = 'term';
+  overlays.closeSearch();
+  overlays.closePalette();
 });
 
 describe('AppMenu', () => {
-  it('carries Insights, and names the shortcut that skips the menu entirely', async () => {
-    const item = await open();
-    expect(item).toBeInTheDocument();
-    // Behind two clicks now, so the one-key route has to be on the label — otherwise the
-    // move quietly makes a destination you use all day more expensive to reach.
-    expect(item.textContent).toContain('⌘\\');
+  it('names the shortcut beside each item that has one, so the menu teaches its own bypass', async () => {
+    const item = await open(/Search transcripts/);
+    expect(item.textContent).toContain('⌘⇧F');
   });
 
-  it('opens Insights when picked', async () => {
-    const item = await open();
+  it('acts and closes: picking Search transcripts opens the overlay and shuts the sheet', async () => {
+    const item = await open(/Search transcripts/);
     item.click();
-    expect(ui.dockView).toBe('usage');
-  });
-
-  it('shows that you are already in Insights, rather than offering it blankly', async () => {
-    ui.dockView = 'usage';
-    const item = await open();
-    expect(item.className).toContain('on');
+    await tick();
+    expect(overlays.search).toBe(true);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it('keeps the destructive fleet verbs out until something is actually running', async () => {

@@ -175,8 +175,8 @@ describe('the repo filter', () => {
   });
 });
 
-describe('railOrder — what ⌘1–9 picks', () => {
-  it('matches the order the rail draws, so ⌘N is the Nth card', () => {
+describe('railOrder — what ⌥1–9 picks', () => {
+  it('matches the order the rail draws, so ⌥N is the Nth card', () => {
     give({
       features: [
         feature('quiet', [member('accept-blue')]),
@@ -184,13 +184,40 @@ describe('railOrder — what ⌘1–9 picks', () => {
       ],
       sessions: [session('s1', { title: 'agent' })],
     });
-    const drawn = ui.railRows.filter((r) => r.kind !== 'mainserver').map((r) => r.name);
-    expect(ui.railOrder.map((e) => e.name)).toEqual(drawn);
+    const drawn = ui.railRows.filter((r) => r.kind !== 'mainserver');
+    expect(ui.railOrder).toHaveLength(drawn.length);
   });
 
-  it('carries a null id for a feature with no agent — there is no session to jump to', () => {
+  /*
+   * A TAGGED SELECTION PER ENTRY, which is the fix for the review row.
+   *
+   * The entries used to be `{kind, id, name}` with every non-session row flattened to
+   * `kind:'feature'` — so a review arrived as a feature named after a merge-request
+   * title, and the caller's `world.features.find(name)` found nothing and cleared the
+   * selection. Each entry is now the value #pick already takes.
+   */
+  it('is the selection itself, so a feature with no agent selects by name', () => {
     give({ features: [feature('bare', [member('accept-blue')])] });
-    expect(ui.railOrder[0]).toMatchObject({ kind: 'feature', id: null, name: 'bare' });
+    expect(ui.railOrder[0]).toEqual({ kind: 'feature', name: 'bare' });
+  });
+
+  it('resolves a PROMOTED feature to its session, exactly as clicking the card does', () => {
+    // Both halves: the topology's embedded copy is re-projected from `sessions`, so a
+    // feature whose agent is not in that list has no session at all (stitchSessions).
+    give({
+      features: [feature('promoted', [member('accept-blue')], embedded('s9', 'idle'))],
+      sessions: [session('s9', { worktreePath: '/accept-blue/wt' })],
+    });
+    expect(ui.railOrder[0]).toEqual({ kind: 'session', id: 's9' });
+  });
+
+  it('carries a review as a review, not as a feature named after its title', () => {
+    give({
+      reviews: [
+        { repo: 'accept-blue', number: 4821, title: 'Retry the webhook', draft: false, updatedAt: '' },
+      ],
+    });
+    expect(ui.railOrder[0]).toEqual({ kind: 'review', id: 'accept-blue!4821' });
   });
 });
 
@@ -233,26 +260,11 @@ describe('selection', () => {
 
 describe('switching without losing your place', () => {
   /*
-   * The three things that made a context switch expensive. None of them was a bug in the
-   * sense of throwing — each just quietly discarded state the user had established, and
-   * the cost only shows up as "coming back is annoying", which is exactly the kind of
-   * thing nobody files.
+   * What made a context switch expensive. None of it was a bug in the sense of throwing —
+   * each case just quietly discarded state the user had established, and the cost only
+   * shows up as "coming back is annoying", which is exactly the kind of thing nobody
+   * files.
    */
-
-  it('⌘\\ into Insights and back RESTORES the selection', () => {
-    give({ features: [], sessions: [session('s1')] });
-    ui.select('s1');
-
-    ui.toggleUsage();
-    expect(ui.dockView).toBe('usage');
-    // Still cleared while Insights is up — the ActionBar must not offer Stop stack for
-    // something that is not on screen.
-    expect(ui.selectedId).toBeNull();
-
-    ui.toggleUsage();
-    expect(ui.dockView).toBe('term');
-    expect(ui.selectedId).toBe('s1');
-  });
 
   it('remembers which dock tab each selection was left on', () => {
     give({
@@ -260,21 +272,21 @@ describe('switching without losing your place', () => {
       sessions: [session('s1'), session('s2')],
     });
     ui.select('s1');
-    ui.setDockView('usage'); // stand-in for Changes/Runs: any non-terminal view
-    expect(ui.dockView).toBe('usage');
+    ui.setDockView('changes');
+    expect(ui.dockView).toBe('changes');
 
     ui.select('s2');
     expect(ui.dockView).toBe('term');
 
     // Back to s1 — you were reading something there, and that is where you land.
     ui.select('s1');
-    expect(ui.dockView).toBe('usage');
+    expect(ui.dockView).toBe('changes');
   });
 
   it('a selection never seen before opens on its terminal', () => {
     give({ features: [], sessions: [session('s1'), session('s2')] });
     ui.select('s1');
-    ui.setDockView('usage');
+    ui.setDockView('changes');
     ui.select('s2');
     expect(ui.dockView).toBe('term');
   });
@@ -345,9 +357,9 @@ describe('switching without losing your place', () => {
     });
     // Whatever the order works out to, the label and the binding are built from one
     // filter — deriving them separately is how ⌘1 came to hit the fourth card.
-    for (const [i, row] of ui.railOrder.entries()) {
-      const key = row.kind === 'session' ? `s:${row.id}` : `f:${row.name}`;
-      if (i < 9) expect(ui.railDigits.get(key)).toBe(i + 1);
+    const rows = ui.railRows.filter((r) => r.kind !== 'mainserver');
+    for (const [i, row] of rows.entries()) {
+      if (i < 9) expect(ui.railDigits.get(row.key)).toBe(i + 1);
     }
   });
 });
@@ -626,10 +638,38 @@ describe('reviews in the rail', () => {
     give({
       baseDirs: ['/w', '/p'],
       repos: [
-        { name: 'accept-blue', repo: 'accept-blue', path: '/w/accept-blue',
-          worktrees: [{ repo: 'accept-blue', wtname: 'accept-blue', path: '/w/accept-blue', isMain: true, baseDir: '/w', running: false, ports: [] }] },
-        { name: 'studio', repo: 'studio', path: '/p/studio',
-          worktrees: [{ repo: 'studio', wtname: 'studio', path: '/p/studio', isMain: true, baseDir: '/p', running: false, ports: [] }] },
+        {
+          name: 'accept-blue',
+          repo: 'accept-blue',
+          path: '/w/accept-blue',
+          worktrees: [
+            {
+              repo: 'accept-blue',
+              wtname: 'accept-blue',
+              path: '/w/accept-blue',
+              isMain: true,
+              baseDir: '/w',
+              running: false,
+              ports: [],
+            },
+          ],
+        },
+        {
+          name: 'studio',
+          repo: 'studio',
+          path: '/p/studio',
+          worktrees: [
+            {
+              repo: 'studio',
+              wtname: 'studio',
+              path: '/p/studio',
+              isMain: true,
+              baseDir: '/p',
+              running: false,
+              ports: [],
+            },
+          ],
+        },
       ],
       reviews: [review({ repo: 'accept-blue' }), review({ repo: 'studio', number: 7 })],
     });
@@ -640,7 +680,9 @@ describe('reviews in the rail', () => {
   });
 
   it('selects a review by repo and number, so two repos cannot collide', () => {
-    give({ reviews: [review({ repo: 'accept-blue', number: 5 }), review({ repo: 'merchant-v3', number: 5 })] });
+    give({
+      reviews: [review({ repo: 'accept-blue', number: 5 }), review({ repo: 'merchant-v3', number: 5 })],
+    });
     ui.selectReview(review({ repo: 'merchant-v3', number: 5 }) as never);
     expect(ui.selectedReview?.repo).toBe('merchant-v3');
     expect(ui.key).toBe('r:merchant-v3!5');

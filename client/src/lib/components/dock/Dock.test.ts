@@ -18,9 +18,7 @@ import type { Feature, Session } from '../../../../../server/types';
  */
 vi.mock('$lib/components/Terminal.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/components/dock/ReviewMount.svelte', () => ({ default: (() => {}) as never }));
-vi.mock('$lib/components/dock/InsightsMount.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/components/dock/LogsPanel.svelte', () => ({ default: (() => {}) as never }));
-vi.mock('$lib/components/insights/FleetInsights.svelte', () => ({ default: (() => {}) as never }));
 vi.mock('$lib/api.js', () => ({
   api: vi.fn().mockResolvedValue({ repos: [] }),
   TOKEN: '',
@@ -85,9 +83,11 @@ describe('Dock routing', () => {
   it('invites you to start something when nothing is selected', () => {
     render(Dock);
     expect(screen.getByText('No session selected')).toBeInTheDocument();
-    // Insights is reachable from the empty state: it is about every session that ever
-    // ran, so it is exactly what you might want with nothing selected.
-    expect(screen.getByText(/Insights/)).toBeInTheDocument();
+    // ONE call to action. The empty state used to offer Insights beside it, back when a
+    // dock view existed that rendered without a selection; every view is a view of a
+    // session now, so starting one is the only thing this screen can offer.
+    const buttons = screen.getAllByRole('button');
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(['+ New session']);
   });
 
   it('says a session is STARTING rather than that none is selected', () => {
@@ -114,15 +114,6 @@ describe('Dock routing', () => {
     expect(container.querySelector('.dock-head')).toBeTruthy();
     expect(container.querySelector('.tabstrip')).toBeTruthy();
     expect(screen.queryByText('No session selected')).not.toBeInTheDocument();
-  });
-
-  it('lets Insights win over any selection — it is about the fleet, not the row', () => {
-    give([], [session()]);
-    ui.select('s1');
-    ui.dockView = 'usage';
-    const { container } = render(Dock);
-    // The session surface must not be underneath it.
-    expect(container.querySelector('.dock-head')).toBeNull();
   });
 
   /*

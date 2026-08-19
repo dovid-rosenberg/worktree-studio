@@ -1,102 +1,155 @@
 <script lang="ts">
-  /*
-   * The action bar: every action for whatever is selected, pinned along the bottom of
-   * the screen.
-   *
-   * It replaces the hover-reveal quick actions the rail cards used to carry. Those
-   * expanded the card on hover, which reflowed every row below it — so moving the mouse
-   * down the rail made the list jump under the cursor, and the row you were aiming at
-   * moved before you clicked it. A fixed bar cannot do that: it occupies the same space
-   * whether or not anything is selected, and the rail stays geometrically still.
-   *
-   * It handles both selection kinds, because both need the same verbs. A feature with no
-   * agent simply has fewer of them.
-   *
-   * ONE VERB FOR STARTING DEV SERVERS. This used to show `Run servers` / `Stop servers`
-   * beside `Run stack` / `Stop stack` for a promoted session. They target the SAME
-   * worktrees — a session's repos are its feature's members — so the pair read as two
-   * different capabilities and were one. The stack verbs win because they do strictly
-   * more: `/group/start` detects a port conflict with another feature and offers to stop
-   * and switch, where the session route just 409s. The ServerBar kept a duplicate pair
-   * (`Run all` / `Stop all`) for a while; it is a readout now and these are the only
-   * server verbs on screen.
-   *
-   * THREE selection kinds, one bar: a session, a sessionless feature, and a dev server
-   * running from a repo's main checkout. The last used to carry its own buttons inside
-   * its rail card — the only buttons in the rail — because it could not be selected.
-   */
-  import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
-  import OverflowMenu from '$lib/components/OverflowMenu.svelte';
-  import SlotMenu from '$lib/components/SlotMenu.svelte';
-  import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
-  // openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
-  import { openApp } from '$lib/stores/world.svelte.js';
-  import { orphans } from '$lib/stores/orphans.svelte.js';
-  import {
-    activateSession, addRepoToSession, closeFeature, closeSession, deactivateSession,
-    deleteFeature, editFeature, editSession, installDeps, openGroup, openSessionRepos,
-    pending, prFeature, promote, reinstateOrphan, restartStack, restartTerminal, runStack,
-    startFeatureSession, stopMainServer, stopStack,
-  } from '$lib/ops.svelte.js';
+/*
+ * The action bar: every action for whatever is selected, pinned along the bottom of
+ * the screen.
+ *
+ * It replaces the hover-reveal quick actions the rail cards used to carry. Those
+ * expanded the card on hover, which reflowed every row below it — so moving the mouse
+ * down the rail made the list jump under the cursor, and the row you were aiming at
+ * moved before you clicked it. A fixed bar cannot do that: it occupies the same space
+ * whether or not anything is selected, and the rail stays geometrically still.
+ *
+ * It handles both selection kinds, because both need the same verbs. A feature with no
+ * agent simply has fewer of them.
+ *
+ * ONE VERB FOR STARTING DEV SERVERS. This used to show `Run servers` / `Stop servers`
+ * beside `Run stack` / `Stop stack` for a promoted session. They target the SAME
+ * worktrees — a session's repos are its feature's members — so the pair read as two
+ * different capabilities and were one. The stack verbs win because they do strictly
+ * more: `/group/start` detects a port conflict with another feature and offers to stop
+ * and switch, where the session route just 409s. The ServerBar kept a duplicate pair
+ * (`Run all` / `Stop all`) for a while; it is a readout now and these are the only
+ * server verbs on screen.
+ *
+ * THREE selection kinds, one bar: a session, a sessionless feature, and a dev server
+ * running from a repo's main checkout. The last used to carry its own buttons inside
+ * its rail card — the only buttons in the rail — because it could not be selected.
+ */
+import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
+import OverflowMenu from '$lib/components/OverflowMenu.svelte';
+import SlotMenu from '$lib/components/SlotMenu.svelte';
+import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
+// openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
+// `world` for the drift feed: how far behind the base this feature is, and how much of
+// it has never left this laptop — the two numbers the branch cluster below acts on.
+import { openApp, world } from '$lib/stores/world.svelte.js';
+import { orphans } from '$lib/stores/orphans.svelte.js';
+import {
+  activateSession,
+  addRepoToSession,
+  closeFeature,
+  closeSession,
+  deactivateSession,
+  deleteFeature,
+  editFeature,
+  editSession,
+  installDeps,
+  openGroup,
+  openSessionRepos,
+  moveSlot,
+  moveSummary,
+  pending,
+  prFeature,
+  promote,
+  pushFeature,
+  reinstateOrphan,
+  replaceSharedDeps,
+  restartStack,
+  restartTerminal,
+  runStack,
+  startFeatureSession,
+  stopMainServer,
+  stopStack,
+  updateFromBase,
+} from '$lib/ops.svelte.js';
 
-  const session = $derived(ui.selected);
-  const feature = $derived(ui.selectedFeature);
-  /*
-   * A resumable conversation among this feature's worktrees.
-   *
-   * Refreshed when the selection changes rather than on a timer: it can only change when
-   * a session is closed, and answering it costs a `git branch` per repo.
-   */
-  const featureOrphan = $derived(
-    feature ? orphans.forPaths(liveMembers(feature).map((m) => m.path)) : null,
-  );
-  $effect(() => {
-    if (feature && !orphans.loadedAt) void orphans.refresh();
-  });
+const session = $derived(ui.selected);
+const feature = $derived(ui.selectedFeature);
+/*
+ * A resumable conversation among this feature's worktrees.
+ *
+ * Refreshed when the selection changes rather than on a timer: it can only change when
+ * a session is closed, and answering it costs a `git branch` per repo.
+ */
+const featureOrphan = $derived(feature ? orphans.forPaths(liveMembers(feature).map((m) => m.path)) : null);
+$effect(() => {
+  if (feature && !orphans.loadedAt) void orphans.refresh();
+});
 
-  /** A dev server running from a repo's main checkout — the third kind of rail row. */
-  const mainServer = $derived(ui.selectedMainServer);
+/** A dev server running from a repo's main checkout — the third kind of rail row. */
+const mainServer = $derived(ui.selectedMainServer);
 
-  /** The feature a selected SESSION belongs to, so stack verbs work from either side. */
-  const sessionFeature = $derived(
-    session && session.feature
-      ? (ui.visibleFeatures.find((f) => f.name === session.feature) || null)
-      : null,
-  );
-  const target = $derived(feature || sessionFeature);
-  const ms = $derived(target ? liveMembers(target) : []);
-  const anyRunning = $derived(ms.some((m) => m.running));
-  const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
-  /** Members that cannot start until their dependencies exist. */
-  const needDeps = $derived(ms.filter((m) => m.depsMissing));
-  const installingDeps = $derived(ms.some((m) => m.depsInstalling));
-  const isPending = $derived(!!target && pending.has(target.name));
+/** The feature a selected SESSION belongs to, so stack verbs work from either side. */
+const sessionFeature = $derived(
+  session && session.feature ? ui.visibleFeatures.find((f) => f.name === session.feature) || null : null,
+);
+const target = $derived(feature || sessionFeature);
+const ms = $derived(target ? liveMembers(target) : []);
+const anyRunning = $derived(ms.some((m) => m.running));
+const anyStartable = $derived(ms.some((m) => m.canStart && !m.running));
+/** Members that cannot start until their dependencies exist. */
+const needDeps = $derived(ms.filter((m) => m.depsMissing));
+/*
+ * Members whose node_modules is a symlink out of the worktree.
+ *
+ * These are not `needDeps` — they start perfectly well, which is the trap. The rail has
+ * been able to say "this worktree shares its dependency tree" since sharedModules() was
+ * written, and there was no button anywhere that fixed it. This is that button.
+ */
+const sharedDeps = $derived(ms.filter((m) => m.sharedModules));
+const installingDeps = $derived(ms.some((m) => m.depsInstalling));
+const isPending = $derived(!!target && pending.has(target.name));
 
-  /*
-   * EVERY worktree the ▷ Run… menu reads configs from — one per repo of the feature.
-   *
-   * ONLY FOR A FEATURE WITH NO SESSION. A session's copy moved into the Runs tab, beside
-   * the history and output a run produces; a sessionless feature has no such tab, and a
-   * run needs only a worktree, so this stays as its way in rather than the capability
-   * disappearing with the tab it does not have.
-   */
-  const runTargets = $derived(ms.map((m) => ({ repo: m.repo, path: m.path })));
+/*
+ * THE TWO GIT VERBS, beside the ship chip that complains about them.
+ *
+ * The dock header has been able to say "behind 27" and "has 3 unpushed commit(s)" since
+ * the drift feed and shipVerdict() shipped, and both sentences named work that had to be
+ * done in a terminal, in each of the feature's repos, by hand — which for a branch 27
+ * commits behind is exactly the state the wrong-branch dev-server incidents come out of.
+ * Nothing else on this bar is a fact about the branch, so they get their own cluster
+ * rather than being wedged in beside the dev servers.
+ *
+ * Shown only when there is something to do: an up-to-date, fully pushed feature has no
+ * cluster at all, on the same rule as the drift chip above it.
+ */
+const lap = $derived(world.overlapFor(target?.name));
+/** The WORST repo, like the chip: one stale half of a feature is a stale feature. */
+const behind = $derived(lap?.behind || 0);
+/** Commits that exist only on this laptop, across every repo of the feature. */
+const unpushed = $derived((lap?.drift || []).reduce((n, d) => n + (d.unpushed || 0), 0));
+/** Files a rebase is already known to fight — the reason the verb may refuse. */
+const willConflict = $derived((lap?.drift || []).reduce((n, d) => n + d.conflicts.length, 0));
 
-  /*
-   * No identity block here.
-   *
-   * The bar used to open with the selection's name, repo and branch — which DockHead
-   * already shows for a session, and FeaturePane's own heading shows for a feature. Three
-   * readouts of one selection (rail card, dock header, this) stacked down the screen is
-   * what made every glance cost a second look. The bar is buttons now: the top says WHAT
-   * you are looking at, the bottom DOES something to it.
-   */
-  let busy = $state(false);
-  /** @param {() => Promise<any>} fn */
-  async function guard(fn: () => Promise<unknown>) {
-    busy = true;
-    try { await fn(); } finally { busy = false; }
+/*
+ * EVERY worktree the ▷ Run… menu reads configs from — one per repo of the feature.
+ *
+ * ONLY FOR A FEATURE WITH NO SESSION. A session's copy moved into the Runs tab, beside
+ * the history and output a run produces; a sessionless feature has no such tab, and a
+ * run needs only a worktree, so this stays as its way in rather than the capability
+ * disappearing with the tab it does not have.
+ */
+const runTargets = $derived(ms.map((m) => ({ repo: m.repo, path: m.path })));
+
+/*
+ * No identity block here.
+ *
+ * The bar used to open with the selection's name, repo and branch — which DockHead
+ * already shows for a session, and FeaturePane's own heading shows for a feature. Three
+ * readouts of one selection (rail card, dock header, this) stacked down the screen is
+ * what made every glance cost a second look. The bar is buttons now: the top says WHAT
+ * you are looking at, the bottom DOES something to it.
+ */
+let busy = $state(false);
+/** @param {() => Promise<any>} fn */
+async function guard(fn: () => Promise<unknown>) {
+  busy = true;
+  try {
+    await fn();
+  } finally {
+    busy = false;
   }
+}
 </script>
 
 <div class="actionbar" class:idle={!session && !feature && !mainServer}>
@@ -142,6 +195,20 @@
             {#if anyRunning}
               <button class="btn sm ghost" title="Stop the dev servers" aria-label="Stop dev servers" onclick={() => stopStack(target.name)}>{'■'}</button>
               <button class="btn sm ghost" title="Restart the dev servers" aria-label="Restart dev servers" onclick={() => restartStack(target.name)}>{'↻'}</button>
+              <!--
+                Moving slot lives HERE, not on the rail card. The card is a pure readout by
+                design, and a running feature usually has a session — so its FeaturePane
+                never renders and a badge-only control would be unreachable exactly when
+                you want it.
+              -->
+              {#if target.slot != null}
+                <SlotMenu
+                  feature={target.name}
+                  mode="move"
+                  current={target.slot}
+                  onpick={(slot, report) => moveSlot(target.name, slot, moveSummary({ members: liveMembers(target) }, report))}
+                />
+              {/if}
             {:else if anyStartable}
               <!--
                 A split button. ▶ is unchanged — one click, default slot, no new decision
@@ -154,6 +221,32 @@
           </span>
         {/if}
 
+        <!--
+          The branch cluster: bring it up to date, and get it off this laptop. Both act on
+          every repo of the feature, which is the whole reason they are worth a button.
+        -->
+        {#if behind || unpushed}
+          <span class="cluster" role="group" aria-label="Branch">
+            <span class="cluster-label">branch</span>
+            {#if behind}
+              <button
+                class="btn sm ghost"
+                aria-label="Update from base"
+                title="Rebase every repo of this feature onto its base ({behind} behind){willConflict ? ` — ${willConflict} file(s) are already known to conflict, so this may refuse and name them` : ''}. Refuses a dirty worktree, and stops any dev server first."
+                onclick={() => updateFromBase(target.name)}
+              >{'⤓'} {behind}</button>
+            {/if}
+            {#if unpushed}
+              <button
+                class="btn sm ghost"
+                aria-label="Push"
+                title="Push {unpushed} commit(s) to origin. Sets an upstream on a first push; a rejected push is reported, never forced."
+                onclick={() => pushFeature(target.name)}
+              >{'↑'} {unpushed}</button>
+            {/if}
+          </span>
+        {/if}
+
         <!-- Offered where the problem is visible, rather than letting Run stack half-fail. -->
         {#if needDeps.length}
           <button
@@ -162,6 +255,21 @@
             title="{needDeps.map((m) => m.repo).join(', ')} cannot start until their dependencies are installed"
             onclick={() => needDeps.forEach((m) => installDeps({ repo: m.repo, path: m.path }))}
           >{installingDeps ? 'Installing…' : `Install deps (${needDeps.length})`}</button>
+        {/if}
+
+        <!--
+          Beside Install deps, and never at the same time as it: a worktree with a shared
+          node_modules is not missing dependencies, it is borrowing somebody else's. The
+          finding used to be a tooltip with no verb attached, which left the two-command
+          fix (remove the link — not the directory — then install) to be typed by hand.
+        -->
+        {#if sharedDeps.length}
+          <button
+            class="btn sm"
+            disabled={installingDeps}
+            title="{sharedDeps.map((m) => m.repo).join(', ')} share a node_modules with another checkout — every cache inside it (Vite's .vite/deps above all) is shared, and an install there rewrites the other worktrees' tree. This removes the symlink and installs here."
+            onclick={() => sharedDeps.forEach((m) => replaceSharedDeps({ repo: m.repo, path: m.path }))}
+          >{installingDeps ? 'Installing…' : `Own deps (${sharedDeps.length})`}</button>
         {/if}
       {/if}
 
@@ -356,9 +464,22 @@
     color: var(--faint); padding: 0 2px 0 8px; user-select: none;
   }
 
-  /* Before the destructive verb, which belongs to no cluster and should not look like it
-     does. A rule rather than a gap: a gap alone reads as accidental. */
-  .sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border); }
+  /*
+   * THE SPLIT — the divider the whole bar is arranged around: reversible verbs to the
+   * left of it, everything that changes what the feature IS to the right.
+   *
+   * It was described at length in the markup above and had NO RULE anywhere — not here,
+   * not in app.css — so both mounts rendered as an empty zero-width span and the
+   * arrangement the comments defend was invisible. A rule rather than a gap: a gap alone
+   * reads as accidental.
+   *
+   * Its own name rather than `.sep`: the `.sep` spans in the ⋯ snippets separate items in
+   * a VERTICAL list and are already styled by their owner (OverflowMenu's
+   * `.sheet :global(.sep)`, a 1px row). The rule that used to live here was a 1px COLUMN
+   * for that same class — dead, since the menu's own rule outranks it, and wrong for the
+   * only elements it could ever have matched.
+   */
+  .split { width: 1px; align-self: stretch; min-height: 20px; margin: 2px 5px; background: var(--border-strong); }
   /* Present even when empty, so selecting something never shifts the layout. */
   .actionbar.idle { color: var(--faint); }
   .hint { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }

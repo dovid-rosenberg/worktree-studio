@@ -23,4 +23,4 @@ if [ -L "$DEST" ]; then
   open "swiftbar://refreshallplugins" 2>/dev/null || true
 fi
 
-say "Done. Remove the Alfred workflow from Alfred → Workflows if you imported it."
+say "Done."

@@ -1,54 +1,55 @@
 <script lang="ts">
-  /*
-   * The rail: repo filter, one flat list, count footer.
-   *
-   * ONE ROW PER THING. This used to be four sections — Servers running, Servers · no
-   * worktree, Agents · no worktree, Worktrees — and a feature with a dev server up
-   * appeared in two of them. The justification (fleet/ServerRow: "when servers are
-   * running, this is the section you watch, so the browse buttons belong here too")
-   * expired when every action moved to the ActionBar: the duplicate carried no buttons,
-   * so it was the same readout drawn twice.
-   *
-   * NO BUCKETS. "Running" conflates two unrelated facts — dev servers up, and agent
-   * state — so a section keyed on it would file a *waiting* agent, the one row that
-   * actually wants the user, among worktrees untouched for a month. Instead every row
-   * sorts on `active` and a single divider marks where the quiet ones start.
-   *
-   * That also retires four `position:sticky; top:0` headers sharing one scroller, which
-   * collided as you scrolled past them.
-   *
-   * Keyed by `row.key` so a `session-state` frame mutates text nodes and class lists and
-   * touches nothing else: scroll position and the focus ring on a card both survive.
-   */
-  import AppHead from '$lib/components/rail/AppHead.svelte';
-  import FeatureCard from '$lib/components/rail/FeatureCard.svelte';
-  import MainServerCard from '$lib/components/rail/MainServerCard.svelte';
-  import SessionCard from '$lib/components/rail/SessionCard.svelte';
-  import ReviewCard from '$lib/components/rail/ReviewCard.svelte';
-  import { RAIL_SORTS, ui, liveMembers } from '$lib/stores/ui.svelte.js';
-  import type { RailSort } from '$lib/stores/ui.svelte.js';
-  import { world } from '$lib/stores/world.svelte.js';
-  import { overlays } from '$lib/stores/overlays.svelte.js';
-  import { groupSplitFeature } from '$lib/ops.svelte.js';
+/*
+ * The rail: repo filter, one flat list, count footer.
+ *
+ * ONE ROW PER THING. This used to be four sections — Servers running, Servers · no
+ * worktree, Agents · no worktree, Worktrees — and a feature with a dev server up
+ * appeared in two of them. The justification (fleet/ServerRow: "when servers are
+ * running, this is the section you watch, so the browse buttons belong here too")
+ * expired when every action moved to the ActionBar: the duplicate carried no buttons,
+ * so it was the same readout drawn twice.
+ *
+ * NO BUCKETS. "Running" conflates two unrelated facts — dev servers up, and agent
+ * state — so a section keyed on it would file a *waiting* agent, the one row that
+ * actually wants the user, among worktrees untouched for a month. Instead every row
+ * sorts on `active` and a single divider marks where the quiet ones start.
+ *
+ * That also retires four `position:sticky; top:0` headers sharing one scroller, which
+ * collided as you scrolled past them.
+ *
+ * Keyed by `row.key` so a `session-state` frame mutates text nodes and class lists and
+ * touches nothing else: scroll position and the focus ring on a card both survive.
+ */
+import AppHead from '$lib/components/rail/AppHead.svelte';
+import FeatureCard from '$lib/components/rail/FeatureCard.svelte';
+import MainServerCard from '$lib/components/rail/MainServerCard.svelte';
+import SessionCard from '$lib/components/rail/SessionCard.svelte';
+import ReviewCard from '$lib/components/rail/ReviewCard.svelte';
+import { RAIL_SORTS, ui, liveMembers } from '$lib/stores/ui.svelte.js';
+import type { RailSort } from '$lib/stores/ui.svelte.js';
+import { world } from '$lib/stores/world.svelte.js';
+import { overlays } from '$lib/stores/overlays.svelte.js';
+import { attachSessionRepos, groupSplitFeature } from '$lib/ops.svelte.js';
+import StateDot from '$lib/components/StateDot.svelte';
 
-  const rows = $derived(ui.railRows);
-  const dividerAt = $derived(ui.dividerAt);
-  const reviewsAt = $derived(ui.reviewsAt);
-  const quiet = $derived(dividerAt < 0 ? 0 : rows.length - dividerAt);
+const rows = $derived(ui.railRows);
+const dividerAt = $derived(ui.dividerAt);
+const reviewsAt = $derived(ui.reviewsAt);
+const quiet = $derived(dividerAt < 0 ? 0 : rows.length - dividerAt);
 
-  /*
-   * The fleet summary, moved down from the top bar to sit beside the rows it counts.
-   *
-   * TWO VOCABULARIES, SAID SEPARATELY. `running` counts dev SERVERS; `working` and
-   * `waiting` count AGENTS. Printed as one comma-run they read as parts of one total and
-   * then fail the arithmetic, so each group names what it counts.
-   *
-   * Servers are per WORKTREE (each runs its own). Agents are per SESSION — counting them
-   * per member inflated the numbers by exactly how multi-repo the work was.
-   */
-  const running = $derived(world.features.flatMap((f) => liveMembers(f)).filter((m) => m.running).length);
-  const working = $derived(world.sessions.filter((s) => s.state === 'working').length);
-  const waiting = $derived(world.sessions.filter((s) => s.state === 'waiting').length);
+/*
+ * The fleet summary, moved down from the top bar to sit beside the rows it counts.
+ *
+ * TWO VOCABULARIES, SAID SEPARATELY. `running` counts dev SERVERS; `working` and
+ * `waiting` count AGENTS. Printed as one comma-run they read as parts of one total and
+ * then fail the arithmetic, so each group names what it counts.
+ *
+ * Servers are per WORKTREE (each runs its own). Agents are per SESSION — counting them
+ * per member inflated the numbers by exactly how multi-repo the work was.
+ */
+const running = $derived(world.features.flatMap((f) => liveMembers(f)).filter((m) => m.running).length);
+const working = $derived(world.sessions.filter((s) => s.state === 'working').length);
+const waiting = $derived(world.sessions.filter((s) => s.state === 'waiting').length);
 </script>
 
 <aside class="rail">
@@ -122,6 +123,23 @@
       </div>
     {/each}
 
+    <!-- A session that cannot see part of its own feature. Above the list for the same
+         reason as the banner above: it is a claim ABOUT a card below — that its Changes
+         panel is drawing an empty diff of a branch that has changes, because the session
+         and the feature disagree about which worktrees belong to it. -->
+    {#each world.sessionRepoGaps as gap (gap.sessionId)}
+      <div class="split">
+        <div class="split-t">Session is missing part of its feature</div>
+        <div class="split-b">
+          <span class="br">{gap.title}</span> has no access to
+          {gap.missing.map((m) => m.repo).join(' + ')}
+        </div>
+        <div class="split-a">
+          <button class="btn sm" onclick={() => attachSessionRepos(gap)}>Give it access</button>
+        </div>
+      </div>
+    {/each}
+
     {#each rows as row, i (row.key)}
       {#if i === dividerAt}
         <div class="divider"><span>idle · {quiet}</span></div>
@@ -153,9 +171,12 @@
     <div class="foot-rows">{rows.length} row(s){quiet ? ` · ${quiet} idle` : ''}</div>
     {#if working || waiting || running}
       <div class="foot-counts">
-        {#if working}<span class="c"><span class="dot working"></span>{working} working</span>{/if}
-        {#if waiting}<span class="c"><span class="dot waiting"></span>{waiting} waiting</span>{/if}
-        {#if running}<span class="c"><span class="dot done"></span>{running} up</span>{/if}
+        <!-- The dot carries the whole phrase and the text beside it is hidden from
+             assistive tech: the swatch and the label are one fact, and announcing both
+             reads it twice. -->
+        {#if working}<span class="c"><StateDot state="working" label="{working} agents working" /><span aria-hidden="true">{working} working</span></span>{/if}
+        {#if waiting}<span class="c"><StateDot state="waiting" label="{waiting} agents waiting on you" /><span aria-hidden="true">{waiting} waiting</span></span>{/if}
+        {#if running}<span class="c"><StateDot state="done" label="{running} dev servers up" /><span aria-hidden="true">{running} up</span></span>{/if}
       </div>
     {/if}
   </div>

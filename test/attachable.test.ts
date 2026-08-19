@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attachableWorktrees } from '../server/features.ts';
+import { attachableWorktrees, detectSessionRepoGaps } from '../server/features.ts';
 
 /*
  * Reconciling a session's repos against its feature's worktrees.
@@ -97,6 +97,87 @@ test('asks the identity resolver rather than comparing names', () => {
   const out = attachableWorktrees(scan(), 'feat-x', new Set(['/r/accept-blue']), byBranch);
   assert.deepEqual(
     out.map((o) => o.repo),
+    ['merchant-v3', 'ab-libraries'],
+  );
+});
+
+/*
+ * detectSessionRepoGaps(): the same reconciliation, asked on every scan.
+ *
+ * Promote was the only moment that ever asked, so a session ADOPTED into an existing
+ * feature — or one whose sibling worktree was cut later with a plain `wt` — kept a repo
+ * list that was quietly short, and the only symptom was an empty Changes diff.
+ */
+
+const sess = (over: Record<string, unknown> = {}) => ({
+  id: 's1',
+  title: 'feat-x work',
+  feature: 'feat-x',
+  active: true,
+  repos: [{ repoPath: '/r/accept-blue' }],
+  ...over,
+});
+
+test('a session whose repos are a strict subset of its feature is detected', () => {
+  const gaps = detectSessionRepoGaps([sess()], scan(), byName);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].sessionId, 's1');
+  assert.equal(gaps[0].feature, 'feat-x');
+  assert.deepEqual(
+    gaps[0].missing.map((m) => m.repo),
+    ['merchant-v3', 'ab-libraries'],
+  );
+  // Enough to attach with, not just enough to name — the offer and the action must
+  // describe the same worktree.
+  assert.equal(gaps[0].missing[0].worktreePath, '/r/merchant-v3/.worktrees/feat-x');
+  assert.equal(gaps[0].missing[0].repoPath, '/r/merchant-v3');
+});
+
+test('an equal set is not a gap — the records agree', () => {
+  const repos = [
+    { repoPath: '/r/accept-blue' },
+    { repoPath: '/r/merchant-v3' },
+    { repoPath: '/r/ab-libraries' },
+  ];
+  assert.deepEqual(detectSessionRepoGaps([sess({ repos })], scan(), byName), []);
+});
+
+test('a session with no feature has nothing to reconcile against', () => {
+  assert.deepEqual(detectSessionRepoGaps([sess({ feature: '' })], scan(), byName), []);
+  assert.deepEqual(detectSessionRepoGaps([sess({ feature: null })], scan(), byName), []);
+});
+
+test('a deactivated session is not offered — there is no agent to /add-dir into', () => {
+  assert.deepEqual(detectSessionRepoGaps([sess({ active: false })], scan(), byName), []);
+  // …but a row that simply does not carry the field is still examined, or a caller
+  // handing over trimmed sessions would silently see no gaps at all.
+  assert.equal(detectSessionRepoGaps([sess({ active: undefined })], scan(), byName).length, 1);
+});
+
+test('reports each session separately, and skips the ones that are whole', () => {
+  const gaps = detectSessionRepoGaps(
+    [
+      sess({ id: 'short' }),
+      sess({
+        id: 'whole',
+        feature: 'unrelated',
+        repos: [{ repoPath: '/r/other' }],
+      }),
+    ],
+    scan(),
+    byName,
+  );
+  assert.deepEqual(
+    gaps.map((g) => g.sessionId),
+    ['short'],
+  );
+});
+
+test('asks the identity resolver, so it reconciles under every strategy', () => {
+  const byBranch = (i: { branch?: string | null }) => (i.branch || '').replace(/^fix\//, '');
+  const gaps = detectSessionRepoGaps([sess()], scan(), byBranch);
+  assert.deepEqual(
+    gaps[0].missing.map((m) => m.repo),
     ['merchant-v3', 'ab-libraries'],
   );
 });

@@ -14,7 +14,7 @@ dashboard with a single page at **http://127.0.0.1:7788**.
 
 1. [Concepts & glossary](#concepts--glossary)
 2. [Install & run](#install--run) — including [start at login](#start-it-at-login-macos)
-3. [Menubar and Alfred](#menubar-and-alfred)
+3. [Menubar](#menubar)
 4. [The feature lifecycle](#the-feature-lifecycle) — the spine of the tool
 5. [Feature reference](#feature-reference)
 6. [The layout](#the-layout)
@@ -101,14 +101,12 @@ place if you move the repo.
 
 ---
 
-## Menubar and Alfred
+## Menubar
 
-Both surfaces are thin clients over the same [HTTP API](docs/api.md): they read
-`GET /state` and POST the same routes the web UI does. Both find the port in your
-config and the token in `~/.local/state/worktree-studio/token`, so neither needs
-configuration of its own. Both need `jq`.
-
-### SwiftBar (menubar)
+The menubar is a thin client over the same [HTTP API](docs/api.md): it reads
+`GET /state` and POSTs the same routes the web UI does. It finds the port in your
+config and the token in `~/.local/state/worktree-studio/token`, so it needs no
+configuration of its own. It needs `jq`.
 
 `install.sh` symlinks `swiftbar/worktrees.10s.sh` into SwiftBar's plugin folder. The
 title carries one number, picked by urgency — agents **waiting on you** (🟡), else
@@ -138,30 +136,10 @@ The distinction matters because of `KeepAlive`: a crashing daemon is relaunched
 within seconds, so "not running" with a Start button would be both fleeting and
 useless — it would ask you to press what launchd is already pressing.
 
-### Alfred
-
-Double-click **`alfred/Worktree Studio.alfredworkflow`** to import it. The keyword is
-`wt`. (Editing `alfred/src/*.sh` does nothing until you re-run `alfred/build.sh` and
-re-import — Alfred copies a workflow into its own preferences on import, so the
-bundle is a snapshot.)
-
-Type `wt` to get your active sessions first, then every worktree, and:
-
-| Key | On a session | On a worktree |
-| --- | --- | --- |
-| `⏎` | **open it in Studio** — the cockpit, focused on that session | open it in Studio: its agent, or its feature |
-| `⌘` | open its worktree in your editor | open it in your editor |
-| `⌃` | start the whole feature's stack | start this repo's dev server |
-| `⌥` | open its ticket ↗, or stop the stack when there is no ticket | stop this repo's dev server |
-| `⇧` | reveal in Finder | reveal in Finder |
-
-A modifier whose action cannot apply — no worktree yet, no `start` command
-configured, nothing running to stop — is shown greyed out with the reason, rather
-than accepting the keystroke and doing nothing.
-
 ### Deep links
 
-`⏎` works because the cockpit reads its selection from the URL fragment:
+Clicking a menubar item opens the cockpit already focused on the right thing,
+because the cockpit reads its selection from the URL fragment:
 
 | Link | Opens |
 | --- | --- |
@@ -200,7 +178,7 @@ The session starts in the repo’s **main checkout**. You can just talk to Claud
 ask questions — no worktree is created yet. (Not every question deserves a branch.)
 
 ### 2. Promote to a worktree
-When the work is real, click **⤴ Promote** (or `⌘↵`). Studio:
+When the work is real, click **⤴ Promote**. Studio:
 - Creates `<repo>/.worktrees/<name>` on a fresh feature branch off the default branch,
 - Copies your gitignored local config into it (see `copyPatterns`),
 - Sends the live Claude session the **`/cd <worktree>`** command, which relocates *both*
@@ -239,7 +217,6 @@ Studio reads, per worktree:
 - `.idea/runConfigurations/*.xml` (JetBrains) — npm scripts, mocha runs, Node files
 - `.vscode/tasks.json` and `.vscode/launch.json` — npm/shell tasks, and launches that
   name a runnable command (a debugger-only entry is skipped, not approximated)
-- `.zed/tasks.json`
 
 They are grouped by repo, since a feature spans several and two repos often both have a
 `test:unit`. Two kinds, and the glyph says which:
@@ -306,12 +283,6 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
 ### Sessions & terminals
 - **Live embedded terminal** (xterm.js) with two-way I/O to the tmux session.
 - **Tabs** per session (`claude`, `shell`, …) — add, select, close tabs.
-- **Pop-out** — open the same live session in a native macOS terminal window (grouped
-  tmux session; both stay in sync).
-- **⊟ Split** (a sub-feature of the terminal) — open a **second, independent terminal**
-  beside the primary. It’s a standalone tmux session with its **own tabs** (add/select/close
-  per side), so nothing you type is echoed into the other pane. Persists per session across
-  switches.
 - **Resume after restart** — Studio restarts and re-attaches every active session; the
   Claude conversation resumes with full history.
 - **Rename** a session; **Deactivate** (stop but keep) / **Resume** (relaunch) it.
@@ -342,7 +313,7 @@ Deleting a session (🗑) also stops its servers and frees its concurrency slot.
   the server refreshes when a commit, a push or a branch switch lands, when a PR is
   opened, and on a slow safety net, and *only* while a browser stream is open: with no
   dashboard attached, neither CLI is ever spawned. Briefly cached and shared with
-  `GET /api/sessions/:id/ci`, the on-demand answer SwiftBar/Alfred still use. Degrades
+  `GET /api/sessions/:id/ci`, the on-demand answer SwiftBar still uses. Degrades
   gracefully when no PR exists or the CLI is missing.
 - **Open PR / MR** and **Create PR** (`/api/group/pr`) across the feature’s repos.
 
@@ -381,8 +352,12 @@ and the PR/CI pills. No buttons.
 **The action bar** (bottom) — every verb for whatever is selected. The rule: the top says
 what you are looking at, the bottom does something to it.
 
-**Insights** (**⌘\\** or ◔ in the top bar) — one destination: a fleet-wide cost overview
-you drill into. Picking a session shows its token breakdown and transcript search.
+**Transcript search** (**⌘⇧F**, or “Search transcripts” in the ⋮ menu) — an overlay, not
+a region. It also
+states the health of the index it searches: a quiet line under the results saying which
+backend answered and how much is indexed, and — only when an empty result set would be
+misleading, because the index is cold, degraded or missing — a banner saying so with a
+rebuild button.
 
 ---
 
@@ -392,13 +367,17 @@ you drill into. Picking a session shows its token breakdown and transcript searc
 |-----|--------|
 | `⌘K` | Command palette (works even while typing) |
 | `⌘N` | New session |
-| `⌘\` | Insights (fleet cost overview) |
 | `⌥1`–`⌥9` | Jump to the Nth row in the rail |
-| `⌘↵` | Promote current session to a worktree |
+| `⌘⇧F` | Search every transcript |
 | `⌘D` | Review changes (open the ✎ Changes tab) |
 | `⌘R` | Run the current feature’s dev servers |
+| `F2` | Rename the current terminal tab |
 | `?` | Keyboard-shortcuts cheatsheet |
-| `Esc` | Close the topmost overlay (palette → settings → intake) |
+| `Esc` | Close the topmost overlay — or, with nothing open, interrupt the agent |
+| `⌘↵` / `⇧↵` | Terminal: newline without submitting |
+| `⌘←` / `⌘→` | Terminal: start / end of line |
+| `⌘⌫` | Terminal: delete to start of line |
+| `⌥←` / `⌥→` | Terminal: move by word |
 
 Shortcuts never fire while you’re typing in the terminal/inputs or when an overlay is up
 (except `⌘K` and `Esc`). On non-Mac, `Ctrl` substitutes for `⌘`.
@@ -421,10 +400,14 @@ Redis DB are offset by `slot × offsetStep` (default 100).
   (`src/config.js` or `src/config/config.js`) to point at that slot’s backend. That half
   works with no repo change.
   
-  Their OWN listening port does not shift unless the repo reads `WTS_FE_PORT`. None of
-  the three currently does, so today a second feature's frontend collides on the shared
-  port even though its backend is correctly offset. Studio detects and names this rather
-  than failing silently — see the troubleshooting entry.
+  Their OWN listening port shifts by one of two routes. If the repo's dev server reads
+  `WTS_FE_PORT`, the slot's env carries it. If it does not — vite, next and ng all bind
+  whatever is in their own config and take `--port` instead — set `portFlag` for that
+  repo (e.g. `"portFlag": "-- --port {port}"` for an npm script) and Studio appends the
+  slot's first port to the start command. See `docs/config.md` for the field. Without
+  either, a second feature's frontend binds the repo's hardcoded default and collides;
+  Studio detects and names that rather than failing silently — see the troubleshooting
+  entry.
 
 Slots are persisted in `servers.json` and self-heal against reality on restart, so a
 frontend never silently points at the wrong backend after a restart. The **shared dev
@@ -432,6 +415,23 @@ database** is intentionally still shared across slots.
 
 > The **job scheduler** must only ever run in one stack. Only the primary/`job_schedule`
 > stack runs jobs; never start more than one job-running instance.
+
+Studio enforces that when the repo declares it. Add `scheduler` to the repo's
+concurrency block and one slot is told it owns the scheduler while every other slot is
+told to stand down:
+
+```jsonc
+"accept-blue": {
+  "portEnv": { "api__port": 1233 },
+  "slotEnv": ["redis__db"],
+  "scheduler": { "env": "job_schedule", "slot": 0, "on": "true", "off": "false" }
+}
+```
+
+Opt-in, and deliberately so: without the key no slot is told anything, exactly as before.
+It is worth adding because duplicate scheduled jobs do not fail — they succeed, twice,
+which is the kind of failure this app exists to make visible. See `docs/config.md` for
+the field.
 
 ---
 
@@ -469,7 +469,7 @@ had before those conventions were configurable.
 | `webRepos` | `[]` | Repos that serve a browser — each gets an “Open ‹repo› ↗” button |
 | `groups` | `[]` | Manual feature groups `{name, members:["repo/branch"]}` |
 | `runConfigs` | `{}` | Editor run-config import mapping |
-| `watch` | see `server/watch.ts` | fs-watch pacing; undocumented elsewhere, hand-edit only |
+| `watch` | see `server/watch.ts` | fs-watch pacing; fully typed as `WatchPacing`, hand-edit only |
 | `sources.github.enabled` | `true` | GitHub intake |
 | `sources.gitlab` | `{enabled:false, host, token}` | GitLab intake |
 | `sources.asana` | `{enabled:false, token, workspace}` | Asana intake |
@@ -478,6 +478,9 @@ had before those conventions were configurable.
 | `concurrency.offsetStep` | `100` | Port/DB offset per slot |
 | `concurrency.maxSlots` | `3` | Max simultaneous features |
 | `concurrency.repos.<repo>` | see below | Per-repo slot wiring |
+| `featureColors` | `{}` | Feature name → colour tag, set from the rail |
+| `featureLinks` | `{}` | Feature name → pinned links (ticket, MR, dashboard) |
+| `linkProviders` | `[]` | Patterns that turn a branch or ticket id into a link |
 
 **Per-repo concurrency wiring** (`concurrency.repos.<repo>`):
 - `portEnv` — env vars → base ports (offset by slot). Backend: `api__port_*`, `redis__db`.
@@ -543,7 +546,7 @@ Every request is authenticated. Send `x-wts-token: $(cat
 ~/.local/state/worktree-studio/token)` — or `?token=…` for `EventSource` and the
 WebSocket, which can't set headers. The server also refuses any request whose
 `Host` isn't a loopback name (DNS-rebinding defense) or whose `Origin`, if it has
-one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred and
+one, isn't this server. `docs/api.md` has the full rules; the SwiftBar and
 `wt-studio` clients already do all of this.
 
 **State & events**
@@ -564,7 +567,6 @@ one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred a
 - `POST /api/sessions/:id/activate` · `/deactivate` — resume / stop.
 - `POST /api/sessions/:id/rename` · `/add-repo`.
 - `POST /api/sessions/:id/tabs` · `/select-tab` · `/close-tab` — primary-terminal tabs.
-- `GET/POST /api/sessions/:id/split/tabs` · `/split/select-tab` · `/split/close-tab` — split-pane tabs.
 - `POST /api/sessions/:id/servers/start` · `/servers/stop`.
 - `GET  /api/sessions/:id/commits` · `/commit-detail?repo=&sha=` · `POST /commit` — review/commit.
 - `GET  /api/sessions/:id/ci` — PR/CI status.
@@ -583,7 +585,7 @@ one, isn't this server. `docs/api.md` has the full rules; the SwiftBar, Alfred a
 
 **Other**
 - `POST /hook/:event` — inbound Claude Code hook receiver (status updates).
-- `WS /ws/term?session=<id>&pane=<primary|split>&cols=&rows=` — terminal I/O.
+- `WS /ws/term?session=<id>&cols=&rows=` — terminal I/O.
 
 ---
 
@@ -682,9 +684,11 @@ Kill the old server first: `lsof -ti :7788 | xargs kill`, then `npm start`. (mac
 - **Frontend** — SvelteKit (`client/`), built by `adapter-static` to `client/build` and
   served by the daemon itself (`server/webui.ts`); `npm install` builds it, `npm start`
   does not. State arrives via SSE; terminals over WebSocket.
-- **Multiplexer** — tmux only, socket `-L wt-studio`, sessions `wts-<name>-<id>`; grouped
-  sessions (`-split`) give independent panes.
-- **Tests** — `node --test test/*.test.ts`.
+- **Multiplexer** — tmux only, socket `-L wt-studio`, sessions `wts-<name>-<id>`. The
+  pop-out and split-pane sessions (`-popout`, `-split`) were removed; `kill()` still
+  tears them down so a session created before the removal cannot outlive its owner.
+- **Tests** — `npm run verify` runs what CI runs (lint · format · typecheck · tests);
+  `npm run test:server` alone is `node --test 'test/**/*.test.ts'`.
 
 ---
 

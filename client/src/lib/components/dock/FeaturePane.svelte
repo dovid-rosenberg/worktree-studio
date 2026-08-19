@@ -1,74 +1,80 @@
 <script lang="ts">
-  import type { Feature, Worktree } from '../../../../../server/types';
-  /*
-   * What the dock shows for a feature with no session.
-   *
-   * There is no terminal to mount, so this answers the question you actually have about
-   * a worktree you are not currently working in: what is in here, and is it merged?
-   *
-   * It used to open with a row of buttons that were a 1:1 duplicate of the ActionBar's
-   * feature branch, sitting directly above the bar that already had them. Those are
-   * gone — the bottom bar acts, this reads. What is left is the thing the ActionBar
-   * cannot tell you: per-repo branch, ports, merge state, commits ahead of base, and
-   * uncommitted files.
-   */
-  import { api } from '$lib/api.js';
-  import { liveMembers } from '$lib/stores/ui.svelte.js';
-  import { errMessage } from '$lib/errmsg.js';
-  import SlotMenu from '$lib/components/SlotMenu.svelte';
-  import { moveSlot, moveSummary } from '$lib/ops.svelte.js';
+import type { Feature, Worktree } from '../../../../../server/types';
+/*
+ * What the dock shows for a feature with no session.
+ *
+ * There is no terminal to mount, so this answers the question you actually have about
+ * a worktree you are not currently working in: what is in here, and is it merged?
+ *
+ * It used to open with a row of buttons that were a 1:1 duplicate of the ActionBar's
+ * feature branch, sitting directly above the bar that already had them. Those are
+ * gone — the bottom bar acts, this reads. What is left is the thing the ActionBar
+ * cannot tell you: per-repo branch, ports, merge state, commits ahead of base, and
+ * uncommitted files.
+ */
+import { api } from '$lib/api.js';
+import { liveMembers } from '$lib/stores/ui.svelte.js';
+import { errMessage } from '$lib/errmsg.js';
+import SlotMenu from '$lib/components/SlotMenu.svelte';
+import { moveSlot, moveSummary } from '$lib/ops.svelte.js';
 
-  let { feature }: { feature: Feature } = $props();
+let { feature }: { feature: Feature } = $props();
 
-  const ms = $derived(liveMembers(feature));
+const ms = $derived(liveMembers(feature));
 
-  /** @param {any} m */
-  /*
-   * Why this member is not running, in the words of the actual blocker.
-   *
-   * `canStart` is `!!startCfg && !depsMissing`, and only the deps half ever explained
-   * itself. A repo absent from `config.start` produced no button and no reason, so the
-   * natural guess was stale deps — wrong, and only an API query said so.
-   */
-  const memberWhy = (m: Worktree) => {
-    if (m.running) return 'running';
-    if (m.depsMissing) return 'deps missing';
-    if (m.noStartCmd) return `no start command for ${m.repo}`;
-    return 'stopped';
+/** @param {any} m */
+/*
+ * Why this member is not running, in the words of the actual blocker.
+ *
+ * `canStart` is `!!startCfg && !depsMissing`, and only the deps half ever explained
+ * itself. A repo absent from `config.start` produced no button and no reason, so the
+ * natural guess was stale deps — wrong, and only an API query said so.
+ */
+const memberWhy = (m: Worktree) => {
+  if (m.running) return 'running';
+  if (m.depsMissing) return 'deps missing';
+  if (m.noStartCmd) return `no start command for ${m.repo}`;
+  return 'stopped';
+};
+
+const memberState = (m: Worktree) => (m.session ? m.session.state : m.running ? 'done' : 'idle');
+
+interface RepoRoll {
+  repo: string;
+  branch: string | null;
+  base: string;
+  commits: { sha: string; subject: string; author: string; when: string }[];
+  uncommitted: { fileCount: number; added: number; deleted: number };
+}
+
+let roll = $state<RepoRoll[]>([]);
+let rollError = $state('');
+
+/*
+ * Keyed on the feature NAME, not the object: the feature is a new object on every
+ * topology frame, so keying the effect on it would refetch several times a second
+ * while a stack is running. The name changes only when you select a different feature.
+ */
+const featureName = $derived(feature.name);
+
+$effect(() => {
+  const name = featureName;
+  let alive = true;
+  roll = [];
+  rollError = '';
+  api('GET', `/api/v1/group/${encodeURIComponent(name)}/commits`)
+    .then((d) => {
+      if (alive) roll = d.repos || [];
+    })
+    .catch((e) => {
+      if (alive) rollError = errMessage(e);
+    });
+  return () => {
+    alive = false;
   };
+});
 
-  const memberState = (m: Worktree) => (m.session ? m.session.state : (m.running ? 'done' : 'idle'));
-
-  interface RepoRoll {
-    repo: string;
-    branch: string | null;
-    base: string;
-    commits: { sha: string; subject: string; author: string; when: string }[];
-    uncommitted: { fileCount: number; added: number; deleted: number };
-  }
-
-  let roll = $state<RepoRoll[]>([]);
-  let rollError = $state('');
-
-  /*
-   * Keyed on the feature NAME, not the object: the feature is a new object on every
-   * topology frame, so keying the effect on it would refetch several times a second
-   * while a stack is running. The name changes only when you select a different feature.
-   */
-  const featureName = $derived(feature.name);
-
-  $effect(() => {
-    const name = featureName;
-    let alive = true;
-    roll = [];
-    rollError = '';
-    api('GET', `/api/v1/group/${encodeURIComponent(name)}/commits`)
-      .then((d) => { if (alive) roll = d.repos || []; })
-      .catch((e) => { if (alive) rollError = errMessage(e); });
-    return () => { alive = false; };
-  });
-
-  const rollFor = (repo: string) => roll.find((r) => r.repo === repo) || null;
+const rollFor = (repo: string) => roll.find((r) => r.repo === repo) || null;
 </script>
 
 <div class="fpane">
