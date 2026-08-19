@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { STALE_AFTER_MS, quietFor, quietLabel, stitchSessions, webAppsFor } from './world.svelte.js';
+import { STALE_AFTER_MS, quietFor, quietLabel, stitchSessions, webAppsFor, world } from './world.svelte.js';
+import { ciSubjectKey } from '../../../../server/types';
 import type { Feature, Repo, Session } from '../../../../server/types';
 
 /*
@@ -216,5 +217,42 @@ describe('webAppsFor', () => {
 
   it('tolerates a row with no ports array at all', () => {
     expect(() => webAppsFor([{ repo: 'x', running: true }])).not.toThrow();
+  });
+});
+
+/*
+ * Merge-request chips for a feature with no session.
+ *
+ * `linksFor` read `this.view.ci[feature.session.id]` and short-circuited to `[]` when
+ * there was no session — the client half of the same bug the server had in
+ * ciSubjects(). Fixing only the server would have left the answers arriving and
+ * nothing looking them up, so this pins the client's side of the shared key.
+ */
+describe('linksFor on a feature with no session', () => {
+  const feature = (over: Partial<Feature> = {}): Feature =>
+    ({ name: 'mfa', auto: true, members: [], session: null, ...over }) as Feature;
+
+  it('uses the feature: key so a sessionless feature still gets its MR chips', () => {
+    expect(ciSubjectKey(feature())).toBe('feature:mfa');
+    expect(ciSubjectKey(feature({ session: { id: 's_mfa' } as never }))).toBe('s_mfa');
+  });
+
+  it('renders a merge request for a sessionless feature', () => {
+    world.view = {
+      ...world.view,
+      ci: { 'feature:mfa': [{ repo: 'api', hasPR: true, url: 'https://x/1', state: 'opened' }] },
+      linkProviders: [],
+    } as never;
+    const links = world.linksFor(feature({ members: [{ repo: 'api' }] as never }));
+    const pr = links.find((l) => l.kind === 'pr');
+    expect(pr).toBeTruthy();
+    expect(pr!.empty).toBeFalsy();
+    expect(pr!.url).toBe('https://x/1');
+  });
+
+  it('still says "no MR" when there genuinely is none', () => {
+    world.view = { ...world.view, ci: {}, linkProviders: [] } as never;
+    const links = world.linksFor(feature({ members: [{ repo: 'api' }] as never }));
+    expect(links.find((l) => l.kind === 'pr')!.empty).toBe(true);
   });
 });
