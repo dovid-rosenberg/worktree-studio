@@ -1,0 +1,165 @@
+{
+  "mux": "tmux",
+  "config": {
+    "port": 7788,
+    "configFile": "/config.json",
+    "buildId": "fixture0build"
+  },
+  "runningTotal": 1,
+  "baseDirs": [
+    "/code"
+  ],
+  "editors": [
+    "WebStorm"
+  ],
+  "linkProviders": [],
+  "defaultEditor": "WebStorm",
+  "webRepos": [
+    "web"
+  ],
+  "runConfigs": {},
+  "sources": [],
+  "repos": [
+    {
+      "name": "api",
+      "repo": "api",
+      "path": "/code/api",
+      "defaultBranch": "develop",
+      "worktrees": [
+        {
+          "repo": "api",
+          "wtname": "invoice-payments",
+          "branch": "feature/invoice-payments",
+          "path": "/code/api/.worktrees/invoice-payments",
+          "isMain": false,
+          "detached": false,
+          "merged": false,
+          "baseBranch": "develop",
+          "baseDir": "/code",
+          "running": true,
+          "pid": 4242,
+          "ports": [
+            1231
+          ],
+          "canStart": true,
+          "session": null
+        },
+        {
+          "repo": "api",
+          "wtname": "stuck-deps",
+          "branch": "feature/stuck-deps",
+          "path": "/code/api/.worktrees/stuck-deps",
+          "isMain": false,
+          "detached": false,
+          "merged": false,
+          "baseBranch": "develop",
+          "baseDir": "/code",
+          "running": false,
+          "pid": null,
+          "ports": [],
+          "canStart": false,
+          "session": null,
+          "depsMissing": true
+        }
+      ]
+    },
+    {
+      "name": "web",
+      "repo": "web",
+      "path": "/code/web",
+      "defaultBranch": "main",
+      "worktrees": [
+        {
+          "repo": "web",
+          "wtname": "invoice-payments",
+          "branch": "feature/invoice-payments",
+          "path": "/code/web/.worktrees/invoice-payments",
+          "isMain": false,
+          "detached": false,
+          "merged": false,
+          "baseBranch": "develop",
+          "baseDir": "/code",
+          "running": false,
+          "pid": null,
+          "ports": [],
+          "canStart": true,
+          "session": null
+        }
+      ]
+    }
+  ],
+  "features": [
+    {
+      "name": "invoice-payments",
+      "auto": true,
+      "slot": 0,
+      "session": null,
+      "members": [
+        {
+          "repo": "api",
+          "wtname": "invoice-payments",
+          "branch": "feature/invoice-payments",
+          "path": "/code/api/.worktrees/invoice-payments",
+          "isMain": false,
+          "detached": false,
+          "merged": false,
+          "baseBranch": "develop",
+          "baseDir": "/code",
+          "running": true,
+          "pid": 4242,
+          "ports": [
+            1231
+          ],
+          "canStart": true,
+          "session": null
+        },
+        {
+          "repo": "web",
+          "wtname": "invoice-payments",
+          "branch": "feature/invoice-payments",
+          "path": "/code/web/.worktrees/invoice-payments",
+          "isMain": false,
+          "detached": false,
+          "merged": false,
+          "baseBranch": "develop",
+          "baseDir": "/code",
+          "running": false,
+          "pid": null,
+          "ports": [],
+          "canStart": true,
+          "session": null
+        }
+      ]
+    },
+    {
+      "name": "stuck-deps",
+      "auto": true,
+      "session": null,
+      "members": [
+        {
+          "repo": "api",
+          "wtname": "stuck-deps",
+          "branch": "feature/stuck-deps",
+          "path": "/code/api/.worktrees/stuck-deps",
+          "isMain": false,
+          "detached": false,
+          "merged": false,
+          "baseBranch": "develop",
+          "baseDir": "/code",
+          "running": false,
+          "pid": null,
+          "ports": [],
+          "canStart": false,
+          "session": null,
+          "depsMissing": true
+        }
+      ]
+    }
+  ],
+  "groups": [],
+  "splitFeatures": [],
+  "sessionRepoGaps": [],
+  "sessions": [],
+  "servers": {},
+  "runs": []
+}

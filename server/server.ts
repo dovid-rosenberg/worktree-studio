@@ -36,6 +36,7 @@ import * as webui from './webui.ts';
 import * as crash from './crash.ts';
 import { fire, expandTilde } from './util.ts';
 import * as configMod from './config.ts';
+import * as fixtures from './fixtures.ts';
 import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import { buildApp } from './app.ts';
 import type { ScannedRepo } from './git.ts';
@@ -151,17 +152,52 @@ async function main() {
 
   // The state payload lives in state.ts; both caches above are handed over as
   // getters because each is replaced (not mutated) on every refresh.
+  /*
+   * Fixtures mode, decided before anything scans.
+   *
+   * Read here rather than inside createState so the failure is a refusal to boot: a typo
+   * in the path must never leave the daemon running against the real fleet while the UI
+   * says nothing is real.
+   */
+  const fixturesFile = fixtures.fixturesFlag(process.argv);
+  const fixturePayload = fixturesFile === null ? null : fixtures.loadFixtures(fixturesFile);
+  if (fixturePayload && fixturesFile) {
+    console.log(`[wt-studio] ${fixtures.describe(fixturesFile, fixturePayload)}`);
+    console.log('[wt-studio] no scan, no watchers — mutating routes are refused');
+  }
+
+  const real = createState({
+    cfg,
+    manager,
+    servers,
+    mux,
+    identity,
+    repos: () => repos,
+    running: () => runningCache,
+    runs: () => runner.runs,
+  });
+
+  /*
+   * The one seam fixtures replace. Everything downstream — /state, the SSE topology
+   * frame, resolveGroup — reads through these, so the routes, the frames and the client
+   * stay the real ones and only the world is fake.
+   */
+  // Mounted on the API router below, before any route, so the refusal is structural
+  // rather than something each handler has to remember.
+  const mutationGuard = fixturePayload ? fixtures.refuseMutations() : null;
+
   const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } =
-    createState({
-      cfg,
-      manager,
-      servers,
-      mux,
-      identity,
-      repos: () => repos,
-      running: () => runningCache,
-      runs: () => runner.runs,
-    });
+    fixturePayload
+      ? {
+          ...real,
+          buildState: async () => ({
+            ...fixturePayload,
+            config: { ...fixturePayload.config, fixtures: true },
+          }),
+          topology: () =>
+            ({ ...fixturePayload, config: { ...fixturePayload.config, fixtures: true } }) as never,
+        }
+      : real;
 
   // ---- SSE live state ----
   // Two named event types with very different rates (see broadcast.ts).
@@ -284,6 +320,7 @@ async function main() {
 
   const app = buildApp({
     cfg,
+    mutationGuard,
     saveConfig: () => configMod.save(cfg),
     guard,
     ui,
@@ -383,24 +420,27 @@ async function main() {
     const reaped = reapLaunchScripts();
     if (reaped) console.log(`[wt-studio] reaped ${reaped} stale launch script(s)`);
   }
-  await watchMod.start({
-    cfg,
-    rescan,
-    refreshRunning,
-    reconcile: () => manager.reconcile(),
-    /*
-     * The pulled feeds get a heartbeat, which three of the four never had.
-     *
-     * ci.ts carried its own tick; reviews, ticket status and overlap were driven only by
-     * an SSE subscribe, a rescan and a commit. Leave one tab open and none of those fire
-     * again — so the review queue's five-minute TTL and ticket status's ten were
-     * decorative, and the data on screen could be hours stale while looking live. The
-     * scheduler here already knows whether anyone is watching, which is the thing that
-     * makes polling three subprocess-spawning feeds affordable.
-     */
-    feeds: { reviews: refreshReviews, taskStatus: refreshTaskStatus, overlap: refreshOverlap },
-    hasViewers: attention.active,
-  });
+  // Nothing to watch: the world is a file, and arming fs.watch on baseDirs would spawn
+  // git for a fleet this daemon is not serving.
+  if (!fixturePayload)
+    await watchMod.start({
+      cfg,
+      rescan,
+      refreshRunning,
+      reconcile: () => manager.reconcile(),
+      /*
+       * The pulled feeds get a heartbeat, which three of the four never had.
+       *
+       * ci.ts carried its own tick; reviews, ticket status and overlap were driven only by
+       * an SSE subscribe, a rescan and a commit. Leave one tab open and none of those fire
+       * again — so the review queue's five-minute TTL and ticket status's ten were
+       * decorative, and the data on screen could be hours stale while looking live. The
+       * scheduler here already knows whether anyone is watching, which is the thing that
+       * makes polling three subprocess-spawning feeds affordable.
+       */
+      feeds: { reviews: refreshReviews, taskStatus: refreshTaskStatus, overlap: refreshOverlap },
+      hasViewers: attention.active,
+    });
   // restore() guards each session on its own, so a rejection here means the whole
   // pass went down and NOTHING was relaunched. Discarding the error left that state
   // indistinguishable from "there were no sessions to restore", since the success

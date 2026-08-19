@@ -73,6 +73,15 @@ $effect(() => {
      404 from a button that looks simply broken — the same shape of failure as the tmux
      warning above, and worth the same banner. `role="alert"`: actions are already
      failing, so it is a stop rather than a status. -->
+<!-- A fixture fleet captured from a real one looks exactly like the real one. This is up
+     for the whole session, not dismissable, because the cost of forgetting is acting on
+     the wrong fleet. -->
+{#if world.fixtures}
+  <div class="streamwarn fixtures" role="status">
+    <strong>Fixture fleet.</strong> Nothing here is real, and mutating actions are refused.
+  </div>
+{/if}
+
 {#if world.buildSkew}
   <div class="streamwarn danger" role="alert">
     This page is newer than the daemon serving it, so some actions will fail until the
@@ -91,6 +100,7 @@ $effect(() => {
   /* The splitter is a real column, so the rail's width is the only thing that moves. */
   .main { flex:1; display:grid; grid-template-columns: var(--rail-w) auto 1fr; min-height:0; min-width:0; }
   .streamwarn { font-family:var(--mono); font-size:12px; color:var(--waiting); background:var(--waiting-bg); padding:5px 16px; flex:none; }
+  .streamwarn.fixtures { background:var(--working-bg); color:var(--ink); border-color:var(--working); }
   .streamwarn.danger { color:var(--del); background:var(--del-bg); }
   .streamwarn code { background:none; border:0; padding:0; }
 </style>

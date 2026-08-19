@@ -51,6 +51,31 @@ SwiftBar menubar reads the same `/api/state` (no more `core.sh`).
   any listening port, not only the configured ones, so a server started by hand outside
   Studio still shows up on its worktree's row.
 
+## Reviewing the UI without a fleet
+
+Two surfaces exist so the interface can be checked deterministically, offline, and
+without touching anything real.
+
+**Fixtures mode** serves a frozen fleet instead of scanning for one:
+
+```sh
+npm start -- --fixtures test/fixtures/fleet.json
+```
+
+No scan, no watchers, no `git`/`tmux`/`gh`, and every mutating route answers `409` —
+the banner says nothing is real, and that is enforced rather than promised. Capture your
+own fleet to replay later:
+
+```sh
+curl -s -H "x-wts-token: $(cat ~/.local/state/worktree-studio/token)" \
+  http://127.0.0.1:7788/api/v1/state > fleet.json
+```
+
+**`/gallery`** renders every state the action bar can take on one page, from the same
+fixture factory the component tests use (`client/src/lib/fixtures/`). Adding a state to
+`GALLERY_STATES` adds a gallery cell and a test case together, so the two cannot describe
+different apps.
+
 ## Requirements
 
 - macOS, Node ≥ 22, `git`, and **tmux** (`brew install tmux`).

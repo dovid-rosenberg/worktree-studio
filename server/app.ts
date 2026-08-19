@@ -79,6 +79,8 @@ const promoted = (r: SessionRepo): r is PromotedRepo => !!r.worktreePath;
  * happens when a commit lands. server.ts supplies them.
  */
 export interface AppDeps {
+  /** Present only in fixtures mode: middleware refusing every mutating request. */
+  mutationGuard?: unknown;
   cfg: Config;
   /** Persist cfg. Injected so no route module learns where config.json lives. */
   saveConfig: () => void;
@@ -126,6 +128,7 @@ export interface AppDeps {
 function buildApp(deps: AppDeps): express.Express {
   const {
     cfg,
+    mutationGuard,
     saveConfig,
     guard,
     ui,
@@ -234,6 +237,9 @@ function buildApp(deps: AppDeps): express.Express {
   // unversioned aliases SwiftBar, Alfred and the current web UI already call).
   // Feature modules register onto the same router — one line each, see below.
   const api = express.Router();
+  // In fixtures mode this refuses every write before any route sees it — structural,
+  // rather than something each of the ~47 handlers has to remember. See server/fixtures.ts.
+  if (mutationGuard) api.use(mutationGuard as never);
   app.use('/api', api);
   app.use('/api/v1', api);
 
