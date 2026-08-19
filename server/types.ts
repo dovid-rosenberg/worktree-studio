@@ -797,6 +797,14 @@ export interface StateConfigSummary {
    * and without it the symptom is a bare 404 from a route the process never registered.
    */
   buildId: string;
+  /**
+   * True when the daemon was started with `--fixtures`.
+   *
+   * The client shows a permanent banner on it. A fixture fleet built from a captured
+   * real one is otherwise indistinguishable from the real one, and acting on the wrong
+   * fleet is the failure this mode would introduce if it were quiet about itself.
+   */
+  fixtures?: boolean;
 }
 
 /** One intake source, as server/sources reports the enabled ones. */

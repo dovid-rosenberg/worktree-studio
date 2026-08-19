@@ -37,7 +37,14 @@ export default defineConfig({
           // `actions/` too: an action's DOM half needs a browser, but the pure helper it
           // is built on (moveItem) does not, and a test file that no project includes is
           // a test file that silently never runs.
-          include: ['src/lib/stores/**/*.test.ts', 'src/lib/actions/**/*.test.ts'],
+          include: [
+            'src/lib/stores/**/*.test.ts',
+            'src/lib/actions/**/*.test.ts',
+            // `fixtures/` too: the world factory is pure data and needs no DOM. It is
+            // also the exact trap the note above warns about — the file sat in a gap
+            // between both projects' patterns and ran nowhere. See coverage.test.ts.
+            'src/lib/fixtures/**/*.test.ts',
+          ],
         },
       },
       {

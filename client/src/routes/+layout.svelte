@@ -30,7 +30,16 @@ let { children } = $props();
 // <html>, so the toggle's first click always flips away from what the user is seeing.
 initTheme();
 
+/*
+ * /gallery is a static picture of fixture states, so a live stream would overwrite the
+ * world it installs on the very next frame. Route knowledge in the layout is not lovely,
+ * but the alternative — a second layout tree — duplicates every overlay mount below for
+ * one page that needs none of them.
+ */
+const isGallery = () => typeof location !== 'undefined' && location.pathname.startsWith('/gallery');
+
 $effect(() => {
+  if (isGallery()) return;
   notify.loadPrefs();
   // The frame is handed to the notifier BEFORE it is swapped into the store — a
   // transition can only be detected against the state that is still current.

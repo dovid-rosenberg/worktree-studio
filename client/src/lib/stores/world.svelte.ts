@@ -295,6 +295,11 @@ class World {
    * field reports nothing. Both are normal, and a banner that fires on them would be
    * trained away long before it was ever right.
    */
+  /** The daemon was started with --fixtures: nothing on screen is a real worktree. */
+  get fixtures(): boolean {
+    return this.view.config?.fixtures === true;
+  }
+
   get buildSkew(): boolean {
     return isBuildSkew(bundleBuildId(), this.view.config?.buildId || '');
   }
