@@ -40,6 +40,7 @@ import * as fixtures from './fixtures.ts';
 import tmux, { reapLaunchScripts } from './multiplexer/tmux.ts';
 import { buildApp } from './app.ts';
 import type { ScannedRepo } from './git.ts';
+import type { StatePayload } from './types.ts';
 import fs from 'fs';
 
 /** A thrown value's message. `catch` binds `unknown`, and not everything thrown is an Error. */
@@ -186,16 +187,51 @@ async function main() {
   // rather than something each handler has to remember.
   const mutationGuard = fixturePayload ? fixtures.refuseMutations() : null;
 
+  /*
+   * The fixture's config, with the two facts that belong to THIS daemon put back.
+   *
+   * A captured payload carries the buildId and port of the daemon it came from, and
+   * spreading it wholesale handed those to the skew check — so every fixtures session
+   * showed a permanent "this page is newer than the daemon" banner that was simply
+   * false. The fleet is fake; which build is serving it is not.
+   */
+  const fixtureConfig = (): StatePayload['config'] => ({
+    ...(fixturePayload?.config ?? {}),
+    configFile: fixturePayload?.config?.configFile ?? '',
+    port: cfg.web?.port ?? 0,
+    buildId: cfg._buildId || '',
+    fixtures: true,
+  });
+
   const { buildState, topology, sessionState, ciSubjects, prunePaths, resolveGroup, conflictsFor } =
     fixturePayload
       ? {
           ...real,
-          buildState: async () => ({
-            ...fixturePayload,
-            config: { ...fixturePayload.config, fixtures: true },
-          }),
-          topology: () =>
-            ({ ...fixturePayload, config: { ...fixturePayload.config, fixtures: true } }) as never,
+          buildState: async () => ({ ...fixturePayload, config: fixtureConfig() }),
+          topology: () => ({ ...fixturePayload, config: fixtureConfig() }) as never,
+          /*
+           * No CI subjects, so the forge is never asked anything.
+           *
+           * ciSubjects() closes over the REAL topology inside createState, so leaving it
+           * in the spread meant a fixtures daemon spawned `gh` against the worktrees of
+           * the actual fleet the moment a browser subscribed — quietly doing real work
+           * for a UI that says nothing on it is real. An empty subject list is the honest
+           * answer: a frozen fleet has no branches whose merge requests could move.
+           */
+          ciSubjects: () => [],
+          /*
+           * The session half comes from the fixture too.
+           *
+           * The client holds topology and sessions as two pristine halves and stitches
+           * them per frame, so a fixture that supplied only the topology had every
+           * embedded session stitched back to null — the fleet rendered, and every
+           * feature in it read "no session". Half a world is not a world.
+           */
+          sessionState: () =>
+            ({
+              sessions: fixturePayload.sessions ?? [],
+              servers: fixturePayload.servers ?? {},
+            }) as never,
         }
       : real;
 

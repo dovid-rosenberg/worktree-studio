@@ -49,3 +49,44 @@ describe('DockHead identity chips', () => {
     expect(screen.queryByTitle(/^Worktree —/)).toBeNull();
   });
 });
+
+/*
+ * The controls stay on the right edge, whatever else the header is carrying.
+ *
+ * The header is one flex row holding identity, merge-request chips, drift, repo chips
+ * with ports, and then the action bar. It used to wrap: add a fourth repo or a couple of
+ * MRs and the whole action bar dropped to a second line, so the buttons moved — and the
+ * bar grew taller — exactly when the feature was busiest. The verbs are the thing you
+ * aim at with a mouse, and a control that moves because a chip appeared is a control you
+ * have to find again.
+ *
+ * The structural fact that makes it work: everything informational lives inside a
+ * scroller, and the action bar is a SIBLING of that scroller, never inside it.
+ */
+describe('DockHead layout', () => {
+  it('keeps the action bar outside the scrolling half', () => {
+    const { container } = render(DockHead, { session: give('Docs casing') as never });
+    const info = container.querySelector('.headinfo');
+    const bar = container.querySelector('.actionbar');
+    expect(info, 'the informational half must be its own element to scroll').toBeTruthy();
+    expect(bar).toBeTruthy();
+    expect(info?.contains(bar as Node), 'the bar must not scroll away with the chips').toBe(false);
+  });
+
+  it('puts the action bar last in the row, after the scroller', () => {
+    const { container } = render(DockHead, { session: give('Docs casing') as never });
+    const row = container.querySelector('.headrow');
+    const kids = [...(row?.children ?? [])];
+    expect(kids.length).toBeGreaterThanOrEqual(2);
+    expect(kids[0]?.classList.contains('headinfo')).toBe(true);
+    expect(kids[kids.length - 1]?.querySelector('.actionbar') ?? kids[kids.length - 1]).toBeTruthy();
+  });
+
+  it('carries the chips inside the scroller, so they are what overflows', () => {
+    const { container } = render(DockHead, { session: give('Docs casing') as never });
+    const info = container.querySelector('.headinfo');
+    // The identity chips are the ones this file already renders unconditionally.
+    expect(info?.querySelector('.idchip.wt')).toBeTruthy();
+    expect(info?.querySelector('.idchip.br')).toBeTruthy();
+  });
+});
