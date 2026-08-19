@@ -87,10 +87,17 @@ function harness({
   const servers = {
     identity,
     featureFor: (p: string) => identity.ofPath(p),
-    allocSlotFor: (f: string) => {
+    allocSlotFor: async (f: string) => {
       calls.allocated.push(f);
       return allocError ? { error: allocError } : { slot: 0 };
     },
+    // Every slot free: these tests are about routing, not occupancy.
+    slotReport: async (_f: string, members: Array<{ repo: string; worktreePath: string }>) =>
+      [0, 1, 2].map((slot) => ({
+        slot,
+        state: 'free' as const,
+        ports: Object.fromEntries(members.map((m) => [m.repo, []])),
+      })),
     releaseSlot: (f: string) => {
       calls.released.push(f);
     },

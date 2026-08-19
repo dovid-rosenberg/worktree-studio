@@ -41,6 +41,7 @@ interface SettingsBody {
   editors?: unknown;
   defaultEditor?: unknown;
   groups?: unknown;
+  concurrency?: unknown;
 }
 
 interface SettingsDeps {
@@ -73,6 +74,12 @@ function register(api: Router, deps: SettingsDeps): void {
       groups: cfg.groups || [],
       // The MANUAL run configurations only; an editor's own are discovered per worktree.
       runConfigs: cfg.runConfigs || {},
+      // Only the two knobs the form edits. `repos` is a port map nobody should be able
+      // to rewrite through a settings round-trip.
+      concurrency: {
+        maxSlots: cfg.concurrency?.maxSlots ?? 1,
+        slotPolicy: cfg.concurrency?.slotPolicy ?? 'free-ports',
+      },
       enabled: sources.enabled(cfg),
       tools: { gh: has('gh'), glab: has('glab') },
       githubAuthed: gh.code === 0,
@@ -165,7 +172,22 @@ function register(api: Router, deps: SettingsDeps): void {
       defaultEditor,
       groups,
       runConfigs: runCfgs,
+      concurrency,
     } = body;
+    /*
+     * A MERGE of two known keys, not a replace.
+     *
+     * `concurrency.repos` is the port map that makes slots work at all, and it is not on
+     * this form. Assigning the posted object wholesale would drop it — the same way a
+     * one-key write through this route once deleted two repos' start commands.
+     */
+    if (isRecord(concurrency)) {
+      const max = Number(concurrency.maxSlots);
+      const policy = concurrency.slotPolicy;
+      cfg.concurrency = cfg.concurrency || { enabled: true, offsetStep: 100, maxSlots: 1, repos: {} };
+      if (Number.isInteger(max) && max >= 1 && max <= 16) cfg.concurrency.maxSlots = max;
+      if (policy === 'free-ports' || policy === 'lowest') cfg.concurrency.slotPolicy = policy;
+    }
     if (isRecord(srcs)) {
       cfg.sources = cfg.sources || {};
       for (const k of Object.keys(srcs)) {
@@ -227,6 +249,7 @@ function register(api: Router, deps: SettingsDeps): void {
       start: cfg.start,
       editors: cfg.editors,
       defaultEditor: cfg.defaultEditor,
+      concurrency: cfg.concurrency,
       groups: cfg.groups,
       enabled: sources.enabled(cfg),
     });

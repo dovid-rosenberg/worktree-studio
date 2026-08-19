@@ -202,6 +202,25 @@ export interface RepoConcurrency {
 }
 
 /**
+ * One slot's availability, judged FOR A SPECIFIC FEATURE.
+ *
+ * There is no global answer: a slot is usable or not depending on which repos are asking,
+ * because only the ports those repos derive get bound. `held` and `blocked` are kept
+ * apart because their remedies differ — stop the other feature, versus go deal with a
+ * process Studio does not manage.
+ */
+export interface SlotReport {
+  slot: number;
+  state: 'free' | 'held' | 'blocked' | 'current';
+  /** repo name → the ports that repo derives on this slot. Only concurrency-governed repos appear. */
+  ports: Record<string, number[]>;
+  /** Set when state === 'held': the feature holding it. */
+  heldBy?: string;
+  /** Set when state === 'blocked': the first bound port and its pid. */
+  blockedBy?: { port: number; pid: number };
+}
+
+/**
  * `concurrency.repos.<repo>.scheduler` — e.g.
  * `{ "env": "job_schedule", "slot": 0, "on": "true", "off": "false" }`.
  *
@@ -224,6 +243,14 @@ export interface ConcurrencyConfig {
   enabled: boolean;
   offsetStep: number;
   maxSlots: number;
+  /**
+   * How a slot is chosen when the caller does not name one.
+   *   'free-ports' — lowest slot whose ports are all unbound (default). Skips a slot that
+   *                  a process Studio does not track is sitting on, which is otherwise a
+   *                  launch that fails only after you have committed to it.
+   *   'lowest'     — lowest slot no feature holds, regardless of what is listening.
+   */
+  slotPolicy?: 'free-ports' | 'lowest';
   /** Ships EMPTY — the port map is one organisation's, not a default. */
   repos: Record<string, RepoConcurrency>;
 }

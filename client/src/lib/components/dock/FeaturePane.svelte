@@ -15,6 +15,8 @@ import type { Feature, Worktree } from '../../../../../server/types';
 import { api } from '$lib/api.js';
 import { liveMembers } from '$lib/stores/ui.svelte.js';
 import { errMessage } from '$lib/errmsg.js';
+import SlotMenu from '$lib/components/SlotMenu.svelte';
+import { moveSlot, moveSummary } from '$lib/ops.svelte.js';
 
 let { feature }: { feature: Feature } = $props();
 
@@ -79,8 +81,17 @@ const rollFor = (repo: string) => roll.find((r) => r.repo === repo) || null;
   <div class="head">
     <h2>{feature.name}</h2>
     {#if !feature.auto}<span class="src" title="Grouped by config.groups, not by shared name">manual</span>{/if}
+    <!--
+      The badge IS the control. The element that shows the slot is the element that
+      changes it, so moving a feature adds no new button anywhere in the UI.
+    -->
     {#if feature.slot != null}
-      <span class="badge slot" title="Concurrency slot — its ports are offset by slot·100">slot {feature.slot}</span>
+      <SlotMenu
+        feature={feature.name}
+        mode="move"
+        current={feature.slot}
+        onpick={(slot, report) => moveSlot(feature.name, slot, moveSummary({ members: ms }, report))}
+      />
     {/if}
   </div>
   <p class="sub">

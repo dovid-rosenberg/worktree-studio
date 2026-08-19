@@ -118,6 +118,9 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
       <!-- The ⌥ digit that selects this row — see .railcard .digit in app.css. -->
       {#if digit}<span class="digit" title="⌥{digit} selects this">⌥{digit}</span>{/if}
       {#if !feature.auto}<span class="src" title="Grouped by config.groups, not by name">manual</span>{/if}
+      <!-- A READOUT, not a control. This whole card is one <button>, so an interactive
+           slot badge here would be a button inside a button — invalid, and clicks on it
+           are not reliably delivered. Moving slot lives on the ActionBar. -->
       {#if feature.slot != null}
         <span class="badge slot" title="Concurrency slot — its ports are offset by slot·100">{feature.slot}</span>
       {/if}

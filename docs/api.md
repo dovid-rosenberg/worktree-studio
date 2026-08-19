@@ -1068,6 +1068,61 @@ of slots.
 The `needsConfirm` response above keeps `ok: true`: nothing failed, the server is
 asking a question. Clients must check `needsConfirm` before `ok`.
 
+### `GET /group/:name/slots`
+
+Every concurrency slot's availability **for this feature**, for the slot picker.
+
+There is no global answer. Only the ports this feature's member repos derive are
+checked, so the same slot can be usable for one feature and not another — a
+frontend-only feature is fine on a slot whose backend ports are taken, because it
+never binds them.
+
+```jsonc
+[
+  { "slot": 0, "state": "blocked", "ports": { "accept-blue": [1231, 1233] },
+    "blockedBy": { "port": 1231, "pid": 54549 } },
+  { "slot": 1, "state": "held", "ports": { "accept-blue": [1331, 1333] },
+    "heldBy": "iso-mfa-totp" },
+  { "slot": 2, "state": "free", "ports": { "accept-blue": [1431, 1433] } },
+  { "slot": 3, "state": "current", "ports": { "accept-blue": [1531, 1533] } }
+]
+```
+
+| `state` | Meaning |
+|---|---|
+| `free` | Nothing holds the slot and every port this feature needs is unbound — the only pickable state |
+| `held` | Another feature holds it; `heldBy` names it |
+| `blocked` | No feature holds it, but an untracked process is on one of the ports; `blockedBy` names port and pid. Studio never signals a process it did not start, so clearing it is the caller's job |
+| `current` | The slot this feature is already on |
+
+Read-only: allocates nothing. Uses the same port probe `POST /group/start`
+pre-checks with, so the picker and the launch cannot disagree. A feature with no
+members answers `[]`. `404 { error }` if the feature is unknown.
+
+### `POST /group/slot`
+
+Move a feature to another slot. `{ group, slot }`.
+
+Necessarily a restart — ports come from environment variables read at launch and
+the `configPatch` rewrite happens before spawn, so nothing changes ports in
+place. Only members that were **running** are restarted; a stopped one joins the
+new slot whenever it is next started.
+
+The target is verified **before anything is stopped**: a half-moved feature —
+backend on the new slot, frontend dead — is worse than not moving. Answers the
+same shape as `POST /group/start`.
+
+```jsonc
+{ "ok": true, "started": 2, "total": 2, "failures": [] }
+```
+
+`409 { ok: false, error }` when the target is `held` or `blocked`, naming the
+holder or the pid, with nothing stopped. The re-allocation after the stop is
+still the authority, so a slot taken during that window also answers `409` —
+with the feature down, which the client reports rather than dressing up.
+Moving to the slot the feature is already on is a no-op `{ ok: true, started: 0,
+total: 0 }`. `400` if `slot` is not a non-negative integer.
+
 ### `POST /group/stop`
 
 Stop every running member and release the feature's slot. `{ ok: true }`.

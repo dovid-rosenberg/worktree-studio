@@ -27,6 +27,7 @@
  */
 import RunConfigMenu from '$lib/components/RunConfigMenu.svelte';
 import OverflowMenu from '$lib/components/OverflowMenu.svelte';
+import SlotMenu from '$lib/components/SlotMenu.svelte';
 import { ui, liveMembers } from '$lib/stores/ui.svelte.js';
 // openApp stays for the MAIN-CHECKOUT server, which has no chip to click.
 // `world` for the drift feed: how far behind the base this feature is, and how much of
@@ -45,6 +46,8 @@ import {
   installDeps,
   openGroup,
   openSessionRepos,
+  moveSlot,
+  moveSummary,
   pending,
   prFeature,
   promote,
@@ -192,8 +195,28 @@ async function guard(fn: () => Promise<unknown>) {
             {#if anyRunning}
               <button class="btn sm ghost" title="Stop the dev servers" aria-label="Stop dev servers" onclick={() => stopStack(target.name)}>{'■'}</button>
               <button class="btn sm ghost" title="Restart the dev servers" aria-label="Restart dev servers" onclick={() => restartStack(target.name)}>{'↻'}</button>
+              <!--
+                Moving slot lives HERE, not on the rail card. The card is a pure readout by
+                design, and a running feature usually has a session — so its FeaturePane
+                never renders and a badge-only control would be unreachable exactly when
+                you want it.
+              -->
+              {#if target.slot != null}
+                <SlotMenu
+                  feature={target.name}
+                  mode="move"
+                  current={target.slot}
+                  onpick={(slot, report) => moveSlot(target.name, slot, moveSummary({ members: liveMembers(target) }, report))}
+                />
+              {/if}
             {:else if anyStartable}
-              <button class="btn sm primary" title="Start the dev servers" aria-label="Start dev servers" onclick={() => runStack(target.name)}>{'▶︎'}</button>
+              <!--
+                A split button. ▶ is unchanged — one click, default slot, no new decision
+                for the case that never cared. The caret is the whole opt-in: it says what
+                each slot would cost and which of them cannot work right now.
+              -->
+              <button class="btn sm primary split-go" title="Start the dev servers" aria-label="Start dev servers" onclick={() => runStack(target.name)}>{'▶︎'}</button>
+              <SlotMenu feature={target.name} mode="start" onpick={(slot) => runStack(target.name, slot)} />
             {/if}
           </span>
         {/if}

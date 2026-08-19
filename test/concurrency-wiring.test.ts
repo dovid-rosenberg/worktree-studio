@@ -54,56 +54,56 @@ function servers(concOverrides = {}) {
 // Slot registry: allocSlotFor / releaseSlot
 // ---------------------------------------------------------------------------
 
-test('allocSlotFor gives the first feature slot 0', () => {
+test('allocSlotFor gives the first feature slot 0', async () => {
   const s = servers();
-  assert.deepEqual(s.allocSlotFor('feat-a'), { slot: 0 });
+  assert.deepEqual(await s.allocSlotFor('feat-a'), { slot: 0 });
 });
 
-test('allocSlotFor gives a second, different feature slot 1', () => {
+test('allocSlotFor gives a second, different feature slot 1', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a');
-  assert.deepEqual(s.allocSlotFor('feat-b'), { slot: 1 });
+  await s.allocSlotFor('feat-a');
+  assert.deepEqual(await s.allocSlotFor('feat-b'), { slot: 1 });
 });
 
-test('allocSlotFor gives a third distinct feature slot 2', () => {
+test('allocSlotFor gives a third distinct feature slot 2', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a');
-  s.allocSlotFor('feat-b');
-  assert.deepEqual(s.allocSlotFor('feat-c'), { slot: 2 });
+  await s.allocSlotFor('feat-a');
+  await s.allocSlotFor('feat-b');
+  assert.deepEqual(await s.allocSlotFor('feat-c'), { slot: 2 });
 });
 
-test('allocSlotFor returns the same cached slot when a feature is asked twice', () => {
+test('allocSlotFor returns the same cached slot when a feature is asked twice', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a'); // 0
-  s.allocSlotFor('feat-b'); // 1
-  assert.deepEqual(s.allocSlotFor('feat-a'), { slot: 0 }, 'reuses the cached slot, does not re-allocate');
+  await s.allocSlotFor('feat-a'); // 0
+  await s.allocSlotFor('feat-b'); // 1
+  assert.deepEqual(await s.allocSlotFor('feat-a'), { slot: 0 }, 'reuses the cached slot, does not re-allocate');
   // feat-a asked again must NOT consume slot 2
-  assert.deepEqual(s.allocSlotFor('feat-c'), { slot: 2 });
+  assert.deepEqual(await s.allocSlotFor('feat-c'), { slot: 2 });
 });
 
-test('allocSlotFor returns an error shape when maxSlots (3) is exhausted', () => {
+test('allocSlotFor returns an error shape when maxSlots (3) is exhausted', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a'); // 0
-  s.allocSlotFor('feat-b'); // 1
-  s.allocSlotFor('feat-c'); // 2
-  const out = s.allocSlotFor('feat-d');
+  await s.allocSlotFor('feat-a'); // 0
+  await s.allocSlotFor('feat-b'); // 1
+  await s.allocSlotFor('feat-c'); // 2
+  const out = await s.allocSlotFor('feat-d');
   assert.equal(out.slot, undefined, 'no slot handed out');
   assert.match(present(out.error, 'a refusal'), /no free concurrency slot/);
 });
 
-test('releaseSlot frees the slot so a new feature reuses the lowest freed slot', () => {
+test('releaseSlot frees the slot so a new feature reuses the lowest freed slot', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a'); // 0
-  s.allocSlotFor('feat-b'); // 1
-  s.allocSlotFor('feat-c'); // 2
+  await s.allocSlotFor('feat-a'); // 0
+  await s.allocSlotFor('feat-b'); // 1
+  await s.allocSlotFor('feat-c'); // 2
   s.releaseSlot('feat-b'); // frees slot 1
-  assert.deepEqual(s.allocSlotFor('feat-new'), { slot: 1 }, 'reuses the lowest freed slot');
+  assert.deepEqual(await s.allocSlotFor('feat-new'), { slot: 1 }, 'reuses the lowest freed slot');
 });
 
-test('allocSlotFor returns slot 0 for any feature when concurrency is disabled', () => {
+test('allocSlotFor returns slot 0 for any feature when concurrency is disabled', async () => {
   const s = servers({ enabled: false });
-  assert.deepEqual(s.allocSlotFor('feat-a'), { slot: 0 });
-  assert.deepEqual(s.allocSlotFor('feat-b'), { slot: 0 }, 'no real allocation happens');
+  assert.deepEqual(await s.allocSlotFor('feat-a'), { slot: 0 });
+  assert.deepEqual(await s.allocSlotFor('feat-b'), { slot: 0 }, 'no real allocation happens');
   assert.equal(s.slots.size, 0, 'slot registry stays empty when disabled');
 });
 
@@ -111,14 +111,14 @@ test('allocSlotFor returns slot 0 for any feature when concurrency is disabled',
 // launchOpts(repo, feature)
 // ---------------------------------------------------------------------------
 
-test('launchOpts returns empty env/ports when concurrency is disabled', () => {
+test('launchOpts returns empty env/ports when concurrency is disabled', async () => {
   const s = servers({ enabled: false });
   assert.deepEqual(s.launchOpts('accept-blue', 'feat-a'), { env: {}, ports: [] });
 });
 
-test('launchOpts for accept-blue at slot 0 yields base ports and redis__db 0', () => {
+test('launchOpts for accept-blue at slot 0 yields base ports and redis__db 0', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a'); // slot 0
+  await s.allocSlotFor('feat-a'); // slot 0
   const opts = s.launchOpts('accept-blue', 'feat-a');
   assert.deepEqual(opts.env, {
     api__port_su: '1231',
@@ -132,11 +132,11 @@ test('launchOpts for accept-blue at slot 0 yields base ports and redis__db 0', (
   assert.equal(opts.patch, undefined, 'accept-blue itself has no configPatch');
 });
 
-test('launchOpts for accept-blue at slot 2 shifts every port +200 and sets redis__db 2', () => {
+test('launchOpts for accept-blue at slot 2 shifts every port +200 and sets redis__db 2', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a'); // 0
-  s.allocSlotFor('feat-b'); // 1
-  s.allocSlotFor('feat-c'); // 2
+  await s.allocSlotFor('feat-a'); // 0
+  await s.allocSlotFor('feat-b'); // 1
+  await s.allocSlotFor('feat-c'); // 2
   const opts = s.launchOpts('accept-blue', 'feat-c');
   assert.deepEqual(opts.env, {
     api__port_su: '1431',
@@ -149,16 +149,16 @@ test('launchOpts for accept-blue at slot 2 shifts every port +200 and sets redis
   assert.deepEqual(opts.ports, [1431, 1432, 1433, 1439, 2199]);
 });
 
-test('launchOpts returns empty env/ports for a repo not in concurrency.repos', () => {
+test('launchOpts returns empty env/ports for a repo not in concurrency.repos', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a');
+  await s.allocSlotFor('feat-a');
   assert.deepEqual(s.launchOpts('some-unconfigured-repo', 'feat-a'), { env: {}, ports: [] });
 });
 
-test('launchOpts for a repo with a configPatch returns a patch descriptor resolving the sibling ports and slot', () => {
+test('launchOpts for a repo with a configPatch returns a patch descriptor resolving the sibling ports and slot', async () => {
   const s = servers();
-  s.allocSlotFor('feat-a'); // 0
-  s.allocSlotFor('feat-b'); // 1
+  await s.allocSlotFor('feat-a'); // 0
+  await s.allocSlotFor('feat-b'); // 1
   const opts = s.launchOpts('merchant-v3', 'feat-b'); // slot 1
   const patch = present(opts.patch, 'a config patch');
   assert.equal(patch.file, 'src/config.ts');
@@ -191,7 +191,7 @@ const FE_CONFIG = [
   '',
 ].join('\n');
 
-test('applyConfigPatch at slot 2 rewrites every sibling localhost:port +200 and leaves other text untouched', () => {
+test('applyConfigPatch at slot 2 rewrites every sibling localhost:port +200 and leaves other text untouched', async () => {
   const s = servers();
   const { dir, file } = worktreeWithConfig('src/config.ts', FE_CONFIG);
   s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 });
@@ -207,14 +207,14 @@ test('applyConfigPatch at slot 2 rewrites every sibling localhost:port +200 and 
   assert.equal(fs.readFileSync(file, 'utf8'), expected);
 });
 
-test('applyConfigPatch at slot 0 leaves the file byte-for-byte unchanged', () => {
+test('applyConfigPatch at slot 0 leaves the file byte-for-byte unchanged', async () => {
   const s = servers();
   const { dir, file } = worktreeWithConfig('src/config.ts', FE_CONFIG);
   s.applyConfigPatch(dir, { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 0 });
   assert.equal(fs.readFileSync(file, 'utf8'), FE_CONFIG);
 });
 
-test('applyConfigPatch is idempotent (running the same patch twice yields the same result)', () => {
+test('applyConfigPatch is idempotent (running the same patch twice yields the same result)', async () => {
   const s = servers();
   const { dir, file } = worktreeWithConfig('src/config.ts', FE_CONFIG);
   const patch = { file: 'src/config.ts', siblingPortEnv: AB_PORT_ENV, slot: 2 };
@@ -224,7 +224,7 @@ test('applyConfigPatch is idempotent (running the same patch twice yields the sa
   assert.equal(fs.readFileSync(file, 'utf8'), once);
 });
 
-test('applyConfigPatch is a no-op (no throw) when the config file is absent', () => {
+test('applyConfigPatch is a no-op (no throw) when the config file is absent', async () => {
   const s = servers();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-wt-'));
   assert.doesNotThrow(() =>
@@ -233,7 +233,7 @@ test('applyConfigPatch is a no-op (no throw) when the config file is absent', ()
   assert.ok(!fs.existsSync(path.join(dir, 'src/config.ts')), 'no file was created');
 });
 
-test('applyConfigPatch is a no-op when the patch descriptor is missing a file', () => {
+test('applyConfigPatch is a no-op when the patch descriptor is missing a file', async () => {
   const s = servers();
   assert.doesNotThrow(() => s.applyConfigPatch('/nonexistent', null));
   // A descriptor with no `file` is the case under test, so it is cast in deliberately:
@@ -245,9 +245,9 @@ test('applyConfigPatch is a no-op when the patch descriptor is missing a file', 
 // Backward-compat: concurrency off == today's base ENV / base ports
 // ---------------------------------------------------------------------------
 
-test('with concurrency disabled, launchOpts for accept-blue returns empty env so start() uses base ENV/ports', () => {
+test('with concurrency disabled, launchOpts for accept-blue returns empty env so start() uses base ENV/ports', async () => {
   const s = servers({ enabled: false });
-  s.allocSlotFor('feat-a');
+  await s.allocSlotFor('feat-a');
   const opts = s.launchOpts('accept-blue', 'feat-a');
   assert.deepEqual(opts, { env: {}, ports: [] });
 });
@@ -266,29 +266,29 @@ function serversOn(stateDir: string, concOverrides: Partial<ConcurrencyConfig> =
   });
 }
 
-test('A1: slots survive a Studio restart (new Servers on the same stateDir restores them)', () => {
+test('A1: slots survive a Studio restart (new Servers on the same stateDir restores them)', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-persist-'));
   const s1 = serversOn(stateDir);
-  s1.allocSlotFor('feat-a'); // 0
-  s1.allocSlotFor('feat-b'); // 1
+  await s1.allocSlotFor('feat-a'); // 0
+  await s1.allocSlotFor('feat-b'); // 1
   const s2 = serversOn(stateDir); // simulate a restart
   assert.equal(s2.slots.get('feat-a'), 0);
   assert.equal(s2.slots.get('feat-b'), 1);
   assert.equal(s2.slots.size, 2);
 });
 
-test('A1: releaseSlot is durable (a restart sees the freed slot gone)', () => {
+test('A1: releaseSlot is durable (a restart sees the freed slot gone)', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-persist-'));
   const s1 = serversOn(stateDir);
-  s1.allocSlotFor('feat-a'); // 0
-  s1.allocSlotFor('feat-b'); // 1
+  await s1.allocSlotFor('feat-a'); // 0
+  await s1.allocSlotFor('feat-b'); // 1
   s1.releaseSlot('feat-a');
   const s2 = serversOn(stateDir);
   assert.equal(s2.slots.has('feat-a'), false);
   assert.equal(s2.slots.get('feat-b'), 1);
 });
 
-test('A1: an old flat servers.json (just a tracked object) still loads as tracked with empty slots', () => {
+test('A1: an old flat servers.json (just a tracked object) still loads as tracked with empty slots', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-oldfile-'));
   const flat = { '/some/worktree/path': { pid: 123, repo: 'accept-blue', log: '/x.log' } };
   fs.writeFileSync(path.join(stateDir, 'servers.json'), JSON.stringify(flat));
@@ -297,10 +297,10 @@ test('A1: an old flat servers.json (just a tracked object) still loads as tracke
   assert.equal(s.slots.size, 0, 'no slots in an old flat file');
 });
 
-test('A1: the persisted file uses the { tracked, slots } shape', () => {
+test('A1: the persisted file uses the { tracked, slots } shape', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-shape-'));
   const s = serversOn(stateDir);
-  s.allocSlotFor('feat-a');
+  await s.allocSlotFor('feat-a');
   const onDisk = JSON.parse(fs.readFileSync(path.join(stateDir, 'servers.json'), 'utf8'));
   assert.ok(onDisk.tracked && typeof onDisk.tracked === 'object', 'has a tracked object');
   assert.deepEqual(onDisk.slots, { 'feat-a': 0 }, 'has the slots map');
@@ -310,11 +310,11 @@ test('A1: the persisted file uses the { tracked, slots } shape', () => {
 // A1/A5 — reconcileSlots drops slots whose feature has no running worktree
 // ---------------------------------------------------------------------------
 
-test('A5: reconcileSlots keeps features that are running and drops the rest', () => {
+test('A5: reconcileSlots keeps features that are running and drops the rest', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-reconcile-'));
   const s = serversOn(stateDir);
-  s.allocSlotFor('feat-x'); // 0
-  s.allocSlotFor('feat-y'); // 1
+  await s.allocSlotFor('feat-x'); // 0
+  await s.allocSlotFor('feat-y'); // 1
   // feat-x has a running worktree; feat-y does not.
   const running = new Map([['/repo/.worktrees/feat-x', { pid: 1, ports: [1233] }]]);
   s.reconcileSlots(running);
@@ -326,10 +326,10 @@ test('A5: reconcileSlots keeps features that are running and drops the rest', ()
   assert.equal(s2.slots.has('feat-y'), false);
 });
 
-test('A5: reconcileSlots with nothing running clears every slot', () => {
+test('A5: reconcileSlots with nothing running clears every slot', async () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-reconcile-'));
   const s = serversOn(stateDir);
-  s.allocSlotFor('feat-x');
+  await s.allocSlotFor('feat-x');
   s.reconcileSlots(new Map());
   assert.equal(s.slots.size, 0);
 });
@@ -338,7 +338,7 @@ test('A5: reconcileSlots with nothing running clears every slot', () => {
 // A4 — start lock is per-worktree, not per-repo
 // ---------------------------------------------------------------------------
 
-test('A4: two different worktrees of the same repo both acquire their locks', () => {
+test('A4: two different worktrees of the same repo both acquire their locks', async () => {
   const s = servers();
   const pathA = '/repo/.worktrees/feat-a';
   const pathB = '/repo/.worktrees/feat-b';
@@ -351,7 +351,7 @@ test('A4: two different worktrees of the same repo both acquire their locks', ()
   s._unlock(lockB);
 });
 
-test('A4: a second lock on the SAME worktree fails until released', () => {
+test('A4: a second lock on the SAME worktree fails until released', async () => {
   const s = servers();
   const p = '/repo/.worktrees/feat-a';
   const first = s._lock(p);
@@ -387,12 +387,12 @@ const SHIPPED = {
   repos: { 'accept-blue': { portEnv: { ...AB_PORT_ENV }, slotEnv: ['redis__db'] } },
 };
 
-test('A8: the shipped config (step 100, maxSlots 3) produces no warnings', () => {
+test('A8: the shipped config (step 100, maxSlots 3) produces no warnings', async () => {
   const msgs = captureWarn(() => validateConcurrency({ concurrency: SHIPPED }));
   assert.deepEqual(msgs, []);
 });
 
-test('A8: maxSlots 17 is flagged (exceeds the redis DB index limit)', () => {
+test('A8: maxSlots 17 is flagged (exceeds the redis DB index limit)', async () => {
   const msgs = captureWarn(() => validateConcurrency({ concurrency: { ...SHIPPED, maxSlots: 17 } }));
   assert.ok(
     msgs.some((m) => /maxSlots=17/.test(m)),
@@ -400,7 +400,7 @@ test('A8: maxSlots 17 is flagged (exceeds the redis DB index limit)', () => {
   );
 });
 
-test('A8: a colliding offsetStep (step 1) is flagged for the accept-blue port family', () => {
+test('A8: a colliding offsetStep (step 1) is flagged for the accept-blue port family', async () => {
   const msgs = captureWarn(() => validateConcurrency({ concurrency: { ...SHIPPED, offsetStep: 1 } }));
   assert.ok(
     msgs.some((m) => /collide/.test(m)),
@@ -408,7 +408,7 @@ test('A8: a colliding offsetStep (step 1) is flagged for the accept-blue port fa
   );
 });
 
-test('A8: a disabled concurrency block is never validated', () => {
+test('A8: a disabled concurrency block is never validated', async () => {
   const msgs = captureWarn(() =>
     validateConcurrency({ concurrency: { ...SHIPPED, enabled: false, maxSlots: 99 } }),
   );
@@ -425,7 +425,7 @@ test('orphan cleanup: stop() drops the tracked entry and releaseSlot frees the f
   s.alive = () => false; // don't signal a made-up pid
   const wt = '/repo/.worktrees/feat-a';
   s.tracked[wt] = { pid: 999999, repo: 'accept-blue', log: '/x.log' };
-  s.allocSlotFor(featureFromPath(wt));
+  await s.allocSlotFor(featureFromPath(wt));
   assert.equal(s.slots.has('feat-a'), true, 'slot allocated for the feature');
 
   const r = await s.stop('accept-blue', wt);
@@ -459,7 +459,7 @@ test('stop() sweeps the ports a drifted server is actually on, not only its slot
     probed.push(p);
     return null;
   };
-  s.allocSlotFor('feat-a'); // slot 0 → 1231…1999
+  await s.allocSlotFor('feat-a'); // slot 0 → 1231…1999
   // What discovery saw: slot 2's ports, held by a server whose cwd is this worktree.
   await s.stop('accept-blue', '/repo/.worktrees/feat-a', [1431, 1439]);
   assert.ok(probed.includes(1439), 'the port it drifted onto is swept');
@@ -474,7 +474,7 @@ test('drifted ports are swept once, even when they overlap the slot', async () =
     probed.push(p);
     return null;
   };
-  s.allocSlotFor('feat-a');
+  await s.allocSlotFor('feat-a');
   // A server on SOME of its slot ports and one stray: the overlap must not double-probe,
   // because each probe is an lsof and the sweep runs on every stop.
   await s.stop('accept-blue', '/repo/.worktrees/feat-a', [1231, 1239, 4000]);
@@ -491,7 +491,7 @@ test("stop() targets only the worktree's known ports (no full discovery scan)", 
     return null;
   };
   // accept-blue at slot 0 → its base port family
-  s.allocSlotFor('feat-a');
+  await s.allocSlotFor('feat-a');
   await s.stop('accept-blue', '/repo/.worktrees/feat-a');
   assert.deepEqual(
     probed.sort((a, b) => a - b),
@@ -603,7 +603,7 @@ test('a pid ps cannot stamp is re-resolved every scan rather than trusted', asyn
 });
 
 // isSlotted — drives the "no stop & switch conflict" behavior for concurrency repos
-test('isSlotted is true only for a configured repo while concurrency is enabled', () => {
+test('isSlotted is true only for a configured repo while concurrency is enabled', async () => {
   const s = servers();
   assert.equal(s.isSlotted('accept-blue'), true, 'configured repo');
   assert.equal(s.isSlotted('some-other-repo'), false, 'repo with no concurrency config');
@@ -628,7 +628,7 @@ import net from 'net';
 function freePort(): Promise<number> {
   return new Promise<number>((resolve) => {
     const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
+    srv.listen(0, '127.0.0.1', async () => {
       const { port } = srv.address() as import('net').AddressInfo;
       srv.close(() => resolve(port));
     });
@@ -663,7 +663,7 @@ test('a slot is not reclaimable while its feature is still starting', { timeout:
   const { s, wt, repo } = slowStarting(port, 1800);
   const feature = s.featureFor(wt);
   assert.equal(feature, 'feat-slow');
-  assert.deepEqual(s.allocSlotFor(feature), { slot: 0 });
+  assert.deepEqual(await s.allocSlotFor(feature), { slot: 0 });
 
   const launching = s.start('api', wt, { ports: [port] });
   try {
@@ -676,7 +676,7 @@ test('a slot is not reclaimable while its feature is still starting', { timeout:
     assert.equal(s.slots.has(feature), true, 'the slot survived a sweep taken mid-launch');
     assert.equal(s.slots.get(feature), 0);
     // and the consequence that made this a port collision: the slot was handed out again
-    assert.deepEqual(s.allocSlotFor('feat-other'), { slot: 1 }, 'no other feature was given the same slot');
+    assert.deepEqual(await s.allocSlotFor('feat-other'), { slot: 1 }, 'no other feature was given the same slot');
     assert.equal(s.isStarting(feature), true, 'the launch is still in flight');
 
     expectOk(await launching, 'start()');
@@ -699,7 +699,7 @@ test('a restart holds the guard across the stop/settle gap, not just the start',
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-race-restart-'));
   const s = new Servers({ _stateDir: stateDir, web: { port: 0 }, start: {}, concurrency: concurrency() });
   const wt = '/repo/.worktrees/feat-r';
-  s.allocSlotFor(s.featureFor(wt));
+  await s.allocSlotFor(s.featureFor(wt));
 
   const restarting = s.restart('api', wt); // no start config for 'api' → start() returns an error
   await new Promise((r) => setTimeout(r, 300)); // inside the 800 ms settle

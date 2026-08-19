@@ -197,7 +197,9 @@ function harness(members: Member[], repoPaths: Array<{ name: string; path: strin
     cfg: { editors: {}, defaultEditor: '' },
     servers: {
       featureFor: (p: string) => p,
-      allocSlotFor: () => ({ slot: 0 }),
+      allocSlotFor: async () => ({ slot: 0 }),
+      // Every slot free: this suite is about rebasing, not occupancy.
+      slotReport: async () => [{ slot: 0, state: 'current' as const, ports: {} }],
       releaseSlotIfIdle: () => true,
       releaseSlot: () => {},
       launchOpts: () => ({}),
