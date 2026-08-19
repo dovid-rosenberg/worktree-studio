@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STALE_AFTER_MS, quietFor, quietLabel, stitchSessions, webAppsFor, world } from './world.svelte.js';
 import { ciSubjectKey } from '../../../../server/types';
+import { bundleBuildId, isBuildSkew } from '$lib/api.js';
 import type { Feature, Repo, Session } from '../../../../server/types';
 
 /*
@@ -254,5 +255,49 @@ describe('linksFor on a feature with no session', () => {
     world.view = { ...world.view, ci: {}, linkProviders: [] } as never;
     const links = world.linksFor(feature({ members: [{ repo: 'api' }] as never }));
     expect(links.find((l) => l.kind === 'pr')!.empty).toBe(true);
+  });
+});
+
+/*
+ * Build skew — the frontend rebuilt under a running daemon.
+ *
+ * The rule lives in api.ts as a pure function, and this is where it is pinned. The store
+ * getter that calls it is one line reading two fields; asserting it here instead would be
+ * asserting Svelte's reactivity, which is not what can be got wrong.
+ */
+describe('isBuildSkew', () => {
+  it('is false when the two agree', () => {
+    expect(isBuildSkew('abc123abc123', 'abc123abc123')).toBe(false);
+  });
+
+  it('is true when the bundle is newer than the daemon', () => {
+    expect(isBuildSkew('deadbeefdead', 'abc123abc123')).toBe(true);
+  });
+
+  it('stays false when either side is unknown, rather than crying wolf', () => {
+    expect(isBuildSkew('', 'abc123abc123')).toBe(false);
+    expect(isBuildSkew('abc123abc123', '')).toBe(false);
+    expect(isBuildSkew('', '')).toBe(false);
+  });
+});
+
+describe('bundleBuildId', () => {
+  const set = (v: string | undefined) => {
+    (globalThis as unknown as { WTS_BUILD?: string }).WTS_BUILD = v;
+  };
+
+  it('reads the injected id', () => {
+    set('abc123abc123');
+    expect(bundleBuildId()).toBe('abc123abc123');
+  });
+
+  it('treats an unsubstituted placeholder as unknown (dev, served by vite)', () => {
+    set('__WTS_BUILD__');
+    expect(bundleBuildId()).toBe('');
+  });
+
+  it('treats an absent global as unknown', () => {
+    set(undefined);
+    expect(bundleBuildId()).toBe('');
   });
 });

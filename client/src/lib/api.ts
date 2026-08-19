@@ -54,6 +54,36 @@ export const TOKEN: string = (() => {
   return String(import.meta.env.VITE_WTS_TOKEN || '');
 })();
 
+/**
+ * The id of THIS bundle, injected into `app.html` by the same substitution as the token.
+ *
+ * Read on each call rather than captured at module load: it is a getter's worth of work,
+ * and a captured value cannot be exercised by a test that sets the global.
+ *
+ * Empty when the placeholder was never substituted — dev, where vite serves the document
+ * and there is no daemon in front of it to inject anything. Empty means "unknown", and an
+ * unknown never reports skew: crying wolf in dev would train the banner to be ignored.
+ */
+export function bundleBuildId(): string {
+  // globalThis rather than window: identical in a browser, and it is what lets this be
+  // exercised without a DOM. The token above predates that and is left alone.
+  const injected = (globalThis as unknown as { WTS_BUILD?: string }).WTS_BUILD;
+  if (injected && !/^__WTS_BUILD/.test(injected)) return String(injected);
+  return '';
+}
+
+/**
+ * Do the bundle and the daemon disagree about which build they are?
+ *
+ * Pure, and separate from the store getter that calls it, because this is the whole rule
+ * and a rule worth testing exhaustively: an unknown on EITHER side is not a skew. Dev has
+ * no injector, and a daemon older than the field reports nothing — both are normal, and a
+ * banner that fired on them would be trained away long before it was ever right.
+ */
+export function isBuildSkew(bundle: string, daemon: string): boolean {
+  return !!bundle && !!daemon && bundle !== daemon;
+}
+
 /** `?token=…` / `&token=…` for EventSource and WebSocket URLs. */
 export const tokenQuery = (sep: '?' | '&'): string =>
   TOKEN ? `${sep}token=${encodeURIComponent(TOKEN)}` : '';

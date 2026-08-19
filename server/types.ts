@@ -368,6 +368,13 @@ export interface Config {
    * use. Hand-built configs are typed `PartialDeep<Config>`, which is unaffected.
    */
   _token: string;
+  /**
+   * The frontend bundle id captured at boot — see webui.buildId().
+   *
+   * On the config because that is what state.ts is handed; it is set once in app.ts
+   * where the mount happens, alongside the same value the document injector reports.
+   */
+  _buildId?: string;
 }
 
 // ---- sessions ---------------------------------------------------------------
@@ -775,12 +782,21 @@ export interface ResolvedFeature extends Omit<Feature, 'members'> {
 }
 
 /**
- * The two config values the payload carries. NOT the config file — that is
+ * The config values the payload carries. NOT the config file — that is
  * `GET /settings`. `configFile` is the absolute path of the file that was loaded.
  */
 export interface StateConfigSummary {
   port: number;
   configFile: string;
+  /**
+   * The frontend bundle this daemon BOOTED with — see webui.buildId().
+   *
+   * The served document carries the id of the bundle on disk right now, so a client
+   * comparing the two learns whether the frontend was rebuilt under a running daemon.
+   * That is the difference between "this feature is broken" and "restart the daemon",
+   * and without it the symptom is a bare 404 from a route the process never registered.
+   */
+  buildId: string;
 }
 
 /** One intake source, as server/sources reports the enabled ones. */

@@ -26,6 +26,10 @@
          anywhere else, comments included. Dev has no daemon in front of it and gets the
          token from Vite instead (see api.js). -->
     <script>window.WTS_TOKEN = "__WTS_TOKEN__";</script>
+    <!-- The id of THIS bundle, substituted by the same injector. The client compares it
+         against the one GET /state reports (the bundle the daemon booted with); a
+         difference means the frontend was rebuilt under a running daemon. -->
+    <script>window.WTS_BUILD = "__WTS_BUILD__";</script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

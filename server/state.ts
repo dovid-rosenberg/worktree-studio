@@ -240,7 +240,7 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
     };
     return {
       mux: mux ? mux.name : 'none',
-      config: { port: cfg.web?.port ?? 0, configFile: cfg._file || '' },
+      config: { port: cfg.web?.port ?? 0, configFile: cfg._file || '', buildId: cfg._buildId || '' },
       runningTotal: flat.filter((w) => w.running).length,
       baseDirs: cfg.baseDirs || [],
       editors: Object.keys(cfg.editors || {}),

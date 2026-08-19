@@ -40,7 +40,7 @@
  * public/app.js, which is the implementation that gets it right.
  */
 
-import { tokenQuery } from '$lib/api.js';
+import { bundleBuildId, isBuildSkew, tokenQuery } from '$lib/api.js';
 // The server's own assembler, imported rather than re-implemented: the ordering, the
 // empty-chip rule and the label derivation must be one answer, not two. `Link` lives
 // there too — it is the shape of an ASSEMBLED link, which is no longer a wire type now
@@ -281,6 +281,22 @@ class World {
   }
   get taskStatus(): Record<string, { label: string; done: boolean }> {
     return this.view.taskStatus || {};
+  }
+
+  /**
+   * The frontend was rebuilt while this daemon kept running.
+   *
+   * `bundleBuildId()` is what the browser is executing; `config.buildId` is what the
+   * daemon booted with. They differ only when client/build changed under a live process —
+   * and then this JS can call routes that process never registered, which surfaces as a
+   * bare Express 404 with nothing on screen connecting it to the cause.
+   *
+   * Either side unknown means no claim: dev has no injector, and a daemon older than this
+   * field reports nothing. Both are normal, and a banner that fires on them would be
+   * trained away long before it was ever right.
+   */
+  get buildSkew(): boolean {
+    return isBuildSkew(bundleBuildId(), this.view.config?.buildId || '');
   }
 
   linksFor(feature: Feature | null): Link[] {
