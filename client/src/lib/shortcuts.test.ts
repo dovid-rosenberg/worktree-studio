@@ -223,12 +223,21 @@ describe('⌘⇧F opens transcript search', () => {
     expect(overlays.search).toBe(false);
   });
 
-  it('Escape closes it, and closes it BEFORE settings', () => {
+  /*
+   * This used to assert the opposite — that Escape closed search even with settings
+   * opened on top of it — because the dismissal order was hardcoded as palette, search,
+   * settings, intake regardless of what happened. Escape now closes whatever is actually
+   * on top, so the surface you are looking at is the one that goes. See overlays.test.ts.
+   */
+  it('Escape closes whichever of the two was opened last', () => {
     overlays.openSearch();
     overlays.openSettings();
     press('Escape');
+    expect(overlays.settings, 'settings was opened on top, so settings closes').toBe(false);
+    expect(overlays.search, 'search is underneath and survives').toBe(true);
+
+    press('Escape');
     expect(overlays.search).toBe(false);
-    expect(overlays.settings).toBe(true);
-    overlays.closeSettings();
+    expect(overlays.any).toBe(false);
   });
 });

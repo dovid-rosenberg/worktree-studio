@@ -114,6 +114,16 @@ const webPorts = $derived(
 const webPort = (repo: string, ports: number[]): number | null =>
   ports.length ? (webPorts.get(repo) ?? null) : null;
 const showWtname = $derived(!!wtname && wtname !== session.title.trim());
+/*
+ * The branch, shown beside the worktree for the same reason the worktree is shown at all.
+ *
+ * A renamed session has three names — the title you gave it, the directory that holds it,
+ * and the ref you are committing to — and only the first is what you typed. Unlabelled,
+ * the worktree chip reads as a stale title rather than as a different fact; that is the
+ * question the rename raises and this is where it gets answered.
+ */
+const branch = $derived(session.branch || '');
+const showBranch = $derived(!!branch && branch !== wtname);
 
 /** Before promote there is one implicit chip for the primary repo. */
 const repoChips = $derived(
@@ -133,7 +143,16 @@ const repoChips = $derived(
          whole point is that you are told without going to check. -->
     <span class="conn {conn.tone}" role="status" aria-live="polite">{conn.text}</span>
   {/if}
-  {#if showWtname}<span class="wtname" title="The worktree name — what groups these repos">{wtname}</span>{/if}
+  {#if showWtname}
+    <span class="idchip wt" title="Worktree — the directory these repos live in, and what groups them">
+      <span class="g" aria-hidden="true">⌂</span>{wtname}
+    </span>
+  {/if}
+  {#if showBranch}
+    <span class="idchip br" title="Branch — the ref your commits land on">
+      <span class="g" aria-hidden="true">⑂</span>{branch}
+    </span>
+  {/if}
   {#if session.sourceUrl}
     <a class="link" href={session.sourceUrl} target="_blank" rel="noreferrer">{labelForSource(session)}</a>
   {:else}
@@ -261,6 +280,14 @@ const repoChips = $derived(
   .dock-head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border);
                background:var(--fc-wash, var(--panel)); box-shadow:inset 4px 0 0 var(--fc, transparent);
                flex:none; flex-wrap:wrap; }
+  .idchip {
+    display:inline-flex; align-items:center; gap:4px;
+    font-family:var(--mono); font-size:11px; padding:2px 7px; border-radius:999px;
+    max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .idchip .g { opacity:.85; font-size:10.5px; }
+  .idchip.wt { color:var(--working); background:var(--working-bg); }
+  .idchip.br { color:var(--done); background:var(--done-bg); }
   .wtname { font-family:var(--mono); font-size:11.5px; color:var(--faint); overflow:hidden;
             text-overflow:ellipsis; white-space:nowrap; max-width:220px; }
   .dock-title { font-weight:650; font-size:16px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
