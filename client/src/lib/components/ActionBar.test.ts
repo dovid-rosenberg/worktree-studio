@@ -47,59 +47,27 @@ vi.mock('$lib/components/RunConfigMenu.svelte', () => ({ default: runMenu as nev
 const { default: ActionBar } = await import('./ActionBar.svelte');
 const { ui } = await import('$lib/stores/ui.svelte.js');
 const { world } = await import('$lib/stores/world.svelte.js');
+const fx = await import('$lib/fixtures/world.js');
 
-const member = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo,
-  wtname: 'wt',
-  path: `/${repo}/wt`,
-  branch: 'feature/x',
-  running: false,
-  canStart: true,
-  ports: [],
-  isMain: false,
-  session: null,
-  ...over,
-});
+/*
+ * Fixtures come from $lib/fixtures/world — one typed factory shared with every other
+ * component test and with /gallery. These four builders used to live here, untyped
+ * behind `as never`, which is how a fixture drifts from the wire without anything
+ * failing. Overrides below are the differences this file actually cares about.
+ */
+const member = (repo: string, over: Record<string, unknown> = {}) =>
+  fx.member({ repo, wtname: 'wt', branch: 'feature/x', ...over } as never);
 
-const feature = (over: Record<string, unknown> = {}): Feature =>
-  ({
-    name: 'token-race-fix',
-    auto: true,
-    members: [member('accept-blue')],
-    session: null,
-    ...over,
-  }) as unknown as Feature;
+const feature = (over: Record<string, unknown> = {}) => fx.feature(over as never);
 
-/** One entry of a session's `repos` — the worktrees the agent can actually write to. */
-const sessionRepo = (repo: string, over: Record<string, unknown> = {}) => ({
-  repo,
-  repoPath: `/${repo}`,
-  worktree: 'wt',
-  worktreePath: `/${repo}/wt`,
-  branch: 'fix/x',
-  ...over,
-});
+const sessionRepo = (repo: string, over: Record<string, unknown> = {}) =>
+  fx.sessionRepo({ repo, worktree: 'wt', worktreePath: `/${repo}/wt`, branch: 'fix/x', ...over } as never);
 
-// `repos` is always present on the wire (server/types.ts declares it required), so the
-// fixture carries it: the bar reads it to decide how many worktrees "Open in editor"
-// has to open, and a fixture without it tests a session shape the server never sends.
-const session = (over: Record<string, unknown> = {}): Session =>
-  ({
-    id: 's1',
-    title: 'token-race-fix',
-    state: 'working',
-    repoName: 'accept-blue',
-    worktreePath: '/wt',
-    branch: 'fix/x',
-    feature: 'token-race-fix',
-    active: true,
-    repos: [sessionRepo('accept-blue', { primary: true })],
-    ...over,
-  }) as unknown as Session;
+const session = (over: Record<string, unknown> = {}) =>
+  fx.session({ id: 's1', title: 'token-race-fix', feature: 'token-race-fix', ...over } as never);
 
 function give(features: Feature[], sessions: Session[]) {
-  world.topology = { features, groups: [], repos: [], webRepos: [] } as never;
-  world.sessionHalf = { sessions, servers: {} } as never;
+  fx.install(world, fx.makeWorld({ features, sessions, topology: { repos: [], webRepos: [] } as never }));
 }
 
 beforeEach(() => {
