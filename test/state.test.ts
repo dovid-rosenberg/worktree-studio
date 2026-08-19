@@ -7,6 +7,7 @@ import assert from 'node:assert';
 import { createState } from '../server/state.ts';
 import type { StateDeps, StateManager, StateRepo, StateServers } from '../server/state.ts';
 import type { RunningServer } from '../server/servers.ts';
+import { ciSubjectKey } from '../server/types.ts';
 import type { Config, PartialDeep, Session, Worktree } from '../server/types.ts';
 import { muxStub, present, session, sessionRepo } from './helpers.ts';
 
@@ -743,4 +744,43 @@ test('a session with no worktree yet still gets a subject, with nothing to look 
     'the new session',
   );
   assert.deepEqual(subject.repos, []);
+});
+
+/*
+ * A feature with no session at all.
+ *
+ * `ciSubjects()` seeded from `manager.all()` and then expanded each SESSION's feature,
+ * skipping any feature whose `session` was null. A worktree made with `wt`, or one whose
+ * session was closed, therefore never entered the sweep — so its merge request was never
+ * looked up and its chip stayed "no MR" forever, with no refresh that could fix it. The
+ * feature is real, on disk, and has a branch; nothing about it needs an agent.
+ */
+test('the CI sweep covers a feature that has no session', () => {
+  const { state } = build({
+    repos: twoRepoFeature(),
+    manager: fakeManager([], {}),
+  });
+
+  const feature = present(
+    state.topology().features.find((f) => f.name === 'mfa'),
+    'the mfa feature',
+  );
+  assert.equal(feature.session, null, 'this feature is driven by no session');
+
+  const subject = present(
+    state.ciSubjects().find((x) => x.id === ciSubjectKey({ name: 'mfa', session: null })),
+    'a CI subject for the sessionless mfa feature',
+  );
+  assert.deepEqual(
+    (subject.repos || []).map((r) => `${r.repo}:${r.branch}`).sort(),
+    ['api:feature/api-mfa', 'web:feature/web-mfa'],
+    'both worktrees have branches, so both merge requests must be looked up',
+  );
+});
+
+test('a sessionless feature does not collide with a session id', () => {
+  const { state } = build({ repos: twoRepoFeature(), manager: fakeManager([], {}) });
+  const key = ciSubjectKey({ name: 'mfa', session: null });
+  assert.notEqual(key, 'mfa', 'a bare feature name could collide with a session id');
+  assert.ok(state.ciSubjects().some((x) => x.id === key));
 });

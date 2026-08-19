@@ -34,6 +34,7 @@ import type {
   TopologyPayload,
   Worktree,
 } from './types.ts';
+import { ciSubjectKey } from './types.ts';
 
 // The collaborators are typed by the surface this file touches, not by the concrete
 // classes server.ts hands over — the same rule server/orchestrator.ts and
@@ -370,8 +371,16 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       out.set(s.id, { id: s.id, repos: [...(s.repos || [])] });
     }
     for (const f of [...t.features, ...t.groups]) {
-      const sid = f.session?.id;
-      if (!sid) continue;
+      /*
+       * Sessionless features are swept too.
+       *
+       * This used to `continue` when `f.session` was null, which meant a feature made
+       * with `wt`, or one whose session had been closed, never entered the sweep at all:
+       * its merge request was never looked up, its chip read "no MR" forever, and no
+       * refresh could change that because nothing was ever asking. A feature on disk with
+       * a branch has a merge request to find whether or not an agent is driving it.
+       */
+      const sid = ciSubjectKey(f);
       const row = out.get(sid) || { id: sid, repos: [] };
       const seen = new Set(row.repos.map((r) => r.worktreePath).filter(Boolean));
       for (const m of f.members || []) {

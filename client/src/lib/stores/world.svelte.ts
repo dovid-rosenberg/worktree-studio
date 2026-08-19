@@ -79,6 +79,7 @@ import type {
   Worktree,
   SessionRepoGap,
 } from '../../../../server/types';
+import { ciSubjectKey } from '../../../../server/types';
 
 /** The two halves as received, plus the CI half, all optional before first frame. */
 export type WorldFrames = Partial<TopologyPayload> & Partial<SessionStatePayload> & Partial<CiPayload>;
@@ -285,10 +286,16 @@ class World {
   linksFor(feature: Feature | null): Link[] {
     if (!feature) return [];
     const sessionId = feature.session?.id || '';
+    /*
+     * The CI answers are keyed by SUBJECT, not by session — `feature:<name>` when the
+     * feature has no session. This used to read `ci[sessionId]` behind a `sessionId ?`
+     * guard, so a feature with no agent asked for nothing and every one of its repos
+     * rendered "no MR" regardless of what was actually open on the forge.
+     */
     return assemble({
       ticketUrl: feature.ticket,
       session: sessionId ? this.session(sessionId) : null,
-      ci: sessionId ? this.view.ci[sessionId] || [] : [],
+      ci: this.view.ci[ciSubjectKey(feature)] || [],
       repos: (feature.members || [])
         .map((m) => (m && 'repo' in m ? m.repo : ''))
         .filter((r): r is string => !!r),

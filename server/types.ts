@@ -1189,3 +1189,22 @@ export interface TaskStatus {
   /** Whether the tracker considers it finished, which is the one status worth a colour. */
   done: boolean;
 }
+
+/**
+ * The key a feature's CI/merge-request answers are stored under in `CiSnapshot`.
+ *
+ * A session id when the feature has a session, and `feature:<name>` when it does not.
+ *
+ * This exists because the snapshot used to be keyed by session id alone, so a feature
+ * with no session had no key to be stored under — the server skipped looking it up and
+ * the client asked for nothing. Both halves compute the key, and both computing it the
+ * same way is the whole point; keeping the rule here rather than spelling it out twice
+ * is what stops them drifting apart the next time one of them is touched.
+ *
+ * The `feature:` prefix is not decoration. Session ids and feature names live in the
+ * same key space, and a feature literally called `s_abc` must not be able to read
+ * another subject's answers.
+ */
+export function ciSubjectKey(feature: { name: string; session?: { id: string } | null }): string {
+  return feature.session?.id || `feature:${feature.name}`;
+}

@@ -131,7 +131,7 @@ re-renders the world on every Claude tool call pays for the difference:
 | --------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `topology`      | every top-level field except `sessions`/`servers` | The repo→worktree shape or the client's chrome changed: a git rescan (~15 s), a worktree/session mutation, dev-server discovery finding something new, a config save. |
 | `session-state` | `{ sessions, servers }`                  | Every state change of any session — i.e. every Claude Code hook, so every tool call. Also rides along with every `topology` frame. |
-| `ci`            | `{ ci: { "<sessionId>": [...] } }`       | The PR/CI snapshot changed. Never rides along with anything — see below.                               |
+| `ci`            | `{ ci: { "<subject>": [...] } }`         | The PR/CI snapshot changed. Never rides along with anything — see below.                               |
 
 All three events are **full replacements of their half**, never per-item
 deltas. A client applies a frame with `state = { ...state, ...frame }`; that is
@@ -146,10 +146,23 @@ subscriber, so it re-snapshots and converges rather than drifting.
 
 #### The `ci` event
 
-`data` is `{ ci: { "<sessionId>": [ … ] } }`, where each value is exactly the
-`repos` array of `GET /sessions/:id/ci`. Sessions with no promoted repo are
+`data` is `{ ci: { "<subject>": [ … ] } }`, where each value is exactly the
+`repos` array of `GET /sessions/:id/ci`. A subject with no promoted repo is
 absent. `ci` is **stream-only** — it is not part of `GET /state`, which stays a
 synchronous build; a non-streaming client asks `GET /sessions/:id/ci` instead.
+
+A **subject** is a session id when the feature has a session, and
+`feature:<name>` when it does not — `ciSubjectKey()` in `server/types.ts` is the
+one definition, imported by both the daemon and the client so the two cannot
+drift. The keys were session ids alone until a feature with no session turned
+out to be unrepresentable: its merge requests were never looked up and every one
+of its repos rendered `no MR` permanently, with no refresh that could correct it.
+A worktree made with `wt`, or one whose session has been closed, is still a
+feature with branches and merge requests worth showing.
+
+The `feature:` prefix keeps the two kinds of key apart: session ids and feature
+names share this key space, so a feature named `s_abc` must not be able to read
+another subject's answers.
 
 It is a separate event rather than part of `session-state` because the two move
 on incomparable timescales: `session-state` is re-sent on every tool call, CI
