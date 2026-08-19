@@ -18,6 +18,7 @@
 // app stops a browser being used as the proxy; it says nothing about the local process
 // that simply asks. Before this gate, `curl 127.0.0.1:7788/` printed the live token to
 // any process on the machine, which turned a 401'd API into an open one.
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import express from 'express';
@@ -26,6 +27,25 @@ import { timingSafeEqual } from './security.ts';
 
 const ROOT = path.join(import.meta.dirname, '..');
 const PLACEHOLDER = '__WTS_TOKEN__';
+const BUILD_PLACEHOLDER = '__WTS_BUILD__';
+
+/**
+ * An id for the bundle currently on disk: the first 12 hex of a digest of index.html.
+ *
+ * index.html is the right file to hash because SvelteKit rewrites the hashed asset URLs
+ * inside it on every build, so its bytes move if and only if the bundle moved. It is also
+ * tiny, which is what makes hashing it per document response affordable.
+ *
+ * Empty string when the build is absent or unreadable — a daemon must not fail to boot,
+ * and `mountFallback` already answers a missing build with its own clear error.
+ */
+function buildId(indexPath: string): string {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(indexPath)).digest('hex').slice(0, 12);
+  } catch {
+    return '';
+  }
+}
 
 // The cookie the tab authenticates with on every later navigation (reload, deep link,
 // bookmark). Deliberately NOT HttpOnly: the SPA reads it to authenticate its own fetches
@@ -48,6 +68,11 @@ export interface ResolvedUi {
 /** The document handler's two inputs, shared by both mounts. */
 interface MountOptions {
   ui: ResolvedUi;
+  /**
+   * The bundle id captured when the daemon booted, reported by GET /state.
+   * Optional: a caller that does not pass one simply has no skew to detect.
+   */
+  bootBuildId?: string;
   token: string;
 }
 
@@ -87,7 +112,17 @@ function sendIndex(ui: ResolvedUi, token: string, res: Response): Response {
   } catch {
     return res.status(500).send('index.html is missing');
   }
-  return framed(res).type('html').set('Cache-Control', 'no-store').send(html.split(PLACEHOLDER).join(token));
+  /*
+   * The build id is read PER RESPONSE, not captured once.
+   *
+   * That is the whole mechanism: this reports the bundle the browser is about to run,
+   * while GET /state reports the one the daemon booted with. Capturing it here too would
+   * make the two agree by construction and detect nothing.
+   */
+  return framed(res)
+    .type('html')
+    .set('Cache-Control', 'no-store')
+    .send(html.split(PLACEHOLDER).join(token).split(BUILD_PLACEHOLDER).join(buildId(ui.index)));
 }
 
 // Framing defenses on every document response.
@@ -208,4 +243,4 @@ function mountFallback(app: Express, { ui, token }: MountOptions): void {
   });
 }
 
-export { resolve, mount, mountFallback, PLACEHOLDER };
+export { resolve, mount, mountFallback, buildId, PLACEHOLDER, BUILD_PLACEHOLDER };

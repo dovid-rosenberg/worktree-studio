@@ -68,6 +68,19 @@ $effect(() => {
   <div class="streamwarn" role="status">{world.streamError}</div>
 {/if}
 
+<!-- The frontend was rebuilt while this daemon kept running, so this JS can call routes
+     that process never registered. Left unsaid, that arrives as Express's default HTML
+     404 from a button that looks simply broken — the same shape of failure as the tmux
+     warning above, and worth the same banner. `role="alert"`: actions are already
+     failing, so it is a stop rather than a status. -->
+{#if world.buildSkew}
+  <div class="streamwarn danger" role="alert">
+    This page is newer than the daemon serving it, so some actions will fail until the
+    daemon restarts — <code>launchctl kickstart -k gui/$(id -u)/com.worktree-studio</code>,
+    or re-run <code>npm start</code>.
+  </div>
+{/if}
+
 <div class="main" style="--rail-w:{ui.railWidth}px">
   <Rail />
   <RailSplitter />

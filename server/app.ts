@@ -210,7 +210,17 @@ function buildApp(deps: AppDeps): express.Express {
   // gate above: a cross-origin page cannot read this response body, and a rebinding
   // page is refused before there is a body to read. See webui.ts for which UI this is;
   // its SPA fallback is mounted after every route below.
-  webui.mount(app, { ui, token: cfg._token });
+  /*
+   * The bundle the daemon BOOTED with, captured once here.
+   *
+   * The served document reports the bundle on disk right now; this is what the daemon's
+   * routes were built alongside. When they differ, the frontend was rebuilt under a
+   * running process and is calling routes this one may not have.
+   */
+  const bootBuildId = webui.buildId(ui.index);
+  // state.ts reports it from here, so the client can compare against the document's.
+  cfg._buildId = bootBuildId;
+  webui.mount(app, { ui, token: cfg._token, bootBuildId });
 
   // Every API route needs the boot token. The Origin/Host gate above only constrains
   // browsers; this is what stops any other local process — or a browser request that
@@ -874,7 +884,7 @@ function buildApp(deps: AppDeps): express.Express {
 
   // Client-side routes (/review, /search, /usage) reach the daemon on a deep link or a
   // reload, and the daemon knows nothing about them. Last, so it shadows no route above.
-  webui.mountFallback(app, { ui, token: cfg._token });
+  webui.mountFallback(app, { ui, token: cfg._token, bootBuildId });
 
   // Truly last: the net every route above falls into. express@5 awaits handlers, so a
   // handler that throws — or a body parser that refuses a body — lands here and gets an

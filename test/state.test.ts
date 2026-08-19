@@ -139,7 +139,10 @@ test('the payload carries the fields SwiftBar and Alfred read', async () => {
   const st = await state.buildState();
   assert.equal(st.mux, 'tmux');
   assert.equal(st.runningTotal, 1, 'SwiftBar renders the menubar count from runningTotal');
-  assert.deepEqual(st.config, { port: 7788, configFile: '/cfg.json' });
+  // `buildId` joins the contract: the client compares it against the id the served
+  // document carries to detect a frontend rebuilt under a running daemon. Empty here
+  // because this fixture config has no _buildId — an absent build is not an error.
+  assert.deepEqual(st.config, { port: 7788, configFile: '/cfg.json', buildId: '' });
   const wt = present(
     present(st.repos[0]).worktrees.find((w) => w.wtname === 'feat-a'),
     'the feat-a row',
