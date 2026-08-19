@@ -134,6 +134,16 @@ const repoChips = $derived(
 </script>
 
 <div class="dock-head">
+  <!--
+    ONE ROW THAT DOES NOT WRAP, and the verbs are pinned to its right edge.
+    The header carries identity, merge requests, drift and a chip per repo, and all of
+    those grow with the feature. While it wrapped, a fourth repo or a second MR dropped
+    the whole action bar onto a second line — so the buttons moved, and the header got
+    taller, exactly when the feature was busiest. Everything informational now scrolls
+    sideways inside .headinfo instead; the controls never move.
+  -->
+  <div class="headrow">
+   <div class="headinfo">
   <!-- This dot has no accompanying text, so without a name the agent's state is conveyed
        by hue and nothing else. StateDot is where that name now comes from, for all of them. -->
   <StateDot state={session.state} />
@@ -223,8 +233,11 @@ const repoChips = $derived(
     {/each}
   </span>
 
-  <span class="grow"></span>
-  <ActionBar />
+   </div>
+
+   <!-- Outside .headinfo on purpose: the bar must not scroll away with the chips. -->
+   <div class="headctl"><ActionBar /></div>
+  </div>
 
   {#if showShip && ship.blockers.length}
     <!-- Full width under the bar. Each line names a REPO and a sentence, because "3 things
@@ -277,9 +290,33 @@ const repoChips = $derived(
      that matters: the rail is what you SCAN, but the dock is what you are looking at while
      you work, so a tag only in the rail would be invisible at the moment you switch.
      `var(--fc, …)` falls back to the untagged look, so nothing changes without a tag. */
-  .dock-head { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border);
+  /* A COLUMN now: the row above, and the ship blockers full-width beneath it. That used
+     to be done by letting the whole header wrap, which is the same mechanism that moved
+     the buttons. */
+  .dock-head { display:flex; flex-direction:column; gap:10px; padding:12px 16px;
+               border-bottom:1px solid var(--border);
                background:var(--fc-wash, var(--panel)); box-shadow:inset 4px 0 0 var(--fc, transparent);
-               flex:none; flex-wrap:wrap; }
+               flex:none; }
+
+  .headrow { display:flex; align-items:center; gap:10px; flex-wrap:nowrap; min-width:0; }
+
+  /*
+   * The half that gives way. `min-width:0` is load-bearing: without it a flex item
+   * refuses to shrink below its content, so the row would widen and push the controls
+   * off the edge rather than scrolling.
+   */
+  .headinfo {
+    display:flex; align-items:center; gap:10px; flex-wrap:nowrap;
+    flex:1 1 auto; min-width:0; overflow-x:auto; overflow-y:hidden;
+    scrollbar-width:none;
+  }
+  .headinfo::-webkit-scrollbar { height:0; }
+  /* Each item keeps its natural size; the CONTAINER is what gives way. Without this the
+     chips compress into unreadable slivers before anything scrolls. */
+  .headinfo > * { flex:none; }
+
+  /* Never shrinks, never wraps, always the right edge. */
+  .headctl { flex:none; margin-left:auto; }
   .idchip {
     display:inline-flex; align-items:center; gap:4px;
     font-family:var(--mono); font-size:11px; padding:2px 7px; border-radius:999px;
@@ -291,8 +328,10 @@ const repoChips = $derived(
   .wtname { font-family:var(--mono); font-size:11.5px; color:var(--faint); overflow:hidden;
             text-overflow:ellipsis; white-space:nowrap; max-width:220px; }
   .dock-title { font-weight:650; font-size:16px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .links { display:flex; align-items:center; gap:6px; flex-wrap:wrap; min-width:0; }
-  .repochips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  /* nowrap: these live in a sideways scroller now, so wrapping would grow the row's
+     height instead of overflowing. */
+  .links { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; min-width:0; }
+  .repochips { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
   .repochip2 { font-family:var(--mono); font-size:11.5px; color:var(--muted); border:1px solid var(--border); border-radius:6px; padding:2px 7px; }
   .repochip2.primary { color:var(--brand); border-color:var(--brand); }
   /* Only a running web repo. The ↗ and the hover are what make a chip read as pressable —
@@ -303,5 +342,4 @@ const repoChips = $derived(
   /* Running: the chip earns the same green the port numbers always wore. */
   .repochip2.up { border-color:var(--done); }
   .ports { color:var(--done); margin-left:6px; }
-  .grow { flex:1; }
 </style>
