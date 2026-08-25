@@ -1,105 +1,103 @@
 <script lang="ts">
-  /*
-   * Pick a concurrency slot — the caret next to ▶ Start, and the slot badge on a running
-   * feature. One component for both, because the only real differences are the trigger
-   * glyph and the heading; the list, the occupancy rules and the dismissal behaviour are
-   * the same question asked twice.
-   *
-   * Occupancy is fetched per open rather than read off the topology frame. It depends on
-   * what is listening right now, and computing it for every feature on every frame would
-   * put an lsof per slot per feature on the broadcast path.
-   *
-   * Dismissal matches OverflowMenu deliberately: outside click, and Escape captured so
-   * the global handler does not read a bare Escape as "interrupt the agent" and send it
-   * to the pty.
-   */
-  import type { SlotReport } from '../../../../server/types';
-  import { api } from '$lib/api.js';
-  import { errMessage } from '$lib/errmsg.js';
+/*
+ * Pick a concurrency slot — the caret next to ▶ Start, and the slot badge on a running
+ * feature. One component for both, because the only real differences are the trigger
+ * glyph and the heading; the list, the occupancy rules and the dismissal behaviour are
+ * the same question asked twice.
+ *
+ * Occupancy is fetched per open rather than read off the topology frame. It depends on
+ * what is listening right now, and computing it for every feature on every frame would
+ * put an lsof per slot per feature on the broadcast path.
+ *
+ * Dismissal matches OverflowMenu deliberately: outside click, and Escape captured so
+ * the global handler does not read a bare Escape as "interrupt the agent" and send it
+ * to the pty.
+ */
+import type { SlotReport } from '../../../../server/types';
+import { api } from '$lib/api.js';
+import { errMessage } from '$lib/errmsg.js';
 
-  let {
-    feature,
-    mode,
-    current = null,
-    onpick,
-  }: {
-    feature: string;
-    mode: 'start' | 'move';
-    /** The feature's slot, for the badge label in `move` mode. */
-    current?: number | null;
-    onpick: (slot: number, report: SlotReport) => void;
-  } = $props();
+let {
+  feature,
+  mode,
+  current = null,
+  onpick,
+}: {
+  feature: string;
+  mode: 'start' | 'move';
+  /** The feature's slot, for the badge label in `move` mode. */
+  current?: number | null;
+  onpick: (slot: number, report: SlotReport) => void;
+} = $props();
 
-  let open = $state(false);
-  let root = $state<HTMLElement | null>(null);
-  let slots = $state<SlotReport[]>([]);
-  let error = $state('');
-  let loading = $state(false);
+let open = $state(false);
+let root = $state<HTMLElement | null>(null);
+let slots = $state<SlotReport[]>([]);
+let error = $state('');
+let loading = $state(false);
 
-  const repos = $derived(
-    [...new Set(slots.flatMap((s) => Object.keys(s.ports)))].join(' + '),
-  );
+const repos = $derived([...new Set(slots.flatMap((s) => Object.keys(s.ports)))].join(' + '));
 
-  async function load() {
-    loading = true;
-    error = '';
-    try {
-      slots = await api('GET', `/api/v1/group/${encodeURIComponent(feature)}/slots`);
-    } catch (e) {
-      error = errMessage(e);
-      slots = [];
-    } finally {
-      loading = false;
+async function load() {
+  loading = true;
+  error = '';
+  try {
+    slots = await api('GET', `/api/v1/group/${encodeURIComponent(feature)}/slots`);
+  } catch (e) {
+    error = errMessage(e);
+    slots = [];
+  } finally {
+    loading = false;
+  }
+}
+
+function toggle(e: MouseEvent) {
+  // The badge lives inside a clickable rail card; opening the menu must not also
+  // select the card behind it.
+  e.stopPropagation();
+  open = !open;
+  if (open) load();
+}
+
+/** Close before acting — a confirm dialog must not open behind a menu still on screen. */
+function pick(s: SlotReport) {
+  open = false;
+  onpick(s.slot, s);
+}
+
+const pickable = (s: SlotReport) => s.state === 'free';
+
+/** The second line: why you cannot have it, or what you would get. */
+function detail(s: SlotReport): string {
+  if (s.state === 'held') return `held by ${s.heldBy}`;
+  if (s.state === 'blocked') return `port ${s.blockedBy?.port} held by pid ${s.blockedBy?.pid}`;
+  const parts = Object.entries(s.ports)
+    .filter(([, ps]) => ps.length)
+    .map(([repo, ps]) => `${repo} ${ps.join('·')}`);
+  return parts.length ? parts.join(' · ') : 'no slot-governed ports';
+}
+
+const pillText = (s: SlotReport) =>
+  s.state === 'current' ? 'current' : s.state === 'held' ? 'in use' : s.state;
+
+$effect(() => {
+  if (!open) return;
+  const onDocClick = (e: MouseEvent) => {
+    if (root && e.target instanceof Node && !root.contains(e.target)) open = false;
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      open = false;
     }
-  }
-
-  function toggle(e: MouseEvent) {
-    // The badge lives inside a clickable rail card; opening the menu must not also
-    // select the card behind it.
-    e.stopPropagation();
-    open = !open;
-    if (open) load();
-  }
-
-  /** Close before acting — a confirm dialog must not open behind a menu still on screen. */
-  function pick(s: SlotReport) {
-    open = false;
-    onpick(s.slot, s);
-  }
-
-  const pickable = (s: SlotReport) => s.state === 'free';
-
-  /** The second line: why you cannot have it, or what you would get. */
-  function detail(s: SlotReport): string {
-    if (s.state === 'held') return `held by ${s.heldBy}`;
-    if (s.state === 'blocked') return `port ${s.blockedBy?.port} held by pid ${s.blockedBy?.pid}`;
-    const parts = Object.entries(s.ports)
-      .filter(([, ps]) => ps.length)
-      .map(([repo, ps]) => `${repo} ${ps.join('·')}`);
-    return parts.length ? parts.join(' · ') : 'no slot-governed ports';
-  }
-
-  const pillText = (s: SlotReport) =>
-    s.state === 'current' ? 'current' : s.state === 'held' ? 'in use' : s.state;
-
-  $effect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (root && e.target instanceof Node && !root.contains(e.target)) open = false;
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        open = false;
-      }
-    };
-    document.addEventListener('click', onDocClick, true);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('click', onDocClick, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  });
+  };
+  document.addEventListener('click', onDocClick, true);
+  document.addEventListener('keydown', onKey, true);
+  return () => {
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('keydown', onKey, true);
+  };
+});
 </script>
 
 <div class="slotmenu" class:badgemode={mode === 'move'} bind:this={root}>
