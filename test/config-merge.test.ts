@@ -102,6 +102,7 @@ test('the shipped convention defaults name no company port, repo or file', () =>
     'ab-iso-fe',
     'ab-su',
     'configPatch',
+    'slotConfig',
     'redis__db',
     'WTS_FE_PORT',
   ]) {
@@ -117,6 +118,32 @@ test('a config that already has the old concurrency values keeps every one of th
   assert.deepEqual(cfg.concurrency, OLD_CONCURRENCY, 'empty defaults did not overwrite or prune anything');
   // and the on-disk file is untouched by the load
   assert.deepEqual(readConfig().concurrency, OLD_CONCURRENCY);
+});
+
+test('a slotConfig survives the load untouched', () => {
+  // The in-memory replacement for configPatch carries a nested array (`base`) and a
+  // template string (`flag`). Both are shapes the merge has not had to preserve before,
+  // and a pruned or merged one would silently put the frontend back on the base port.
+  const mine = {
+    enabled: true,
+    offsetStep: 100,
+    maxSlots: 5,
+    repos: {
+      'accept-blue': { portEnv: { api__port_merchant: 1239 }, slotEnv: ['redis__db'] },
+      'merchant-v3': {
+        portEnv: { WTS_FE_PORT: 3030 },
+        slotConfig: {
+          file: 'src/config.js',
+          siblingRepo: 'accept-blue',
+          base: ['vite.config.local.mjs', 'vite.config.js'],
+          flag: '--config {config}',
+        },
+      },
+    },
+  };
+  writeConfig({ concurrency: mine });
+  assert.deepEqual(load().concurrency, mine);
+  assert.deepEqual(readConfig().concurrency, mine, 'and the on-disk file is untouched by the load');
 });
 
 test('a config with its OWN concurrency repos is not merged with the defaults', () => {

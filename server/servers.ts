@@ -25,6 +25,15 @@ import type {
 import { TAIL_MAX_BYTES, readTail, tailFile } from './log-tail.ts';
 
 /**
+ * Studio's own Vite config, handed to a slotted frontend via `--config`.
+ *
+ * Deliberately outside any repo: it substitutes the slot's backend port as the module is
+ * served, so nothing is written into the worktree and a plain `npm run dev` from an
+ * editor still points at the base port. See server/slot-vite-config.mjs.
+ */
+const SLOT_VITE_CONFIG = path.join(import.meta.dirname, 'slot-vite-config.mjs');
+
+/**
  * The config `Servers` reads.
  *
  * `PartialDeep<Config>` for everything it reads defensively (server.ts hands it a
@@ -133,6 +142,29 @@ export interface ConfigPatchPlan {
   slot: number;
 }
 
+/**
+ * The in-memory counterpart: everything the slot wrapper config needs, EXCEPT the
+ * worktree path.
+ *
+ * Path-free for the same reason `ConfigPatchPlan` is — `launchOpts(repo, feature)` does
+ * not know one, and start() does. start() resolves `base` against the worktree and
+ * turns this into the wrapper's `WTS_SLOT_VITE` env payload.
+ */
+export interface SlotConfigPlan {
+  /** Repo-relative file whose backend-port references are substituted as it is served. */
+  file: string;
+  /** Repo-relative candidate base configs, first existing one wins. */
+  base: string[];
+  /** Flag template; `{config}` becomes the wrapper's absolute path. */
+  flag: string;
+  siblingPortEnv: Record<string, number>;
+  offsetStep: number;
+  maxSlots: number;
+  slot: number;
+  /** The frontend's own port for this slot, when the repo derives one. */
+  port?: number;
+}
+
 /** Launch env + ports for a repo at a feature's slot. */
 export interface LaunchOpts {
   env: Record<string, string>;
@@ -143,7 +175,18 @@ export interface LaunchOpts {
    * need to know what a concurrency slot is.
    */
   portArgs?: string;
+  /**
+   * Already-substituted flag pointing the dev server at Studio's slot wrapper config —
+   * see RepoConcurrency.slotConfig. Appended to the start command exactly like
+   * `portArgs`; the wrapper reads the rest of its instructions from `env.WTS_SLOT_VITE`.
+   *
+   * Mutually exclusive with `patch`: a repo either has its config rewritten on disk or
+   * substituted in memory, never both.
+   */
+  configArgs?: string;
   patch?: ConfigPatchPlan;
+  /** In-memory alternative to `patch`; start() turns it into `configArgs` + wrapper env. */
+  slotCfg?: SlotConfigPlan;
   /**
    * Run THIS command instead of the repo's configured one.
    *
@@ -621,9 +664,14 @@ class Servers {
 
   // Launch env + ports for a repo at a feature's current slot. {} / [] when
   // concurrency is off or the repo has no concurrency config (behaves as today).
-  // When the repo declares a `configPatch` (e.g. an FE that hardcodes its backend's
-  // ports), return a `patch` descriptor that start() applies to the worktree's config
-  // file — shifting ALL of the sibling repo's port families to this feature's slot.
+  //
+  // When the repo declares a `slotConfig` (preferred), return a `slotCfg` descriptor:
+  // start() launches the dev server with Studio's own wrapper config, which substitutes
+  // the sibling ports as the module is SERVED, leaving the file on disk untouched.
+  //
+  // When it declares only a `configPatch`, return a `patch` descriptor that start()
+  // writes into the worktree's config file — the older behavior, kept for dev servers
+  // that cannot be handed a config from outside the checkout. Never both.
   launchOpts(repo: string, feature: string): LaunchOpts {
     const conc = this.cfg.concurrency;
     // As in allocSlotFor: no concurrency block means `_concEnabled()` already said no.
@@ -637,6 +685,28 @@ class Servers {
     // takes the port on the command line. Empty when unconfigured or when this repo
     // derives no ports, so an unconcerned repo's command is untouched.
     const portArgs = rc.portFlag && ports.length ? rc.portFlag.split('{port}').join(String(ports[0])) : '';
+    // slotConfig wins over configPatch: the in-memory path leaves the worktree alone,
+    // so a repo that has been migrated must not also get its file rewritten.
+    const sc = rc.slotConfig;
+    if (sc) {
+      const siblingPortEnv = this._repoConc(sc.siblingRepo)?.portEnv;
+      if (siblingPortEnv)
+        return {
+          env,
+          ports,
+          portArgs,
+          slotCfg: {
+            file: sc.file,
+            base: sc.base,
+            flag: sc.flag,
+            siblingPortEnv,
+            offsetStep: step,
+            maxSlots: conc.maxSlots || 1,
+            slot,
+            ...(ports.length ? { port: ports[0] } : {}),
+          },
+        };
+    }
     const cp = rc.configPatch;
     if (cp) {
       const sib = this._repoConc(cp.siblingRepo);
@@ -644,6 +714,39 @@ class Servers {
       if (siblingPortEnv) return { env, ports, portArgs, patch: { file: cp.file, siblingPortEnv, slot } };
     }
     return { env, ports, portArgs };
+  }
+
+  /**
+   * Turn a path-free `SlotConfigPlan` into what spawning actually needs: the wrapper's
+   * env payload and the flag that points the dev server at it.
+   *
+   * Returns null when no candidate base config exists in the worktree. That is a real
+   * possibility — `base` names files a repo may simply not have — and launching the
+   * wrapper anyway would fail at import with a stack trace about Studio's own file. The
+   * caller falls back to the repo's plain start command instead, which is the behavior
+   * the user would have had without concurrency.
+   */
+  slotConfigLaunch(
+    worktreePath: string,
+    plan?: SlotConfigPlan | null,
+  ): { env: Record<string, string>; configArgs: string } | null {
+    if (!plan?.file || !plan.flag) return null;
+    const base = (plan.base || []).find((rel) => fs.existsSync(path.join(worktreePath, rel)));
+    if (!base) return null;
+    const payload = {
+      root: worktreePath,
+      baseConfig: path.join(worktreePath, base),
+      file: plan.file,
+      siblingPortEnv: plan.siblingPortEnv,
+      offsetStep: plan.offsetStep,
+      maxSlots: plan.maxSlots,
+      slot: plan.slot,
+      ...(plan.port ? { port: plan.port } : {}),
+    };
+    return {
+      env: { WTS_SLOT_VITE: JSON.stringify(payload) },
+      configArgs: plan.flag.split('{config}').join(SLOT_VITE_CONFIG),
+    };
   }
 
   // Rewrite a worktree's gitignored FE config to point at this slot's sibling ports.
@@ -1264,30 +1367,58 @@ class Servers {
   }
 
   /**
-   * The backend ports this worktree's patched config file names RIGHT NOW — or null
-   * when there is nothing to read.
+   * The backend ports this frontend worktree talks to RIGHT NOW — or null when there is
+   * nothing to say.
    *
-   * The missing half of applyConfigPatch. That method rewrites a frontend's gitignored
-   * config so its API base URL lands on this feature's slot, and then nothing ever looks
-   * at the file again — not on start, not on stop, not on decorate. It is also never
-   * reverted, so the last write survives the feature that made it. The file is therefore
-   * a claim about the world that Studio authored and never checked.
+   * Two sources, because there are two mechanisms. A `slotConfig` repo DERIVES them from
+   * its slot: the substitution happens in memory as the module is served, so there is no
+   * file to consult and the slot number is the whole truth. A `configPatch` repo READS
+   * THEM BACK out of the file that was written to disk.
+   *
+   * That read half exists because the write half was, for a long time, the only half.
+   * applyConfigPatch rewrote a frontend's config and then nothing ever looked at the file
+   * again — not on start, not on stop, not on decorate — and it was never reverted, so
+   * the last write survived the feature that made it. The file was a claim about the
+   * world that Studio authored and never checked, and an MFA frontend pointed at another
+   * branch's backend for hours on the strength of it.
    *
    * null and `[]` are different answers and both are load-bearing: null is "I did not
-   * look" (no configPatch, no sibling port map, file absent or unreadable), `[]` is
+   * look" (no mapping, no sibling port map, file absent or unreadable), `[]` is
    * "I read it and it names no backend of that repo". Collapsing them would let a
    * missing file read as a config pointing nowhere, which is a claim about a file that
    * is not there.
    *
-   * Cost: one statSync per frontend worktree per decorate, and a readFileSync only when
-   * the file has changed since the last one (see _wiredCache). A repo with no
-   * configPatch does not touch the disk at all — the two map lookups above the stat are
-   * the whole of its cost.
+   * Cost: nothing on the derived path. On the read path, one statSync per frontend
+   * worktree per decorate, and a readFileSync only when the file has changed since the
+   * last one (see _wiredCache). A repo with neither mapping does not touch the disk at
+   * all — the two map lookups above are the whole of its cost.
    */
   wiredPorts(worktree: Pick<Worktree, 'path' | 'repo'>): number[] | null {
     const conc = this.cfg.concurrency;
     if (!this._concEnabled() || !conc) return null;
-    const cp = this._repoConc(worktree.repo)?.configPatch;
+    const rc = this._repoConc(worktree.repo);
+    /*
+     * On the in-memory path there is no file to read back, so the ports are DERIVED.
+     *
+     * Reading would be worse than useless here: nothing writes the config any more, so
+     * it names the base port permanently and every frontend would report itself wired to
+     * slot 0. The substitution happens as the module is served, from this same slot
+     * number, so deriving it is not a guess — it is the same input the wrapper gets.
+     *
+     * `wiredTo` still earns its keep. It answers "is the thing listening on that port
+     * MINE", which no amount of config-reading settles: a stale process from a
+     * reassigned slot, or another feature's backend, still shows up as 'foreign'.
+     */
+    const sc = rc?.slotConfig;
+    if (sc) {
+      const siblingPortEnv = this._repoConc(sc.siblingRepo)?.portEnv;
+      if (!siblingPortEnv) return null;
+      const slot = this.slots.get(this.featureFor(worktree.path)) ?? 0;
+      return Object.values(siblingPortEnv)
+        .map((base) => base + slot * conc.offsetStep)
+        .sort((a, b) => a - b);
+    }
+    const cp = rc?.configPatch;
     if (!cp?.file) return null;
     // The same resolution launchOpts() does: the patch names a sibling REPO, and its
     // portEnv is what supplies the port families. No portEnv, no families to look for.
@@ -1520,8 +1651,15 @@ class Servers {
     // The port flag rides on the END of the command, where a shell puts arguments —
     // `npm start` becomes `npm start -- --port 5273`. Appended here rather than baked
     // into config.start so the same entry works with concurrency off.
-    const cmd = `${opts.cmd || sc!.cmd}${opts.portArgs ? ` ${opts.portArgs}` : ''}`;
-    const env = opts.env && Object.keys(opts.env).length ? { ...ENV, ...opts.env } : ENV;
+    // Resolved here rather than in launchOpts() because picking the base config to wrap
+    // means looking at the worktree, and launchOpts() is handed a feature, not a path.
+    // Null when the repo is not on the in-memory path, or names no base config that
+    // exists — in which case the command is left exactly as configured.
+    const slotLaunch = this.slotConfigLaunch(worktreePath, opts.slotCfg);
+    const extraArgs = [opts.portArgs, slotLaunch?.configArgs].filter(Boolean).join(' ');
+    const cmd = `${opts.cmd || sc!.cmd}${extraArgs ? ` ${extraArgs}` : ''}`;
+    const slotEnv = { ...opts.env, ...slotLaunch?.env };
+    const env = Object.keys(slotEnv).length ? { ...ENV, ...slotEnv } : ENV;
     const ports = opts.ports?.length ? opts.ports : (sc?.ports ?? []);
     // Waited for, briefly: the holder is usually a stop of this same worktree that is
     // about to finish, and refusing the launch the user pressed Start for because a

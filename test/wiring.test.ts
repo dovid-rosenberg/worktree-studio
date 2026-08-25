@@ -247,3 +247,105 @@ test('a worktree whose directory is gone carries no verdict', () => {
   fs.rmSync(fe.path, { recursive: true, force: true });
   assert.equal(s.decorate(fe, running()).wiredTo, null);
 });
+
+// ---------------------------------------------------------------------------
+// The derived half: a repo on `slotConfig` has no patched file to read back.
+//
+// The substitution happens in memory as the module is served, so the config on disk
+// keeps the base port permanently. Reading it would report every frontend as wired to
+// slot 0 — the ports must come from the slot instead. `wiredTo` is unchanged and still
+// answers the question that matters: whether the thing listening there is MINE.
+// ---------------------------------------------------------------------------
+
+/** merchant-v3 migrated to slotConfig; accept-blue's port map is untouched. */
+function slottedServers() {
+  return servers({
+    repos: {
+      'accept-blue': { portEnv: { ...AB_PORT_ENV }, slotEnv: ['redis__db'] },
+      'merchant-v3': {
+        portEnv: { WTS_FE_PORT: 3030 },
+        slotConfig: {
+          file: 'src/config.ts',
+          siblingRepo: 'accept-blue',
+          base: ['vite.config.js'],
+          flag: '--config {config}',
+        },
+      },
+      'plain-fe': { portEnv: { PLAIN_PORT: 4040 } },
+    },
+  });
+}
+
+/** A frontend worktree whose config is left at the BASE ports, as it now always is. */
+function unpatchedFe(feature: string) {
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-repo-'));
+  const dir = path.join(repoRoot, '.worktrees', feature);
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src/config.ts'), FE_CONFIG);
+  return { path: dir, repo: 'merchant-v3' };
+}
+
+test('wiredPorts derives the slot family for a slotConfig repo, ignoring what the file says', async () => {
+  const s = slottedServers();
+  await s.allocSlotFor('other'); // 0
+  await s.allocSlotFor('mfa'); // 1
+  const fe = unpatchedFe('mfa');
+
+  // The file on disk names the BASE ports and always will.
+  assert.match(fs.readFileSync(path.join(fe.path, 'src/config.ts'), 'utf8'), /localhost:1239/);
+
+  assert.deepEqual(
+    s.wiredPorts(fe),
+    [1331, 1332, 1333, 1339, 2099],
+    "slot 1's family, derived — not the 12xx the config literally contains",
+  );
+});
+
+test('a slotConfig frontend at slot 0 derives the base family', () => {
+  const s = slottedServers();
+  assert.deepEqual(s.wiredPorts(unpatchedFe('mfa')), [1231, 1232, 1233, 1239, 1999]);
+});
+
+test('wiredTo still names a foreign backend on a derived port', async () => {
+  const s = slottedServers();
+  await s.allocSlotFor('other'); // 0
+  await s.allocSlotFor('mfa'); // 1
+  // The slot-1 merchant port is held by a different feature's backend — the original
+  // incident, which the move to in-memory substitution does not make impossible.
+  const wired = present(
+    s.wiredTo(unpatchedFe('mfa'), running(backend('billing-refactor', [1339]))),
+    'a wiredTo verdict',
+  );
+  assert.equal(wired.status, 'foreign');
+  assert.equal(wired.port, 1339);
+  assert.equal(wired.feature, 'billing-refactor');
+});
+
+test('wiredTo reads as mine when the slot family is served by this feature', async () => {
+  const s = slottedServers();
+  await s.allocSlotFor('other');
+  await s.allocSlotFor('mfa'); // 1
+  const wired = present(
+    s.wiredTo(unpatchedFe('mfa'), running(backend('mfa', [1339, 1331]))),
+    'a wiredTo verdict',
+  );
+  assert.equal(wired.status, 'mine');
+  assert.equal(wired.feature, 'mfa');
+});
+
+test('wiredTo is dead when nothing holds the derived family', async () => {
+  const s = slottedServers();
+  await s.allocSlotFor('mfa'); // 0
+  const wired = present(s.wiredTo(unpatchedFe('mfa'), running()), 'a wiredTo verdict');
+  assert.equal(wired.status, 'dead');
+});
+
+test('a slotConfig repo never reads the config file, so a missing one is not "unknown"', () => {
+  const s = slottedServers();
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-repo-'));
+  const dir = path.join(repoRoot, '.worktrees', 'mfa');
+  fs.mkdirSync(dir, { recursive: true });
+  // No src/config.ts at all. On the read path that is null ("I did not look"); on the
+  // derived path the slot is knowable regardless of what the worktree contains.
+  assert.deepEqual(s.wiredPorts({ path: dir, repo: 'merchant-v3' }), [1231, 1232, 1233, 1239, 1999]);
+});

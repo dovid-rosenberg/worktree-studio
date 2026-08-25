@@ -76,7 +76,11 @@ test('allocSlotFor returns the same cached slot when a feature is asked twice', 
   const s = servers();
   await s.allocSlotFor('feat-a'); // 0
   await s.allocSlotFor('feat-b'); // 1
-  assert.deepEqual(await s.allocSlotFor('feat-a'), { slot: 0 }, 'reuses the cached slot, does not re-allocate');
+  assert.deepEqual(
+    await s.allocSlotFor('feat-a'),
+    { slot: 0 },
+    'reuses the cached slot, does not re-allocate',
+  );
   // feat-a asked again must NOT consume slot 2
   assert.deepEqual(await s.allocSlotFor('feat-c'), { slot: 2 });
 });
@@ -676,7 +680,11 @@ test('a slot is not reclaimable while its feature is still starting', { timeout:
     assert.equal(s.slots.has(feature), true, 'the slot survived a sweep taken mid-launch');
     assert.equal(s.slots.get(feature), 0);
     // and the consequence that made this a port collision: the slot was handed out again
-    assert.deepEqual(await s.allocSlotFor('feat-other'), { slot: 1 }, 'no other feature was given the same slot');
+    assert.deepEqual(
+      await s.allocSlotFor('feat-other'),
+      { slot: 1 },
+      'no other feature was given the same slot',
+    );
     assert.equal(s.isStarting(feature), true, 'the launch is still in flight');
 
     expectOk(await launching, 'start()');
@@ -1062,4 +1070,91 @@ test('stopAll reads the running map AFTER the stops, never before', async () => 
   );
   assert.deepEqual(order.at(-1), 'refresh', 'the guard reads the post-stop world');
   assert.equal(order.length, 3, 'one refresh for the batch, not one per member');
+});
+
+// ---------------------------------------------------------------------------
+// slotConfig — the in-memory replacement for applyConfigPatch.
+//
+// The write-to-disk path above leaks Studio's slot into workflows that are not
+// Studio's: the rewrite is never reverted, so a worktree that once ran at slot 1
+// keeps `localhost:1339` in its config, and a plain `npm run dev` from an editor
+// then talks to a port nothing is listening on. These cover the replacement —
+// launchOpts hands start() a plan, start() turns it into a wrapper flag + env, and
+// no file is touched at any point.
+// ---------------------------------------------------------------------------
+
+/** The standard repo map, with merchant-v3 migrated from configPatch to slotConfig. */
+function slotConfigRepos(merchantExtra = {}) {
+  return {
+    ...concurrency().repos,
+    'merchant-v3': {
+      portEnv: { WTS_FE_PORT: 3030 },
+      slotConfig: {
+        file: 'src/config.js',
+        siblingRepo: 'accept-blue',
+        base: ['vite.config.local.mjs', 'vite.config.js'],
+        flag: '--config {config}',
+      },
+      ...merchantExtra,
+    },
+  };
+}
+
+test('launchOpts for a slotConfig repo returns a slotCfg plan and NO on-disk patch', async () => {
+  const s = servers({ repos: slotConfigRepos() });
+  await s.allocSlotFor('feat-a'); // 0
+  await s.allocSlotFor('feat-b'); // 1
+  const opts = s.launchOpts('merchant-v3', 'feat-b'); // slot 1
+  assert.equal(opts.patch, undefined, 'a migrated repo must never get its file rewritten');
+  const plan = present(opts.slotCfg, 'a slot config plan');
+  assert.equal(plan.file, 'src/config.js');
+  assert.deepEqual(plan.siblingPortEnv, AB_PORT_ENV, "resolves to accept-blue's portEnv");
+  assert.equal(plan.slot, 1);
+  assert.equal(plan.port, 3130, "carries the frontend's own slot port");
+  assert.equal(plan.offsetStep, 100);
+  assert.equal(plan.maxSlots, 3);
+});
+
+test('slotConfig wins when a repo declares both', async () => {
+  // Both mappings present on one repo: the in-memory one must suppress the disk write.
+  const s = servers({
+    repos: slotConfigRepos({ configPatch: { file: 'src/config.ts', siblingRepo: 'accept-blue' } }),
+  });
+  await s.allocSlotFor('feat-a');
+  const opts = s.launchOpts('merchant-v3', 'feat-a');
+  assert.ok(opts.slotCfg, 'the in-memory plan is produced');
+  assert.equal(opts.patch, undefined, 'and the disk rewrite is suppressed');
+});
+
+test('slotConfigLaunch picks the first base config that exists and points the flag at the wrapper', async () => {
+  const s = servers({ repos: slotConfigRepos() });
+  await s.allocSlotFor('feat-b');
+  const { dir } = worktreeWithConfig('vite.config.js', 'export default {};');
+  const plan = present(s.launchOpts('merchant-v3', 'feat-b').slotCfg, 'a plan');
+
+  const launch = present(s.slotConfigLaunch(dir, plan), 'a resolved launch');
+  assert.match(launch.configArgs, /^--config \S+slot-vite-config\.mjs$/);
+  const payload = JSON.parse(launch.env.WTS_SLOT_VITE);
+  assert.equal(payload.root, dir);
+  assert.equal(payload.baseConfig, path.join(dir, 'vite.config.js'), 'falls through to the tracked config');
+  assert.equal(payload.slot, 0);
+
+  // A local override, when present, is preferred — it carries per-worktree settings the
+  // shared config does not have, and the wrapper wraps rather than replaces it.
+  fs.writeFileSync(path.join(dir, 'vite.config.local.mjs'), 'export default {};');
+  const withLocal = present(s.slotConfigLaunch(dir, plan), 'a resolved launch');
+  assert.equal(JSON.parse(withLocal.env.WTS_SLOT_VITE).baseConfig, path.join(dir, 'vite.config.local.mjs'));
+});
+
+test('slotConfigLaunch returns null when no base config exists, leaving the command alone', async () => {
+  const s = servers({ repos: slotConfigRepos() });
+  await s.allocSlotFor('feat-b');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wts-nobase-'));
+  const plan = present(s.launchOpts('merchant-v3', 'feat-b').slotCfg, 'a plan');
+  assert.equal(
+    s.slotConfigLaunch(dir, plan),
+    null,
+    'launching the wrapper against a missing base config would fail at import',
+  );
+  assert.equal(s.slotConfigLaunch(dir, null), null, 'and an absent plan is simply not this path');
 });

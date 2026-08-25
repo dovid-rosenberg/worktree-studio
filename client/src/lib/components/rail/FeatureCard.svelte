@@ -191,7 +191,7 @@ const behind = $derived((lap?.behind || 0) >= 5 ? lap!.behind : 0);
             <span
               class="wired {m.wiredTo.status}"
               title={m.wiredTo.status === 'foreign'
-                ? `WRONG BACKEND — :${m.wiredTo.port} is served by feature '${m.wiredTo.feature}'${m.wiredTo.repo ? ` (${m.wiredTo.repo})` : ''} at ${m.wiredTo.path}. This frontend's config points there, so its API calls hit that branch's code: expect 404s on routes this branch has and that one does not. Start this feature's backend and restart this frontend to re-patch the config.`
+                ? `WRONG BACKEND — :${m.wiredTo.port} is served by feature '${m.wiredTo.feature}'${m.wiredTo.repo ? ` (${m.wiredTo.repo})` : ''} at ${m.wiredTo.path}. This frontend talks to that port, so its API calls hit that branch's code: expect 404s on routes this branch has and that one does not. Stop that server and start this feature's own backend on this slot.`
                 : m.wiredTo.status === 'mine'
                   ? `API config points at :${m.wiredTo.port} — this feature's own backend`
                   : m.wiredTo.status === 'dead'

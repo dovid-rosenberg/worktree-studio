@@ -122,3 +122,72 @@ what it was pushed.
 **All four phases are done.** What is left in the original list is Asana write-back, which
 the owner deferred, and the collision half of Phase 1, which was built and then removed at
 their request.
+
+---
+
+# Slot targeting without touching the repo  ✅ LANDED
+
+## Why
+
+Studio encoded per-slot state by rewriting a file the vanilla toolchain also reads.
+`applyConfigPatch` rewrote `localhost:1239` → `localhost:1339` inside a frontend's
+gitignored `src/config.js` and never reverted it, so the last slot a worktree ran at
+survived the feature that made it.
+
+Reported 2026-08-25: `merchant-mfa` opened in WebStorm — no Studio involved — failed
+every API call with `ERR_CONNECTION_REFUSED` on `POST localhost:1339/merchant/auth/login`.
+Its config had been patched to slot 1 at some earlier point and nothing runs on 1339
+unless Studio starts it. Six of seven merchant-v3 worktrees carried a patched port;
+three were off-base.
+
+## What changed
+
+- [x] `server/slot-rewrite.ts` — `portRefRe` / `rewriteSiblingPort` /
+      `rewriteAllSiblingPorts` extracted so the daemon and the Vite wrapper (separate
+      processes) share one definition of "a reference to a backend port".
+      `concurrency.ts` re-exports them, so no existing importer or test moved.
+- [x] `server/slot-vite-config.mjs` — Studio's own Vite config, outside every repo.
+      Wraps the worktree's config (`vite.config.local.mjs` preferred, else
+      `vite.config.js`) and adds one `enforce: 'pre'` transform that substitutes the
+      slot's ports **as the module is served**. Nothing is written to the worktree.
+- [x] `RepoConcurrency.slotConfig` (types.ts) — the in-memory mapping. Wins over
+      `configPatch` when both are present.
+- [x] `launchOpts` returns a path-free `SlotConfigPlan`; `slotConfigLaunch` resolves it
+      against the worktree into `--config <wrapper>` + `WTS_SLOT_VITE`; `start()`
+      appends it exactly as it already appended `portArgs`.
+- [x] `wiredPorts` **derives** the family from the slot for a `slotConfig` repo instead
+      of reading the file back. Reading is meaningless once nothing writes — it would
+      report every frontend as wired to slot 0. `wiredTo` and all four `WiredStatus`
+      values are unchanged and still catch a foreign process on the slot's port.
+- [x] Config migrated: `merchant-v3` + `ab-su` to `slotConfig`, start commands reduced
+      to `exec npx vite`. `ab-iso-fe` (webpack-dev-server) deliberately left on
+      `configPatch`.
+- [x] One-time reset of the three off-base worktrees (`merchant-mfa` 1339,
+      `custom-reports` 1339, `fix-google-pay-mobile` 1439) back to 1239.
+
+## Review
+
+`npm run verify` green: lint, format, typecheck (server + client), 1108 server tests
+(1089 pre-existing, unchanged, + 19 new) and 302 client tests.
+
+End-to-end against the live config, one worktree at slot 1, same file same instant:
+
+    SERVED via wrapper (:3130)   baseURL localhost:1339   verifyUrl 1339   legacyUrl 3030
+    ON DISK (WebStorm reads)     baseURL localhost:1239   verifyUrl 1239   legacyUrl 3030
+
+The port families move together, `legacyUrl:3030` and `localhost:12390` are untouched
+(the `(?![0-9])` guard), and slot 0 is a no-op that returns `null` rather than an
+identical rewrite.
+
+## Not done
+
+- **`ab-iso-fe`** still rewrites on disk. webpack-dev-server needs its own out-of-repo
+  `--config` wrapper plus a module rule applying the same rewrite. Until that lands,
+  `applyConfigPatch` cannot be deleted and iso worktrees keep the old failure mode.
+- **Editor run configurations** (`LaunchOpts.cmd`) replace the start command, so such a
+  launch gets neither `configArgs` nor `portArgs` and is not slot-targeted at all.
+  Pre-existing for `portArgs`; worth a decision rather than a silent gap.
+- **`/branding/logo.png` 404** on localhost is unrelated to slots
+  (`src/utils/index.js:209` returns `/branding/<file>` and no `public/branding/` exists).
+  Not folded in: fixing it with a dev-server proxy would reintroduce exactly the
+  Studio-behaves-differently-from-vanilla split this change removes.

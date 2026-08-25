@@ -107,16 +107,52 @@ export interface RunConfig {
 }
 
 /**
- * Re-point a gitignored FE config file at a sibling repo's slot-shifted ports.
+ * Re-point a gitignored FE config file at a sibling repo's slot-shifted ports by
+ * REWRITING IT ON DISK.
  *
- * The FE has no env var for the backend it talks to — the URL is baked into a
- * checked-out file — so the only way to move it is to rewrite the file itself.
+ * Superseded by `SlotConfig` for any repo whose dev server can be handed a config from
+ * outside the checkout (today: Vite). Still the only option for one that cannot, so it
+ * stays — but prefer `slotConfig`, and see below for why.
  */
 export interface ConfigPatch {
   /** Repo-relative path of the file to rewrite. */
   file: string;
   /** The repo whose `portEnv` supplies the port families to shift. */
   siblingRepo: string;
+}
+
+/**
+ * The same re-pointing, done in memory instead of on disk.
+ *
+ * `ConfigPatch` writes the slot's port into a file the VANILLA TOOLCHAIN ALSO READS, and
+ * never reverts it. A worktree that once ran at slot 1 keeps `localhost:1339` in its
+ * config forever, so opening it in an editor and running `npm run dev` — no Studio
+ * involved — produces ERR_CONNECTION_REFUSED on every API call, because nothing listens
+ * on 1339 unless Studio put it there. Studio's private state had leaked into a workflow
+ * that is not Studio's.
+ *
+ * `SlotConfig` launches the dev server with a config from Studio's own directory
+ * (`server/slot-vite-config.mjs`) which substitutes the port as the module is served.
+ * The file on disk keeps the base port permanently — a vanilla launch is then correct by
+ * construction rather than by remembering to revert something.
+ *
+ * Takes precedence when a repo declares both.
+ */
+export interface SlotConfig {
+  /** Repo-relative file whose backend-port references are rewritten in memory. */
+  file: string;
+  /** The repo whose `portEnv` supplies the port families to shift. */
+  siblingRepo: string;
+  /**
+   * Repo-relative candidate base configs, first existing one wins.
+   *
+   * The wrapper wraps the repo's own config rather than replacing it, so per-worktree
+   * local settings (a `vite.config.local.mjs` with its own `optimizeDeps` workarounds)
+   * keep applying. Ordered most-specific first.
+   */
+  base: string[];
+  /** Flag template passed to the dev server; `{config}` becomes the wrapper's path. */
+  flag: string;
 }
 
 /**
@@ -199,6 +235,8 @@ export interface RepoConcurrency {
    */
   scheduler?: SchedulerOwnership;
   configPatch?: ConfigPatch;
+  /** In-memory alternative to `configPatch`; wins when both are present. */
+  slotConfig?: SlotConfig;
 }
 
 /**
