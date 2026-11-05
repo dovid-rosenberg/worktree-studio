@@ -70,7 +70,7 @@ export async function listSessions(signal?: AbortSignal): Promise<StateSession[]
 //
 // FTS5's MATCH argument is a query language, not a search box: a bare `OR`, an
 // unbalanced quote or a stray `*` is a syntax error, and `NEAR`/`-` mean something.
-// server/transcript-index.js `ftsQuery()` defuses this by quoting every whitespace-run
+// server/transcript-index.ts `ftsQuery()` defuses this by quoting every whitespace-run
 // as a literal phrase and ANDing them.
 //
 // This mirrors that tokenizer, for two reasons the server can't cover: it lets the UI

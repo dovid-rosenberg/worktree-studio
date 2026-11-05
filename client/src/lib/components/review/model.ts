@@ -210,7 +210,7 @@ export function isRenameSummaryPath(file: string): boolean {
 
 /**
  * Why a file has no stageable hunks, phrased for the user. Mirrors
- * `unstageableReason()` in server/hunks.js — the server refuses these, and the panel
+ * `unstageableReason()` in server/hunks.ts — the server refuses these, and the panel
  * has to say so up front rather than letting the user press Stage and get a 400.
 
  */

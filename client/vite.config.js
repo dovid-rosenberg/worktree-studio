@@ -12,7 +12,7 @@ import { defineConfig } from 'vite';
  * second daemon can be run from a worktree without editing this file, and so two dev
  * servers don't fight over 5273:
  *
- *   WT_STUDIO_CONFIG=/tmp/x/config.json WT_STUDIO_STATE=/tmp/x/state node server/server.js
+ *   WT_STUDIO_CONFIG=/tmp/x/config.json WT_STUDIO_STATE=/tmp/x/state node server/server.ts
  *   WT_STUDIO_DAEMON=http://127.0.0.1:7803 WT_STUDIO_DEV_PORT=5281 \
  *     WT_STUDIO_STATE=/tmp/x/state npm run dev
  *
@@ -24,7 +24,7 @@ const DEV_PORT = Number(process.env.WT_STUDIO_DEV_PORT || 5273);
 const PREVIEW_PORT = Number(process.env.WT_STUDIO_PREVIEW_PORT || 5274);
 
 /*
- * The boot token lives at <stateDir>/token, mode 0600 (server/security.js). WT_STUDIO_STATE
+ * The boot token lives at <stateDir>/token, mode 0600 (server/security.ts). WT_STUDIO_STATE
  * moves the state dir, so honour it here for the same reason the server does.
  */
 const STATE_DIR = process.env.WT_STUDIO_STATE
@@ -36,7 +36,7 @@ function readToken() {
 }
 
 /*
- * The dev server and the daemon are on different ports, and server/security.js checks
+ * The dev server and the daemon are on different ports, and server/security.ts checks
  * BOTH `Host` and `Origin` against the daemon's own bind address (that pair is the
  * DNS-rebinding defence — see the header of security.js). A dev request forwarded
  * verbatim therefore arrives claiming `localhost:5273`, and is refused with

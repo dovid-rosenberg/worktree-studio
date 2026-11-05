@@ -17,7 +17,7 @@
          delivered this way: the tab has no other channel, and any endpoint that handed it
          out would also hand it to a cross-origin <script src>. Reading this document
          cross-origin is what browsers forbid, and the Host/Origin gate in
-         server/security.js is what stops a DNS-rebinding page from reading it either.
+         server/security.ts is what stops a DNS-rebinding page from reading it either.
 
          adapter-static copies this file to build/index.html verbatim, so the daemon's
          EXISTING single-line injector in server.js works on it unchanged; only the path

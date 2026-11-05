@@ -4,7 +4,7 @@
 // same across all of them:
 //
 //   sqlite-fts5  snippet() wraps matches in « », the delimiters chosen in
-//                server/transcript-index.js. Best case — the server knows exactly which
+//                server/transcript-index.ts. Best case — the server knows exactly which
 //                tokens matched, including stemmed forms the client couldn't guess.
 //   sqlite-like  substr(body, 1, 400). No markers, and the match may be past the cut.
 //   file-scan    transcripts.excerpt() centres the window on the match. No markers.
