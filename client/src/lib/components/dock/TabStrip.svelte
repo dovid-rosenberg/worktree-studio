@@ -31,9 +31,7 @@ let {
   changesCount = 0,
 }: { session: Session; changesCount?: number } = $props();
 
-const tabs = $derived<SessionTab[]>(
-  session.tabs && session.tabs.length ? session.tabs : [{ id: '0', title: 'claude' }],
-);
+const tabs = $derived<SessionTab[]>(session.tabs?.length ? session.tabs : [{ id: '0', title: 'claude' }]);
 const promoted = $derived(!!session.worktreePath);
 
 /*

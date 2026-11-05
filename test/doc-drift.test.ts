@@ -202,7 +202,7 @@ function documentedRoutes(md: string): Map<string, number> {
     // happens to show `POST /sessions` should not be able to satisfy this test.
     if (line.startsWith('```')) fenced = !fenced;
     if (fenced) return;
-    for (const m of line.matchAll(new RegExp('`(' + VERBS + ') +(\\S+?)`', 'g'))) {
+    for (const m of line.matchAll(new RegExp(`\`(${VERBS}) +(\\S+?)\``, 'g'))) {
       const verb = m[1];
       // `ws://…/ws/term` and the prefixed spellings the intro uses to explain the aliasing.
       const p = m[2].replace(/^ws:\/\/[^/]*/, '').replace(/^\/api(\/v1)?(?=\/)/, '');

@@ -29,7 +29,7 @@ const srv = $derived((world.servers[session.id] && world.servers[session.id].rep
 const running = $derived(srv.filter((r) => r.running));
 const ports = $derived(running.flatMap((r) => r.ports || []));
 const selected = $derived(ui.selectedId === session.id);
-const reps = $derived(session.repos && session.repos.length ? session.repos : [{ repo: session.repoName }]);
+const reps = $derived(session.repos?.length ? session.repos : [{ repo: session.repoName }]);
 
 /*
  * How long this card's status has been unverified — 0 while it is still believable.

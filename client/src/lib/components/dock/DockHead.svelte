@@ -127,7 +127,7 @@ const showBranch = $derived(!!branch && branch !== wtname);
 
 /** Before promote there is one implicit chip for the primary repo. */
 const repoChips = $derived(
-  session.repos && session.repos.length
+  session.repos?.length
     ? session.repos
     : [{ repo: session.repoName, primary: true, worktreePath: session.worktreePath }],
 );

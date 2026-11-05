@@ -91,7 +91,7 @@ const selCommit = $derived.by(() => {
 
 const totals = $derived({
   commits: repos.reduce((n, r) => n + (r.commits ? r.commits.length : 0), 0),
-  unc: repos.reduce((n, r) => n + ((r.uncommitted && r.uncommitted.fileCount) || 0), 0),
+  unc: repos.reduce((n, r) => n + (r.uncommitted?.fileCount || 0), 0),
 });
 
 /* ---------------- loading ---------------- */
@@ -120,8 +120,8 @@ async function loadCommits({ keepSelection = true } = {}) {
     if (!survives) {
       // Same default as public/app.js: the newest commit if there is one, otherwise
       // whatever uncommitted entry exists.
-      const withCommits = repos.find((r) => r.commits && r.commits.length);
-      const withUnc = repos.find((r) => r.uncommitted && r.uncommitted.fileCount);
+      const withCommits = repos.find((r) => r.commits?.length);
+      const withUnc = repos.find((r) => r.uncommitted?.fileCount);
       if (withCommits) select(withCommits.repo, withCommits.commits[0].sha);
       else if (withUnc) select(withUnc.repo, 'uncommitted');
       else {
@@ -245,7 +245,7 @@ const blocks = $derived.by(() => {
       if (!h) {
         // Show the merged working-tree diff immediately; it is replaced by the split
         // staged/unstaged view the moment /hunks answers.
-        if (f.parsed && f.parsed.hunks.length) {
+        if (f.parsed?.hunks.length) {
           groups.push({
             label: 'Working tree · loading staging state…',
             side: null,
@@ -257,7 +257,7 @@ const blocks = $derived.by(() => {
         }
       } else if ('error' in h) {
         error = h.error;
-        if (f.parsed && f.parsed.hunks.length) {
+        if (f.parsed?.hunks.length) {
           groups.push({
             label: 'Working tree (staging unavailable)',
             side: null,
@@ -268,7 +268,7 @@ const blocks = $derived.by(() => {
       } else {
         const un = h.unstaged;
         const st = h.staged;
-        if (un && un.hunks.length) {
+        if (un?.hunks.length) {
           groups.push({
             label: `Unstaged · ${un.hunks.length} hunk${un.hunks.length === 1 ? '' : 's'}${h.untracked ? ' · untracked' : ''}`,
             side: 'unstaged',
@@ -276,7 +276,7 @@ const blocks = $derived.by(() => {
             hunks: un.hunks,
           });
         }
-        if (st && st.hunks.length) {
+        if (st?.hunks.length) {
           groups.push({
             label: `Staged · ${st.hunks.length} hunk${st.hunks.length === 1 ? '' : 's'}`,
             side: 'staged',
@@ -300,7 +300,7 @@ const blocks = $derived.by(() => {
               tone: 'warn',
               text: 'git listed this path in the commit summary but produced no patch for it.',
             });
-      if (f.parsed && f.parsed.hunks.length) {
+      if (f.parsed?.hunks.length) {
         groups.push({ label: '', side: null, action: null, hunks: f.parsed.hunks });
       }
     }

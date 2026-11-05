@@ -68,7 +68,6 @@ describe('persisted', () => {
     const real = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     // Deleting rather than stubbing: a ReferenceError and a throwing getter are different
     // failures, and the store hits the first one in the `logic` project.
-    // biome-ignore lint/performance/noDelete: restoring the descriptor afterwards is the point
     delete (globalThis as { localStorage?: unknown }).localStorage;
     try {
       const p = persisted<string>('wts-test-d', (raw) => raw || 'fallback');

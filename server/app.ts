@@ -459,7 +459,7 @@ function buildApp(deps: AppDeps): express.Express {
     const promotedSession = manager.get(req.params.id);
     const wtName = promotedSession?.worktree;
     if (wtName && promotedSession?.sourceUrl) {
-      const existing = (cfg.featureLinks || {})[wtName];
+      const existing = cfg.featureLinks?.[wtName];
       if (!existing?.ticket) {
         cfg.featureLinks = { ...(cfg.featureLinks || {}) };
         cfg.featureLinks[wtName] = { ...(existing || {}), ticket: promotedSession.sourceUrl };
@@ -731,8 +731,8 @@ function buildApp(deps: AppDeps): express.Express {
     if (!worktreePath) return res.status(400).json({ error: 'worktreePath is required' });
     const found = await runConfigs.discover(worktreePath, { startCmd: servers.startCfg(repo)?.cmd });
     const names = new Set(found.map((c) => c.name));
-    const manual = ((cfg.runConfigs || {})[repo] || [])
-      .filter((c) => c && c.name && c.cmd && !names.has(c.name))
+    const manual = (cfg.runConfigs?.[repo] || [])
+      .filter((c) => c?.name && c.cmd && !names.has(c.name))
       .map((c) => ({ ...c, source: 'manual' as const, file: cfg._file }));
     res.json({ configs: [...found, ...manual] });
   });
@@ -781,7 +781,7 @@ function buildApp(deps: AppDeps): express.Express {
     const found = await runConfigs.discover(String(worktreePath), {
       startCmd: servers.startCfg(String(repo))?.cmd,
     });
-    const manual = (cfg.runConfigs || {})[String(repo)] || [];
+    const manual = cfg.runConfigs?.[String(repo)] || [];
     const pick = found.find((c) => c.name === name) || manual.find((c) => c && c.name === name);
     if (!pick) return res.status(404).json({ error: `no run configuration named '${name}'` });
 

@@ -107,11 +107,15 @@ function matchesStartCmd(cmd: string, worktreePath: string, startCmd?: string): 
 
 /** Editor placeholders for "the project root". */
 function resolvePlaceholders(s: string, worktreePath: string): string {
-  return s
-    .replaceAll('$PROJECT_DIR$', worktreePath)
-    .replaceAll('${workspaceFolder}', worktreePath)
-    .replaceAll('${workspaceRoot}', worktreePath)
-    .replaceAll('$ProjectFileDir$', worktreePath);
+  return (
+    s
+      .replaceAll('$PROJECT_DIR$', worktreePath)
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's literal placeholder
+      .replaceAll('${workspaceFolder}', worktreePath)
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: VS Code's literal placeholder
+      .replaceAll('${workspaceRoot}', worktreePath)
+      .replaceAll('$ProjectFileDir$', worktreePath)
+  );
 }
 
 /**
@@ -380,5 +384,5 @@ export async function discover(
   if (launchText) out.push(...parseVsCodeLaunch(launchText, worktreePath, launch, opts.startCmd));
 
   const seen = new Set<string>();
-  return out.filter((c) => (seen.has(c.name) ? false : (seen.add(c.name), true)));
+  return out.filter((c) => !seen.has(c.name) && Boolean(seen.add(c.name)));
 }

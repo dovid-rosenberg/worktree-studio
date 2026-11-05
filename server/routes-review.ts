@@ -136,7 +136,7 @@ function register(api: Router, deps: ReviewDeps): void {
     const body: ApplyBody = req.body || {};
     const r = resolveWorktree(deps, req, body.repo);
     if (!r.entry) return res.status(r.status).json({ error: r.error });
-    const out = await hunks[op](r.entry.worktreePath, {
+    const out = await (op === 'stage' ? hunks.stage : hunks.unstage)(r.entry.worktreePath, {
       file: body.file,
       hunks: selection(body),
       expect: body.expect,
