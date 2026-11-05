@@ -1376,6 +1376,7 @@ class SessionManager extends EventEmitter {
     // the agent's own process exited — mark inactive so the UI offers Reactivate
     if (event === 'SessionEnd') s.active = false;
     s.lastEventAt = Date.now();
+    if (event === 'UserPromptSubmit') s.lastPromptAt = s.lastEventAt;
     this._touch(id);
     // Republish the raw lifecycle event. 'change' fires on every touch and says
     // nothing about WHICH event caused it; listeners that only care about turn

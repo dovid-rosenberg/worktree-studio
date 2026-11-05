@@ -42,8 +42,8 @@ import type {
 export type LiveMember = Worktree;
 
 /**
- * One row of the rail, whatever kind of thing it is. `active` is the single sort key:
- * a live agent, or a running dev server.
+ * One row of the rail, whatever kind of thing it is. `active` is "above the idle divider":
+ * waiting, a live agent you touched recently, or a running dev server.
  */
 export type RailRow =
   | { kind: 'session'; key: string; name: string; session: Session; active: boolean }
@@ -150,7 +150,7 @@ const savedSplits = persisted<Set<string>>(
 export type RailSort = 'attention' | 'status' | 'running' | 'agent' | 'name';
 
 export const RAIL_SORTS: Array<{ id: RailSort; label: string; hint: string }> = [
-  { id: 'attention', label: 'Attention', hint: 'Waiting first, then anything active' },
+  { id: 'attention', label: 'Attention', hint: 'Waiting first, then what you touched most recently' },
   { id: 'status', label: 'Task status', hint: 'By the tracker’s own workflow order' },
   { id: 'running', label: 'Running', hint: 'Features with dev servers up first' },
   { id: 'agent', label: 'Agent state', hint: 'Waiting, working, idle, stopped' },
@@ -184,12 +184,34 @@ function statusRank(label: string | undefined): number {
 }
 
 const byName = (a: RailRow, b: RailRow) => a.name.localeCompare(b.name);
-const waiting = (r: RailRow) => rowSession(r)?.state === 'waiting';
+
+/** A live agent you have not prompted for this long counts as idle. */
+export const STALE_MS = 24 * 60 * 60_000;
+
+/** When you last touched a row: your last prompt, else when its session began. 0 = never. */
+function touchedAt(r: RailRow): number {
+  const id = rowSession(r)?.id;
+  const s = id ? world.session(id) : null;
+  return s?.lastPromptAt || s?.createdAt || 0;
+}
+
+/**
+ * Attention tiers: 0 waiting on you, 1 live agent, 2 dev server only, 3 idle.
+ *
+ * A working agent stays live however long ago you prompted it — it is doing something.
+ * An idle one goes stale after STALE_MS, or the top of the rail fills with agents that
+ * finished days ago. working ↔ idle inside the window does not move a row.
+ */
+function tier(r: RailRow): number {
+  const s = rowSession(r);
+  if (s?.state === 'waiting') return 0;
+  if (s && s.state !== 'stopped' && (s.state === 'working' || Date.now() - touchedAt(r) < STALE_MS)) return 1;
+  return rowRunning(r) ? 2 : 3;
+}
 
 const COMPARATORS: Record<RailSort, (a: RailRow, b: RailRow) => number> = {
-  // The default, and why the rail exists: what needs you, then what is alive.
-  attention: (a, b) =>
-    Number(waiting(b)) - Number(waiting(a)) || Number(b.active) - Number(a.active) || byName(a, b),
+  // The default, and why the rail exists: what needs you, then what you were last in.
+  attention: (a, b) => tier(a) - tier(b) || touchedAt(b) - touchedAt(a) || byName(a, b),
   status: (a, b) => statusRank(rowStatus(a)) - statusRank(rowStatus(b)) || byName(a, b),
   running: (a, b) => Number(rowRunning(b)) - Number(rowRunning(a)) || byName(a, b),
   agent: (a, b) => agentRank(a) - agentRank(b) || byName(a, b),
@@ -415,7 +437,10 @@ class UI {
    */
   unpromotedSessions = $derived(
     world.sessions
-      .filter((s) => !s.worktreePath && this.#repoInScope(s.repoName))
+      // `!worktreePath` tests only the PRIMARY repo. A session whose primary never got a
+      // worktree but whose other repos did is already its feature's card; drawing it here
+      // too made two rows share one selection, and deleting this one kept the worktrees.
+      .filter((s) => !s.worktreePath && !world.featureFor(s.id) && this.#repoInScope(s.repoName))
       .slice()
       .sort(
         (a, b) =>
@@ -461,7 +486,7 @@ class UI {
             key: selectionKey({ kind: 'session', id: s.id }),
             name: s.title,
             session: s,
-            active: s.state !== 'stopped',
+            active: false, // set below, from tier()
           }),
         ),
         ...this.visibleMainServers.map(
@@ -470,7 +495,7 @@ class UI {
             key: selectionKey({ kind: 'mainserver', path: w.path }),
             name: w.repo,
             worktree: w,
-            active: true,
+            active: false,
           }),
         ),
         ...this.visibleFeatures.map(
@@ -479,18 +504,17 @@ class UI {
             key: selectionKey({ kind: 'feature', name: f.name }),
             name: f.name,
             feature: f,
-            active: featureActive(f),
+            active: false,
           }),
         ),
       ];
       /*
-       * Waiting first, then active, then alphabetical.
+       * Waiting first, then by tier (see tier()), then by your last prompt, newest first.
        *
-       * `active` alone left a waiting agent sitting alphabetically among a dozen equally
-       * active idle ones — so the single state worth interrupting you for was no easier
-       * to find than anything else. Waiting now reliably occupies row one, which is also
-       * what makes the ⌥ digit on the card worth reading.
+       * Alphabetical inside a tier made you scroll for the thing you were just in. Waiting
+       * still reliably occupies row one, which is what makes the ⌥ digit worth reading.
        */
+      for (const r of rows) r.active = tier(r) < 3;
       rows.sort(COMPARATORS[this.railSort] || COMPARATORS.attention);
 
       /*
