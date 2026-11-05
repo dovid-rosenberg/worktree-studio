@@ -109,6 +109,18 @@ describe('the rail', () => {
     expect(ui.railRows.map((r) => r.key)).toEqual(['f:one']);
   });
 
+  it('does not draw a session again when a feature already carries it', () => {
+    // Primary repo (ab-docs) has no worktree, the other repo does: the session is the
+    // feature's card, and a second session row would share its selection.
+    give({
+      features: [
+        feature('tdf', [member('accept-blue', { session: embedded('s1', 'idle') })], embedded('s1', 'idle')),
+      ],
+      sessions: [session('s1', { repoName: 'ab-docs', worktreePath: null })],
+    });
+    expect(ui.railRows.map((r) => r.key)).toEqual(['f:tdf']);
+  });
+
   it('holds agents, main-checkout servers and features in ONE list', () => {
     give({
       features: [feature('feat', [member('accept-blue')])],
@@ -388,6 +400,54 @@ describe('rail sorting', () => {
     board();
     ui.setRailSort('attention');
     expect(ui.railRows[0].name).toBe('alpha'); // waiting
+  });
+
+  it('attention orders live agents by your last prompt, not by name', () => {
+    const now = Date.now();
+    give({
+      features: [
+        feature('aaa', [member('r1')], embedded('s1', 'idle')),
+        feature('zzz', [member('r2')], embedded('s2', 'idle')),
+      ],
+      sessions: [
+        session('s1', { worktreePath: '/r1/wt', createdAt: now - 5000, lastPromptAt: now - 4000 }),
+        session('s2', { worktreePath: '/r2/wt', createdAt: now - 5000, lastPromptAt: now - 1000 }),
+      ],
+    });
+    expect(ui.railRows.map((r) => r.name)).toEqual(['zzz', 'aaa']);
+  });
+
+  it('an idle agent untouched for a day drops below the divider; a working one does not', () => {
+    const old = Date.now() - 2 * 24 * 60 * 60_000;
+    give({
+      features: [
+        feature('stale', [member('r1')], embedded('s1', 'idle')),
+        feature('grinding', [member('r2')], embedded('s2', 'working')),
+        feature('none', [member('r3')]),
+      ],
+      sessions: [
+        session('s1', { worktreePath: '/r1/wt', createdAt: old, lastPromptAt: old }),
+        session('s2', { state: 'working', worktreePath: '/r2/wt', createdAt: old, lastPromptAt: old }),
+      ],
+    });
+    expect(ui.railRows.map((r) => r.name)).toEqual(['grinding', 'stale', 'none']);
+    expect(ui.dividerAt).toBe(1);
+  });
+
+  it('waiting beats a more recent prompt; a dev server alone sits below live agents', () => {
+    const now = Date.now();
+    give({
+      features: [
+        feature('server', [member('r1', { running: true })]),
+        feature('live', [member('r2')], embedded('s2', 'idle')),
+        feature('blocked', [member('r3')], embedded('s3', 'waiting')),
+      ],
+      sessions: [
+        session('s2', { worktreePath: '/r2/wt', createdAt: now, lastPromptAt: now }),
+        session('s3', { state: 'waiting', worktreePath: '/r3/wt', createdAt: now - 9e6 }),
+      ],
+    });
+    expect(ui.railRows.map((r) => r.name)).toEqual(['blocked', 'live', 'server']);
   });
 
   it('name is stable — nothing about the world reorders it', () => {

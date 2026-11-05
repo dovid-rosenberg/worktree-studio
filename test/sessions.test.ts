@@ -281,6 +281,19 @@ test('applyHook UserPromptSubmit moves the session to working', () => {
   assert.equal(got(m, 'h2').state, 'working');
 });
 
+test('applyHook stamps lastPromptAt on a prompt and only on a prompt', () => {
+  // The rail orders by YOUR last touch; an agent's own tool calls must not bump it.
+  const m = manager();
+  m.sessions.set('h2b', session({ id: 'h2b', muxName: 'm', state: 'idle', active: true, createdAt: 1 }));
+  m.applyHook('h2b', 'PreToolUse', { tool_name: 'Bash' });
+  assert.equal(got(m, 'h2b').lastPromptAt, undefined);
+  m.applyHook('h2b', 'UserPromptSubmit', {});
+  const at = got(m, 'h2b').lastPromptAt;
+  assert.ok(at && at > 1);
+  m.applyHook('h2b', 'Stop', {});
+  assert.equal(got(m, 'h2b').lastPromptAt, at);
+});
+
 test('applyHook Notification moves the session to waiting', () => {
   const m = manager();
   m.sessions.set(

@@ -490,6 +490,8 @@ export interface Session {
   hookAuth?: boolean;
   /** Epoch ms of the last hook event. Absent until the first one arrives. */
   lastEventAt?: number;
+  /** Epoch ms the user last submitted a prompt — the rail's "recently touched" key. */
+  lastPromptAt?: number;
 }
 
 /**
