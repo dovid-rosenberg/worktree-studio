@@ -149,6 +149,10 @@ test('ordinary churn — working-tree saves and git index writes — triggers no
     h.stop();
     fs.rmSync(base, { recursive: true, force: true });
   });
+  // FSEvents can deliver makeRepo's own writes after the watch starts; on a loaded CI
+  // runner that was one stray rescan. Let them land, then count only the churn below.
+  await sleep(QUIET.debounceMs * 2);
+  calls.length = 0;
 
   fs.mkdirSync(path.join(repo, 'src', 'deep'), { recursive: true });
   for (let i = 0; i < 25; i++) fs.writeFileSync(path.join(repo, 'src', 'deep', `f${i}.js`), `// ${i}\n`);

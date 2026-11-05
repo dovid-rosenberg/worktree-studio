@@ -1,11 +1,8 @@
 # client — Worktree Studio frontend (SvelteKit)
 
-The port of `public/` to SvelteKit. Built with `adapter-static` in SPA mode: the output
-is plain files, and **the Express daemon in `server/` remains the only server**. There is
-no Node adapter, no second process, no second port in production.
-
-This is now the UI the daemon serves. `public/` is untouched and still works, but it is
-unserved unless you start with `WTS_UI=legacy` — see "Serving the build from the daemon".
+Built with `adapter-static` in SPA mode: the output is plain files, and **the Express
+daemon in `server/` is the only server**. There is no Node adapter, no second process, no
+second port in production.
 
 ## Layout
 
@@ -15,50 +12,44 @@ client/
   vite.config.js            dev/preview proxy to the daemon, and the dev boot token
   src/
     app.html                pre-paint theme script + the __WTS_TOKEN__ placeholder
-    app.css                 design tokens + global primitives, ported from public/style.css
+    app.css                 design tokens + global primitives
     lib/
-      api.js                the boot token, api(method,url,body), busy()
-      ops.svelte.js         every mutating action (promote, popout, stacks, features…)
-      shortcuts.svelte.js   global keys (⌘K, ⌘N, ⌘\, ⌘1–9, ⌘↵, ⌘D, ⌘R, ?)
-      theme.svelte.js       data-theme on <html>, localStorage `wts-theme`, xterm palette
-      actions/
-        activatable.js      keyboard-operable click targets
-        trapFocus.js        overlay focus trap + focusablesIn
+      api.ts                the boot token, api(method,url,body)
+      ops.svelte.ts         every mutating action (promote, delete, servers, groups…)
+      shortcuts.svelte.ts   global keys
+      theme.svelte.ts       data-theme on <html>, localStorage `wts-theme`, xterm palette
+      deeplink.ts, persisted.ts, ship.ts, tail.ts, errmsg.ts, featureColor.ts
+      actions/              activatable, reorderable, trapFocus
+      fixtures/             a frozen fleet for fixtures mode and the gallery
       stores/
-        world.svelte.js     the SSE state layer — see "The two-half stream" below
-        ui.svelte.js        view / selection / repo filter / dock view / split set
-        notify.svelte.js    attention diffing, desktop notification, beep, waiting count
-        overlays.svelte.js  which blocking overlay is up
-        toasts.svelte.js    the toast stack
-        dialog.svelte.js    uiDialog / uiConfirm / uiPrompt, promise-returning
+        world.svelte.ts     the SSE state layer — see "The three-half stream" below
+        ui.svelte.ts        selection, rail rows and sort, repo/root filter, dock view
+        notify.svelte.ts    attention diffing, desktop notification, beep, waiting count
+        overlays.svelte.ts  which blocking overlay is up
+        orphans.svelte.ts   orphaned sessions/worktrees
+        toasts.svelte.ts    the toast stack
+        dialog.svelte.ts    uiDialog / uiConfirm / uiPrompt, promise-returning
       components/
         Terminal.svelte     one live terminal — xterm + socket + fit + ResizeObserver
-        TopBar.svelte       brand / mux badge / Work-Fleet segment / global actions
-        Modal.svelte        shared backdrop + focus trap + restore
-        DialogHost.svelte   renders the queued dialog
-        Palette.svelte      ⌘K command palette
-        IntakeModal.svelte  new-session intake (free text / GitHub / GitLab / Asana)
-        SettingsModal.svelte  connections & settings
-        Toasts.svelte
-        rail/               Rail, SessionCard
-        dock/               Dock, DockHead, TabStrip, ServerBar, SplitPane, LogsPanel,
-                            ReviewMount
-        fleet/              Fleet, FeatureRow, AgentRow, ServerRow, MainServerRow,
-                            FeatureMenu
+        ActionBar, AppMenu, OverflowMenu, RunConfigMenu, SlotMenu, LinkChip, StateDot
+        Modal, DialogHost, DirPicker, Palette (⌘K), IntakeModal, SettingsModal,
+        SearchOverlay (⌘⇧F), Toasts
+        rail/               Rail, AppHead, FeatureCard, SessionCard, MainServerCard,
+                            ReviewCard, RailSplitter
+        dock/               Dock, DockHead, TabStrip, FeaturePane, LogsPanel, RunsPanel,
+                            ReviewMount, ReviewPane
         review/             the Changes panel, mounted by dock/ReviewMount
           ReviewPanel.svelte   commit list + diff pane; owns fetching and staging
           CommitList.svelte    left column: uncommitted entries, then commits per repo
           DiffViewport.svelte  the windowed diff surface + keyboard navigation
-          model.js             blocks → flat fixed-height item list (pure)
-          api.js               the four review routes, typed
-        search/             transcript search (SearchPanel/SearchHit, ⌘⇧F) and the
-                            index-health readout it carries (IndexStatus).
+          model.ts             blocks → flat fixed-height item list (pure)
+          api.ts               the review routes, typed
+        search/             transcript search (SearchPanel/SearchHit) and IndexStatus
     routes/
-      +layout.js            ssr = false, prerender = false
+      +layout.ts            ssr = false, prerender = false
       +layout.svelte        theme, the SSE connection, global keys, every overlay
-      +page.svelte          the single screen: Work (rail + dock) and Fleet
-      review/+page.svelte   Changes-panel harness — session picker + <ReviewPanel>
-      search/               search harness
+      +page.svelte          the single screen: rail + dock
+      gallery/+page.svelte  every card state, rendered from fixtures
 ```
 
 
@@ -69,14 +60,15 @@ npm install
 npm run dev        # http://localhost:5273 — proxies /api and /ws to the daemon on 7788
 npm run build      # → client/build
 npm run preview    # http://localhost:5274 — the built bundle, same proxy
-npm run check      # svelte-check
+npm run check      # svelte-kit sync + svelte-check
+npm test           # svelte-kit sync + vitest
 ```
 
 The daemon must already be running on 7788; this client never starts one. Note Vite binds
 the IPv6 loopback, so use `localhost`, not `127.0.0.1`.
 
-Work and Fleet are two views of **one** route, not two routes: switching must not tear
-down the live terminal, and on a static SPA fallback a URL change would do exactly that.
+There is one route on purpose: switching selection must not tear down the live terminal,
+and on a static SPA fallback a URL change would do exactly that.
 
 ## The three-half stream, and the trap in it
 
@@ -101,10 +93,8 @@ merged object in place and the `topology` frame — which arrives first on conne
 again on every rescan — overwrites those rows with stale (or, if you stitched into the
 previous object, absent) decoration that no later frame restores.
 
-So `stores/world.svelte.js` keeps **each half verbatim** and *derives* the world from the
+So `stores/world.svelte.ts` keeps **each half verbatim** and *derives* the world from the
 pair on every frame, through the pure `stitchSessions()`. Frame order stops mattering.
-This is the same semantics as `lastTopology` / `lastSessions` / `stitchSessions` in
-`public/app.js`.
 
 One consequence worth knowing before you write a component: **every session object is a
 new object on every frame.** An `$effect` that reads one re-runs several times a second.
@@ -114,7 +104,7 @@ reopened the terminal WebSocket on every tool call.
 
 ## Rendering is keyed
 
-`public/app.js` did `rail.innerHTML = ''` and rebuilt every card on every tick, which
+The original vanilla-JS UI did `rail.innerHTML = ''` and rebuilt every card on every tick, which
 destroyed focus, scroll position, selection and open menus several times a second.
 Everything here is keyed — sessions by id, features by name, worktrees by path — and
 updates in place. Measured against a live daemon: 12 `session-state` frames produced 12
@@ -137,9 +127,8 @@ Every `/api` request needs it — as `x-wts-token`, or as `?token=` on the two t
 that cannot set a header (`EventSource` and the terminal WebSocket).
 
 - **Production**: `app.html` declares `window.WTS_TOKEN` with a `__WTS_TOKEN__`
-  placeholder, and the daemon substitutes it when it serves the document — the mechanism
-  `public/index.html` already uses, so no new server code is needed beyond pointing the
-  existing injector at `client/build/index.html`. The injector replaces **every**
+  placeholder, and the daemon substitutes it when it serves `client/build/index.html`.
+  The injector replaces **every**
   occurrence (`split`/`join`, not `String.replace` — which would substitute only the
   first, and would expand `$&`-style patterns in the replacement). `app.html` still
   carries the placeholder exactly once, and says so.
@@ -155,18 +144,16 @@ allowlist is keyed to the daemon's bind port, and the dev server is on another o
 
 This is the UI the daemon serves. `server/webui.ts` owns all of it:
 
-- `resolve()` picks **one** root — `client/build`, or `public/` when `WTS_UI=legacy` —
-  and proves its `index.html` exists. Missing, the daemon refuses to boot and names the
+- `resolve()` points at `client/build` and proves its `index.html` exists. Missing, the daemon refuses to boot and names the
   command that produces it, rather than answering `/` with a blank page.
 - `mount()` registers the injecting handler for `/` and `/index.html` plus
   `express.static(root, { index: false })`, so the un-injected document can never leave
   by the static path.
-- `mountFallback()` is registered **after every route** in `server.js`. The client has
-  real routes (`/review`, `/search`, `/usage`) and a deep link or a reload on one is the
-  document the tab boots from, so it goes through the same injector rather than
-  `sendFile`. It skips `/api` and `/ws` so an unknown API path stays a 404 for SwiftBar,
-  Alfred and the CLI instead of becoming 200 text/html. `express@4` is what the repo
-  pins, so `'*'` is the right pattern; Express 5 would need `'/*splat'`.
+- `mountFallback()` is registered **after every route** in `server.ts`. A deep link or a
+  reload on any client path is the document the tab boots from, so it goes through the
+  same injector rather than `sendFile`. It skips `/api` and `/ws` so an unknown API path
+  stays a 404 for SwiftBar, Alfred and the CLI instead of becoming 200 text/html. The
+  pattern is `'/{*splat}'` — Express 5 dropped bare `'*'`.
 
 The injector replaces **every** occurrence of the placeholder, not just the first. The
 placeholder appears exactly once in `app.html` and a test pins that, but a single
@@ -180,12 +167,6 @@ placeholder appears exactly once in `app.html` and a test pins that, but a singl
 has to); `npm start` is still a bare `node server/server.ts`, with no build step and no
 network. The build does not track edits to `client/src`: rerun `npm run build` from the
 repo root, or use `npm run dev` here.
-
-Running both UIs **at once** is still not a thing: `/` is answered by one handler, so
-whichever root `resolve()` picked is the UI you get. `WTS_UI=legacy` swaps it; it does
-not add a second. (Serving them side by side would need a prefix mount, its own injecting
-handler and a matching `paths.base` in `svelte.config.js`, or the assets resolve to
-`/_app/...` and 404.)
 
 The `/ws/term` WebSocket is unaffected: `server.on('upgrade')` runs before Express sees
 the request, so static serving and the terminal socket cannot collide. Verified against
@@ -202,11 +183,7 @@ a socket that opens and immediately dies.
 
 ## Terminal.svelte
 
-One component, instantiated once per pane. It replaces the duplicated `term`/`term2`,
-`fit`/`fit2`, `ws`/`ws2`, `ro`/`ro2` globals and the parallel `openTerminal`/
-`openSecondTerm`, `connectTermWS`/`connectSecondWS`, `sendResize`/`sendResize2`,
-`destroyTerminal`/`closeSecondTerm` functions in `public/app.js`. Each instance privately
-owns its xterm, WebSocket, fit addon and ResizeObserver, and tears all four down on
+One component, instantiated once per pane. Each instance privately owns its xterm, WebSocket, fit addon and ResizeObserver, and tears all four down on
 destroy, so neither pane can reach into the other's state.
 
 ```svelte
@@ -224,8 +201,6 @@ destroy, so neither pane can reach into the other's state.
 | `maxRetries` | `5` | reconnect attempts, backing off 1s → 2s → 4s |
 | `onstatus` | — | `'connecting' \| 'open' \| 'reconnecting' \| 'closed'` |
 
-Methods via `bind:this`: `focus()`, `refit()`, `sendText(data)`.
-
 Changing `sessionId`/`pane`/`tab` retargets in place — the socket is replaced and the
 buffer reset, but the xterm instance and its renderer are reused, so the parent does not
 need a `{#key}` wrapper to force a remount.
@@ -242,32 +217,14 @@ server → client   raw pty output (text or binary frames)
 ```
 
 The server parses each inbound text frame as JSON and falls back to writing it verbatim,
-so `sendText()` uses the `input` frame rather than raw bytes — a payload that happens to
-be valid JSON would otherwise be misread as a control message.
-
-## Deliberate behaviour changes
-
-Three places where this does not reproduce `public/app.js` exactly, because the original
-was wrong:
-
-- **Both terminals re-theme.** `toggleTheme()` only ever reassigned `term.options.theme`,
-  so a split pane kept the old palette until it was destroyed.
-- **The split pane reconnects.** Only the primary had the backoff chain; the split printed
-  `[disconnected]` and stayed dead, so a daemon restart left it stranded.
-- **The first theme toggle is not a no-op.** The old `toggleTheme()` inferred the current
-  theme from `prefers-color-scheme` when `data-theme` was unset, but the CSS defaults to
-  dark regardless of OS preference — so on a light-themed OS the first click "toggled"
-  from an assumed light to dark while the page was already dark.
-
-Also: fitting is skipped when the pane measures 0×0. The old ResizeObserver callback ran
-`fit()` unconditionally, which on a hidden pane could push a nonsense geometry to the pty.
+so programmatic input should use the `input` frame rather than raw bytes — a payload that
+happens to be valid JSON would otherwise be misread as a control message.
 
 ## The Changes panel (`lib/components/review/`)
 
 `<ReviewPanel sessionId={id} />` is the whole panel: per repo, the branch's commits plus
 an uncommitted entry on the left, a diff pane on the right. It owns its own fetching and
-its own state and takes no store, so the shell can mount it with one prop. Develop it at
-`/review` — that harness picks a session out of `/api/v1/state` and mounts nothing else.
+its own state and takes no store, so the shell can mount it with one prop.
 
 ### Two layouts, one payload
 
@@ -282,7 +239,7 @@ neither layout re-parses patch text:
 ### Why it is windowed
 
 A commit here reaches a few thousand diff lines and a lockfile commit reaches far more;
-side-by-side doubles the elements per row. `model.js` flattens every file header, group
+side-by-side doubles the elements per row. `model.ts` flattens every file header, group
 label, hunk header and diff row in the selected commit into **one** item list whose
 per-kind heights are known constants, and prefix-sums them. The viewport then binary-
 searches `scrollTop` to the first visible item and draws only that slice plus an
@@ -293,7 +250,7 @@ overscan, absolutely positioned at their known offsets:
   twitch as rows recycle;
 - cost per frame is O(window), independent of diff size.
 
-The heights in `model.js`'s `H` are load-bearing — the CSS pins the same `height` on each
+The heights in `model.ts`'s `H` are load-bearing — the CSS pins the same `height` on each
 row, and changing one without the other makes the list drift from its own scrollbar.
 
 The trade-off is real and deliberate: **off-screen rows are not in the DOM, so the
@@ -321,7 +278,7 @@ carries its own offset (`--hxl` / `--hxr`) driven by its own scrollbar under the
   bare transform on the text slides it left *over* the line number, because the row does
   not clip. Reading a wide line while its number scrolls away is the bug this layout
   exists to avoid.
-- widths are measured **per surface** in `model.js` over the whole diff (`cols`,
+- widths are measured **per surface** in `model.ts` over the whole diff (`cols`,
   `colsLeft`, `colsRight`), so each scroll range is fixed before the first frame and a
   long line on the right cannot invent scroll range on the left.
 
@@ -389,7 +346,7 @@ prints the composite `README.md => docs.md` (or `{src => lib}/math.js`), `--name
 prints the new path. The composite half has no patch on any route, so the panel labels it
 as a summary line and skips its `/hunks` request rather than drawing a file header with
 nothing under it. If the daemon ever emits a real flag for this, `isRenameSummaryPath()`
-in `model.js` is the one place to change.
+in `model.ts` is the one place to change.
 
 ### Not built here
 

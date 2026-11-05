@@ -33,7 +33,7 @@ const rendered = $derived.by(() => {
       out.push({ t: 'unc', key: `${r.repo}\u0000uncommitted`, repo: r.repo, u: r.uncommitted });
   }
   for (const r of repos) {
-    if (!(r.commits && r.commits.length)) continue;
+    if (!r.commits?.length) continue;
     out.push({ t: 'hd', key: `hd:${r.repo}`, label: `⎇ ${r.repo}` });
     for (const c of r.commits) out.push({ t: 'commit', key: `${r.repo}\u0000${c.sha}`, repo: r.repo, c });
   }

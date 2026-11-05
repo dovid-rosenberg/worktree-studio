@@ -15,7 +15,7 @@ export type TermStatus = 'connecting' | 'open' | 'reconnecting' | 'closed';
  * Every instance owns its xterm, socket, fit addon and ResizeObserver privately, so
  * two terminals on screen cannot reach into each other's state.
  *
- * Wire protocol (server/server.js, wss.on('connection')) — unchanged:
+ * Wire protocol (server/server.ts, wss.on('connection')) — unchanged:
  *   GET /ws/term?session=<id>&cols=<n>&rows=<n>  (the server also accepts &tab=<i>)
  *   client → server: raw bytes (written straight to the pty), or JSON
  *                    {type:'resize',cols,rows} / {type:'input',data}
@@ -185,7 +185,7 @@ function connect(t: XTerm, attempt: number, gen: number) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const qs = new URLSearchParams({ session: sessionId, cols: String(t.cols), rows: String(t.rows) });
   // A WebSocket handshake cannot carry a header, so the boot token rides in the query
-  // string — the form server/security.js accepts for exactly this reason. Without it
+  // string — the form server/security.ts accepts for exactly this reason. Without it
   // the upgrade is refused with 401 before any pty is spawned.
   if (TOKEN) qs.set('token', TOKEN);
 
@@ -452,13 +452,7 @@ $effect(() => {
   return () => cancelAnimationFrame(id);
 });
 
-// ---- imperative API, for parents holding `bind:this` ----
-
-export function focus() {
-  term?.focus();
-}
-
-export function refit() {
+function refit() {
   if (!term || !fitAddon || !host?.clientWidth || !host?.clientHeight) return;
   try {
     fitAddon.fit();
@@ -466,18 +460,6 @@ export function refit() {
     /* */
   }
   sendResize();
-}
-
-/**
- * Send text as if typed. Uses the protocol's {type:'input'} frame rather than raw
- * bytes so a payload that happens to be valid JSON can't be misread as a control
- * message by the server's parse-then-fallback branch.
- * @param {string} data
- */
-export function sendText(data: string) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-  socket.send(JSON.stringify({ type: 'input', data }));
-  return true;
 }
 </script>
 

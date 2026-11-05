@@ -95,14 +95,14 @@ const commandRows = $derived(
     // line without submitting" — so advertising it here promised a key that does nothing
     // in the palette and something else entirely everywhere it does work.
     if (cur && !cur.worktreePath) add('⤴', 'Promote current to worktree', '', () => promote(cur));
-    if (cur && cur.worktreePath)
+    if (cur?.worktreePath)
       add('✎', 'Review changes', '⌘D', () => {
         ui.goToSession(cur.id);
         // setDockView, not the field: it is the only writer that persists the choice.
         ui.setDockView('changes');
       });
     // Was labelled 'Run stack' while calling startSessionServers — the other verb.
-    if (cur && cur.worktreePath && cur.feature) add('▶', 'Run stack', '⌘R', () => runStack(cur.feature));
+    if (cur?.worktreePath && cur.feature) add('▶', 'Run stack', '⌘R', () => runStack(cur.feature));
     if (cur) {
       if (cur.active === false) add('↻', 'Resume current', '', () => activateSession(cur));
       else add('⏻', 'Deactivate current', '', () => deactivateSession(cur));

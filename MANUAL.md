@@ -339,12 +339,16 @@ One screen, four regions. There is no view to switch between — Work and Fleet 
 merged, because Fleet was the same three lists the rail already drew.
 
 **The rail** (left) — one flat list, one row per thing: features, unpromoted sessions,
-and dev servers running from a repo's main checkout. Active first (a live session or a
-running server), then alphabetical, with an `idle · N` divider marking where the quiet
-ones start. Filter by repo at the top. Cards are readouts; they carry no buttons.
+and dev servers running from a repo's main checkout. The default sort (Attention) puts
+agents waiting on you first, then live agents, then rows with only a dev server up —
+each group ordered by when you last sent that session a prompt — and an `idle · N`
+divider above the rest. An idle agent you have not prompted for a day counts as idle.
+Merge requests waiting on your review sit below everything, under their own divider.
+Filter by repo at the top; the sort menu beside it offers Task status, Running, Agent
+state and Name. Cards are readouts; they carry no buttons.
 
 **The dock** (right) — the selected session's identity header, its terminal tabs, the
-Changes and Logs panels, and the server bar.
+Changes, Logs and Runs panels, and the server bar.
 
 **The server bar** (under the dock) — a READOUT: every repo the session owns, its ports,
 and the PR/CI pills. No buttons.

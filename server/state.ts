@@ -229,11 +229,11 @@ function createState({ cfg, manager, servers, mux, repos, running, runs, identit
       const out: Feature = { ...f, session: m ? m.session : null };
       const slot = servers.slots.get(f.name);
       if (slot !== undefined) out.slot = slot;
-      const color = (cfg.featureColors || {})[f.name];
+      const color = cfg.featureColors?.[f.name];
       if (color) out.color = color;
       // Raw link config only. The MR chips are joined in on the client from the `ci`
       // frame — see the note on Feature.ticket.
-      const lk = (cfg.featureLinks || {})[f.name];
+      const lk = cfg.featureLinks?.[f.name];
       if (lk?.ticket) out.ticket = lk.ticket;
       if (lk?.pins?.length) out.pins = lk.pins;
       return out;

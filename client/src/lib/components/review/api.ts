@@ -2,7 +2,7 @@
  * The review panel's slice of the daemon API. Everything the Changes panel needs and
  * nothing else, so the panel never reaches for a global fetch helper the shell owns.
  *
- * Routes (server/server.js + server/routes-review.js), all under /api/v1:
+ * Routes (server/server.ts + server/routes-review.ts), all under /api/v1:
  *   GET  /sessions/:id/commits                     branch commits + uncommitted summary
  *   GET  /sessions/:id/commit-detail?repo=&sha=    per-file diffs (+ `parsed` model)
  *   GET  /sessions/:id/hunks?repo=&file=           stageable / unstageable hunks

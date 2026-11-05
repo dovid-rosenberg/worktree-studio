@@ -81,7 +81,7 @@ const mainServer = $derived(ui.selectedMainServer);
 
 /** The feature a selected SESSION belongs to, so stack verbs work from either side. */
 const sessionFeature = $derived(
-  session && session.feature ? ui.visibleFeatures.find((f) => f.name === session.feature) || null : null,
+  session?.feature ? ui.visibleFeatures.find((f) => f.name === session.feature) || null : null,
 );
 const target = $derived(feature || sessionFeature);
 const ms = $derived(target ? liveMembers(target) : []);

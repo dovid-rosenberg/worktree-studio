@@ -88,7 +88,7 @@ function classify(raw: string) {
 
 /** @param {any} r */
 function optionLabel(r: SessionServerRepo) {
-  const ports = r.ports && r.ports.length ? ' ' + r.ports.map((p: number) => ':' + p).join(' ') : '';
+  const ports = r.ports?.length ? ` ${r.ports.map((p: number) => `:${p}`).join(' ')}` : '';
   return `${r.repo}${ports}${r.running ? '' : ' (stopped)'}`;
 }
 

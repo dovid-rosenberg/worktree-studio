@@ -264,7 +264,7 @@ function applyAtCursor(op: 'stage' | 'unstage') {
   const b = it.k === 'gap' ? null : it.b;
   if (!b) return;
   const g = it.k === 'group' && it.g.side === side ? it.g : b.groups.find((x) => x.side === side);
-  if (!g || !g.hunks.length) return;
+  if (!g?.hunks.length) return;
   onapply({ op, file: b.file, ...selectionOf(g) });
 }
 
@@ -467,8 +467,8 @@ const cursorLabel = $derived.by(() => {
   if (it.k === 'note') return it.note.text;
   if (it.k === 'row') {
     const l = it.right || it.left;
-    const n = it.type === 'del' ? it.left && it.left.oldLine : l && l.newLine;
-    return `${it.type} line ${n ?? ''}: ${(l && l.text) || 'empty'}`;
+    const n = it.type === 'del' ? it.left?.oldLine : l?.newLine;
+    return `${it.type} line ${n ?? ''}: ${l?.text || 'empty'}`;
   }
   return '';
 });

@@ -138,7 +138,7 @@ function register(api: Router, deps: SettingsDeps): void {
           .map((x: { label: string; url: string }) => (x.label ? x : { url: x.url }))
       : undefined;
 
-    const next = { ...((cfg.featureLinks || {})[name] || {}) };
+    const next = { ...(cfg.featureLinks?.[name] || {}) };
     if (ticket !== undefined) {
       if (ticket) next.ticket = ticket;
       else delete next.ticket;

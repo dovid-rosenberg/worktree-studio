@@ -5,6 +5,10 @@
 # Monthly, not weekly: this is a single-maintainer local tool, and a PR queue nobody
 # reads is the same as no updates at all. Grouped so a month's patches arrive as one
 # reviewable change rather than nine.
+#
+# Groups take minor and patch only. A '*' group bundled every major with the month's
+# patches, so one breaking upgrade (SvelteKit 3, xterm 6) made the whole PR unmergeable
+# and the safe updates never landed. Majors now arrive as their own PR each.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -15,6 +19,7 @@ updates:
     groups:
       server-deps:
         patterns: ['*']
+        update-types: [minor, patch]
 
   - package-ecosystem: npm
     directory: /client
@@ -24,6 +29,7 @@ updates:
     groups:
       client-deps:
         patterns: ['*']
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
