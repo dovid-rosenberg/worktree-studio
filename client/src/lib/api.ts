@@ -1,7 +1,7 @@
 /*
  * The one place that knows how to talk to the daemon.
  *
- * Every /api request has to carry the boot token (server/security.js). It goes in a
+ * Every /api request has to carry the boot token (server/security.ts). It goes in a
  * header where we can set one, and in the query string on the two transports that
  * cannot — EventSource and WebSocket. Requests also pass an Origin/Host allowlist,
  * which is why dev traffic goes through the Vite proxy on the same origin rather than
@@ -161,18 +161,4 @@ export async function request(method: HttpMethod, url: string, opts: RequestOpts
 /** The mutating shorthand the shell uses everywhere: `api('POST', url, body)`. */
 export function api(method: HttpMethod, url: string, body?: unknown): Promise<any> {
   return request(method, url, body === undefined ? {} : { body });
-}
-
-/**
- * Run an async action with a visible "in flight" flag, guaranteeing the flag clears.
- * Replaces app.js's guardBtn(), which disabled a DOM node directly; here the caller
- * owns a `$state` boolean and binds it to `disabled`.
- */
-export async function busy<T>(setBusy: (v: boolean) => void, fn: () => Promise<T>): Promise<T> {
-  setBusy(true);
-  try {
-    return await fn();
-  } finally {
-    setBusy(false);
-  }
 }
