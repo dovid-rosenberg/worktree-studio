@@ -3,7 +3,7 @@
 //
 // client/ is a separate npm project on purpose: its toolchain (vite, svelte, adapter-
 // static) is a build-time concern and has no business in the daemon's dependency tree,
-// which is deliberately five packages. So this installs there if it has to, then builds.
+// which is deliberately three packages. So this installs there if it has to, then builds.
 //
 // Wired into the root `postinstall`, which is the one moment the network is already
 // assumed. `npm start` stays `node server/server.ts` — no build step, no install check,
