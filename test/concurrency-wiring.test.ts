@@ -76,7 +76,11 @@ test('allocSlotFor returns the same cached slot when a feature is asked twice', 
   const s = servers();
   await s.allocSlotFor('feat-a'); // 0
   await s.allocSlotFor('feat-b'); // 1
-  assert.deepEqual(await s.allocSlotFor('feat-a'), { slot: 0 }, 'reuses the cached slot, does not re-allocate');
+  assert.deepEqual(
+    await s.allocSlotFor('feat-a'),
+    { slot: 0 },
+    'reuses the cached slot, does not re-allocate',
+  );
   // feat-a asked again must NOT consume slot 2
   assert.deepEqual(await s.allocSlotFor('feat-c'), { slot: 2 });
 });
@@ -676,7 +680,11 @@ test('a slot is not reclaimable while its feature is still starting', { timeout:
     assert.equal(s.slots.has(feature), true, 'the slot survived a sweep taken mid-launch');
     assert.equal(s.slots.get(feature), 0);
     // and the consequence that made this a port collision: the slot was handed out again
-    assert.deepEqual(await s.allocSlotFor('feat-other'), { slot: 1 }, 'no other feature was given the same slot');
+    assert.deepEqual(
+      await s.allocSlotFor('feat-other'),
+      { slot: 1 },
+      'no other feature was given the same slot',
+    );
     assert.equal(s.isStarting(feature), true, 'the launch is still in flight');
 
     expectOk(await launching, 'start()');

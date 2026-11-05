@@ -27,8 +27,8 @@ jobs:
     name: Lint and format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -49,8 +49,8 @@ jobs:
     name: Typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -58,10 +58,10 @@ jobs:
             package-lock.json
             client/package-lock.json
       - run: npm ci --ignore-scripts
+      # The client's `check` script runs `svelte-kit sync` itself. A separate
+      # `npm --prefix client exec svelte-kit sync` step ran it in the repo ROOT, so the
+      # client never got its tsconfig and this job failed on every run.
       - run: npm ci --prefix client
-      # svelte-check needs the generated .svelte-kit types, which `svelte-kit sync`
-      # writes. postinstall normally does it via the client build; skipped above.
-      - run: npm --prefix client exec svelte-kit sync
       - run: npx tsc --noEmit
       - run: npm --prefix client run check
 
@@ -77,8 +77,8 @@ jobs:
     # has. macOS runners are free for public repositories.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -120,8 +120,8 @@ jobs:
     # was carrying two high-severity transitive advisories.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Audit server dependencies
